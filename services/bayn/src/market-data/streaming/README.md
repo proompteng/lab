@@ -9,11 +9,19 @@ Trading has one market-data capability: load a verified feature and raw-data sna
 The production adapter consumes Kafka; backtesting supplies recorded events on its simulated clock. An unavailable
 adapter blocks observations. ClickHouse remains the historical archive and does not supply an execution fallback.
 
-The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
-
 A replacement consumer captures partition bounds and rebuilds actual retained history before serving entry inputs.
-The current strategy uses at most 30 minutes of context and requires the latest completed minute, a matching native
-feature and fresh quotes. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
+Separate equity quote and trade topics start at their captured end offsets: the strategy uses their latest values,
+so replaying obsolete ticks can exhaust the five-minute bootstrap budget and repeatedly restart an otherwise valid
+history rebuild. No old quote substitutes for a new delivery. Entries still require a newly observed, verified quote
+within the existing freshness limit. Bar and feature topics retain the full lookback; the mixed crypto topic also
+retains it because that topic carries historical bars alongside ticks. Explicit historical diagnostics retain all
+requested channels from their requested start. Every required partition must reach its frozen bootstrap end offset,
+and the five-minute deadline, source verification, calendar and quote-freshness checks remain enforced.
+The current strategy uses at most 30 minutes of equity context and 120 minutes of crypto context. Bootstrap seeks
+each source independently and the crypto projection retains 121 distinct bar minutes. The latest completed minute,
+a matching native feature and fresh quotes remain required. Crypto rolling indicators keep their 30-minute window
+and verify against that exact raw-bar subset; the additional chart bars retain their own source and arrival evidence. Crypto numerical window summaries describe
+all chart bars, while the volume ratio compares only the final fifteen minutes with the preceding fifteen. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
 minute and two seconds after the broker open; crypto uses its current completed history continuously. Missing older
 minutes remain visible gaps. Historical backfills keep their real ingestion and replacement-consumer receipt times.
 Premarket, prior-session, non-final, future and fabricated bars cannot substitute for current session evidence.
@@ -48,7 +56,14 @@ An individual valid chunk above the SQL byte target is written whole under the e
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-A failed write, invalid delivery or individually oversized chunk permanently marks the epoch incomplete; the
+Connection failures, including a failed COMMIT acknowledgement reported as a SQL defect, retry the identical append
+at most twice with 100 milliseconds between attempts. Each retry reads the existing ordinals and verifies their
+exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.
+If every chunk already exists, a [transactional WAL acknowledgement](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-REPLICATION) makes the retry's COMMIT wait for the configured
+synchronous durability; a locally visible row alone does not prove that its lost COMMIT acknowledgement was durable.
+Other defects, interruptions, invalid evidence and exhausted connection retries retain their failures. Query, socket,
+queue and shutdown deadlines remain unchanged. A failed write, invalid delivery or individually oversized chunk
+permanently marks the epoch incomplete; the
 warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
 delivery counts. Native capture failures also use the error-only GlitchTip boundary; collector failures do not
 interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted

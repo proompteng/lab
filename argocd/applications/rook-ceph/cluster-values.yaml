@@ -87,7 +87,8 @@ cephClusterSpec:
       osd_scrub_auto_repair_num_errors: "5"
       # Catch up with overdue deep scrubs while mClock favors client operations.
       osd_max_scrubs: "3"
-      # Bound deep-scrub batches so shared-HDD client writes can resume between smaller chunks.
+      # Keep both bounds explicit when restoring the measured baseline from a runtime trial.
+      osd_scrub_chunk_min: "5"
       osd_scrub_chunk_max: "5"
       # Recurring backfill must not indefinitely postpone integrity checks.
       osd_scrub_during_recovery: "true"

@@ -3,7 +3,12 @@ import { Clock, Effect, Layer, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { operationalError } from '../errors'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+  stagedChartAssessments,
+} from './staged-chart-questions'
+import type { ChartDecisionSource } from './chart-questions'
 import {
   makeStagedDispatchClaim,
   makeStagedTerminalReceipt,
@@ -15,7 +20,7 @@ import { decodeJevResponse, prepareJevRequest } from './contract'
 import { DecisionsClient, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { utcInstantFromEpochMillis } from '../time'
 import { EntryInferenceJournal, deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
-import type { EntryInferenceInput } from './entry-inference-input'
+import type { EntryInferenceInput, EntryInferenceMaterial } from './entry-inference-input'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { defaultJevProtocolDocument } from './protocol'
@@ -35,7 +40,7 @@ export const entryEvaluationRequestFixture = (
   const prepared = Result.getOrThrow(
     prepareEntryInferenceInput({
       ...(selectionPolicy === undefined
-        ? { schemaVersion: 'bayn.entry-inference-input.v5' }
+        ? { schemaVersion: 'bayn.entry-inference-input.v6' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
@@ -130,6 +135,20 @@ export const nativeChartInference = (raw: unknown, at: string) => {
   }
 }
 
+export const chartAssessmentsFixture = (source: ChartDecisionSource, at = source.chart.windowEndAt) => {
+  const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
+  const chart = nativeChartInference(initial.request, at)
+  const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(source, stageResponseIdentity(chart)))
+  const baseStart = next.status === 'PREPARED' ? nativeChartInference(next.request, at) : null
+  return Result.getOrThrow(
+    stagedChartAssessments(
+      source,
+      stageResponseIdentity(chart),
+      baseStart === null ? null : stageResponseIdentity(baseStart),
+    ),
+  )
+}
+
 export const chartProviderFixture: DecisionsClient['Service'] = {
   evaluate: (raw) =>
     Clock.currentTimeMillis.pipe(Effect.map((at) => nativeChartInference(raw, utcInstantFromEpochMillis(at)))),
@@ -140,31 +159,48 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
   Layer.sync(EntryInferenceJournal, () => {
     const saved = new Map<string, string>()
     const claims = new Map<string, string>()
-    return {
-      recordVisualClaim: (claim) =>
-        Effect.sync(() => {
-          const key = `${claim.requestId}:${claim.stage}`
-          const prior = claims.get(key)
-          claims.set(key, claim.claimHash)
-          return { dispatchAllowed: prior === undefined }
-        }),
-      recordVisualTerminal: () => Effect.void,
-      recordBaseStartSkip: () => Effect.void,
-      recordHandoff: (handoff) =>
-        Effect.suspend(() => {
-          const previous = saved.get(handoff.requestId)
-          if (previous !== undefined && previous !== handoff.handoffHash)
-            return Effect.fail(
-              operationalError({
-                component: 'database',
-                operation: 'test-handoff',
-                message: 'Fixture handoff is immutable',
-              }),
-            )
-          saved.set(handoff.requestId, handoff.handoffHash)
-          return Effect.succeed({ dispatchAllowed: previous === undefined })
-        }),
+    const recordHandoff = (handoff: import('./entry-inference').EntryHandoff) =>
+      Effect.suspend(() => {
+        const previous = saved.get(handoff.requestId)
+        if (previous !== undefined && previous !== handoff.handoffHash)
+          return Effect.fail(
+            operationalError({
+              component: 'database',
+              operation: 'test-handoff',
+              message: 'Fixture handoff is immutable',
+            }),
+          )
+        saved.set(handoff.requestId, handoff.handoffHash)
+        return Effect.succeed({ dispatchAllowed: previous === undefined })
+      })
+    const recordClaim = (claim: import('./staged-checkpoint').StagedDispatchClaim) =>
+      Effect.sync(() => {
+        const key = `${claim.requestId}:${claim.stage}`
+        const prior = claims.get(key)
+        claims.set(key, claim.claimHash)
+        return { dispatchAllowed: prior === undefined }
+      })
+    const journal: typeof EntryInferenceJournal.Service = {
+      recordVisualClaims: (inputs) =>
+        Effect.forEach(inputs, (claim) =>
+          recordClaim(claim).pipe(Effect.map((result) => ({ requestId: claim.requestId, ...result }))),
+        ),
+      recordTransitions: (inputs) =>
+        Effect.forEach(inputs, (input) =>
+          Effect.gen(function* () {
+            const requestId = input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId
+            const successor = input.successor
+            const result =
+              successor.kind === 'NONE'
+                ? { dispatchAllowed: false }
+                : successor.kind === 'VISUAL'
+                  ? yield* recordClaim(successor.claim)
+                  : yield* recordHandoff(successor.handoff)
+            return { requestId, ...result }
+          }),
+        ),
     }
+    return journal
   }),
 )
 
@@ -230,7 +266,12 @@ export const entryCompletionFixture = (
   }
 }
 
-export const stagedCheckpointFixture = (request: JevEvaluationRequest, at = request.observedAt): StagedCheckpoint => {
+export const stagedCheckpointFixture = (
+  request: Pick<JevEvaluationRequest, 'requestId' | 'observedAt' | 'expiresAt'> & {
+    readonly request: EntryInferenceMaterial
+  },
+  at = request.observedAt,
+): StagedCheckpoint => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const initial = Result.getOrThrow(
     makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),

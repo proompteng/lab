@@ -34,7 +34,7 @@ import {
   intradayMomentumFeatureTopic,
 } from '../strategy/intraday-momentum/protocol'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../market-data/intraday/model'
 
 type EquityFixtureSnapshot = Omit<StreamingVerifiedMarketSnapshot, 'manifest'> & {
   readonly manifest: Omit<StreamingVerifiedMarketSnapshot['manifest'], 'calendar' | 'streaming'> & {
@@ -96,6 +96,7 @@ export const streamingFixture = (returns: Readonly<Record<string, number>> = { A
     minimumWatermarkLagMs: 2000,
     symbols: [...protocol.candidateSymbols, 'SPY'].sort(),
     candidateSymbols: protocol.candidateSymbols,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   }
   const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
   const { cut, query, snapshot, rows } = streamingFixtureFromRaw(raw, request)

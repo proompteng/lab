@@ -9,6 +9,7 @@ import type { Statement } from 'effect/sql/Statement'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
 import { discoverAutonomousCyclePass } from '../runner/program'
+import { selectCycleRecovery } from '../runner/recovery-selection'
 
 import { CycleState, CycleTerminalReason, type CycleDraft } from '../model'
 import {
@@ -21,6 +22,7 @@ import {
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
+import { WriterFence, WriterFenceLive } from '../../execution/writer-fence'
 import {
   executionActivationExpiredRestrictionReason,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -33,7 +35,7 @@ import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore } from './model'
-import { CycleStoreLive } from './postgres'
+import { CycleStoreLive, withWriterFenceCycleStore } from './postgres'
 import { makeCycleQueries } from './queries'
 import { DecisionEvidenceMismatch } from './model'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
@@ -227,12 +229,88 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
   })
 
+  test('commits an immediately admissible cycle active and converges concurrent retries', async () => {
+    const candidate = draft()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const receipts = yield* Effect.all(
+          [store.acquire(candidate, activatedAt), store.acquire(candidate, activatedAt)],
+          { concurrency: 'unbounded' },
+        )
+        return { receipts, stored: yield* store.read(candidate.identity.cycleId) }
+      }),
+    )
+
+    expect(result.receipts.filter(({ created }) => created)).toHaveLength(1)
+    expect(result.receipts.map(({ cycle }) => cycle)).toEqual([
+      expect.objectContaining({ state: CycleState.Active, stateVersion: 2, bindings: {} }),
+      expect.objectContaining({ state: CycleState.Active, stateVersion: 2, bindings: {} }),
+    ])
+    expect(Option.getOrThrow(result.stored)).toEqual(result.receipts[0]?.cycle)
+  })
+
+  test('rolls back new acquisition when its immediate activation fails', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE FUNCTION reject_test_cycle_activation() RETURNS trigger AS $$
+          BEGIN RAISE EXCEPTION 'activation failed'; END;
+          $$ LANGUAGE plpgsql`
+        yield* sql`CREATE TRIGGER reject_test_cycle_activation BEFORE UPDATE OF state ON autonomous_cycles
+          FOR EACH ROW WHEN (NEW.state = 'ACTIVE') EXECUTE FUNCTION reject_test_cycle_activation()`
+        const candidate = draft()
+        const acquired = yield* store.acquire(candidate, activatedAt).pipe(Effect.result)
+        expect(Result.isFailure(acquired)).toBe(true)
+        expect(Option.isNone(yield* store.read(candidate.identity.cycleId))).toBe(true)
+      }),
+    )
+  })
+
+  test('inserts and activates immediate admission in one real writer-fenced transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = withWriterFenceCycleStore(yield* CycleStore, yield* WriterFence)
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE TABLE test_cycle_admission_transactions (
+          ordinal bigint GENERATED ALWAYS AS IDENTITY, operation text, transaction_id xid8
+        )`
+        yield* sql`CREATE FUNCTION record_test_cycle_admission_transaction() RETURNS trigger AS $$
+          BEGIN
+            INSERT INTO test_cycle_admission_transactions (operation, transaction_id)
+            VALUES (TG_OP, pg_current_xact_id());
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql`
+        yield* sql`CREATE TRIGGER record_test_cycle_admission_transaction
+          AFTER INSERT OR UPDATE OF state ON autonomous_cycles
+          FOR EACH ROW EXECUTE FUNCTION record_test_cycle_admission_transaction()`
+        const receipt = yield* store.acquire(draft(), activatedAt)
+        const transactions = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              operation: Schema.Literals(['INSERT', 'UPDATE']),
+              transaction_id: Schema.NonEmptyString,
+            }),
+          ),
+        )(
+          yield* sql`SELECT operation, transaction_id::text
+          FROM test_cycle_admission_transactions ORDER BY ordinal`,
+        )
+        expect(receipt.cycle.state).toBe(CycleState.Active)
+        expect(transactions.map((row) => row.operation)).toEqual(['INSERT', 'UPDATE'])
+        expect(new Set(transactions.map((row) => row.transaction_id)).size).toBe(1)
+      }).pipe(Effect.provide(WriterFenceLive)),
+    )
+  })
+
   test('activation at the equity cutoff persists unused expiry without binding evidence', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
         const candidate = draft()
-        const acquiredAt = '2026-08-28T19:54:59.000Z'
+        const acquiredAt = candidate.window.submissionCutoffAt
         yield* store.acquire(candidate, acquiredAt)
         const receipt = yield* store.activate(candidate.identity.cycleId, candidate.window.submissionCutoffAt)
         expect(receipt.cycle).toMatchObject({
@@ -245,6 +323,30 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         expect(Option.getOrThrow(yield* store.read(candidate.identity.cycleId))).toEqual(receipt.cycle)
       }),
     )
+  })
+
+  test('an immediately activated entry still expires at its original cutoff before decision construction', async () => {
+    const candidate = draft()
+    const receipt = await runtime.runPromise(
+      Effect.flatMap(CycleStore, (store) => store.acquire(candidate, '2026-08-28T19:54:59.999Z')),
+    )
+    expect(receipt.cycle.state).toBe(CycleState.Active)
+    expect(
+      Result.getOrThrow(
+        selectCycleRecovery({
+          cycleBindingId: qualificationRunId,
+          accountId,
+          strategyProtocolHash: candidate.identity.strategyProtocolHash,
+          observedAt: candidate.window.submissionCutoffAt,
+          cycle: receipt.cycle,
+        }),
+      ),
+    ).toEqual({
+      action: 'BLOCK',
+      cycleId: candidate.identity.cycleId,
+      observedAt: candidate.window.submissionCutoffAt,
+      reason: CycleTerminalReason.UnusedEntryExpired,
+    })
   })
 
   test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
@@ -360,7 +462,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const current = Option.getOrThrow(result.current)
     expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
     expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
-    expect(current.state).toBe(CycleState.Pending)
+    expect(current).toMatchObject({ state: CycleState.Active, stateVersion: 2 })
     expect(current.bindings).toEqual({})
     expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
     expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
@@ -598,7 +700,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
             'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.jev.protocol.v26', ${'7'.repeat(64)}, ${accountId},
+            'bayn.jev.protocol.v32', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}

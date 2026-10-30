@@ -41,6 +41,7 @@ export const expenseSourceFixture = (
     key?: string | undefined
     authorityGenerationHash?: string
     accountId?: string
+    observedAt?: string
     inputTokens?: number
     missing?: boolean | undefined
     rejected?: boolean | undefined
@@ -56,8 +57,8 @@ export const expenseSourceFixture = (
     authorityGenerationHash: options.authorityGenerationHash ?? 'b'.repeat(64),
     snapshotId: 'c'.repeat(64),
     symbol: 'AAPL',
-    observedAt: '1970-01-01T00:00:00.000Z',
-    expiresAt: '1970-01-01T00:00:05.000Z',
+    observedAt: options.observedAt ?? '1970-01-01T00:00:00.000Z',
+    expiresAt: new Date(Date.parse(options.observedAt ?? '1970-01-01T00:00:00.000Z') + 5000).toISOString(),
     request: inferenceRequest,
     requestHash: Result.getOrThrow(canonicalHashV1Result(inferenceRequest)),
   }

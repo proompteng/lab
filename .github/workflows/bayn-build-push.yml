@@ -16,6 +16,7 @@ on:
       - 'nix/images/bayn.nix'
       - 'nix/images/opencode-cli.nix'
       - 'nix/images/bayn-runtime-root.nix'
+      - 'nix/images/bayn-frozen-control.nix'
       - 'nix/images/bayn-deps-hash.nix'
       - 'nix/images/normalize-bayn-bun-deps.sh'
       - 'nix/images/normalize-bayn-bun-deps.test.sh'
@@ -52,7 +53,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    uses: ./.github/workflows/bayn-ci.yml
+    secrets: inherit
+
   image:
+    needs: validation
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn

@@ -3,7 +3,12 @@ import {
   makeEntryAblationPolicy,
   type EntryAblationPolicy,
 } from './jev/entry-ablation-policy'
-import { isProtectedEntryTarget, protectedEntryExpiresAtMs } from './strategy/runtime-decision'
+import {
+  isProtectedEntryTarget,
+  protectedEntryExpiresAtMs,
+  protectedEntryBuyPriceCeilings,
+} from './strategy/runtime-decision'
+import { MarketKind, instrumentMarket } from './instruments'
 import { reproduceJevCandidateObservation } from './jev/observation'
 import { JevContractError } from './jev/contract'
 import {
@@ -28,7 +33,7 @@ import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { maximumFundedBuyQuantities } from './jev/entry-sizing'
-import { jevMaximumEntryAskMicros } from './jev/entry-economics'
+import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './jev/entry-economics'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -1009,11 +1014,15 @@ const streamingPricingEvidenceIssues = (
     if (isProtectedEntryTarget(target) && target.selectedSymbols.includes(symbol)) {
       const plan = target.exitPolicy.plans[symbol]
       // Match compileJevEntry using the exact quote bid, before instrument-price quantization.
-      if (plan === undefined || bid <= BigInt(plan.levels.stopPriceMicros))
+      if (
+        plan === undefined ||
+        bid <= BigInt(plan.levels.stopPriceMicros) ||
+        bid >= BigInt(plan.levels.profitLimitPriceMicros)
+      )
         return [
           {
             path: ['executionMarketDataRows'],
-            issue: 'entry pricing must remain strictly above the selected protective stop',
+            issue: 'entry pricing must remain strictly between the selected stop and profit target',
           },
         ]
     }
@@ -1272,7 +1281,8 @@ const jevEntryEvidenceIssues = (
       if (
         Result.isFailure(originalAsk) ||
         pricedAsk === undefined ||
-        BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, originalAsk.success)
+        (instrumentMarket(symbol) === MarketKind.Crypto &&
+          BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, symbol, originalAsk.success))
       )
         issues.push({
           path: ['plannerInput', 'referencePrices'],
@@ -1280,7 +1290,12 @@ const jevEntryEvidenceIssues = (
         })
     }
   }
-  if ((document.entryLimitSlippageBps ?? 0) > observation.protocol.maximumEntryLimitSlippageBps)
+  if (
+    target.selectedSymbols.some(
+      (symbol) =>
+        (document.entryLimitSlippageBps ?? 0) > jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps,
+    )
+  )
     issues.push({
       path: ['entryLimitSlippageBps'],
       issue: 'entry limit allowance exceeds the inference-bound cost ceiling',
@@ -1828,6 +1843,7 @@ const executionMaterialIssues = (
   if (Result.isFailure(floorResult))
     issues.push({ path: ['strategyDecision'], issue: 'profit limits require the exact entry-bound exit plan' })
   const profitFloors: Readonly<Record<string, bigint>> = Result.isSuccess(floorResult) ? floorResult.success : {}
+  const buyCeilings = protectedEntryBuyPriceCeilings(document.strategyDecision)
   for (const [index, target] of targets.entries()) {
     if (
       target.strategyName !== document.bindings.strategyName ||
@@ -1887,6 +1903,7 @@ const executionMaterialIssues = (
       const expectedProposedPositions = proposedPositionSequence?.[index]
       const plannedTarget = document.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
       const minimumSellPriceMicros = profitFloors[target.symbol]
+      const maximumBuyPriceMicros = buyCeilings[target.symbol]
       const pricing =
         plannedTarget === undefined
           ? undefined
@@ -1899,6 +1916,7 @@ const executionMaterialIssues = (
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),
               ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+              ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)

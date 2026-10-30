@@ -6,13 +6,13 @@ import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import type { EntryInferenceInput } from './entry-inference-input'
+import type { JevProtocolMaterial } from './protocol'
 import { makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
 import {
-  decodeDecisionsResponse,
+  DecisionsRequestSchema,
   decisionsModel,
   prepareDecisionsRequest,
-  DecisionsRequestSchema,
   type DecisionsRequest,
   type DecisionsResponse,
 } from './decisions'
@@ -75,16 +75,32 @@ export const chartQuestionPolicy = {
 
 export type ChartDecisionSource = {
   readonly chart: NativeChartEvidence
-  readonly protocol: EntryInferenceInput['protocol']
+  readonly protocol: JevProtocolMaterial
   readonly funding: EntryInferenceInput['funding']
 }
 
+type PreparedChartRequest = {
+  readonly body: string
+  readonly requestHash: string
+  readonly sourceFeasible: boolean
+}
+const preparedChartRequests = new Map<string, PreparedChartRequest>()
+const detachedChartRequest = (prepared: PreparedChartRequest) =>
+  Schema.decodeUnknownResult(
+    Schema.fromJsonString(DecisionsRequestSchema),
+    strictParseOptions,
+  )(prepared.body).pipe(Result.map((request) => ({ ...prepared, request })))
+
 export const buildChartDecisionsRequest = (
   source: ChartDecisionSource,
-  stage: 'ALL' | 'CHART' | { readonly selectedEnd: string } = 'ALL',
+  stage: 'CHART' | { readonly selectedEnd: string },
 ) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
+    // Revalidation must hash actual source content; claimed chart hashes cannot establish cache identity.
+    const key = yield* canonicalHashV1Result({ chart, protocol, funding, stage, questionPolicy: chartQuestionPolicy })
+    const cached = preparedChartRequests.get(key)
+    if (cached !== undefined) return yield* detachedChartRequest(cached)
     const economics = yield* jevEntryEconomics({
       protocol,
       symbol: chart.symbol,
@@ -146,7 +162,7 @@ export const buildChartDecisionsRequest = (
             ...(stage === 'CHART'
               ? []
               : baseEnds
-                  .filter((end) => stage === 'ALL' || end.id === stage.selectedEnd)
+                  .filter((end) => end.id === stage.selectedEnd)
                   .map((end) => ({
                     type: 'choice' as const,
                     name: `base_first_bar_ending_${end.chartLabel}`,
@@ -202,51 +218,25 @@ export const buildChartDecisionsRequest = (
       ],
       questions: typeof stage === 'object' ? baseQuestions : [...presenceQuestions, ...anchors, ...baseQuestions],
     })
-    return {
-      ...prepared,
+    const reusable = {
+      body: prepared.body,
+      requestHash: prepared.requestHash,
       sourceFeasible:
         candidates.baseWindows.length > 0 ||
         (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0),
     }
+    // Two stages for a fifteen-candidate cohort fit without retaining an unbounded chart history.
+    if (preparedChartRequests.size >= 64) {
+      const oldest = preparedChartRequests.keys().next()
+      if (oldest.done === false) preparedChartRequests.delete(oldest.value)
+    }
+    preparedChartRequests.set(key, reusable)
+    return yield* detachedChartRequest(reusable)
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Executable chart questions could not be prepared', cause }),
     ),
   )
-
-const preparedChartRequests = new Map<
-  string,
-  { readonly body: string; readonly requestHash: string; readonly sourceFeasible: boolean }
->()
-
-export const makeChartDecisionsRequest = (source: ChartDecisionSource) =>
-  Result.gen(function* () {
-    const { chart, protocol, funding } = source
-    const key = yield* canonicalHashV1Result({ chart, protocol, funding, questionPolicy: chartQuestionPolicy }).pipe(
-      Result.mapError((cause) => new JevContractError({ message: 'Chart request source cannot be hashed', cause })),
-    )
-    const cached = preparedChartRequests.get(key)
-    if (cached !== undefined) {
-      const request = yield* Schema.decodeUnknownResult(
-        Schema.fromJsonString(DecisionsRequestSchema),
-        strictParseOptions,
-      )(cached.body).pipe(
-        Result.mapError((cause) => new JevContractError({ message: 'Cached chart request cannot be decoded', cause })),
-      )
-      return { request, ...cached }
-    }
-    const prepared = yield* buildChartDecisionsRequest(source)
-    preparedChartRequests.set(key, {
-      body: prepared.body,
-      requestHash: prepared.requestHash,
-      sourceFeasible: prepared.sourceFeasible,
-    })
-    if (preparedChartRequests.size > 32) {
-      const oldest = preparedChartRequests.keys().next().value
-      if (oldest !== undefined) preparedChartRequests.delete(oldest)
-    }
-    return prepared
-  })
 
 const Presence = Schema.Union([
   Schema.Struct({
@@ -279,13 +269,6 @@ export type ChartAssessmentsMaterial =
   | ChartAssessments
   | RetainedConditionalChartAssessmentsMaterial
   | import('./retained-funded-chart-questions').ChartAssessments
-
-export const chartAssessments = (source: ChartDecisionSource, input: unknown) =>
-  Result.gen(function* () {
-    const prepared = yield* makeChartDecisionsRequest(source)
-    const response = yield* decodeDecisionsResponse(prepared.request, input)
-    return yield* chartAssessmentsFromResponse(source.chart, response, prepared.request)
-  })
 
 export const chartAssessmentsFromResponse = (
   chart: NativeChartEvidence,

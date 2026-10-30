@@ -119,6 +119,8 @@ durableTest.each(
       'fill',
       'ablation-fill',
       'momentum-fill',
+      'momentum-latency-valid',
+      'momentum-latency-expired',
       'momentum-partial-exit-reentry',
       'fallback',
       'missing-benchmark',
@@ -139,6 +141,8 @@ durableTest.each(
       'measured-entry-expired',
       'measured-zero-fill-reentry',
       'measured-submit-expired-reentry',
+      'latency-stress-valid',
+      'latency-stress-expired',
       'operator-held-replay',
       'operator-after-system-replay',
       'reconciliation-idle-recovery',
@@ -158,9 +162,18 @@ durableTest.each(
       ? { evaluate: () => Effect.die('Momentum must not dispatch chart provider requests') }
       : chartProviderFixture
     const scenario =
-      mode === 'momentum-partial-exit-reentry' ? 'partial-exit-reentry' : ablation || momentum ? 'fill' : mode
+      mode === 'momentum-latency-valid'
+        ? 'latency-stress-valid'
+        : mode === 'momentum-latency-expired'
+          ? 'latency-stress-expired'
+          : mode === 'momentum-partial-exit-reentry'
+            ? 'partial-exit-reentry'
+            : ablation || momentum
+              ? 'fill'
+              : mode
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
     const admissionRace = scenario.startsWith('entry-lease-')
+    const latencyStress = scenario.startsWith('latency-stress-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -185,6 +198,7 @@ durableTest.each(
     let expiredStartedSubmit = false
     let expiredApprovedIntent = false
     const measured =
+      latencyStress ||
       scenario === 'measured-exit' ||
       scenario === 'measured-bootstrap-delay' ||
       partialEntryReentry ||
@@ -200,6 +214,9 @@ durableTest.each(
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const cryptoAdmissionAtMs = initialAtMs + 120_000
     const reentryAtMs = initialAtMs + 240_100
+    // Improving arrival quotes fill under the fixed buy ceiling before the later protected-exit jump.
+    const measuredPremium = (tick: number) =>
+      0.02 + (tick >= (partialEntryReentry ? 100 : 50) ? 0.04 + tick * 0.00002 : -tick * 0.00002)
     const lifecycleObservations = admissionRace
       ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
       : scenario === 'partial-exit-reentry'
@@ -223,13 +240,16 @@ durableTest.each(
                 fullWindow: (index + 1) % 25 === 0,
                 offset: BigInt((index + 2) * 1000),
                 bidSize: 100,
-                premium: 0.02 + (index + 1) * 0.00002 + (index >= (partialEntryReentry ? 99 : 49) ? 0.04 : 0),
+                premium: measuredPremium(index + 1),
               })),
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
               partialEntryReentry
                 ? [
                     { at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 },
+                    ...(slippedExit
+                      ? [{ at: reentryAtMs + 1000, fullWindow: false, offset: 310_000n, bidSize: 100, premium: 0.0198 }]
+                      : []),
                     { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.06 },
                   ]
                 : []),
@@ -282,7 +302,13 @@ durableTest.each(
           quotes: original.quotes.map((row) => ({
             ...shiftOffset(row),
             askSize:
-              !restingDayLifecycle || at <= initialAtMs + (measured ? 2000 : 200) || at === reentryAtMs ? 100 : 0,
+              latencyStress ||
+              !restingDayLifecycle ||
+              at <= initialAtMs + (measured ? 2000 : 200) ||
+              at === reentryAtMs ||
+              (slippedExit && at === reentryAtMs + 1000)
+                ? 100
+                : 0,
           })),
           trades: original.trades.map(shiftOffset),
         }
@@ -374,7 +400,9 @@ durableTest.each(
         strategyBehaviorHash: strategyRuntime.provenance.strategy.behaviorHash,
       },
       operationTimeoutMs:
-        scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry' ? 20_000 : 10_000,
+        latencyStress || scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry'
+          ? 20_000
+          : 10_000,
       execution: {
         brokerIdentity: Result.getOrThrow(
           makeBrokerIdentity({
@@ -643,6 +671,18 @@ durableTest.each(
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
         const runtimeInput = {
+          decisionLatencyStress: latencyStress
+            ? {
+                p95FullBatchMs: scenario === 'latency-stress-expired' ? 15_000 : 1_000,
+                advanceTo: (at: number) =>
+                  advanceMarketTo(at).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ReplayBrokerFailure({ message: 'Latency stress could not advance the test source', cause }),
+                    ),
+                  ),
+              }
+            : null,
           config,
           strategy: strategyRuntime,
           broker: {
@@ -738,6 +778,51 @@ durableTest.each(
           })),
         )
         const runtime = yield* createRuntime
+        if (latencyStress) {
+          const passes = []
+          for (let attempt = 0; attempt < 6; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1_000)
+            passes.push((yield* runtime.advance).observation)
+            const releases = yield* runtime.decisionLatencyEvidence
+            if (releases.receipts.length + releases.observationReceipts.length > 0) break
+          }
+          const evidence = yield* runtime.decisionLatencyEvidence
+          expect(evidence.admittedBatchCount, JSON.stringify(passes)).toBe(momentum ? 0 : 1)
+          expect(evidence.admittedObservationCount).toBe(momentum ? 1 : 0)
+          expect(evidence.unreleasedObservationHashes).toEqual([])
+          expect(evidence.unreleasedBatchIds).toEqual([])
+          expect(evidence.receipts).toHaveLength(momentum ? 0 : 1)
+          const receipt = momentum ? evidence.observationReceipts[0] : evidence.receipts[0]
+          if (receipt === undefined) throw new Error('Missing native batch release receipt')
+          const delay = Date.parse(receipt.releasedAt) - Date.parse(receipt.commandIssuedAt)
+          expect(delay).toBeGreaterThanOrEqual(scenario === 'latency-stress-expired' ? 15_000 : 1_000)
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(
+            momentum ? 0 : eligibleEntrySymbols.length,
+          )
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(
+            momentum ? 0 : eligibleEntrySymbols.length,
+          )
+          expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
+          const state = yield* broker.snapshot
+          if (scenario === 'latency-stress-expired') {
+            expect(state.orders).toEqual([])
+            expect(state.fills).toEqual([])
+            expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+            expect(
+              passes.some(
+                (pass) =>
+                  pass.result === 'SUCCESS' &&
+                  pass.readiness?.reason === (momentum ? 'NO_ELIGIBLE_CANDIDATE' : 'INFERENCE_UNAVAILABLE'),
+              ),
+            ).toBe(true)
+          } else {
+            expect(state.orders.length, JSON.stringify(passes)).toBeGreaterThan(0)
+            expect(state.fills.some((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          }
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'LatencyStress' as const }
+        }
         if (scenario === 'entry-lease-expires-during-bind' || scenario === 'entry-lease-expires-at-commit') {
           yield* sql`CREATE FUNCTION expire_fixture_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
             BEGIN
@@ -1208,7 +1293,7 @@ durableTest.each(
           const store = runtime.store
           const fence = yield* WriterFence
           const intents = yield* IntentStore
-          const mutations = yield* MutationStore
+          const mutations = runtime.mutations
           const blockedIntents = yield* BlockedCycleIntentStore
           const closures = yield* ExecutionCycleClosureStore
           const grants = yield* PersistedCapitalGrantStore
@@ -1274,6 +1359,7 @@ durableTest.each(
                   ),
             ),
           )
+          const reconciliationConflicts = new Set<string>()
           let lostResponses = 0
           const submitResponseLost = yield* Deferred.make<void>()
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
@@ -1328,7 +1414,17 @@ durableTest.each(
                   writerFence: fence,
                   persistedCapitalGrants: grants,
                   verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
-                    verifyBrokerStateVersion(sql, accountId, version, intentId, requireCryptoEntryFeeBound),
+                    verifyBrokerStateVersion(sql, accountId, version, intentId, requireCryptoEntryFeeBound).pipe(
+                      Effect.tapError((cause) =>
+                        Effect.sync(() => {
+                          if (
+                            cause._tag === 'ReconciliationStoreError' &&
+                            cause.message === 'cached broker reconciliation version changed before submit'
+                          )
+                            reconciliationConflicts.add(intentId)
+                        }),
+                      ),
+                    ),
                   readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
                 },
               })
@@ -1450,15 +1546,51 @@ durableTest.each(
           const counts = yield* sql<
             Record<string, unknown>
           >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
-          expect(counts).toEqual([
+          const retainedIntents =
+            yield* sql`SELECT i.intent_id,i.client_order_id,i.symbol,i.side,i.state,i.terminal_outcome,i.protection->>'_tag' AS protection,
+            r.outcome,r.reason_codes,
+            (SELECT jsonb_agg(jsonb_build_object('type',e.event_type,'denial',e.denial_reason,'routing',e.routing)
+              ORDER BY e.sequence) FROM mutation_events e WHERE e.intent_id=i.intent_id) AS events
+            FROM intents i LEFT JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+            WHERE i.account_id=${accountId} ORDER BY i.created_at,i.intent_id`
+          const rejected = retainedIntents.filter((row) => row['terminal_outcome'] === 'REJECTED')
+          expect(new Set(rejected.map((row) => row['intent_id']))).toEqual(reconciliationConflicts)
+          const brokerState = yield* broker.snapshot
+          for (const row of rejected) {
+            expect(row).toMatchObject({
+              side: 'SELL',
+              state: 'TERMINAL',
+              protection: null,
+              outcome: 'APPROVED',
+            })
+            expect(row['events']).toEqual([
+              { type: 'SUBMIT_STARTED', denial: null, routing: null },
+              { type: 'SUBMIT_DENIED', denial: SubmissionDenialReason.ReconciliationStoreError, routing: null },
+            ])
+            expect(brokerState.orders.some((order) => order.order.clientOrderId === row['client_order_id'])).toBe(false)
+          }
+          expect(counts, JSON.stringify(retainedIntents)).toEqual([
             scenario === 'recovery-filled'
-              ? { intents: 2, fills: 2, transactions: 2 }
+              ? { intents: 3 + rejected.length, fills: 2, transactions: 2 }
               : { intents: 1, fills: 0, transactions: 0 },
           ])
           expect(
+            retainedIntents
+              .filter((row) => row['terminal_outcome'] !== 'REJECTED')
+              .map((row) => [row['side'], row['state'], row['terminal_outcome'], row['protection'], row['outcome']]),
+          ).toEqual(
+            scenario === 'recovery-filled'
+              ? [
+                  ['BUY', 'TERMINAL', 'CANCELED', 'Bracket', 'APPROVED'],
+                  ['SELL', 'TERMINAL', 'CANCELED', 'Oco', 'APPROVED'],
+                  ['SELL', 'TERMINAL', 'FILLED', null, 'APPROVED'],
+                ]
+              : [['BUY', 'TERMINAL', 'CANCELED', 'Bracket', 'APPROVED']],
+          )
+          expect(
             yield* sql`SELECT count(*)::int AS denied FROM mutation_events e JOIN intents i USING(intent_id)
             WHERE i.account_id=${accountId} AND e.event_type='SUBMIT_DENIED'`,
-          ).toEqual([{ denied: 0 }])
+          ).toEqual([{ denied: rejected.length }])
           expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
@@ -1660,7 +1792,7 @@ durableTest.each(
               if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
                 throw new Error('Measured lifecycle requires complete execution quote evidence')
               const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
-              const expectedMidpoint = 100 * (1.02 + tick * 0.00002 + (tick >= 50 ? 0.04 : 0))
+              const expectedMidpoint = 100 * (1 + measuredPremium(tick))
               expect(execution.quote.availableAtMs).toBe(initialAtMs + tick * 200)
               expect(execution.quote.askPrice).toBeCloseTo(expectedMidpoint + 0.01, 8)
               expect(execution.quote.bidPrice).toBeCloseTo(expectedMidpoint - 0.01, 8)
@@ -1671,6 +1803,12 @@ durableTest.each(
                   ? ((quotedMicros + 9999n) / 10000n) * 10000n
                   : (quotedMicros / 10000n) * 10000n
               expect(execution.outcome.fillPriceMicros).toBe(tickRoundedMicros.toString())
+              if (order.order.side === OrderSide.Buy) {
+                if (order.order.limitPriceMicros === undefined) throw new Error('Capped entry has no limit')
+                expect(BigInt(execution.outcome.fillPriceMicros)).toBeLessThanOrEqual(
+                  BigInt(order.order.limitPriceMicros),
+                )
+              }
               const conditional =
                 order.order.parentBrokerOrderId !== undefined || order.order.nativeProtection?._tag === 'Oco'
               if (conditional) expect(Date.parse(execution.arrivedAt)).toBe(execution.quote.availableAtMs)
@@ -1900,10 +2038,9 @@ durableTest.each(
                 return yield* Effect.die('This control must not dispatch a Jev provider request')
               const started = yield* Clock.currentTimeMillis
               const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
-              const { candidate } = yield* Schema.decodeUnknownEffect(
-                Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }),
-              )(request.state).pipe(Effect.orDie)
-              const symbol = candidate.symbol
+              const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+                request.state,
+              ).pipe(Effect.orDie)
               if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
                 managementCalls += 1
                 throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')

@@ -1,4 +1,6 @@
-import { DecisionsClient } from '../jev/decisions'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
+import { nativeReplayPolicyIdentity } from './native-policy'
+import { loadActiveStrategyProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { replayTestInstruments } from '../testing/replay-instruments'
@@ -9,7 +11,8 @@ import { randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, FileSystem, Layer, Redacted, Result } from 'effect'
+import { Clock, Effect, FileSystem, Layer, Redacted, Result, Schema } from 'effect'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
 
 import { PostgresClientLive } from '../db/postgres-client'
@@ -20,19 +23,22 @@ import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-
 import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
-import { JevClient } from '../jev/client'
 import { jevBacktestOutcome } from '../jev/experiment-economics'
 import { jevInstructions } from '../jev/instructions'
 import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
-import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import {
+  retainedReplayFixture,
+  retainedReplayCaptureFixture,
+  momentumTradeReplayFixture,
+} from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { BacktestIssue, prepareBacktest, runBacktest, type BacktestPass } from './backtest'
 import { postgresMigrations } from '../db/postgres-migrations'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
-import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
+import { AssetClass, AssetExchange, AssetStatus, OrderSide as BrokerOrderSide } from '../broker/alpaca/model'
 import { IntentState, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import {
@@ -41,11 +47,36 @@ import {
   observedQuoteAt,
 } from '../market-data/streaming/projection'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
+import { ReplayBrokerCheckpointSchema } from './broker-checkpoint'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayInferenceTiming } from './inference-timing'
 import { makeReplayTimeline } from './session'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { withLatencyCliPhase } from './latency-cli-progress.test-support'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
+
+const writeCompiledReplayCommand = (path: string, entrypoint = `${import.meta.dir}/../backtest-command.ts`) =>
+  Effect.gen(function* () {
+    const compiled = yield* Effect.promise(() =>
+      Bun.build({
+        entrypoints: [entrypoint],
+        target: 'node',
+        external: ['tigerbeetle-node', '@platformatic/kafka'],
+        define: {
+          __BAYN_BUILD_SOURCE_REVISION__: JSON.stringify(config.build.sourceRevision),
+          __BAYN_BUILD_IMAGE_REPOSITORY__: JSON.stringify(config.build.imageRepository),
+          __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__: JSON.stringify(config.build.strategyBehaviorHash),
+          __BAYN_BUILD_STRATEGY_PARAMETER_HASH__: JSON.stringify(config.build.strategyParameterHash),
+        },
+      }),
+    )
+    expect(compiled.success).toBe(true)
+    const output = compiled.outputs[0]
+    if (output === undefined || compiled.outputs.length !== 1) throw new Error('Missing compiled replay executable')
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.writeFile(path, new Uint8Array(yield* Effect.promise(() => output.arrayBuffer())))
+  })
 
 durableTest(
   'measured cleanup consumes closing arrivals before valuing residual inventory',
@@ -223,7 +254,14 @@ durableTest(
   30000,
 )
 
-durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
+durableTest.each([
+  'opening',
+  'UTC-midnight',
+  'unknown-data-cost',
+  'retained-responses',
+  'momentum-measured',
+  'momentum-trading',
+] as const)(
   'native backtest retains %s polling through measured bootstrap and cleanup latency',
   async (boundary) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -235,27 +273,60 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
-    const retained = retainedReplayFixture()
-    const openMs = Date.parse(boundary !== 'UTC-midnight' ? '2026-09-04T13:30:00Z' : '2026-09-04T23:59:30Z')
-    const closeMs = openMs + 60_000
+    const trading = boundary === 'momentum-trading'
+    const retained = trading ? momentumTradeReplayFixture() : retainedReplayFixture()
+    const openMs = Date.parse(
+      trading
+        ? retained.input.query.observedAt
+        : boundary !== 'UTC-midnight'
+          ? '2026-09-04T13:30:00Z'
+          : '2026-09-04T23:59:30Z',
+    )
+    const closeMs = openMs + (trading ? 40_000 : 60_000)
     const source = {
       ...retained.manifest,
       coverageStartMs: Math.min(openMs, retained.manifest.coverageStartMs),
       coverageEndMs: Math.max(closeMs, retained.manifest.coverageEndMs),
     }
-    const { verification: _verification, ...build } = config.build
+    const { verification: _verification, ...rootBuild } = config.build
+    const policy = boundary.startsWith('momentum-') ? JevResearchPolicy.Momentum : JevResearchPolicy.Candidate
+    const identity = Result.getOrThrow(
+      nativeReplayPolicyIdentity(policy, Result.getOrThrow(loadActiveStrategyProtocol())),
+    )
+    const build = {
+      ...rootBuild,
+      strategyBehaviorHash: identity.strategy.behaviorHash,
+      strategyParameterHash: identity.strategy.parameterHash,
+    }
+    const recording = {
+      schemaVersion: 'bayn.replay-inference-recording.v1',
+      sourceManifestHash: Result.getOrThrow(canonicalHashV1Result(source)),
+      sourceRevision: build.sourceRevision,
+      strategyBehaviorHash: build.strategyBehaviorHash,
+      strategyParameterHash: build.strategyParameterHash,
+      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
+      calls: [],
+    }
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v6',
+          schemaVersion: 'bayn.backtest.v10',
+          policy,
+          latencyStress: null,
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
-            mode: 'measured-providers',
+            ...(boundary === 'retained-responses'
+              ? {
+                  mode: 'retained-responses',
+                  recording,
+                  recordingHash: Result.getOrThrow(canonicalHashV1Result(recording)),
+                }
+              : { mode: 'measured-providers' }),
             maximumCalls: 1000,
             models: { jev: jevModel, chart: 'gpt-6-luna' },
             inputDefinition: 'bayn.jev-entry-state.v22',
-            costs: {
+            costs: replayRateCardFixture({
               jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
               chart: {
                 inputMicrosPerMillionTokens: '100000',
@@ -263,9 +334,9 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
                 cachedInputMicrosPerMillionTokens: '10000',
                 cacheWriteInputMicrosPerMillionTokens: '125000',
               },
-            },
+            }),
           },
-          allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : '0',
+          allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : trading ? '1000000000' : '0',
           interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
           source,
           openingCashMicros: '100000000000',
@@ -273,10 +344,10 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
           calendar: [
             {
               session_open: '0930',
-              session_close: boundary !== 'UTC-midnight' ? '0931' : '1600',
+              session_close: boundary !== 'UTC-midnight' && !trading ? '0931' : '1600',
               date: '2026-09-04',
               open: '09:30',
-              close: boundary !== 'UTC-midnight' ? '09:31' : '16:00',
+              close: boundary !== 'UTC-midnight' && !trading ? '09:31' : '16:00',
             },
             { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
@@ -328,7 +399,10 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
       Effect.gen(function* () {
         const providerClock = yield* Clock.clockWith(Effect.succeed)
         const fs = yield* FileSystem.FileSystem
-        const directory = yield* fs.makeTempDirectoryScoped()
+        const directory = yield* fs.makeTempDirectoryScoped({
+          directory: `${import.meta.dir}/../../node_modules`,
+          prefix: '.backtest-cli-test-',
+        })
         const path = `${directory}/arrivals.ndjson.gz`
         yield* fs.writeFile(path, gzipSync(retained.body))
         const sql = yield* PgClient.PgClient
@@ -344,6 +418,12 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
               passes.push(pass)
             }),
           () => Effect.die('A quiet opening fixture must not call the provider'),
+          boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum
+            ? null
+            : {
+                chart: chartProviderFixture,
+                jev: { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+              },
         ).pipe(
           Effect.provide(TestClock.layer()),
           Effect.provideService(OperationDeadlineClock, {
@@ -357,8 +437,6 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
               Effect.tap(() => Effect.sleep('25 millis').pipe(Effect.provideService(Clock.Clock, providerClock))),
             ),
           }),
-          Effect.provideService(DecisionsClient, chartProviderFixture),
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('A quiet opening fixture must not infer') }),
         )
         expect(Date.parse(passes[0]?.observedAt ?? '')).toBeGreaterThanOrEqual(openMs)
         expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeGreaterThanOrEqual(closeMs)
@@ -367,6 +445,13 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
         expect(report.initialization.elapsedMs).toBeGreaterThanOrEqual(25)
         expect(report.brokerState.ledger.openingCashMicros).toBe('100000000000')
         expect(report.brokerState.ledger.positions).toEqual([])
+        expect(Result.getOrThrow(canonicalHashV1Result(report.brokerCheckpoint.state))).toBe(
+          Result.getOrThrow(canonicalHashV1Result(report.brokerState)),
+        )
+        expect(Date.parse(report.brokerCheckpoint.observedAt)).toBeGreaterThanOrEqual(closeMs)
+        expect(report.batches).toEqual([])
+        expect(report.inference.providerDispatchCount).toBe(0)
+        expect(report.inference.retainedCallCount).toBe(0)
         expect(report.sessions[0]?.schedule.firstPollAtMs).toBe(openMs)
         expect(report.sessions.at(-1)?.schedule.lastPollAtMs).toBe(closeMs)
         expect(report.sessions).toHaveLength(boundary !== 'UTC-midnight' ? 1 : 2)
@@ -404,8 +489,183 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
           expect(report.sessions.every((session) => session.netEquityChangeMicros === null)).toBe(true)
           expect(report.issues).toContain(BacktestIssue.UnresolvedDataCost)
         }
+        if (trading) {
+          expect(report.completion, JSON.stringify({ issues: report.issues, sessions: report.sessions })).toBe(
+            'COMPLETE',
+          )
+          expect(report.sessions.every((session) => session.schedule.unavailableDecisionPassCount === 0)).toBe(true)
+          expect(report.brokerState.fills.some((fill) => fill.side === BrokerOrderSide.Buy)).toBe(true)
+          expect(report.brokerState.fills.some((fill) => fill.side === BrokerOrderSide.Sell)).toBe(true)
+          expect(report.momentumObservations.length).toBeGreaterThan(0)
+          const executionProfit = report.reconciledExecutionPnlAfterCostsMicros
+          const netProfit = report.reconciledNetPnlAfterCostsMicros
+          if (executionProfit === null || netProfit === null)
+            throw new Error('Completed trade lacks reconciled economics')
+          expect(BigInt(executionProfit)).toBeGreaterThan(0n)
+          expect(netProfit).toBe((BigInt(executionProfit) - 1_000_000_000n).toString())
+          expect(BigInt(netProfit)).toBeLessThan(0n)
+        }
+        if (boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum) {
+          yield* sql`DROP SCHEMA public CASCADE`
+          yield* sql`CREATE SCHEMA public`
+          const inputPath = `${directory}/input.json`
+          const receiptPath = `${directory}/source-receipt.json`
+          const outputPath = `${directory}/command-output`
+          const commandPath = trading ? `${directory}/backtest-command.js` : `${import.meta.dir}/../backtest-command.ts`
+          const commandRuntime = trading ? Bun.which('node') : process.execPath
+          if (commandRuntime === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
+          if (trading) yield* writeCompiledReplayCommand(commandPath)
+          const receipt = JSON.stringify(prepared.sourceReceipt.value)
+          yield* fs.writeFileString(
+            inputPath,
+            JSON.stringify({ ...prepared.input, replicate: `${prepared.input.replicate}-cli` }),
+          )
+          yield* fs.writeFileString(receiptPath, receipt)
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+          const child = yield* spawner.spawn(
+            ChildProcess.make(
+              commandRuntime,
+              [
+                commandPath,
+                '--input',
+                inputPath,
+                '--arrivals',
+                path,
+                '--source-receipt',
+                receiptPath,
+                '--source-receipt-sha256',
+                sha256(receipt),
+                '--output',
+                outputPath,
+              ],
+              {
+                env: {
+                  BAYN_PUBLIC_INFORMATION_PROXY: '',
+                  BAYN_OPENAI_API_KEY: '',
+                  BAYN_JEV_API_KEY: '',
+                  BAYN_BACKTEST_POSTGRES_URL: baynTestPostgresUrl,
+                  BAYN_BACKTEST_TIGERBEETLE_ADDRESS: baynTestTigerBeetleAddress,
+                  BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID: String(databases.tigerBeetle.clusterId),
+                  BAYN_BACKTEST_TIGERBEETLE_LEDGER: String(databases.tigerBeetle.ledger),
+                },
+                stdin: 'ignore',
+                stdout: 'ignore',
+                stderr: 'inherit',
+              },
+            ),
+          )
+          expect(Number(yield* child.exitCode)).toBe(0)
+          const cliReport = yield* fs.readFileString(`${outputPath}/report.json`).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.fromJsonString(
+                  Schema.Struct({
+                    schemaVersion: Schema.Literal('bayn.backtest-report.v9'),
+                    profitability: Schema.Literal('UNPROVEN'),
+                    completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
+                    executableSha256: Schema.String,
+                    reconciledExecutionPnlAfterCostsMicros: Schema.String,
+                    reconciledNetPnlAfterCostsMicros: Schema.NullOr(Schema.String),
+                    brokerCheckpoint: ReplayBrokerCheckpointSchema,
+                    inference: Schema.Struct({
+                      providerDispatchCount: Schema.Number,
+                      retainedCallCount: Schema.Number,
+                    }),
+                  }),
+                ),
+              ),
+            ),
+          )
+          expect(cliReport.inference).toEqual({ providerDispatchCount: 0, retainedCallCount: 0 })
+          expect(cliReport.brokerCheckpoint.state.ledger.openingCashMicros).toBe('100000000000')
+          if (trading) {
+            expect(cliReport.executableSha256).toBe(sha256(yield* fs.readFile(commandPath)))
+            expect(cliReport.completion).toBe('COMPLETE')
+            expect(cliReport.brokerCheckpoint.state.ledger.positions).toEqual([])
+            expect(cliReport.brokerCheckpoint.state.fills.some((fill) => fill.side === BrokerOrderSide.Buy)).toBe(true)
+            expect(cliReport.brokerCheckpoint.state.fills.some((fill) => fill.side === BrokerOrderSide.Sell)).toBe(true)
+            expect(BigInt(cliReport.reconciledExecutionPnlAfterCostsMicros)).toBeGreaterThan(0n)
+            expect(cliReport.reconciledNetPnlAfterCostsMicros).toBe(
+              (BigInt(cliReport.reconciledExecutionPnlAfterCostsMicros) - 1_000_000_000n).toString(),
+            )
+            if (cliReport.reconciledNetPnlAfterCostsMicros === null) throw new Error('CLI lacks reconciled economics')
+            expect(BigInt(cliReport.reconciledNetPnlAfterCostsMicros)).toBeLessThan(0n)
+          }
+        }
       }).pipe(Effect.scoped, Effect.provide(stores), Effect.provide(NodeServices.layer)),
     )
   },
-  30000,
+  120000,
+)
+
+durableTest.each([
+  { policy: JevResearchPolicy.Candidate, trading: false },
+  { policy: JevResearchPolicy.Ablation, trading: false },
+  { policy: JevResearchPolicy.Momentum, trading: false },
+  { policy: JevResearchPolicy.Momentum, trading: true },
+])(
+  'native $policy latency CLI retains twenty sessions with trading=$trading',
+  async ({ policy, trading }) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped({
+          directory: `${import.meta.dir}/../../node_modules`,
+          prefix: '.latency-cli-test-',
+        })
+        const executablePath = `${directory}/backtest-command.js`
+        const workerPath = `${directory}/latency-cli.js`
+        yield* Effect.gen(function* () {
+          yield* writeCompiledReplayCommand(executablePath)
+          yield* writeCompiledReplayCommand(workerPath, `${import.meta.dir}/latency-cli.test-support.ts`)
+        }).pipe(withLatencyCliPhase('compile'))
+        const node = Bun.which('node')
+        if (node === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+        const child = yield* spawner.spawn(
+          ChildProcess.make(node, [workerPath, policy, trading ? 'trading' : 'missing', directory, executablePath], {
+            stdin: 'ignore',
+            stdout: 'inherit',
+            stderr: 'inherit',
+          }),
+        )
+        yield* child.exitCode.pipe(
+          Effect.tap((code) => Effect.sync(() => expect(Number(code)).toBe(0))),
+          withLatencyCliPhase('worker'),
+        )
+        const result = yield* fs.readFileString(`${directory}/acceptance.json`).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.fromJsonString(
+                Schema.Struct({
+                  policy: Schema.String,
+                  trading: Schema.Boolean,
+                  sessionCount: Schema.Number,
+                  filledSessions: Schema.Number,
+                  executionProfitMicros: Schema.String,
+                  qualificationProfitMicros: Schema.String,
+                  complete: Schema.Boolean,
+                  providerDispatchCount: Schema.Number,
+                  receiptEconomicsComplete: Schema.Boolean,
+                  executableHash: Schema.String,
+                }),
+              ),
+            ),
+          ),
+        )
+        expect(result).toMatchObject({
+          policy,
+          trading,
+          sessionCount: 20,
+          filledSessions: trading ? 20 : 0,
+          complete: true,
+          providerDispatchCount: 0,
+          receiptEconomicsComplete: false,
+          executableHash: sha256(yield* fs.readFile(executablePath)),
+        })
+        expect(BigInt(result.qualificationProfitMicros)).toBe(BigInt(result.executionProfitMicros) - 20_000_000n)
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+  600000,
 )

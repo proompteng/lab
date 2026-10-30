@@ -124,6 +124,84 @@ test('an equity-only replay account leaves crypto eligibility unknown', async ()
   expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
 })
 
+test('simulated mutation receipts retain the original dispatch and completion clocks', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const receipt = yield* submit(broker, intent())
+      expect(receipt.evidence.routing).toEqual({
+        startedAt: observedAt,
+        requestDispatchedAt: observedAt,
+        completedAt: new Date(startMs + 100).toISOString(),
+      })
+      const canceled = yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(canceled.evidence.routing).toEqual({
+        startedAt: new Date(startMs + 100).toISOString(),
+        requestDispatchedAt: new Date(startMs + 100).toISOString(),
+        completedAt: new Date(startMs + 100).toISOString(),
+      })
+    }),
+  )
+})
+
+test('routing observation does not resynchronize the market or add submission clock reads', async () => {
+  await run(
+    Effect.gen(function* () {
+      let reads = 0
+      const broker = yield* setup({
+        submissionTime: Effect.sync(() => {
+          reads += 1
+          return observedAt
+        }),
+      })
+      const receipt = yield* submit(broker, intent())
+      expect(reads).toBe(1)
+      yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(reads).toBe(1)
+    }),
+  )
+})
+
+test.each([false, true])(
+  'broker snapshot retry advances the owned replay timeline or reports failure: %s',
+  async (advanceFails) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const advances: number[] = []
+        const broker = yield* setup({
+          advanceToArrival: (at) =>
+            Effect.sync(() => advances.push(at)).pipe(
+              Effect.andThen(
+                advanceFails && at > startMs + 100
+                  ? Effect.fail(new ReplayBrokerFailure({ message: 'Synthetic timeline persistence failure' }))
+                  : TestClock.setTime(at),
+              ),
+            ),
+        })
+        yield* broker.mutation.submit(intent())
+        const projection = broker.read.projection
+        if (projection === undefined) throw new Error('Missing broker projection')
+        const result = yield* Effect.result(projection.snapshot)
+        if (advanceFails) {
+          expect(result).toMatchObject({
+            _tag: 'Failure',
+            failure: { operation: 'preflight', message: 'Replay broker snapshot failed' },
+          })
+        } else {
+          const snapshot = Result.getOrThrow(result)
+          expect(snapshot.history.orders.rows).toHaveLength(1)
+          expect(snapshot.history.fills).toHaveLength(1)
+          expect(snapshot.positions.value).toHaveLength(1)
+        }
+        expect(advances).toEqual([startMs + 100, startMs + 600])
+        expect(yield* Clock.currentTimeMillis).toBe(startMs + (advanceFails ? 100 : 600))
+        expect((yield* broker.checkpoint).state.fills).toHaveLength(1)
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+      { signal: AbortSignal.timeout(2000) },
+    )
+  },
+)
+
 test('same-millisecond round trips preserve fill accounting order across checkpoint restore', async () => {
   await run(
     Effect.gen(function* () {

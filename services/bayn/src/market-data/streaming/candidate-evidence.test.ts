@@ -15,7 +15,7 @@ import { diagnoseStreamingInputs } from './inputs'
 const fixture = streamingFixture()
 const query = {
   ...fixture.query,
-  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   maximumQuoteAgeMs: 10_000,
 }
 const withTimes = (symbol: string, quoteAt: string, tradeAt: string) => ({
@@ -35,6 +35,65 @@ const replay = (snapshot: import('./snapshot').StreamingVerifiedMarketSnapshot) 
   )
 
 describe('candidate executable quote and window trade evidence', () => {
+  test('a benchmark window trade cannot veto candidates with fresh executable quotes', () => {
+    const { snapshot } = streamingFixtureFromRaw(
+      withTimes('SPY', '2026-09-04T14:30:01.000Z', '2026-09-04T14:20:00.000Z'),
+      query,
+    )
+    expect(snapshot.manifest.candidateExclusions).toEqual([])
+    expect(jevStalePricingSymbols(snapshot)).not.toContain('SPY')
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).numericalState
+    expect(state.benchmark.latestTrade.ageMs).toBe(602_000)
+    expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
+  })
+
+  test('retained market-quotes v1 keeps its original post-range benchmark trade contract', () => {
+    const raw = withTimes('SPY', '2026-09-04T14:30:01.000Z', '2026-09-04T14:20:00.000Z')
+    const result = latestQuotes(
+      { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes },
+      raw.quotes,
+      raw.trades,
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.reason).toBe('not-ready')
+      expect(result.failure.facts?.['symbol']).toBe('SPY')
+    }
+  })
+
+  test.each(['2026-09-04T14:29:51.999Z', '2026-09-04T14:20:00.000Z'])(
+    'a contextual benchmark trade never admits its stale quote at %s',
+    (quoteAt) => {
+      const raw = withTimes('SPY', quoteAt, '2026-09-04T14:20:00.000Z')
+      expect(Result.isFailure(latestQuotes(query, raw.quotes, raw.trades))).toBe(true)
+    },
+  )
+
+  test('a missing real benchmark trade remains unavailable', () => {
+    expect(
+      Result.isFailure(
+        latestQuotes(
+          query,
+          fixture.archive.quotes,
+          fixture.archive.trades.filter((row) => row.symbol !== 'SPY'),
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  test('a benchmark trade outside the real window cannot supply context', () => {
+    const raw = withTimes('SPY', '2026-09-04T14:30:01.000Z', '2026-09-04T13:59:59.999Z')
+    expect(Result.isFailure(Result.try(() => streamingFixtureFromRaw(raw, query)))).toBe(true)
+  })
+
+  test('a future benchmark quote cannot reach current entry inference', () => {
+    const raw = withTimes('SPY', '2026-09-04T14:30:02.001Z', '2026-09-04T14:20:00.000Z')
+    const result = Result.try(() => streamingFixtureFromRaw(raw, query))
+    expect(
+      Result.isFailure(result) || Result.isFailure(jevRequestForSnapshot(Result.getOrThrow(result).snapshot, 'AAPL')),
+    ).toBe(true)
+  })
+
   test('diagnostics retain decision-time holes after a later bar arrives', () => {
     const missingAt = '2026-09-04T14:10:00.000Z'
     const bars = new Map(fixture.cut.projection.bars)
@@ -194,19 +253,11 @@ describe('candidate executable quote and window trade evidence', () => {
     expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
   })
 
-  test('keeps required benchmark post-range evidence strict', () => {
-    expect(() =>
-      streamingFixtureFromRaw(withTimes('SPY', '2026-09-04T14:30:01.000Z', '2026-09-04T14:20:00.000Z'), query),
-    ).toThrow('post-range trade')
-    expect(() =>
-      streamingFixtureFromRaw(withTimes('SPY', '2026-09-04T14:29:59.000Z', '2026-09-04T14:30:01.000Z'), query),
-    ).toThrow('post-range quote')
-  })
-
   test('reproduces historical cuts under their original evidence contract', () => {
+    const { candidateEvidencePolicy: _policy, ...historicalQuery } = fixture.query
     const { snapshot } = streamingFixtureFromRaw(
       withTimes('AAPL', '2026-09-04T14:30:01.000Z', '2026-09-04T14:20:00.000Z'),
-      fixture.query,
+      historicalQuery,
     )
     expect(exclusion(snapshot)?.message).toBe('intraday snapshot lacks a post-range trade for every symbol')
     expect(snapshot.manifest.streaming.features.some((receipt) => receipt.value.material.symbol === 'AAPL')).toBe(false)
@@ -274,7 +325,7 @@ describe('candidate executable quote and window trade evidence', () => {
     const snapshot = Result.getOrThrow(
       constructSimulatedSnapshot(simulation.cursor, simulation.source, {
         ...simulation.query,
-        candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+        candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
       }),
     )
     const restored = Result.getOrThrow(

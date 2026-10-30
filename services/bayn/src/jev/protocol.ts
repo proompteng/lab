@@ -1,3 +1,5 @@
+import { MarketKind } from '../instruments'
+import { marketHistoryMinutes } from '../market-data/history'
 import { JevMarketProfilesSchema, jevMarketProfiles, jevUniverse, jevCandidateSymbols } from './markets'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result, Schema } from 'effect'
@@ -14,100 +16,187 @@ import {
 import { JevContractError, jevModel } from './contract'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
+import { retainedMarketEntryJudgmentPolicy } from './retained-market-entry-questions'
 
 const entryQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: entryJudgmentPolicy }),
+)
+const retainedMarketQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: retainedMarketEntryJudgmentPolicy }),
 )
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
+const protocolFields = (entryQuestionPolicyHash: string) => ({
+  entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
+  entryFeePolicy: Schema.Literal('broker-tier-buy-and-maximum-sell'),
+  entrySelectionPolicy: Schema.Literal('source-anchored-proposal-judgments'),
+  entryQuestionPolicyHash: Schema.Literal(entryQuestionPolicyHash),
+  maximumEntryQuoteDriftBps: Schema.Literal(10),
+  maximumEntryLimitSlippageBps: Schema.Literal(10),
+  entrySignalPolicy: Schema.Literal('openai-decisions-then-jev'),
+  model: Schema.Literal(jevModel),
+  inputDefinition: Schema.Literal('bayn.jev-entry-state.v22'),
+  marketProfiles: JevMarketProfilesSchema,
+  universe: Schema.Array(SymbolSchema),
+  candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
+  positionPolicy: Schema.Literal('long-only'),
+  decisionDelaySeconds: Schema.Literal(intradayDecisionDelaySeconds),
+  maximumDecisionLagMs: PositiveIntegerSchema,
+  maximumQuoteAgeMs: Schema.Literal(10_000),
+  candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
+  warmupMinutesAfterOpen: Schema.Literal(0),
+  entryCutoffMinutesBeforeClose: Schema.Literal(5),
+  flattenBeforeCloseMinutes: Schema.Literal(5),
+  hardFlatBeforeCloseMinutes: Schema.Literal(0),
+  maximumPositions: Schema.Literal(1),
+  maximumGrossWeight: Weight,
+  maximumSymbolWeight: Weight,
+  inferenceValidityMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
+  horizonMinutes: Minutes,
+  maximumHoldingMinutes: Minutes,
+  allocation: Schema.Literal('equal-weight'),
+  executionModel: ExecutionModelV6Schema,
+})
+
+const CurrentProtocol = Schema.Struct({
+  ...protocolFields(entryQuestionPolicyHash),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v32'),
+  lookbackMinutes: Schema.Struct({
+    equity: Schema.Literal(marketHistoryMinutes[MarketKind.Equity]),
+    crypto: Schema.Literal(marketHistoryMinutes[MarketKind.Crypto]),
+  }),
+})
+
+type ProtocolFields = Omit<typeof CurrentProtocol.Type, 'schemaVersion' | 'lookbackMinutes'>
+const validateProtocol = (
+  protocol: ProtocolFields,
+  shortestLookbackMinutes: number,
+  evidencePolicy?: IntradayCandidateEvidencePolicy,
+) => {
+  const issues: Schema.FilterIssue[] = []
+  if (
+    evidencePolicy !== undefined
+      ? protocol.candidateEvidencePolicy !== evidencePolicy
+      : protocol.candidateEvidencePolicy !== undefined &&
+        protocol.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+  )
+    issues.push({ path: ['candidateEvidencePolicy'], issue: 'must match the protocol evidence contract' })
+  if (protocol.universe.join(',') !== jevUniverse.join(','))
+    issues.push({ path: ['universe'], issue: 'must match the reviewed equity and crypto universe' })
+  const candidates = [...new Set(protocol.candidateSymbols)].sort()
+  if (
+    candidates.join(',') !== protocol.candidateSymbols.join(',') ||
+    candidates.includes('SPY') ||
+    candidates.some((symbol) => !protocol.universe.includes(symbol))
+  )
+    issues.push({
+      path: ['candidateSymbols'],
+      issue: 'must be unique sorted universe members excluding the benchmark',
+    })
+  if (protocol.maximumSymbolWeight > protocol.maximumGrossWeight)
+    issues.push({ path: ['maximumSymbolWeight'], issue: 'cannot exceed the gross allocation' })
+  if (protocol.decisionDelaySeconds * 1000 + protocol.maximumDecisionLagMs > maximumIntradayObservationLagMs)
+    issues.push({ path: ['maximumDecisionLagMs'], issue: 'must fit the verified observation lag' })
+  if (
+    protocol.horizonMinutes !== protocol.maximumHoldingMinutes ||
+    protocol.maximumHoldingMinutes > shortestLookbackMinutes
+  )
+    issues.push({
+      path: ['horizonMinutes'],
+      issue: 'must equal the holding horizon and fit its completed source window',
+    })
+  const expectedModel = canonicalHashV1Result(intradayExecutionModel)
+  const actualModel = canonicalHashV1Result(protocol.executionModel)
+  if (Result.isFailure(expectedModel) || Result.isFailure(actualModel) || expectedModel.success !== actualModel.success)
+    issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed session-limit execution contract' })
+  return issues
+}
+
+// These schemas reproduce immutable financial evidence; new execution accepts only v32.
 export const jevProtocolSchemaForQuestionPolicy = <
-  V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26' = 'bayn.jev.protocol.v24',
+  V extends
+    | 'bayn.jev.protocol.v24'
+    | 'bayn.jev.protocol.v25'
+    | 'bayn.jev.protocol.v26'
+    | 'bayn.jev.protocol.v27'
+    | 'bayn.jev.protocol.v28'
+    | 'bayn.jev.protocol.v29' = 'bayn.jev.protocol.v24',
 >(
   entryQuestionPolicyHash: string,
   version: V = 'bayn.jev.protocol.v24' as V,
 ) =>
   Schema.Struct({
+    ...protocolFields(entryQuestionPolicyHash),
     schemaVersion: Schema.Literal(version),
-    entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
-    entryFeePolicy: Schema.Literal('broker-tier-buy-and-maximum-sell'),
-    entrySelectionPolicy: Schema.Literal('source-anchored-proposal-judgments'),
-    entryQuestionPolicyHash: Schema.Literal(entryQuestionPolicyHash),
-    maximumEntryQuoteDriftBps: Schema.Literal(10),
-    maximumEntryLimitSlippageBps: Schema.Literal(10),
-    entrySignalPolicy: Schema.Literal('openai-decisions-then-jev'),
-    model: Schema.Literal(jevModel),
-    inputDefinition: Schema.Literal('bayn.jev-entry-state.v22'),
-    marketProfiles: JevMarketProfilesSchema,
-    universe: Schema.Array(SymbolSchema),
-    candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
-    positionPolicy: Schema.Literal('long-only'),
     lookbackMinutes: Schema.Literal(intradayLookbackMinutes),
-    decisionDelaySeconds: Schema.Literal(intradayDecisionDelaySeconds),
-    maximumDecisionLagMs: PositiveIntegerSchema,
-    maximumQuoteAgeMs: Schema.Literal(10_000),
-    candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
-    warmupMinutesAfterOpen: Schema.Literal(0),
-    entryCutoffMinutesBeforeClose: Schema.Literal(5),
-    flattenBeforeCloseMinutes: Schema.Literal(5),
-    hardFlatBeforeCloseMinutes: Schema.Literal(0),
-    maximumPositions: Schema.Literal(1),
-    maximumGrossWeight: Weight,
-    maximumSymbolWeight: Weight,
-    inferenceValidityMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
-    horizonMinutes: Minutes,
-    maximumHoldingMinutes: Minutes,
-    allocation: Schema.Literal('equal-weight'),
-    executionModel: ExecutionModelV6Schema,
   }).check(
-    Schema.makeFilter((protocol) => {
-      const issues: Schema.FilterIssue[] = []
-      if (protocol.universe.join(',') !== jevUniverse.join(','))
-        issues.push({ path: ['universe'], issue: 'must match the reviewed equity and crypto universe' })
-      const candidates = [...new Set(protocol.candidateSymbols)].sort()
-      if (
-        candidates.join(',') !== protocol.candidateSymbols.join(',') ||
-        candidates.includes('SPY') ||
-        candidates.some((symbol) => !protocol.universe.includes(symbol))
-      )
-        issues.push({
-          path: ['candidateSymbols'],
-          issue: 'must be unique sorted universe members excluding the benchmark',
-        })
-      if (protocol.maximumSymbolWeight > protocol.maximumGrossWeight)
-        issues.push({ path: ['maximumSymbolWeight'], issue: 'cannot exceed the gross allocation' })
-      if (protocol.decisionDelaySeconds * 1000 + protocol.maximumDecisionLagMs > maximumIntradayObservationLagMs)
-        issues.push({ path: ['maximumDecisionLagMs'], issue: 'must fit the verified observation lag' })
-      if (
-        protocol.horizonMinutes !== protocol.maximumHoldingMinutes ||
-        protocol.maximumHoldingMinutes > protocol.lookbackMinutes
-      )
-        issues.push({
-          path: ['horizonMinutes'],
-          issue: 'must equal the holding horizon and fit its completed source window',
-        })
-      const expectedModel = canonicalHashV1Result(intradayExecutionModel)
-      const actualModel = canonicalHashV1Result(protocol.executionModel)
-      if (
-        Result.isFailure(expectedModel) ||
-        Result.isFailure(actualModel) ||
-        expectedModel.success !== actualModel.success
-      )
-        issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed session-limit execution contract' })
-      return issues
-    }),
+    Schema.makeFilter((protocol) =>
+      validateProtocol(
+        protocol,
+        protocol.lookbackMinutes,
+        version === 'bayn.jev.protocol.v29' ? IntradayCandidateEvidencePolicy.MarketQuotes : undefined,
+      ),
+    ),
   )
 
-export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v26')
+export const JevProtocolSchema = CurrentProtocol.check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+    ),
+  ),
+)
+
+export const RetainedJevProtocolV30Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  ...protocolFields(retainedMarketQuestionPolicyHash),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v30'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotes,
+    ),
+  ),
+)
+
+export const RetainedJevProtocolV31Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  ...protocolFields(retainedMarketQuestionPolicyHash),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v31'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+    ),
+  ),
+)
 
 export type JevProtocol = typeof JevProtocolSchema.Type
-export type JevProtocolMaterial = Omit<JevProtocol, 'schemaVersion'> & {
-  readonly schemaVersion: 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26'
-}
+export type JevProtocolMaterial =
+  | JevProtocol
+  | typeof RetainedJevProtocolV30Schema.Type
+  | typeof RetainedJevProtocolV31Schema.Type
+  | (Omit<JevProtocol, 'schemaVersion' | 'lookbackMinutes'> & {
+      readonly lookbackMinutes: 30
+      readonly schemaVersion:
+        | 'bayn.jev.protocol.v24'
+        | 'bayn.jev.protocol.v25'
+        | 'bayn.jev.protocol.v26'
+        | 'bayn.jev.protocol.v27'
+        | 'bayn.jev.protocol.v28'
+        | 'bayn.jev.protocol.v29'
+    })
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v26',
+  schemaVersion: 'bayn.jev.protocol.v32',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',
@@ -121,11 +210,14 @@ export const defaultJevProtocolDocument = Object.freeze({
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
   positionPolicy: 'long-only',
-  lookbackMinutes: intradayLookbackMinutes,
+  lookbackMinutes: Object.freeze({
+    equity: marketHistoryMinutes[MarketKind.Equity],
+    crypto: marketHistoryMinutes[MarketKind.Crypto],
+  }),
   decisionDelaySeconds: intradayDecisionDelaySeconds,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 10_000,
-  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,
   flattenBeforeCloseMinutes: 5,

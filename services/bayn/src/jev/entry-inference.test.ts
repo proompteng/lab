@@ -1,3 +1,4 @@
+import { evaluateFixtureEntry } from './evaluation.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Fiber, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -8,17 +9,13 @@ import { utcInstantFromEpochMillis } from '../time'
 import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
 import { DecisionsClient, DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
-import {
-  EntryInferenceJournal,
-  evaluateClaimedEntryHandoff,
-  evaluateClaimedEntryInference,
-  type EntryHandoff,
-} from './entry-inference'
+import { EntryInferenceJournal, type EntryHandoff } from './entry-inference'
 import { decodeEntryHandoff, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput, type EntryInferenceInput } from './entry-inference-input'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevOutcome, makeJevEvaluationRequest, makeJevEvaluationReceipt, entryInferenceAvailableAt } from './evidence'
 import { defaultJevProtocolDocument } from './protocol'
+import type { StagedDispatchClaim } from './staged-checkpoint'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
 const fixture = () => {
@@ -34,7 +31,7 @@ const fixture = () => {
     claimedAt: utcInstantFromEpochMillis(at),
     expiresAt: utcInstantFromEpochMillis(at + 10_000),
     input: {
-      schemaVersion: 'bayn.entry-inference-input.v5' as const,
+      schemaVersion: 'bayn.entry-inference-input.v6' as const,
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
@@ -67,11 +64,38 @@ const providers = (
     readonly baseDelay?: number
     readonly baseClaimDenied?: boolean
     readonly baseTerminalFails?: boolean
+    readonly journalCommitDelay?: number
   } = {},
 ) => {
   const events: string[] = []
   const checkpointEvents: string[] = []
   const handoffs: EntryHandoff[] = []
+  const commits: string[] = []
+  const jevBudgets: (number | undefined)[] = []
+  const commit = <A, E, R>(name: string, operation: Effect.Effect<A, E, R>) =>
+    Effect.sync(() => commits.push(name)).pipe(
+      Effect.andThen(operation),
+      Effect.tap(() => Effect.sleep(options.journalCommitDelay ?? 0)),
+    )
+  const recordClaim = (claim: StagedDispatchClaim) =>
+    Effect.gen(function* () {
+      checkpointEvents.push('claim')
+      if (options.chartClaimDelay !== undefined) yield* Effect.sleep(options.chartClaimDelay)
+      return {
+        dispatchAllowed:
+          options.chartClaimDenied !== true && !(claim.stage === 'BASE_START' && options.baseClaimDenied),
+      }
+    })
+  const recordHandoff = (handoff: EntryHandoff) =>
+    Effect.gen(function* () {
+      events.push('handoff')
+      checkpointEvents.push('handoff')
+      handoffs.push(handoff)
+      const { handoffHash, ...material } = handoff
+      expect(handoffHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
+      if (options.commitDelay !== undefined) yield* Effect.sleep(options.commitDelay)
+      return { dispatchAllowed: options.existingHandoff !== true }
+    })
   const layer = Layer.mergeAll(
     Layer.succeed(DecisionsClient, {
       evaluate: (input) =>
@@ -139,42 +163,54 @@ const providers = (
         }),
     }),
     Layer.succeed(EntryInferenceJournal, {
-      recordVisualClaim: (claim) =>
-        Effect.gen(function* () {
-          checkpointEvents.push('claim')
-          if (options.chartClaimDelay !== undefined) yield* Effect.sleep(options.chartClaimDelay)
-          return {
-            dispatchAllowed:
-              options.chartClaimDenied !== true && !(claim.stage === 'BASE_START' && options.baseClaimDenied),
-          }
-        }),
-      recordVisualTerminal: (terminal) =>
-        Effect.gen(function* () {
-          checkpointEvents.push('terminal')
-          if (options.chartTerminalDelay !== undefined) yield* Effect.sleep(options.chartTerminalDelay)
-          if (options.chartTerminalFails || (terminal.stage === 'BASE_START' && options.baseTerminalFails))
-            return yield* operationalError({
-              component: 'journal',
-              operation: 'test chart terminal commit',
-              message: 'Unavailable',
-            })
-        }),
-      recordBaseStartSkip: () => Effect.void,
-      recordHandoff: (handoff) =>
-        Effect.gen(function* () {
-          events.push('handoff')
-          checkpointEvents.push('handoff')
-          handoffs.push(handoff)
-          const { handoffHash, ...material } = handoff
-          expect(handoffHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
-          if (options.commitDelay !== undefined) yield* Effect.sleep(options.commitDelay)
-          return { dispatchAllowed: options.existingHandoff !== true }
-        }),
+      recordVisualClaims: (inputs) =>
+        commit(
+          'claims',
+          Effect.forEach(inputs, (claim) =>
+            recordClaim(claim).pipe(Effect.map((result) => ({ requestId: claim.requestId, ...result }))),
+          ),
+        ),
+      recordTransitions: (inputs) =>
+        commit(
+          'transitions',
+          Effect.gen(function* () {
+            if (
+              inputs.some((input) => input.terminal !== null && input.successor.kind !== 'NONE') &&
+              options.chartTerminalDelay !== undefined
+            )
+              yield* Effect.sleep(options.chartTerminalDelay)
+            return yield* Effect.forEach(inputs, ({ terminal, successor }) =>
+              Effect.gen(function* () {
+                const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
+                if (terminal !== null) {
+                  checkpointEvents.push('terminal')
+                  if (
+                    successor.kind !== 'NONE' &&
+                    (options.chartTerminalFails || (terminal.stage === 'BASE_START' && options.baseTerminalFails))
+                  )
+                    return yield* operationalError({
+                      component: 'journal',
+                      operation: 'test chart terminal commit',
+                      message: 'Unavailable',
+                    })
+                }
+                const result =
+                  successor.kind === 'NONE'
+                    ? { dispatchAllowed: false }
+                    : successor.kind === 'VISUAL'
+                      ? yield* recordClaim(successor.claim)
+                      : yield* recordHandoff(successor.handoff)
+                return { requestId, ...result }
+              }),
+            )
+          }),
+        ),
     }),
     Layer.succeed(JevClient, {
-      evaluate: (input) =>
+      evaluate: (input, timeoutMs) =>
         Effect.gen(function* () {
           expect(handoffs).toHaveLength(1)
+          jevBudgets.push(timeoutMs)
           events.push('jev')
           checkpointEvents.push('jev')
           const prepared = Result.getOrThrow(prepareJevRequest(input))
@@ -208,31 +244,51 @@ const providers = (
         }),
     }),
   )
-  return { events, checkpointEvents, handoffs, layer }
+  return { events, checkpointEvents, handoffs, commits, jevBudgets, layer }
 }
 
-const run = (
-  claim: Parameters<typeof evaluateClaimedEntryInference>[0],
-  setup: ReturnType<typeof providers>,
-  advance = 0,
-) =>
+const run = (claim: Parameters<typeof evaluateFixtureEntry>[0], setup: ReturnType<typeof providers>, advance = 0) =>
   Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(at)
-      const fiber = yield* evaluateClaimedEntryInference(claim).pipe(Effect.result, Effect.forkChild)
+      const fiber = yield* evaluateFixtureEntry(claim).pipe(Effect.result, Effect.forkChild)
       if (advance > 0) yield* TestClock.adjust(advance)
       return yield* Fiber.join(fiber)
     }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
   )
 
 describe('claimed sequential entry inference', () => {
+  test('two-second journal commits leave the original deadline available for both chart stages and Jev', async () => {
+    const setup = providers({ journalCommitDelay: 2_000, jevDelay: 1_000 })
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, setup, 7_000))
+    expect(setup.commits).toEqual(['claims', 'transitions', 'transitions'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff', 'jev'])
+    expect(setup.jevBudgets).toEqual([4_000])
+    expect(result.jev.status).toBe('RECEIVED')
+    expect(result.completedAt).toBe(utcInstantFromEpochMillis(at + 7_000))
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+  })
+
+  test('a late atomic handoff commit retains visual evidence without authorizing Jev', async () => {
+    const setup = providers({ journalCommitDelay: 3_400 })
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, setup, 10_200))
+    expect(setup.commits).toEqual(['claims', 'transitions', 'transitions'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
+    expect(setup.jevBudgets).toEqual([])
+    expect(result.handoff.baseStart.status).toBe('RECEIVED')
+    expect(result.jev.status).toBe('NOT_DISPATCHED')
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+  })
+
   test('BASE_START duplicate admission or terminal crash cannot dispatch Jev', async () => {
     const duplicate = providers({ baseClaimDenied: true })
     expect(Result.isFailure(await run(fixture(), duplicate))).toBe(true)
     expect(duplicate.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'claim'])
     const crash = providers({ baseTerminalFails: true })
     expect(Result.isFailure(await run(fixture(), crash))).toBe(true)
-    expect(crash.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'claim', 'visual', 'terminal'])
+    expect(crash.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'claim', 'visual', 'terminal', 'terminal'])
     expect(crash.handoffs).toHaveLength(0)
   })
 
@@ -326,7 +382,7 @@ describe('claimed sequential entry inference', () => {
   test('terminal commit failure leaves no handoff and never dispatches Jev', async () => {
     const setup = providers({ chartTerminalFails: true })
     expect(Result.isFailure(await run(fixture(), setup))).toBe(true)
-    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal'])
+    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'terminal'])
     expect(setup.handoffs).toHaveLength(0)
   })
 
@@ -339,7 +395,8 @@ describe('claimed sequential entry inference', () => {
   test('late terminal persistence retains chart evidence but never grants a fresh Jev window', async () => {
     const setup = providers({ chartTerminalDelay: 10_000 })
     expect(Result.isFailure(await run(fixture(), setup, 10_000))).toBe(true)
-    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal'])
+    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'claim'])
+    expect(setup.events).toEqual(['visual'])
     expect(setup.handoffs).toHaveLength(0)
   })
 
@@ -401,7 +458,7 @@ describe('claimed sequential entry inference', () => {
         outcome: { status: JevOutcome.Completed, completion },
       }),
     )
-    expect(Result.isFailure(entryInferenceAvailableAt(request, receipt, at, 'bayn.entry-inference-input.v5'))).toBe(
+    expect(Result.isFailure(entryInferenceAvailableAt(request, receipt, at, 'bayn.entry-inference-input.v6'))).toBe(
       true,
     )
     for (const jev of [{ status: 'NOT_REQUESTED' }, { status: 'NOT_DISPATCHED' }])
@@ -442,10 +499,10 @@ describe('claimed sequential entry inference', () => {
     const handoff = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(at)
-        return yield* evaluateClaimedEntryHandoff(claim)
+        return yield* evaluateFixtureEntry(claim).pipe(Effect.map((completion) => completion.handoff))
       }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
     )
-    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff', 'jev'])
     expect(setup.handoffs).toEqual([handoff])
     expect(Result.isSuccess(decodeEntryHandoff(claim, handoff))).toBe(true)
     expect(handoff.disposition.status).toBe('READY')
@@ -510,7 +567,7 @@ describe('claimed sequential entry inference', () => {
       }),
     )
     expect(
-      Result.isFailure(entryInferenceAvailableAt(request, receipt, at + 10_001, 'bayn.entry-inference-input.v5')),
+      Result.isFailure(entryInferenceAvailableAt(request, receipt, at + 10_001, 'bayn.entry-inference-input.v6')),
     ).toBe(true)
   })
 
@@ -657,7 +714,7 @@ describe('claimed sequential entry inference', () => {
     expect(result.handoff.disposition.status).toBe('READY')
     if (result.handoff.disposition.status === 'READY')
       expect(result.handoff.disposition.jevRequest.state).toMatchObject({
-        candidate: { bars1m: [{ close: 101 }, { close: 100 }, { close: 104 }, { close: 104 }] },
+        completedSourceBars: [{ close: 101 }, { close: 100 }, { close: 104 }, { close: 104 }],
       })
   })
 })

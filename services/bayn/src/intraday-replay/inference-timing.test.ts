@@ -1,9 +1,10 @@
+import { evaluateFixtureEntry } from '../jev/evaluation.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { entryEvaluationRequestFixture, nativeChartInference } from '../jev/entry-inference.test-support'
 import { nativeJevInference } from '../jev/native.test-support'
 import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
-import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../jev/entry-inference'
+import { EntryInferenceJournal } from '../jev/entry-inference'
 import { expect, test } from 'bun:test'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -640,7 +641,7 @@ test.each([1000, null])(
           },
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
         const operation = timing.run(
-          evaluateClaimedEntryInference({
+          evaluateFixtureEntry({
             requestId: request.requestId,
             input: request.request,
             observedAt: request.observedAt,
@@ -650,16 +651,30 @@ test.each([1000, null])(
             Effect.provideService(JevClient, timing.clients.jev),
             Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, {
-              recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
-              recordVisualTerminal: () => Effect.void,
-              recordBaseStartSkip: () => Effect.void,
-              recordHandoff: () =>
-                f.providerClock.adjust(1000).pipe(
-                  Effect.as({ dispatchAllowed: true }),
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      committed = true
-                    }),
+              recordVisualClaims: (claims) =>
+                Effect.succeed(claims.map((claim) => ({ requestId: claim.requestId, dispatchAllowed: true }))),
+              recordTransitions: (transitions) =>
+                Effect.forEach(transitions, ({ terminal, successor }) =>
+                  (successor.kind === 'HANDOFF'
+                    ? f.providerClock.adjust(1000).pipe(
+                        Effect.as({ dispatchAllowed: true }),
+                        Effect.tap(() =>
+                          Effect.sync(() => {
+                            committed = true
+                          }),
+                        ),
+                      )
+                    : Effect.succeed({ dispatchAllowed: successor.kind === 'VISUAL' })
+                  ).pipe(
+                    Effect.map((admission) => ({
+                      requestId:
+                        terminal === null
+                          ? successor.kind === 'HANDOFF'
+                            ? successor.handoff.requestId
+                            : ''
+                          : terminal.requestId,
+                      ...admission,
+                    })),
                   ),
                 ),
             }),
@@ -709,7 +724,7 @@ test('exhausting the shared budget after the chart retains its paid call and pre
       }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
       const result = yield* timing
         .run(
-          evaluateClaimedEntryInference({
+          evaluateFixtureEntry({
             requestId: request.requestId,
             input: request.request,
             observedAt: request.observedAt,
@@ -719,10 +734,15 @@ test('exhausting the shared budget after the chart retains its paid call and pre
             Effect.provideService(JevClient, timing.clients.jev),
             Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, {
-              recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
-              recordVisualTerminal: () => Effect.void,
-              recordBaseStartSkip: () => Effect.void,
-              recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
+              recordVisualClaims: (claims) =>
+                Effect.succeed(claims.map((claim) => ({ requestId: claim.requestId, dispatchAllowed: true }))),
+              recordTransitions: (inputs) =>
+                Effect.succeed(
+                  inputs.map((input) => ({
+                    requestId: input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId,
+                    dispatchAllowed: input.successor.kind !== 'NONE',
+                  })),
+                ),
             }),
             Effect.provideService(Clock.Clock, f.marketClock),
           ),

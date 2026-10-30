@@ -303,6 +303,7 @@ describe('entry observation admission', () => {
           Effect.provideService(JevBatchStore, {
             pending: () => Effect.succeed([]),
             read: () => Effect.die('No batch was recorded'),
+            complete: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             begin: (plan) =>
               TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(
@@ -323,7 +324,7 @@ describe('entry observation admission', () => {
           Effect.provideService(JevEvaluationStore, {
             read: () => Effect.die('No request can exist'),
 
-            record: () => Effect.die('No inference can be recorded'),
+            recordAll: () => Effect.die('No inference can be recorded'),
             abandon: () => Effect.die('No inference can be abandoned'),
           }),
           Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call is allowed') }),

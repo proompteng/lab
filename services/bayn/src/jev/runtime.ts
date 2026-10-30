@@ -3,6 +3,7 @@ import { jevProfitTargetCrossed } from './profit-target'
 import { maximumFundedBuyQuantities } from './entry-sizing'
 import { jevMaximumEntryAskMicros } from './entry-economics'
 import { jevMarketForSymbol } from './markets'
+import { MarketKind } from '../instruments'
 import { jevMarketForCycle, jevCycleCandidates } from './markets'
 import { isContinuousMarket, type MarketHours } from '../market-hours'
 import {
@@ -64,6 +65,7 @@ import {
 } from './exit'
 import { JevPositionStore, JevPurpose, jevManagedExitPlan } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
+import { decideJevPositionHold, type JevPositionHold } from './hold'
 import { type JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
@@ -348,12 +350,22 @@ export const compileJevEntry = (
       const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
       const withinCostBound =
         BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
-        jevMaximumEntryAskMicros(decision.evidence.observation.protocol, originalAsk)
+        jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, originalAsk)
       const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
-      if (exclusion !== null || !withinCostBound || bid <= BigInt(plan.levels.stopPriceMicros))
+      const requiresMarketableLimit = jevMarketForSymbol(symbol).market === MarketKind.Crypto
+      const ineligibleReason =
+        exclusion ??
+        (requiresMarketableLimit && !withinCostBound
+          ? 'entry cost price ceiling'
+          : bid <= BigInt(plan.levels.stopPriceMicros)
+            ? 'protective stop crossed'
+            : bid >= BigInt(plan.levels.profitLimitPriceMicros)
+              ? 'profit target already reached'
+              : null)
+      if (ineligibleReason !== null)
         return yield* Result.fail(
           new JevAwaitingEvidence({
-            message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion ?? 'entry cost price ceiling'}`,
+            message: `Jev target ${symbol} no longer has an eligible execution quote: ${ineligibleReason}`,
             readiness: DecisionReadinessReason.NoEligibleCandidate,
           }),
         )
@@ -405,6 +417,7 @@ export const evaluateJevPositionManagement = (input: {
     let maximumHoldDueAt: string | undefined
     let maximumHoldEvaluatedAt: string | undefined
     let maximumHoldEvidence: JevExitEvidence | undefined
+    let positionHold: JevPositionHold | undefined
     return Effect.gen(function* () {
       const store = yield* JevPositionStore
       const portfolio = yield* store.read({
@@ -474,7 +487,19 @@ export const evaluateJevPositionManagement = (input: {
           : (yield* Effect.fromResult(jevProfitTargetCrossed(portfolio, bid)))
             ? JevExitReason.ProfitTarget
             : undefined
-        if (reason === undefined) return undefined
+        if (reason === undefined) {
+          positionHold = yield* Effect.fromResult(
+            decideJevPositionHold({
+              ...evidence,
+              authorityGenerationHash: input.authorityGenerationHash,
+              source: {
+                manifest: pricing.manifest,
+                rows: yield* Effect.fromResult(persistIntradayRecordRows(pricing)),
+              },
+            }),
+          )
+          return undefined
+        }
         const target = yield* Effect.fromResult(
           decideJevExit({
             ...evidence,
@@ -511,7 +536,10 @@ export const evaluateJevPositionManagement = (input: {
       Effect.map(
         (target): JevPositionManagement =>
           target === undefined
-            ? { _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } }
+            ? {
+                _tag: 'Wait',
+                details: { waitReason: 'JEV_POSITION_HELD', ...(positionHold === undefined ? {} : { positionHold }) },
+              }
             : { _tag: 'Exit', target },
       ),
       Effect.catchTags({
