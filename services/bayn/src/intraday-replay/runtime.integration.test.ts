@@ -170,7 +170,7 @@ durableTest.each(
           ? 'latency-stress-expired'
           : mode === 'momentum-partial-exit-reentry'
             ? 'partial-exit-reentry'
-            : ablation || momentum || mode === 'missing-benchmark'
+            : ablation || momentum
               ? 'fill'
               : mode
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
@@ -207,8 +207,9 @@ durableTest.each(
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
+    const sessionCloseLifecycle = ['fill', 'fallback', 'missing-benchmark'].includes(scenario)
     const restingDayLifecycle =
-      measured || ['fill', 'fallback', 'early-exit', 'partial-exit-reentry'].includes(scenario)
+      measured || sessionCloseLifecycle || ['early-exit', 'partial-exit-reentry'].includes(scenario)
     const fixture = {
       ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined, true),
       protocol,
@@ -354,10 +355,9 @@ durableTest.each(
             strategy: ablationIdentity.strategy,
           })
         : candidateRuntime
-    const closeAtMs =
-      scenario === 'fill' || scenario === 'fallback'
-        ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
-        : Date.parse('2026-09-04T19:59:02Z')
+    const closeAtMs = sessionCloseLifecycle
+      ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
+      : Date.parse('2026-09-04T19:59:02Z')
     const closeQuery = {
       ...fixture.query,
       ...(ablation || momentum ? { symbols: [...equityMarketProfile.universe] } : {}),
@@ -704,31 +704,32 @@ durableTest.each(
             },
           },
           source,
-          cursor: Effect.sync(() => {
-            if (mode === 'missing-benchmark' || mode === 'missing-candidate') {
-              const bars = new Map(
-                [...cursor.projection.bars].filter(([symbol]) =>
-                  mode === 'missing-benchmark'
-                    ? symbol !== 'SPY'
-                    : !eligibleEntrySymbols.some((candidate) => candidate === symbol),
-                ),
-              )
-              if (mode === 'missing-benchmark') {
-                expect(bars.has('SPY')).toBe(false)
-                expect(bars.get('AAPL')).toEqual(cursor.projection.bars.get('AAPL'))
-              } else expect(eligibleEntrySymbols.some((symbol) => bars.has(symbol))).toBe(false)
-              return {
-                ...cursor,
-                projection: {
-                  ...cursor.projection,
-                  bars,
-                },
-              }
-            }
-            return scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
-              ? { ...cursor, projection: { ...cursor.projection, quoteHistory: new Map() } }
-              : cursor
-          }),
+          cursor: Effect.sync(() =>
+            scenario === 'missing-benchmark'
+              ? {
+                  ...cursor,
+                  projection: {
+                    ...cursor.projection,
+                    bars: new Map([...cursor.projection.bars].filter(([symbol]) => symbol !== 'SPY')),
+                    features: new Map([...cursor.projection.features].filter(([symbol]) => symbol !== 'SPY')),
+                  },
+                }
+              : scenario === 'missing-candidate'
+                ? {
+                    ...cursor,
+                    projection: {
+                      ...cursor.projection,
+                      bars: new Map(
+                        [...cursor.projection.bars].filter(
+                          ([symbol]) => !eligibleEntrySymbols.some((candidate) => candidate === symbol),
+                        ),
+                      ),
+                    },
+                  }
+                : scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
+                  ? { ...cursor, projection: { ...cursor.projection, quoteHistory: new Map() } }
+                  : cursor,
+          ),
           clock,
           currentUtcInstant: Effect.gen(function* () {
             if (restingDayLifecycle) {
@@ -752,11 +753,7 @@ durableTest.each(
           reconciliationIntervalMs:
             scenario === 'no-trade-finalization' ? 30_000 : measured ? config.operationTimeoutMs : 1000,
           reconciliationPassTimeoutMs:
-            scenario === 'no-trade-finalization'
-              ? 30_000
-              : scenario === 'fill' || scenario === 'fallback'
-                ? 1000
-                : config.operationTimeoutMs,
+            scenario === 'no-trade-finalization' ? 30_000 : sessionCloseLifecycle ? 1000 : config.operationTimeoutMs,
         }
         const mutations = yield* MutationStore
         const expiryMutations: typeof mutations = {
@@ -1993,6 +1990,16 @@ durableTest.each(
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
       (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${accountId}) AS transactions`
+        if (scenario === 'missing-benchmark') {
+          const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
+            count(*)::int AS count,
+            bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
+            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v34') AS current_protocol
+            FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
+          expect(source?.count).toBeGreaterThan(0)
+          expect(source?.candidate_only).toBe(true)
+          expect(source?.current_protocol).toBe(true)
+        }
         if (momentum) {
           expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
           expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
