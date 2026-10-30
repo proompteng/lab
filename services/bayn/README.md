@@ -33,6 +33,10 @@ still require full reproduction. Newly inserted intents skip their intermediate 
 The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
 their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
 
+Forward reports verify every session's frozen inference expenses once before checking the exact TigerBeetle ledger.
+An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
+still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
@@ -88,7 +92,14 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The current source uses `jev` protocol v33, verified numerical input v22, batch v7 and entry target v7. It retains the
+Live Jev entry queries request only their candidate symbols. Candidate bars, rolling features, fresh quotes and
+all existing funding and execution checks remain mandatory. An absent SPY feature or another coin's feature cannot
+prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
+are absent from the current numerical input. Independent momentum qualification requests and verifies its own
+reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
+Migration 166 rejects v33 execution requests and dispatch while retaining their original financial readers and history.
+
+The current source uses `jev` protocol v34, verified numerical input v23, batch v8 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -99,7 +110,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v33 and its exact question-policy hash.
+current execution and database guards accept v34 and its exact question-policy hash.
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
 preflight still prevents provider calls when neither proposal template can fund an entry; it does not hide closer
@@ -200,8 +211,9 @@ cycle's position management or recovery. No protection result is cached between 
 
 A quote side withdrawn by the provider retains its observed zero price and zero size in the source evidence. It
 supersedes the prior quote and excludes that candidate until a fresh two-sided quote arrives. It cannot authorize entry,
-pricing or liquidation, and a withdrawn required benchmark still blocks the snapshot. Negative, crossed and
-contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
+pricing or liquidation. Live Jev queries have no required benchmark; an independent momentum research query that
+explicitly requests a reference still requires that reference's valid data. Negative, crossed and contradictory
+quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
 schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
 rejection receipts cannot be relabeled as accepted evidence.
 

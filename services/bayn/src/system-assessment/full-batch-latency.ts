@@ -108,7 +108,7 @@ export const measureFullBatchLatency = (
       const missingBefore = missing.length
       const violationsBefore = violations.length
       const plan = decodeJevBatchPlan(batch.plan)
-      if (Result.isFailure(plan) || plan.success.schemaVersion !== JevBatchPlanVersion.V7) {
+      if (Result.isFailure(plan) || plan.success.schemaVersion !== JevBatchPlanVersion.V8) {
         violations.push(`INVALID_BATCH_PLAN:${batch.plan.batchId}`)
         continue
       }
