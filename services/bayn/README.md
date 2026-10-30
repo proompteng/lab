@@ -22,7 +22,8 @@ unchanged, and later equity attempts require a successful authoritative calendar
 
 A system-restricted, previously traded generation can enter settlement after an idle failure when every account
 mutation is resolved, all intents are terminal, no cycle remains active and a trusted position observation after the
-restriction proves the account flat. Recovery reuses the existing settled-account predicate and still requires a later
+restriction proves the account flat. Every retained decision must reproduce a completed cycle or a verified zero-target
+decision. Recovery reuses the existing settled-account predicate and still requires a later
 exact reconciliation before OBSERVE rollover. It preserves the plan and all trading history; capital reactivation
 continues through the existing mandate checks.
 
