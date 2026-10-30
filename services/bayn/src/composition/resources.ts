@@ -271,7 +271,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
         ),
     BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
-    WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
+    WriterFencedCycleStoreResourceLive.pipe(Layer.provide(executionPersistence)),
   ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 

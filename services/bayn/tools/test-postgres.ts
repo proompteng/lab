@@ -54,4 +54,9 @@ const run = (args: readonly string[]) => {
 }
 
 run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
-if (shard.startsWith('1/')) run(['src/shadow-decision.test.ts', '--test-name-pattern', 'migrated cycle guard'])
+if (shard.startsWith('1/'))
+  run([
+    'src/shadow-decision.test.ts',
+    '--test-name-pattern',
+    'migrated cycle guard|PostgreSQL entry binding and nested',
+  ])
