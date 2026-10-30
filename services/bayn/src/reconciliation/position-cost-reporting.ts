@@ -109,11 +109,35 @@ export const positionCostAnchor = (
   transactions: readonly AccountingTransaction[],
   accruals: readonly FeeAccrual[],
   observedAt: string,
+  fillExecutionTimes: ReadonlyMap<string, string>,
 ): ProjectedPosition['costBasisAnchor'] => {
   const native = transactions
     .filter((t) => t.accountId === accountId && t.symbol === position.symbol)
     .toSorted((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.transactionId.localeCompare(b.transactionId))
-  if (!position.symbol.includes('/')) return equityPositionCostAnchor(position, native, observedAt)
+  if (!position.symbol.includes('/')) {
+    let quantity = 0n
+    let cost = 0n
+    let firstOpen = 0
+    for (const [index, trade] of native.entries()) {
+      quantity += BigInt(trade.quantityDeltaAtoms)
+      cost += BigInt(trade.costBasisDeltaMicros)
+      // A flat millisecond boundary makes all earlier fill ordering irrelevant to the current average.
+      if (quantity === 0n && cost === 0n && native[index + 1]?.occurredAt !== trade.occurredAt) firstOpen = index + 1
+    }
+    const ordered = []
+    const timestamps = new Set<string>()
+    for (const trade of native.slice(firstOpen)) {
+      const at = fillExecutionTimes.get(trade.brokerEventId)
+      if (at === undefined || `${at.slice(0, 23)}Z` !== trade.occurredAt || timestamps.has(at)) return null
+      timestamps.add(at)
+      ordered.push({ trade, at })
+    }
+    return equityPositionCostAnchor(
+      position,
+      ordered.toSorted((a, b) => a.at.localeCompare(b.at)).map(({ trade }) => trade),
+      observedAt,
+    )
+  }
   const byId = new Map(native.map((trade) => [trade.transactionId, trade]))
   const cohorts = accruals
     .filter((a): a is CoinAccrual => a.kind === 'COIN' && a.accountId === accountId && a.symbol === position.symbol)

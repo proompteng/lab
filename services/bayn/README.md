@@ -63,6 +63,8 @@ reproduction, cost evidence and research limitations; this recovery does not est
 
 Equity position reporting replays the broker's intraday average rounded after each opening fill. Both reported
 average and cost basis must reproduce exactly from complete fill history and the unchanged native inventory cost.
+The replay uses immutable broker nanosecond timestamps, preserving execution order within a millisecond. Missing or
+ambiguous current-position timestamps cannot establish a reporting anchor. Prior flat positions do not affect it.
 A partial sale retains the entry average; closing the position resets it. An overnight position cannot use this
 intraday anchor. Crypto retains its verified coin-fee basis. Cash, quantities and posted ledger amounts remain exact;
 there is no cost-basis tolerance.

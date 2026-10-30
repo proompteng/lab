@@ -415,6 +415,7 @@ export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
+  readonly fillExecutionTimes: ReadonlyMap<string, string>
   readonly fees?: readonly import('../broker/alpaca/model').FeeActivity[]
   readonly brokerFeeAccruals: readonly FeeAccrual[]
   readonly cashReportingOffsetMicros: string
@@ -506,6 +507,7 @@ export const compareOpeningCash = (input: {
             input.transactions,
             input.brokerFeeAccruals,
             input.snapshot.positionsObservedAt,
+            input.fillExecutionTimes,
           ),
         })),
         expectedCashMicros,
