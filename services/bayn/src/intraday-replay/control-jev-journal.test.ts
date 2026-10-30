@@ -192,6 +192,37 @@ test('a durable pending claim forbids another call, expires once, and preserves 
     }),
   ))
 
+test.each([
+  ['malformed', {}],
+  ['different valid source', originalFixture.observation.payload],
+  ['changed observation time', { ...observation, observedAt: '2000-01-01T00:00:00.000Z' }],
+] as const)('batch reads revalidate stored observation bytes: %s', (_name, changed) =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      const path = `${directory}/observation-${plan.observationHash}.json`
+      yield* fs.writeFileString(path, JSON.stringify(changed))
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+      expect(Result.isFailure(yield* Effect.result(journal.batches.begin(plan, observation)))).toBeTrue()
+      yield* fs.writeFileString(path, JSON.stringify(observation))
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+    }),
+  ),
+)
+
+test('batch reads reject a missing stored observation even after an earlier successful read', () =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      yield* fs.remove(`${directory}/observation-${plan.observationHash}.json`)
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+    }),
+  ))
+
 test('terminal receipt and resolution are atomic, idempotent and reject conflicting evidence', () =>
   run(
     Effect.gen(function* () {

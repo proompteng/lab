@@ -8,6 +8,7 @@ import {
   JevCandidatePlanStatus,
   JevCandidateResultStatus,
   makeJevBatchResult,
+  type JevBatchPlan,
   type JevBatchResult,
 } from '../jev/batch'
 import { type JevBatchEvidence, JevBatchStore } from '../jev/batch-evaluation'
@@ -37,7 +38,7 @@ import {
   makeJevResolution,
   type JevEvaluationEvidence,
 } from '../jev/resolution'
-import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
+import { reproduceJevTradingSignalBatch, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -231,13 +232,21 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         if (observation.contentHash !== id) return yield* failure('Observation hash differs')
         return raw
       })
+    const readBatchSource = (decoded: JevBatchPlan) =>
+      Effect.gen(function* () {
+        const raw = yield* read('observation', decoded.observationHash)
+        if (raw === null) return yield* failure('Batch observation is missing')
+        // Reproduce the freshly read bytes once; the result proves both the source hash and batch identity.
+        const { observation, plan } = yield* Effect.fromResult(reproduceJevTradingSignalBatchEvidence(raw, decoded))
+        if (observation.contentHash !== decoded.observationHash) return yield* failure('Observation hash differs')
+        return plan
+      })
     const readBatch = (id: string): Effect.Effect<JevBatchEvidence | null, OperationalError> =>
       Effect.gen(function* () {
         const raw = yield* read('batch', id)
         if (raw === null) return null
         const decoded = yield* Effect.fromResult(decodeJevBatchPlan(raw))
-        const observation = yield* readObservation(decoded.observationHash)
-        const plan = yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, decoded))
+        const plan = yield* readBatchSource(decoded)
         if (plan.batchId !== id) return yield* failure('Batch identity differs')
         const rawResult = yield* read('batch-result', id)
         if (rawResult === null) return { plan, result: null }
@@ -280,8 +289,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             const decoded = yield* Effect.fromResult(decodeJevBatchPlan(raw))
             yield* Effect.fromResult(reproduceJevTradingSignalBatch(suppliedObservation, decoded))
             yield* recordObservation({ contentHash: decoded.observationHash, payload: suppliedObservation })
-            const observation = yield* readObservation(decoded.observationHash)
-            const plan = yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, decoded))
+            const plan = yield* readBatchSource(decoded)
             const saved = yield* readBatch(plan.batchId)
             if (saved !== null) return { ...saved, dispatches: [] }
             const claimedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
