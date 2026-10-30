@@ -363,6 +363,22 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               OR EXISTS (SELECT 1 FROM settled_cycles)
               OR (
                 generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+                AND EXISTS (
+                  SELECT 1 FROM intents AS intent
+                  JOIN mutation_events AS event ON event.intent_id = intent.intent_id
+                  WHERE intent.authority_generation_hash = generation.generation_hash
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM autonomous_cycles AS cycle
+                  WHERE cycle.account_id = generation.account_id
+                    AND cycle.state IN ('PENDING', 'ACTIVE')
+                )
+                AND observe_recovery_account_settled(
+                  generation.generation_hash, generation.account_id, ${input.observedAt}::timestamptz
+                )
+              )
+              OR (
+                generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
                 AND NOT EXISTS (
                   SELECT 1
                   FROM autonomous_cycle_shadow_decisions AS decision

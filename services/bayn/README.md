@@ -15,6 +15,17 @@ A rejected intent rolls back its decision binding. Broker submission starts afte
 the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
 mutation during persistence cannot change the approved intent identities or protection.
 
+Cycle discovery bounds the equity-calendar read to five seconds. Temporary transport, timeout, rate-limit and server
+failures exclude equity discovery for that attempt while continuous crypto discovery uses its own calendar. Fatal
+authentication, identity and malformed-response failures still stop discovery. The pass and inference deadlines remain
+unchanged, and later equity attempts require a successful authoritative calendar read.
+
+A system-restricted, previously traded generation can enter settlement after an idle failure when every account
+mutation is resolved, all intents are terminal, no cycle remains active and a trusted position observation after the
+restriction proves the account flat. Recovery reuses the existing settled-account predicate and still requires a later
+exact reconciliation before OBSERVE rollover. It preserves the plan and all trading history; capital reactivation
+continues through the existing mandate checks.
+
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
 snapshot, symbol, timestamp and exclusion check within the original inference window.
