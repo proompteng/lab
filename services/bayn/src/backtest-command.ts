@@ -244,43 +244,43 @@ const main = Effect.scoped(
         }),
       ),
     )
-    const passHash = yield* hashBacktestPassLog(passesPath)
-    const { reportHash: _reportHash, ...reportBody } = report
-    const material = {
-      ...reportBody,
-      executableSha256: sha256(yield* fs.readFile(yield* path.fromFileUrl(new URL(import.meta.url)))),
-      passLog: {
-        file: 'passes.ndjson.gz',
-        encoding: 'gzip-members-json-lines',
-        sha256: passHash,
-        records: report.schedule.passCount,
-      },
-    }
-    const output = yield* Effect.fromResult(
-      canonicalJsonV1Result({
-        ...material,
-        reportHash: yield* Effect.fromResult(canonicalHashV1Result(material)),
-      }),
-    )
-    yield* fs.writeFileString(path.join(args.outputPath, 'report.json'), `${output}\n`, { flag: 'wx' })
-    yield* print(
-      JSON.stringify({
-        runId: report.runId,
-        completion: report.completion,
-        instructionsHash: report.jevInstructions.contentHash,
-        providerDispatchCount: report.inference.providerDispatchCount,
-        retainedCallCount: report.inference.retainedCallCount,
-        reportPath: path.join(args.outputPath, 'report.json'),
-      }),
-    )
+    yield* Effect.gen(function* () {
+      const passHash = yield* hashBacktestPassLog(passesPath)
+      const { reportHash: _reportHash, ...reportBody } = report
+      const material = {
+        ...reportBody,
+        executableSha256: sha256(yield* fs.readFile(yield* path.fromFileUrl(new URL(import.meta.url)))),
+        passLog: {
+          file: 'passes.ndjson.gz',
+          encoding: 'gzip-members-json-lines',
+          sha256: passHash,
+          records: report.schedule.passCount,
+        },
+      }
+      const output = yield* Effect.fromResult(
+        canonicalJsonV1Result({
+          ...material,
+          reportHash: yield* Effect.fromResult(canonicalHashV1Result(material)),
+        }),
+      )
+      yield* fs.writeFileString(path.join(args.outputPath, 'report.json'), `${output}\n`, { flag: 'wx' })
+      yield* print(
+        JSON.stringify({
+          runId: report.runId,
+          completion: report.completion,
+          instructionsHash: report.jevInstructions.contentHash,
+          providerDispatchCount: report.inference.providerDispatchCount,
+          retainedCallCount: report.inference.retainedCallCount,
+          reportPath: path.join(args.outputPath, 'report.json'),
+        }),
+      )
+    }).pipe(Effect.withSpan('bayn.backtest.report-write'))
   }),
 )
-if (import.meta.main)
-  NodeRuntime.runMain(
-    main.pipe(
-      Effect.tapCause(Effect.logError),
-      // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns platform resources
-      Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([Logger.withConsoleError(Logger.formatJson)]))),
-    ),
-    { disableErrorReporting: true },
-  )
+export const backtestCommand = main.pipe(
+  Effect.tapCause(Effect.logError),
+  // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns platform resources
+  Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([Logger.withConsoleError(Logger.formatJson)]))),
+)
+
+if (import.meta.main) NodeRuntime.runMain(backtestCommand, { disableErrorReporting: true })

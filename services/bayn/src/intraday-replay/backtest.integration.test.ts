@@ -616,7 +616,7 @@ durableTest.each([
         const executablePath = `${directory}/backtest-command.js`
         const workerPath = `${directory}/latency-cli.js`
         yield* Effect.gen(function* () {
-          yield* writeCompiledReplayCommand(executablePath)
+          yield* writeCompiledReplayCommand(executablePath, `${import.meta.dir}/replay-phase-command.test-support.ts`)
           yield* writeCompiledReplayCommand(workerPath, `${import.meta.dir}/latency-cli.test-support.ts`)
         }).pipe(withLatencyCliPhase('compile'))
         const node = Bun.which('node')
