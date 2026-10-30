@@ -192,6 +192,10 @@ describe('impact router', () => {
     expect(plan.validationTargets).toEqual(['kubeconform'])
   })
 
+  test('routes the Bayn rendered secret-mode regression through schema validation', () => {
+    expect(selectImpactPlan(['scripts/test-bayn-secret-file-mode.sh'], map).validationTargets).toContain('kubeconform')
+  })
+
   test.each([
     'services/ofz/test-ha-manifests.sh',
     'services/ofz/tests/ha_manifests.py',

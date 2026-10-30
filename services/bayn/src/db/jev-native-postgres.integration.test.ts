@@ -76,7 +76,11 @@ import { makeExecutionCycleClosure, ExecutionCycleClosureStore } from './executi
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgres'
 import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
-import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
+import {
+  evaluateJevObservation,
+  evaluateJevObservationFromSnapshot,
+  evaluateJevPositionManagement,
+} from '../jev/runtime'
 import { JevExitReason, jevProfitTargetLimitFloors } from '../jev/exit'
 import { equityMarketProfile } from '../jev/markets'
 import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
@@ -1199,8 +1203,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Clock.currentTimeMillis.pipe(
               Effect.map((now) => {
                 const symbol = Schema.decodeUnknownSync(
-                  Schema.Struct({ state: Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }) }),
-                )(request).state.candidate.symbol
+                  Schema.Struct({ state: Schema.Struct({ symbol: Schema.String }) }),
+                )(request).state.symbol
                 calls.push(symbol)
                 return nativeJevInference(request, utcInstantFromEpochMillis(now), true)
               }),
@@ -1255,7 +1259,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ).toBe(true)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v30' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v33' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1269,7 +1273,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   })
 
   test.each([JevPurpose.Entry, JevPurpose.Manage])(
-    'stale benchmark trades wait without consuming the %s window or preventing fresh inference',
+    'stale benchmark quotes wait without consuming the %s window or preventing fresh inference',
     async (purpose) => {
       let calls = 0
       await runtime.runPromise(
@@ -1293,21 +1297,46 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
           }
           const query = selected.managed.snapshot.manifest
-          const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] }, premiums)
-          const snapshot = streamingFixtureFromRaw(
-            {
-              ...raw,
-              trades: raw.trades.map((trade) =>
-                trade.symbol === 'SPY' ? { ...trade, eventAt: utcInstantFromEpochMillis(atMs - 10_422) } : trade,
-              ),
-            },
-            query,
-          ).snapshot
-          const input = { ...nativeInput, portfolio, snapshot }
-          const result = yield* evaluateJevObservation(input).pipe(Effect.result)
+          const original = makeIntradayMomentumTestSnapshot(
+            fixture.protocol,
+            { ...query, archiveWatermarks: [] },
+            premiums,
+          )
+          const raw = {
+            ...original,
+            trades: original.trades.map((trade) =>
+              trade.symbol === 'SPY'
+                ? {
+                    ...trade,
+                    eventAt: utcInstantFromEpochMillis(atMs - 61_000),
+                    ingestedAt: utcInstantFromEpochMillis(atMs - 61_000),
+                  }
+                : trade,
+            ),
+          }
+          const loadSnapshot = Effect.try({
+            try: () =>
+              streamingFixtureFromRaw(
+                {
+                  ...raw,
+                  quotes: raw.quotes.map((quote) =>
+                    quote.symbol === 'SPY' ? { ...quote, eventAt: utcInstantFromEpochMillis(atMs - 10_422) } : quote,
+                  ),
+                },
+                query,
+              ).snapshot,
+            catch: (cause) => cause,
+          })
+          const input = { ...nativeInput, portfolio }
+          const result = yield* evaluateJevObservationFromSnapshot(
+            input,
+            query.rangeEndAt,
+            loadSnapshot,
+            JevBatchPlanVersion.V7,
+          ).pipe(Effect.result)
           expect(result).toMatchObject({
             _tag: 'Failure',
-            failure: { _tag: 'JevAwaitingEvidence', readiness: 'SNAPSHOT_STALE' },
+            failure: { _tag: 'IntradaySnapshotFailure', reason: 'freshness', facts: { symbol: 'SPY' } },
           })
           expect(calls).toBe(0)
           expect(yield* sql`SELECT count(*)::integer AS count FROM intraday_candidate_observations`).toEqual([
@@ -1328,25 +1357,29 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                   check: Effect.void,
                   verifyReference: fixtureStreamingReference,
                   loadSnapshot: (pricingQuery) =>
-                    Effect.succeed(
-                      pricingQuery.purpose === undefined
-                        ? snapshot
-                        : streamingFixtureFromRaw(
-                            makeIntradayMomentumTestSnapshot(
-                              fixture.protocol,
-                              { ...pricingQuery, archiveWatermarks: [] },
-                              { AAPL: 0.08 },
-                            ),
-                            pricingQuery,
-                          ).snapshot,
-                    ),
+                    pricingQuery.purpose === undefined
+                      ? loadSnapshot.pipe(Effect.orDie)
+                      : Effect.sync(
+                          () =>
+                            streamingFixtureFromRaw(
+                              makeIntradayMomentumTestSnapshot(
+                                fixture.protocol,
+                                { ...pricingQuery, archiveWatermarks: [] },
+                                { AAPL: 0.08 },
+                              ),
+                              pricingQuery,
+                            ).snapshot,
+                        ),
                 },
               }),
             ).toMatchObject({ _tag: 'Exit', target: { reason: JevExitReason.ProfitTarget } })
             expect(calls).toBe(0)
           }
           if (purpose === JevPurpose.Entry) {
-            const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
+            const recovered = yield* evaluateJevObservation({
+              ...input,
+              snapshot: streamingFixtureFromRaw(raw, query).snapshot,
+            })
             expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
             expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V7)
             expect(calls).toBe(15)
