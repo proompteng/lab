@@ -124,6 +124,7 @@ durableTest.each(
       'momentum-partial-exit-reentry',
       'fallback',
       'missing-benchmark',
+      'missing-candidate',
       'no-trade',
       'no-trade-with-excluded-source',
       'no-trade-finalization',
@@ -158,9 +159,10 @@ durableTest.each(
   async ({ scenario: mode }) => {
     const ablation = mode === 'ablation-fill'
     const momentum = mode.startsWith('momentum-')
-    const chartProvider: DecisionsClient['Service'] = momentum
-      ? { evaluate: () => Effect.die('Momentum must not dispatch chart provider requests') }
-      : chartProviderFixture
+    const chartProvider: DecisionsClient['Service'] =
+      momentum || mode === 'missing-candidate'
+        ? { evaluate: () => Effect.die('This scenario must not dispatch chart provider requests') }
+        : chartProviderFixture
     const scenario =
       mode === 'momentum-latency-valid'
         ? 'latency-stress-valid'
@@ -168,7 +170,7 @@ durableTest.each(
           ? 'latency-stress-expired'
           : mode === 'momentum-partial-exit-reentry'
             ? 'partial-exit-reentry'
-            : ablation || momentum
+            : ablation || momentum || mode === 'missing-benchmark'
               ? 'fill'
               : mode
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
@@ -702,19 +704,31 @@ durableTest.each(
             },
           },
           source,
-          cursor: Effect.sync(() =>
-            scenario === 'missing-benchmark'
-              ? {
-                  ...cursor,
-                  projection: {
-                    ...cursor.projection,
-                    bars: new Map([...cursor.projection.bars].filter(([symbol]) => symbol !== 'SPY')),
-                  },
-                }
-              : scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
-                ? { ...cursor, projection: { ...cursor.projection, quoteHistory: new Map() } }
-                : cursor,
-          ),
+          cursor: Effect.sync(() => {
+            if (mode === 'missing-benchmark' || mode === 'missing-candidate') {
+              const bars = new Map(
+                [...cursor.projection.bars].filter(([symbol]) =>
+                  mode === 'missing-benchmark'
+                    ? symbol !== 'SPY'
+                    : !eligibleEntrySymbols.some((candidate) => candidate === symbol),
+                ),
+              )
+              if (mode === 'missing-benchmark') {
+                expect(bars.has('SPY')).toBe(false)
+                expect(bars.get('AAPL')).toEqual(cursor.projection.bars.get('AAPL'))
+              } else expect(eligibleEntrySymbols.some((symbol) => bars.has(symbol))).toBe(false)
+              return {
+                ...cursor,
+                projection: {
+                  ...cursor.projection,
+                  bars,
+                },
+              }
+            }
+            return scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
+              ? { ...cursor, projection: { ...cursor.projection, quoteHistory: new Map() } }
+              : cursor
+          }),
           clock,
           currentUtcInstant: Effect.gen(function* () {
             if (restingDayLifecycle) {
@@ -1218,7 +1232,7 @@ durableTest.each(
           return { _tag: 'Coverage' as const }
         }
         if (
-          scenario === 'missing-benchmark' ||
+          scenario === 'missing-candidate' ||
           scenario === 'no-trade' ||
           scenario === 'no-trade-with-excluded-source' ||
           scenario === 'failed-model-response'
@@ -1240,6 +1254,16 @@ durableTest.each(
           expect(schedule.failedPassCount).toBe(0)
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
+          if (scenario === 'missing-candidate') {
+            expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
+            expect(
+              yield* sql`SELECT
+              (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
+              (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,
+              (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${accountId}) AS transactions
+            `,
+            ).toEqual([{ intents: 0, fills: 0, transactions: 0 }])
+          }
           const assessment = assessBacktestSession({
             finalWindow: true,
             ...schedule,
@@ -2034,7 +2058,7 @@ durableTest.each(
         Effect.provideService(JevClient, {
           evaluate: (raw) =>
             Effect.gen(function* () {
-              if (ablation || momentum)
+              if (ablation || momentum || mode === 'missing-candidate')
                 return yield* Effect.die('This control must not dispatch a Jev provider request')
               const started = yield* Clock.currentTimeMillis
               const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
