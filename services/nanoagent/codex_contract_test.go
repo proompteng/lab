@@ -429,6 +429,12 @@ stream_max_retries = 0
 					if _, err := supervisor.call(ctx, "turn/interrupt", nextInterrupt); err != nil {
 						t.Fatal("interrupt restarted native turn", err)
 					}
+					for supervisor.terminalStatus(thread.Thread.ID, nextTurn.Turn.ID, next.generation.id) != "interrupted" {
+						if ctx.Err() != nil {
+							t.Fatal("restarted native turn cancellation was not durably recorded")
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
 					return
 				case <-ctx.Done():
 					t.Fatal("turn interrupted but its model request was not cancelled")
