@@ -15,6 +15,7 @@ import {
 } from '../strategy/intraday-market'
 import { JevContractError, jevModel } from './contract'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
+import { stagedChartQuestionPolicy as retainedFilteredChartQuestionPolicy } from './retained-filtered-staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 import { retainedMarketEntryJudgmentPolicy } from './retained-market-entry-questions'
 
@@ -22,7 +23,7 @@ const entryQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: entryJudgmentPolicy }),
 )
 const retainedMarketQuestionPolicyHash = Result.getOrThrow(
-  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: retainedMarketEntryJudgmentPolicy }),
+  canonicalHashV1Result({ chart: retainedFilteredChartQuestionPolicy, jev: retainedMarketEntryJudgmentPolicy }),
 )
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
@@ -62,7 +63,7 @@ const protocolFields = (entryQuestionPolicyHash: string) => ({
 
 const CurrentProtocol = Schema.Struct({
   ...protocolFields(entryQuestionPolicyHash),
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v32'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v33'),
   lookbackMinutes: Schema.Struct({
     equity: Schema.Literal(marketHistoryMinutes[MarketKind.Equity]),
     crypto: Schema.Literal(marketHistoryMinutes[MarketKind.Crypto]),
@@ -179,11 +180,26 @@ export const RetainedJevProtocolV31Schema = Schema.Struct({
   ),
 )
 
+export const RetainedJevProtocolV32Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  ...protocolFields('c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v32'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+    ),
+  ),
+)
+
 export type JevProtocol = typeof JevProtocolSchema.Type
 export type JevProtocolMaterial =
   | JevProtocol
   | typeof RetainedJevProtocolV30Schema.Type
   | typeof RetainedJevProtocolV31Schema.Type
+  | typeof RetainedJevProtocolV32Schema.Type
   | (Omit<JevProtocol, 'schemaVersion' | 'lookbackMinutes'> & {
       readonly lookbackMinutes: 30
       readonly schemaVersion:
@@ -196,7 +212,7 @@ export type JevProtocolMaterial =
     })
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v32',
+  schemaVersion: 'bayn.jev.protocol.v33',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',

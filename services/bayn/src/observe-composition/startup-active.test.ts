@@ -20,12 +20,12 @@ const prepare = (strategy: StrategyRuntime) =>
   })
 
 test('autonomous startup admits the exact source-selected model trade-plan identity', () => {
-  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v32')
+  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v33')
   const result = Result.getOrThrow(prepare(fixtureRuntime))
   expect(result.strategyProtocolHash).toBe(
     Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
   )
-  expect(result.strategyProtocolHash).toBe('b59f2f378bd0a5ccd8db33883ea77fd6fe5c6c3d9f1d646519973b63710d9f3a')
+  expect(result.strategyProtocolHash).toBe('1570690c9b638b3c053905da52ac5ab89f24db8166f55a3c9eac9fd8be18f765')
 })
 
 test('rejects retired Jev protocols at the only active protocol boundary', () => {

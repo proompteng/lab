@@ -271,10 +271,15 @@ export const stagedCheckpointFixture = (
     readonly request: EntryInferenceMaterial
   },
   at = request.observedAt,
+  stages = { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest },
 ): StagedCheckpoint => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const initial = Result.getOrThrow(
-    makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
+    stages.makeInitialChartStageRequest({
+      chart,
+      protocol: request.request.protocol,
+      funding: request.request.funding,
+    }),
   )
   const claim = Result.getOrThrow(
     makeStagedDispatchClaim({
@@ -300,7 +305,7 @@ export const stagedCheckpointFixture = (
     }),
   )
   const next = Result.getOrThrow(
-    makeSelectedBaseStartStageRequest(
+    stages.makeSelectedBaseStartStageRequest(
       { chart, protocol: request.request.protocol, funding: request.request.funding },
       stageResponseIdentity(visual),
     ),
