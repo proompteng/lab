@@ -108,6 +108,13 @@ Source and sink checkpoint IDs, consumer offsets, replication quorum and synchro
 Acceptance requires current quotes within Bayn's existing age limit, a draining retained backlog and successful
 checkpoints; a running Flink job is insufficient.
 
+The quote archive retains a withdrawn side when its price and size are both zero. Such rows carry their original
+Kafka coordinates and timestamps so an archived partition prefix covers the same source records as a live snapshot.
+Negative, non-finite and crossed prices, negative sizes, and a zero price with nonzero size remain invalid.
+A retained withdrawal does not provide an executable bid or ask; Bayn continues to exclude it from entry pricing.
+Previously discarded withdrawals require recovery from their original retained Kafka records before historical
+archive coverage can be claimed. Updating the writer alone does not repair those gaps.
+
 ## Rolling feature branch
 
 Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. It requires the existing

@@ -582,7 +582,12 @@ internal fun decodeArchiveQuote(
   require(listOf(payload.bp, payload.bs, payload.ap, payload.`as`).all { it.isFinite() }) {
     "quote prices and sizes must be finite"
   }
-  require(payload.bp > 0 && payload.ap > 0 && payload.bp <= payload.ap) { "quote market must be positive and uncrossed" }
+  require(payload.bp >= 0 && payload.ap >= 0 && (payload.bp == 0.0 || payload.ap == 0.0 || payload.bp <= payload.ap)) {
+    "quote prices must be non-negative and uncrossed"
+  }
+  require((payload.bp > 0 || payload.bs == 0.0) && (payload.ap > 0 || payload.`as` == 0.0)) {
+    "withdrawn quote sides must have zero size"
+  }
   require(payload.bs >= 0 && payload.`as` >= 0) { "quote sizes must be non-negative" }
   return IntradayQuoteRecord(
     provider = "alpaca",
