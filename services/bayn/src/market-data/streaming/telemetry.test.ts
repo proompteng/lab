@@ -14,6 +14,45 @@ import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { validateBarCoverage, validateBarStructure } from '../intraday/verification'
 import { selectStreamingInputs } from './inputs'
 import { RequiredMarketFeatureSchema } from '../features/contract'
+import { cryptoMomentumFixture } from '../../testing/crypto-market-fixture'
+import { snapshotReadiness, DecisionReadinessReason } from '../../cycle/runner/readiness'
+
+test.each(['absent', 'arrived after observation', 'feature absent'])(
+  'required benchmark diagnostics retain the rejected symbol and window when evidence is %s',
+  (scenario) => {
+    const { cut, query } = cryptoMomentumFixture()
+    const symbol = query.benchmarkSymbols?.[0]
+    if (symbol === undefined) throw new Error('Fixture must require benchmark evidence')
+    expect(Result.isSuccess(selectStreamingInputs(cut.projection, query))).toBe(true)
+    const bars = new Map(cut.projection.bars)
+    const features = new Map(cut.projection.features)
+    if (scenario === 'feature absent') features.delete(symbol)
+    else
+      bars.set(
+        symbol,
+        (bars.get(symbol) ?? []).flatMap((entry) => {
+          if (Date.parse(entry.value.eventAt) !== Date.parse(query.rangeEndAt) - 60_000) return [entry]
+          return scenario === 'absent' ? [] : [{ ...entry, availableAtMs: Date.parse(query.observedAt) + 1 }]
+        }),
+      )
+    const projection = { ...cut.projection, bars, features }
+    const result = selectStreamingInputs(projection, query)
+    if (Result.isSuccess(result)) throw new Error('Unavailable benchmark evidence must reject the observation')
+    expect(result.failure.reason).toBe('not-ready')
+    expect(result.failure.facts).toEqual({ symbol, eventAt: query.rangeEndAt })
+    expect(snapshotFailureMeasurement(result.failure, query, projection)).toMatchObject({
+      symbol,
+      eventAt: query.rangeEndAt,
+      inputFailure: 'not-ready',
+      candidateCoverage: null,
+    })
+    expect(snapshotReadiness(result.failure)).toMatchObject({
+      reason: DecisionReadinessReason.SnapshotUnavailable,
+      symbol,
+      eventAt: query.rangeEndAt,
+    })
+  },
+)
 
 test.each(['absent', 'arrived after observation'])(
   'a required feature rejection identifies the minute bar %s at the rejected cut',
