@@ -4,7 +4,7 @@ import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Button, Input, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import {
   accessCommandSchema,
@@ -14,7 +14,7 @@ import {
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
 import {
   Action,
   ExecuteCommandResponseSchema,
@@ -24,6 +24,7 @@ import {
   type ReadAuditResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 import { ServicePolicyPanel } from './service-policy-panel'
+import { SettingsSelect } from './settings-select'
 
 type AccessView = 'workspace' | 'platform' | 'audit'
 type View = AccessView | 'policies'
@@ -122,11 +123,12 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const readError = current?.kind === 'error' ? current.message : ''
   const loading = active && view !== 'policies' && (!current || current.kind === 'loading')
   const viewTitle = view === 'audit' ? 'Audit log' : view === 'platform' ? 'Platform access' : 'Workspace access'
-  const [error, setError] = useState('')
+  const [error, setError] = useState<Error>()
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<AccessCommand>()
   const [credential, setCredential] = useState('')
   const [receipt, setReceipt] = useState('')
+  const needsVerification = error instanceof PasskeyRequiredError
   const formId = useId()
   const form = useForm<Form>({
     resolver: zodResolver(formSchema),
@@ -170,7 +172,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       const query = new URLSearchParams({ view })
       if (cursor) query.set('cursor', cursor)
       if (view === 'workspace' && workspaceUid) query.set('workspace', workspaceUid)
-      setError('')
+      setError(undefined)
       try {
         const response = await fetch(`/api/tengri/access?${query}`, { cache: 'no-store', signal: controller.signal })
         const json = z.json().parse(await response.json())
@@ -202,7 +204,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   }, [active, load, receipt])
   const execute = async (input: AccessCommand) => {
     setBusy(true)
-    setError('')
+    setError(undefined)
     setCredential('')
     setPending(input)
     try {
@@ -214,7 +216,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       const json = z.json().parse(await response.json())
       if (!response.ok) {
         if (response.status < 500) setPending(undefined)
-        if (response.status === 428) throw new Error('Verify with your passkey, then repeat this change.')
+        if (response.status === 428) throw new PasskeyRequiredError()
         throw new Error(errorMessage(json))
       }
       const result = fromJson(ExecuteCommandResponseSchema, json).receipt
@@ -223,7 +225,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       setCredential(result.agentCredential)
       setPending(undefined)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Change could not be confirmed. Retry the pending change.')
+      setError(cause instanceof Error ? cause : new Error('Change could not be confirmed. Retry the pending change.'))
     } finally {
       setBusy(false)
     }
@@ -332,7 +334,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       ) : null}
     </div>
   )
-  const selectClass =
+  const textareaClass =
     'rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-100 focus-visible:outline-2 focus-visible:outline-zinc-400'
   return (
     <Tabs
@@ -341,28 +343,20 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
         if (value === 'workspace' || value === 'platform' || value === 'audit' || value === 'policies') setView(value)
       }}
       render={<section aria-label="Access administration" />}
-      className="gap-4 text-zinc-200"
+      className="min-w-0 gap-4 text-zinc-200"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <TabsList
-          activateOnFocus
-          aria-label="Access view"
-          className="h-auto min-h-9 max-w-full flex-wrap border border-white/10 bg-zinc-950/40 p-0.5"
-        >
+        <TabsList activateOnFocus aria-label="Access view" className="max-w-full justify-start overflow-x-auto">
           {(['workspace', 'platform', 'audit', 'policies'] as const)
             .filter((item) => item !== 'workspace' || workspaceUid)
             .map((item) => (
-              <TabsTrigger
-                key={item}
-                value={item}
-                className="min-w-20 px-3 text-[13px] text-zinc-400 data-active:bg-zinc-600 data-active:text-white data-active:shadow-sm dark:data-active:bg-zinc-600"
-              >
+              <TabsTrigger key={item} value={item} className="shrink-0 px-2.5">
                 {item === 'workspace'
                   ? 'Workspace'
                   : item === 'platform'
                     ? 'Platform'
                     : item === 'policies'
-                      ? 'Service policies'
+                      ? 'Service access'
                       : 'Audit'}
               </TabsTrigger>
             ))}
@@ -372,17 +366,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
             Refresh
           </Button>
         ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={busy || Boolean(pending)}
-          onClick={() =>
-            void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
-          }
-        >
-          Verify passkey
-        </Button>
       </div>
       <TabsContent key={accessView} value={accessView} className="space-y-4" aria-busy={loading}>
         <h2 className="text-[13px] font-medium">{viewTitle}</h2>
@@ -405,7 +388,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
         </p>
         {error || readError ? (
           <p role="alert" className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-200">
-            {error || readError}
+            {error?.message || readError}
           </p>
         ) : null}
         {pending ? (
@@ -527,28 +510,28 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 <legend className="mb-2 text-sm font-medium">Change access</legend>
                 <label className="flex items-center gap-2 text-xs">
                   Change
-                  <select
-                    aria-label="Change"
-                    className={selectClass}
-                    {...form.register('action')}
-                    onChange={(event) => {
-                      const next = z.enum(actions).parse(event.target.value)
-                      form.setValue('action', next)
-                      form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
-
-                      if (['grant', 'emergency'].includes(next))
-                        form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
-                    }}
-                  >
-                    {(view === 'workspace'
-                      ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
-                      : ['membership', 'quota']
-                    ).map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  <Controller
+                    name="action"
+                    control={form.control}
+                    render={({ field }) => (
+                      <SettingsSelect
+                        {...field}
+                        aria-label="Change"
+                        disabled={busy || Boolean(pending)}
+                        onValueChange={(value) => {
+                          const next = z.enum(actions).parse(value)
+                          field.onChange(next)
+                          form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
+                          if (['grant', 'emergency'].includes(next))
+                            form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
+                        }}
+                        options={(view === 'workspace'
+                          ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
+                          : ['membership', 'quota']
+                        ).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))}
+                      />
+                    )}
+                  />
                 </label>
                 {['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(action)
                   ? field(
@@ -560,14 +543,22 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 {['membership', 'collaborator'].includes(action) ? (
                   <label className="flex items-center gap-2 text-xs">
                     Role
-                    <select aria-label="Role" {...form.register('role')} className={selectClass}>
-                      {(action === 'membership'
-                        ? ['member', 'administrator', 'auditor', 'operator']
-                        : ['developer', 'viewer']
-                      ).map((role) => (
-                        <option key={role}>{role}</option>
-                      ))}
-                    </select>
+                    <Controller
+                      name="role"
+                      control={form.control}
+                      render={({ field }) => (
+                        <SettingsSelect
+                          {...field}
+                          aria-label="Role"
+                          disabled={busy || Boolean(pending)}
+                          onValueChange={field.onChange}
+                          options={(action === 'membership'
+                            ? ['member', 'administrator', 'auditor', 'operator']
+                            : ['developer', 'viewer']
+                          ).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))}
+                        />
+                      )}
+                    />
                   </label>
                 ) : null}
                 {['membership', 'collaborator'].includes(action) ? (
@@ -645,7 +636,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                           rows={2}
                           aria-invalid={Boolean(form.formState.errors[name])}
                           aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
-                          className={`${selectClass} block w-full`}
+                          className={`${textareaClass} block w-full`}
                           placeholder="One approved target per line"
                         />
                         {form.formState.errors[name] ? (
@@ -722,8 +713,20 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     {form.formState.errors.root.server.message}
                   </p>
                 ) : null}
-                <Button type="submit" size="sm">
-                  {busy ? 'Applying…' : 'Apply change'}
+                <Button
+                  type={needsVerification ? 'button' : 'submit'}
+                  size="sm"
+                  disabled={busy}
+                  onClick={
+                    needsVerification
+                      ? () =>
+                          void startTengriSignIn('step-up').catch(() =>
+                            setError(new PasskeyRequiredError('Verification could not start. Try again.')),
+                          )
+                      : undefined
+                  }
+                >
+                  {busy ? 'Applying…' : needsVerification ? 'Verify identity' : 'Apply change'}
                 </Button>
               </fieldset>
             </form>
