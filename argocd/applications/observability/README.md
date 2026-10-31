@@ -187,6 +187,10 @@ removed to reduce recurring cardinality. See the [alert delivery RCA](../../../d
 Apply a fallback configuration update before a separately
 reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
 
+Ceph host read-latency incidents have a dedicated route with ten-second first delivery, fifteen-minute updates and
+four-hour repeats. Their stable node identity and ten-minute recovery hold avoid OSD membership churn while the
+annotations retain individual OSD latencies. Other critical Ceph alerts keep the general critical route.
+
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
 and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace

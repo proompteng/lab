@@ -210,7 +210,7 @@ test('critical Ceph alerts opt into the configured email route', () => {
   expect(criticalRules.map((rule) => rule.alert)).toEqual([
     'CephClusterHealthError',
     'CephSlowOps',
-    'CephOsdReadLatencyHigh',
+    'CephHostReadLatencyHigh',
     'CephOsdCommitLatencyCritical',
   ])
 
@@ -219,7 +219,7 @@ test('critical Ceph alerts opt into the configured email route', () => {
   )
   const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
   const emailRoute = alertmanager.route.routes.find(
-    (route: { receiver: string }) => route.receiver === 'critical-email',
+    (route: { matchers: string[] }) => route.matchers.length === 2 && route.matchers.includes('severity = "critical"'),
   )
   expect(emailRoute.matchers).toEqual(['severity = "critical"', 'notify = "email"'])
   const emailReceiver = alertmanager.receivers.find(
@@ -227,6 +227,28 @@ test('critical Ceph alerts opt into the configured email route', () => {
   )
   expect(emailReceiver.email_configs).toHaveLength(1)
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
+})
+
+test('Ceph host read latency uses its host-grouped route before the general critical route', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const config = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  expect(config.route.routes[0]).toEqual({
+    receiver: 'critical-email',
+    matchers: ['alertname = "CephHostReadLatencyHigh"', 'severity = "critical"', 'notify = "email"'],
+    group_by: ['alertname', 'service', 'node'],
+    group_wait: '10s',
+    group_interval: '15m',
+    repeat_interval: '4h',
+    continue: false,
+  })
+  expect(config.route.routes[1]).toMatchObject({
+    matchers: ['severity = "critical"', 'notify = "email"'],
+    group_wait: '10s',
+    group_interval: '5m',
+    repeat_interval: '1h',
+  })
 })
 
 test('warnings require explicit email opt-in and use the existing receiver with a four-hour repeat', () => {
