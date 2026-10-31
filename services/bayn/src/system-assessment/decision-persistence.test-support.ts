@@ -21,13 +21,7 @@ export const makePersistenceDocumentFixture = (accountId: string) =>
     const native = nativeJevFixture(JevPurpose.Entry, undefined, accountId)
     const evidence = nativeJevDecisionEvidence(native)
     const target = Result.getOrThrow(decideJevEntry(evidence))
-    const {
-      candidateEvidencePolicy: _candidates,
-      benchmarkEvidencePolicy: _benchmarks,
-      candidateSymbols: _symbols,
-      benchmarkSymbols: _benchmarkSymbols,
-      ...query
-    } = native.query
+    const { candidateEvidencePolicy: _candidates, candidateSymbols: _symbols, ...query } = native.query
     const pricing = streamingFixtureFromRaw(native.snapshot, {
       ...query,
       observedAt: target.decidedAt,
@@ -83,13 +77,7 @@ export const cryptoPersistenceDocumentFixture = Effect.gen(function* () {
   )
   const native = { protocol, portfolio, draft, observation, snapshot }
   const evidence = nativeJevDecisionEvidence(native)
-  const {
-    candidateSymbols: _candidates,
-    candidateEvidencePolicy: _policy,
-    benchmarkSymbols: _benchmarks,
-    benchmarkEvidencePolicy: _benchmarkPolicy,
-    ...pricingQuery
-  } = query
+  const { candidateSymbols: _candidates, candidateEvidencePolicy: _policy, ...pricingQuery } = query
   const pricing = Result.getOrThrow(
     constructStreamingSnapshot(cut, {
       ...pricingQuery,

@@ -186,7 +186,7 @@ const plan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
@@ -214,7 +214,7 @@ const excludedPlan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: excludedFixture.observation.payload,
     expiresAt: plan.expiresAt,
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const first = requested[0]
@@ -383,7 +383,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         )
         const input = { observation: observation.payload, expiresAt: plan.expiresAt }
         const candidate = yield* Effect.fromResult(
-          makeJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V7 }),
+          makeJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
         )
         const ablation = yield* Effect.fromResult(
           makeJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.Ablation }),
@@ -641,7 +641,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         if (saved.result === null) throw new Error('Expired claims were not finalized')
         expect(
           Result.isFailure(
-            usableEntryBatchInferences(plan, saved.result, Date.parse(plan.expiresAt), JevBatchPlanVersion.V7),
+            usableEntryBatchInferences(plan, saved.result, Date.parse(plan.expiresAt), JevBatchPlanVersion.V8),
           ),
         ).toBe(true)
       }).pipe(
@@ -713,7 +713,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* Clock.currentTimeMillis).toBe(observed + commits * 2000)
         expect(
           Result.getOrThrow(
-            usableEntryBatchInferences(plan, saved.result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V7),
+            usableEntryBatchInferences(plan, saved.result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V8),
           ),
         ).toHaveLength(requested.length)
         expect(plan.expiresAt).toBe(utcInstantFromEpochMillis(observed + 10000))
@@ -741,7 +741,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           WHERE request.cycle_id=${plan.cycleId}`
         expect(proof).toEqual({ receipts: requested.length, shares_completion: true })
         expect(
-          Result.getOrThrow(usableEntryBatchInferences(plan, stored.result, observed, JevBatchPlanVersion.V7)),
+          Result.getOrThrow(usableEntryBatchInferences(plan, stored.result, observed, JevBatchPlanVersion.V8)),
         ).toHaveLength(requested.length)
         expect(yield* evaluateJevBatch(plan, fixture.observation.payload)).toEqual(stored)
         expect(calls).toBe(requested.length)
@@ -1174,7 +1174,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       makeJevTradingSignalBatch({
         observation: foreignObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     const foreignFirst = foreignPlan.candidates.find(
@@ -1266,14 +1266,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       makeJevTradingSignalBatch({
         observation: nextObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     const foreignPlan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: foreignObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     await runtime.runPromise(
@@ -1316,7 +1316,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  for (const planVersion of [JevBatchPlanVersion.V7]) {
+  for (const planVersion of [JevBatchPlanVersion.V8]) {
     test(`persists ${planVersion} under the expanded database constraint`, async () => {
       const { batchId: _, ...material } = plan
       const versioned = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: planVersion }))
@@ -1404,7 +1404,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(result.completedAt).toBe(utcInstantFromEpochMillis(observed + 4_700))
         expect(
           Result.getOrThrow(
-            usableEntryBatchInferences(plan, result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V7),
+            usableEntryBatchInferences(plan, result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V8),
           ),
         ).toHaveLength(requested.length)
       }).pipe(atObservation),
@@ -1503,7 +1503,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             makeJevTradingSignalBatch({
               observation: fixture.observation.payload,
               expiresAt: utcInstantFromEpochMillis(observed + 6000),
-              planVersion: JevBatchPlanVersion.V7,
+              planVersion: JevBatchPlanVersion.V8,
             }),
           ),
         ).toBe(true)
@@ -1572,7 +1572,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
               plan,
               result,
               observed + fixture.protocol.inferenceValidityMs,
-              JevBatchPlanVersion.V7,
+              JevBatchPlanVersion.V8,
             ),
           ),
         ).toBe(true)
@@ -1814,7 +1814,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         if (saved === null || saved.result === null) throw new Error('Committed receipts did not finalize')
         for (const result of finalized) expect(result).toEqual(saved)
         expect(
-          Result.getOrThrow(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V7)),
+          Result.getOrThrow(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V8)),
         ).toHaveLength(requested.length)
         expect(yield* sql`SELECT result_hash FROM jev_batch_results`).toEqual([
           { result_hash: saved.result.resultHash },
@@ -2069,7 +2069,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         if (saved.result === null) throw new Error('Committed approvals lost their batch result')
         expect(
           Result.isSuccess(
-            usableEntryBatchInferences(plan, saved.result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V7),
+            usableEntryBatchInferences(plan, saved.result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V8),
           ),
         ).toBe(true)
         expect(yield* store.read(plan.batchId)).toEqual(saved)
@@ -2094,7 +2094,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(saved.result.completedAt).toBe(plan.observedAt)
         expect(
           Result.isFailure(
-            usableEntryBatchInferences(plan, saved.result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V7),
+            usableEntryBatchInferences(plan, saved.result, yield* Clock.currentTimeMillis, JevBatchPlanVersion.V8),
           ),
         ).toBe(true)
         expect(yield* store.read(plan.batchId)).toEqual(saved)
@@ -2277,7 +2277,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                 plan,
                 saved.result,
                 observed + fixture.protocol.inferenceValidityMs,
-                JevBatchPlanVersion.V7,
+                JevBatchPlanVersion.V8,
               ),
             ),
           ).toBe(true)

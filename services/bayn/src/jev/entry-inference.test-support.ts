@@ -40,10 +40,10 @@ export const entryEvaluationRequestFixture = (
   const prepared = Result.getOrThrow(
     prepareEntryInferenceInput({
       ...(selectionPolicy === undefined
-        ? { schemaVersion: 'bayn.entry-inference-input.v6' }
+        ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v22',
+        schemaVersion: 'bayn.jev-entry-state.v23',
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol, bars1m: bars },
         session: { completedBarWindowEndsAt: windowEndAt },

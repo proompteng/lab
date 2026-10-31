@@ -1,3 +1,5 @@
+import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
+import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
 import observedResistance from '../../migrations/0165_observed_resistance'
 import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
 import jevObservationWindowIndex from '../../migrations/0163_jev_observation_window_index'
@@ -169,6 +171,8 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 export const migrationLoader = PgMigrator.fromRecord({
   '164_focused_entry_evidence': focusedEntryEvidence,
   '165_observed_resistance': observedResistance,
+  '166_candidate_entry_evidence': candidateEntryEvidence,
+  '167_chart_structure_before_funding': chartStructureBeforeFunding,
   '163_jev_observation_window_index': jevObservationWindowIndex,
   '160_crypto_quote_evidence': cryptoQuoteEvidence,
   '161_crypto_history_context': cryptoHistoryContext,

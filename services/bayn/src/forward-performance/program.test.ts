@@ -724,7 +724,8 @@ describe('forward performance read program', () => {
       let expenseGeneration: string | undefined
       const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
       const readers: ForwardPerformanceReaders = {
-        inferenceExpenses: (_config, _sql, _accountId, generation, fence) => {
+        inferenceExpenses: () => Effect.succeed([]),
+        inferenceExpenseSnapshots: (_sql, _accountId, generation, fence) => {
           expenseWriterFence = fence
           expenseGeneration = generation
           return Effect.succeed([])
@@ -956,6 +957,7 @@ describe('forward performance read program', () => {
       recordedAt: '2026-09-18T16:00:00.000Z',
     }))
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenseSnapshots: () => Effect.succeed([]),
       inferenceExpenses: () => Effect.succeed([]),
       marketVolume: () => Effect.succeed([]),
       postgres: () =>
@@ -1042,7 +1044,7 @@ describe('forward performance read program', () => {
     expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
-  test('keeps performance and expense reads on one cut when new work commits between them', async () => {
+  test('captures one cut and releases its transaction before expense verification', async () => {
     const sql = makeReadOnlySql({ statements: [] })
     let committedCut = 1
     let snapshotCut: number | undefined
@@ -1077,9 +1079,15 @@ describe('forward performance read program', () => {
           committedCut++
           return []
         }),
-      inferenceExpenses: () =>
+      inferenceExpenseSnapshots: () =>
         Effect.sync(() => {
           expenseCut = snapshotCut ?? committedCut
+          return []
+        }),
+      inferenceExpenses: (_config, _sql, _accountId, snapshots) =>
+        Effect.sync(() => {
+          expect(snapshotCut).toBeUndefined()
+          expect(snapshots).toEqual([])
           return []
         }),
       ledger: () =>
@@ -1203,6 +1211,7 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation, { extraReconciliationDiscrepancy: true })
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenseSnapshots: () => Effect.succeed([]),
       inferenceExpenses: () => Effect.succeed([]),
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
@@ -1275,6 +1284,7 @@ describe('forward performance read program', () => {
     if (marketVolumeEvidence === undefined) throw new Error('market-volume fixture failed')
     let observedMarketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[] | undefined
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenseSnapshots: () => Effect.succeed([]),
       inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({

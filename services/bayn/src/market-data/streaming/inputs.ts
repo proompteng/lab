@@ -190,7 +190,11 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
           !bars.some((bar) => intradayInstantNanos(bar.value.eventAt) === end - 60_000_000_000n))
       )
         return yield* Result.fail(
-          failure('not-ready', `Required completed-bar benchmark is unavailable for ${symbol}`, { symbol }),
+          new IntradaySnapshotFailure({
+            reason: 'not-ready',
+            message: `Required completed-bar benchmark is unavailable for ${symbol}`,
+            facts: { symbol, eventAt: request.rangeEndAt },
+          }),
         )
       if (selected !== undefined) featureReceipts.push(selected)
       else if (candidates.has(symbol)) {

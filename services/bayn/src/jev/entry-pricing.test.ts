@@ -39,7 +39,7 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const decision = Result.getOrThrow(
@@ -253,7 +253,7 @@ describe('Jev entry execution quote eligibility', () => {
         calls.snapshots += 1
         return fixture.snapshot
       }),
-      JevBatchPlanVersion.V7,
+      JevBatchPlanVersion.V8,
     ).pipe(
       Effect.flatMap(({ snapshot, evidence }) =>
         Effect.fromResult(decideJevEntry(evidence)).pipe(

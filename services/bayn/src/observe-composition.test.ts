@@ -5120,7 +5120,7 @@ describe('OBSERVE runtime composition', () => {
   test('binds a native Jev entry to its full signal batch and independent execution pricing', async () => {
     const fixture = await executionLifecycleFixture()
     expect(fixture.snapshotRequests).toHaveLength(2)
-    expect(fixture.snapshotRequests[0]).toMatchObject({ symbols: equityMarketProfile.universe })
+    expect(fixture.snapshotRequests[0]).toMatchObject({ symbols: equityMarketProfile.candidateSymbols })
     expect(fixture.snapshotRequests[1]).toMatchObject({
       symbols: ['NVDA'],
       purpose: IntradaySnapshotPurpose.EntryPricing,
@@ -5132,7 +5132,7 @@ describe('OBSERVE runtime composition', () => {
         strategyName: 'jev',
         accountId,
         cycleId: cycle.identity.cycleId,
-        decisionMarketData: { symbols: equityMarketProfile.universe },
+        decisionMarketData: { symbols: equityMarketProfile.candidateSymbols },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
       strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v7', selectedSymbols: ['NVDA'] },

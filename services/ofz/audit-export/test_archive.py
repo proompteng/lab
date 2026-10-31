@@ -61,6 +61,43 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_transient_transport_repeats_full_verification_before_fencing(self):
+        database = Mock()
+        exporter = archive.Exporter(database, Mock())
+        failure = urllib3.exceptions.ReadTimeoutError(None, None, "PRIVATE_SENTINEL")
+        with patch.object(exporter, "_tick", side_effect=[failure, 0]) as verify:
+            self.assertEqual(exporter.tick(), 0)
+        self.assertEqual(verify.call_count, 2)
+        database.execute.assert_not_called()
+
+    def test_persistent_transport_failure_fences_after_one_retry(self):
+        database = Mock()
+        exporter = archive.Exporter(database, Mock())
+        failure = urllib3.exceptions.ReadTimeoutError(None, None, "PRIVATE_SENTINEL")
+        with (
+            patch.object(exporter, "_tick", side_effect=failure) as verify,
+            self.assertRaises(urllib3.exceptions.ReadTimeoutError),
+        ):
+            exporter.tick()
+        self.assertEqual(verify.call_count, 2)
+        database.execute.assert_called_once_with(
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=0 "
+            "WHERE acknowledged_at_ms<>0"
+        )
+
+    def test_integrity_failure_fences_without_retry(self):
+        database = Mock()
+        exporter = archive.Exporter(database, Mock())
+        with (
+            patch.object(
+                exporter, "_tick", side_effect=archive.ArchiveError("hash mismatch")
+            ) as verify,
+            self.assertRaises(archive.ArchiveError),
+        ):
+            exporter.tick()
+        self.assertEqual(verify.call_count, 1)
+        database.execute.assert_called_once()
+
     def test_worker_recovers_from_transport_timeout_without_restart(self):
         tick = Mock(
             side_effect=[
@@ -85,7 +122,7 @@ class ArchiveBoundaries(unittest.TestCase):
         self.assertIn('"event": "audit_archive_retry"', errors.getvalue())
         self.assertNotIn("PRIVATE_SENTINEL", errors.getvalue())
 
-    def test_once_reports_transport_failure_without_retry(self):
+    def test_once_reports_transport_failure_without_worker_retry(self):
         timeout = urllib3.exceptions.ReadTimeoutError(None, None, "fixture timeout")
         tick = Mock(side_effect=timeout)
         exporter = SimpleNamespace(
@@ -384,6 +421,26 @@ class ArchivePolling(unittest.TestCase):
         self.assertEqual(self.checkpoint_version()["acknowledged_at_ms"], 0)
         self.assertEqual(exporter.tick(), 0)
         self.assertGreater(self.checkpoint_version()["acknowledged_at_ms"], 0)
+
+    def test_transient_read_reverifies_without_invalidating_fresh_checkpoint(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+        checkpoint = self.checkpoint_version()
+        verify_object = exporter.verify_object
+        attempts = 0
+
+        def interrupted_read(receipt):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise urllib3.exceptions.ReadTimeoutError(None, None, "fixture timeout")
+            return verify_object(receipt)
+
+        with patch.object(exporter, "verify_object", side_effect=interrupted_read):
+            self.assertEqual(exporter.tick(), 0)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(self.checkpoint_version(), checkpoint)
+        self.assertEqual(exporter.verifications, 5)
 
     def test_bounded_order_preserves_late_commits_and_missing_outboxes(self):
         self.database.execute("DELETE FROM ofz.audit_outbox WHERE audit_sequence=5")

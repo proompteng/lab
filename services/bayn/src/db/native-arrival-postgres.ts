@@ -1,6 +1,6 @@
 import type { PgClient } from '@effect/sql-pg'
 import { Effect, Schedule, Schema } from 'effect'
-import { isSqlError } from 'effect/sql/SqlError'
+import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import {
@@ -21,6 +21,8 @@ const PersistedChunk = Schema.Struct({
 })
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
+const retryableAppendFailure = (cause: unknown): cause is SqlError =>
+  isSqlError(cause) && (cause.reason._tag === 'ConnectionError' || cause.reason._tag === 'StatementTimeoutError')
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
@@ -109,22 +111,21 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
         }),
       )
     }).pipe(
-      // The SQL adapter reports failed COMMIT acknowledgements as defects. Reconcile the same immutable
-      // ordinals on a new connection before retrying; a committed chunk must never be appended twice.
+      // A lost or timed-out COMMIT acknowledgement may follow a committed write. Reconcile the same immutable
+      // ordinals before retrying, including the synchronous durability barrier when every ordinal already exists.
       Effect.catchCause((cause) => {
         const errors = cause.reasons.map((reason) =>
           reason._tag === 'Fail' ? reason.error : reason._tag === 'Die' ? reason.defect : undefined,
         )
         const first = errors[0]
-        return isSqlError(first) &&
-          errors.every((value) => isSqlError(value) && value.reason._tag === 'ConnectionError')
+        return retryableAppendFailure(first) && errors.every(retryableAppendFailure)
           ? Effect.fail(first)
           : Effect.failCause(cause)
       }),
       Effect.retry({
         times: 2,
         schedule: Schedule.spaced('100 millis'),
-        while: (cause) => isSqlError(cause) && cause.reason._tag === 'ConnectionError',
+        while: retryableAppendFailure,
       }),
       Effect.mapError(error),
     ),
