@@ -207,8 +207,9 @@ evidence obligation.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective
-evidence; implementation tests do not establish those claims. Pinned offline Lean proofs and mandatory conformance
-release gates remain the next integration boundary.
+evidence; implementation tests do not establish those claims. Pinned offline Lean proofs and production conformance
+are mandatory PR and exact-main image-publication gates. Run `bun run --filter @proompteng/bayn verify:formal` from
+the repository root on Linux; see the [formal verification prerequisites and coverage](../../formal/README.md).
 
 ## Validation
 

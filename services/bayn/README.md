@@ -1266,23 +1266,29 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v5`. Its hashed `scope` records the requested
+The forward-performance command emits `bayn.forward-performance-report.v6`. Its hashed `scope` records the requested
 `AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
 account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
 bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v4 trading receipt
-is unchanged. `operatingCostCoverage` remains `INCOMPLETE` until invoice and other operating-cost evidence exists;
-tariff estimates cannot establish fully costed profitability.
+is unchanged. With `--assessment <assessment-sha256>`, the report attaches a persisted system assessment for the same
+account and authority generation. `operatingCostCoverage` is `COMPLETE` only when every candidate session in that
+assessment is fully costed. `operatingCostScope` identifies its registration, source cut, and as-of time; it does not
+extend that evidence to other windows. Without a matching assessment, coverage remains `INCOMPLETE`. Tariff estimates
+cannot establish fully costed profitability. See the [system assessment command](src/system-assessment/README.md#private-reporting-command)
+for prospective registration, source capture, and immutable assessment receipts.
 
 ### Private inference operating-cost report
 
-The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
-coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
+The v4 trading receipt verifies trading transfers and broker fees. Its fields do not include operating expenses:
+`otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
 `OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Independently known cost-coverage, missing-ledger and
 unsettled-fee gaps remain explicit when starting capital is unavailable; unavailable financial totals remain null.
-Verified gross trading P&L and fees remain visible when the required financial boundary exists.
+Verified gross trading P&L and fees remain visible when the required financial boundary exists. The v6 report's
+attached `systemAssessment` supplies actual net economic profit, conservative qualification profit, and their
+separate profitability and edge verdicts for its registered window. It does not rewrite the v4 receipt.
 Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
 Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
 receipts keep their original bytes and hashes; this correction applies to newly computed reports.
@@ -1642,7 +1648,7 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v5`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v6`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds the requested scope and all report content. The report does not

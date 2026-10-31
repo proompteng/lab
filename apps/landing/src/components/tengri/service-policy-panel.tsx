@@ -4,52 +4,56 @@ import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   Button,
-  Card,
-  CardContent,
-  CardFooter,
   Checkbox,
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
   FieldSet,
   Input,
-  NativeSelect,
 } from '@proompteng/design/ui'
 import { useCallback, useEffect, useId, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, policyCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
 import type { PolicyWrite } from '@/lib/platform/policies'
+import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
 import {
   GetPlatformConfigurationResponseSchema,
   WritePolicyRelationshipsResponseSchema,
   type GetPlatformConfigurationResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
+import { SettingsSelect } from './settings-select'
 
 const formSchema = z.object({
-  resourceKind: z.string().min(1, 'Choose a policy'),
-  resourceId: z.string().min(1, 'Choose a resource').max(256),
-  relation: z.string().min(1, 'Choose a permission'),
+  resource: z.string().min(1, 'Choose a resource'),
+  relations: z.array(z.string()).min(1, 'Choose at least one permission').max(128),
   subjectKind: z.enum(['human', 'workload']),
-  subjectId: z.string().min(1, 'Enter the subject identity').max(512),
+  subjectId: z.string().min(1, 'Choose a service or enter a person ID').max(512),
   enabled: z.boolean(),
   reason: z.string().min(3, 'Explain the reason for this change').max(512),
 })
 type Form = z.infer<typeof formSchema>
 
+const labels: Record<string, string> = {
+  opencode: 'OpenCode',
+  'kubernetes.namespace': 'Kubernetes namespace',
+  status_reader: 'Pod status',
+  log_reader: 'Pod logs',
+  event_reader: 'Namespace events',
+}
+const label = (value: string) =>
+  labels[value] ?? value.replace(/[._-]/g, ' ').replace(/^./, (letter) => letter.toUpperCase())
+const resourceKey = (resource: { kind: string; id: string }) => JSON.stringify([resource.kind, resource.id])
+
 async function read(response: Response) {
   const json = z.json().parse(await response.json())
   if (!response.ok) {
+    if (response.status === 428) throw new PasskeyRequiredError()
     const error = z.object({ error: z.string() }).safeParse(json)
-    throw new Error(
-      response.status === 428
-        ? 'Verify your passkey, then retry this change.'
-        : error.success
-          ? error.data.error
-          : 'Policy administration is unavailable',
-    )
+    throw new Error(error.success ? error.data.error : 'Policy administration is unavailable')
   }
   return json
 }
@@ -57,7 +61,7 @@ async function read(response: Response) {
 export function ServicePolicyPanel({ active }: { active: boolean }) {
   const [configuration, setConfiguration] = useState<GetPlatformConfigurationResponse>()
   const [catalog, setCatalog] = useState<ConnectorCatalog>()
-  const [error, setError] = useState('')
+  const [error, setError] = useState<Error>()
   const [receipt, setReceipt] = useState('')
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<PolicyWrite>()
@@ -65,29 +69,39 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
   const form = useForm<Form>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      resourceKind: '',
-      resourceId: '',
-      relation: '',
+      resource: '',
+      relations: [],
       subjectKind: 'workload',
       subjectId: '',
       enabled: true,
       reason: '',
     },
   })
-  const kind = form.watch('resourceKind')
-  const relation = form.watch('relation')
+  const selectedResource = form.watch('resource')
   const subjectKind = form.watch('subjectKind')
   const policy = configuration ? policyCatalogSchema.parse(JSON.parse(configuration.policyCatalogJson)) : undefined
-  const resources = policy?.resources.filter((resource) => resource.relations.length > 0) ?? []
-  const relations = resources.find((resource) => resource.kind === kind)?.relations ?? []
-  const subjects = relations.find((entry) => entry.name === relation)?.subjects ?? []
   const targets = [
     ...new Map(
       (catalog?.operations.flatMap((operation) => operation.targets) ?? [])
-        .filter((target) => target.resource.kind === kind)
-        .map((target) => [target.resource.id, target]),
+        .filter((target) =>
+          policy?.resources.some((entry) => entry.kind === target.resource.kind && entry.relations.length),
+        )
+        .map((target) => [resourceKey(target.resource), target]),
     ).values(),
   ]
+  const target = targets.find((entry) => resourceKey(entry.resource) === selectedResource)
+  const relations = policy?.resources.find((entry) => entry.kind === target?.resource.kind)?.relations ?? []
+  const serviceOptions =
+    configuration?.relayClients.flatMap((client) =>
+      client.identities.map((identity) => ({
+        value: identity,
+        label:
+          label(client.id) +
+          (client.identities.length > 1
+            ? ' · ' + identity.replace(/^spiffe:\/\/[^/]+\/ns\//, '').replace('/sa/', ' / ')
+            : ''),
+      })),
+    ) ?? []
   const blocked = busy || Boolean(pending)
   const load = useCallback(async (signal?: AbortSignal) => {
     const [config, connectors] = await Promise.all([
@@ -105,14 +119,14 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
     const controller = new AbortController()
     void load(controller.signal).catch((cause: unknown) => {
       if (!controller.signal.aborted)
-        setError(cause instanceof Error ? cause.message : 'Policy administration is unavailable')
+        setError(cause instanceof Error ? cause : new Error('Policy administration is unavailable'))
     })
     return () => controller.abort()
   }, [active, load])
   const execute = async (request: PolicyWrite) => {
     setPending(request)
     setBusy(true)
-    setError('')
+    setError(undefined)
     try {
       const response = await fetch('/api/platform/policies', {
         method: 'POST',
@@ -126,228 +140,264 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
       setPending(undefined)
       await load()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The policy change could not be confirmed.')
+      setError(cause instanceof Error ? cause : new Error('The policy change could not be confirmed.'))
     } finally {
       setBusy(false)
     }
   }
   const submit = form.handleSubmit(async (value) => {
     if (!configuration || pending) return
-    if (!subjects.includes(value.subjectKind)) {
-      form.setError('subjectKind', { message: 'This relation does not accept that subject kind' })
+    if (!target) {
+      form.setError('resource', { message: 'Choose an available resource' })
+      return
+    }
+    if (value.subjectKind === 'workload' && !serviceOptions.some((option) => option.value === value.subjectId)) {
+      form.setError('subjectId', { message: 'Choose a registered service' })
+      return
+    }
+    if (
+      value.relations.some(
+        (name) => !relations.find((entry) => entry.name === name)?.subjects.includes(value.subjectKind),
+      )
+    ) {
+      form.setError('relations', { message: 'Choose permissions available for this recipient' })
       return
     }
     await execute({
       operationId: crypto.randomUUID(),
       expectedPolicyVersion: String(configuration.policyVersion),
-      relationships: [
-        {
-          resource: { kind: value.resourceKind, id: value.resourceId },
-          relation: value.relation,
-          subjectKind: value.subjectKind,
-          subjectId: value.subjectId,
-          enabled: value.enabled,
-        },
-      ],
+      relationships: value.relations.map((relation) => ({
+        resource: target.resource,
+        relation,
+        subjectKind: value.subjectKind,
+        subjectId: value.subjectId,
+        enabled: value.enabled,
+      })),
       reason: value.reason,
     })
   })
   const refresh = async () => {
     setBusy(true)
-    setError('')
+    setError(undefined)
     try {
       await load()
       setPending(undefined)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Policies are unavailable')
+      setError(cause instanceof Error ? cause : new Error('Policies are unavailable'))
     } finally {
       setBusy(false)
     }
   }
   const { errors } = form.formState
+  const needsVerification = error instanceof PasskeyRequiredError
   return (
-    <section aria-label="Service policies" className="@container/policies space-y-4">
-      <FieldDescription>Assign resource permissions to people or registered services.</FieldDescription>
+    <section aria-label="Service access" className="@container/policies space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-sm font-medium">Service access</h2>
+        <FieldDescription>Choose who can use a resource and what they can do.</FieldDescription>
+      </div>
       {error ? (
-        <p role="alert" className="text-sm text-red-300">
-          {error}
+        <p role="alert" className="text-xs text-red-300">
+          {error.message}
         </p>
       ) : null}
       {receipt ? (
-        <p role="status" className="break-words text-xs text-zinc-400">
-          {receipt}
-        </p>
+        <div role="status" className="space-y-1 text-xs text-zinc-400">
+          <p className="text-zinc-200">Access updated.</p>
+          <details>
+            <summary className="cursor-pointer">View receipt</summary>
+            <p className="mt-1 break-all">{receipt}</p>
+          </details>
+        </div>
       ) : null}
       {!configuration ? (
-        <p role="status" className="text-sm text-zinc-400">
-          Loading service policies…
+        <p role="status" className="text-xs text-zinc-400">
+          Loading service access…
         </p>
       ) : (
-        <Card size="sm">
-          <form noValidate onSubmit={submit} className="space-y-4">
-            <CardContent>
-              <FieldSet disabled={blocked}>
-                <FieldGroup className="grid gap-3 @min-[420px]/policies:grid-cols-2">
-                  <Field data-invalid={Boolean(errors.resourceKind)}>
-                    <FieldLabel htmlFor={formId + '-policy'}>Policy</FieldLabel>
-                    <NativeSelect
-                      id={formId + '-policy'}
-                      className="w-full"
-                      aria-invalid={Boolean(errors.resourceKind)}
-                      aria-describedby={formId + '-policy-error'}
-                      {...form.register('resourceKind', {
-                        onChange: () => {
-                          form.setValue('relation', '')
-                          form.setValue('resourceId', '')
-                        },
-                      })}
-                    >
-                      <option value="">Choose a policy</option>
-                      {resources.map((resource) => (
-                        <option key={resource.kind} value={resource.kind}>
-                          {resource.kind}
-                        </option>
-                      ))}
-                    </NativeSelect>
-                    <FieldError id={formId + '-policy-error'} errors={[errors.resourceKind]} />
-                  </Field>
-                  <Field data-invalid={Boolean(errors.relation)}>
-                    <FieldLabel htmlFor={formId + '-permission'}>Permission</FieldLabel>
-                    <NativeSelect
-                      id={formId + '-permission'}
-                      className="w-full"
-                      aria-invalid={Boolean(errors.relation)}
-                      aria-describedby={formId + '-permission-error'}
-                      {...form.register('relation')}
-                    >
-                      <option value="">Choose a permission</option>
-                      {relations.map((entry) => (
-                        <option key={entry.name} value={entry.name}>
-                          {entry.name}
-                        </option>
-                      ))}
-                    </NativeSelect>
-                    <FieldError id={formId + '-permission-error'} errors={[errors.relation]} />
-                  </Field>
-                  <Field className="col-span-full" data-invalid={Boolean(errors.resourceId)}>
-                    <FieldLabel htmlFor={formId + '-resource'}>Resource identity</FieldLabel>
-                    <Input
-                      id={formId + '-resource'}
-                      list={formId + '-resources'}
-                      aria-invalid={Boolean(errors.resourceId)}
-                      aria-describedby={formId + '-resource-help ' + formId + '-resource-error'}
-                      {...form.register('resourceId')}
+        <form noValidate onSubmit={submit} className="space-y-4">
+          <FieldSet disabled={blocked}>
+            <FieldGroup className="grid gap-4 @min-[420px]/policies:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor={formId + '-recipient'}>Assign to</FieldLabel>
+                <Controller
+                  name="subjectKind"
+                  control={form.control}
+                  render={({ field }) => (
+                    <SettingsSelect
+                      {...field}
+                      id={formId + '-recipient'}
+                      disabled={blocked}
+                      options={[
+                        { value: 'workload', label: 'Service' },
+                        { value: 'human', label: 'Person' },
+                      ]}
+                      onValueChange={(value) => {
+                        field.onChange(value)
+                        form.setValue('subjectId', '')
+                        form.setValue('relations', [])
+                      }}
                     />
-                    <datalist id={formId + '-resources'}>
-                      {targets.map((target) => (
-                        <option key={target.resource.id} value={target.resource.id}>
-                          {target.name}
-                        </option>
-                      ))}
-                    </datalist>
-                    <FieldDescription id={formId + '-resource-help'}>
-                      Choose a target or enter its exact resource ID.
-                    </FieldDescription>
-                    <FieldError id={formId + '-resource-error'} errors={[errors.resourceId]} />
-                  </Field>
-                  <Field data-invalid={Boolean(errors.subjectKind)}>
-                    <FieldLabel htmlFor={formId + '-subject-kind'}>Subject kind</FieldLabel>
-                    <NativeSelect
-                      id={formId + '-subject-kind'}
-                      className="w-full"
-                      aria-invalid={Boolean(errors.subjectKind)}
-                      aria-describedby={formId + '-subject-kind-error'}
-                      {...form.register('subjectKind', { onChange: () => form.setValue('subjectId', '') })}
-                    >
-                      <option value="workload">Service</option>
-                      <option value="human">Person</option>
-                    </NativeSelect>
-                    <FieldError id={formId + '-subject-kind-error'} errors={[errors.subjectKind]} />
-                  </Field>
-                  <Field data-invalid={Boolean(errors.subjectId)}>
-                    <FieldLabel htmlFor={formId + '-subject'}>
-                      {subjectKind === 'workload' ? 'Registered service identity' : 'Ofz human ID'}
-                    </FieldLabel>
-                    {subjectKind === 'workload' ? (
-                      <>
-                        <Input
-                          id={formId + '-subject'}
-                          list={formId + '-services'}
-                          placeholder="spiffe://…"
-                          aria-invalid={Boolean(errors.subjectId)}
-                          aria-describedby={formId + '-subject-help ' + formId + '-subject-error'}
-                          {...form.register('subjectId')}
-                        />
-                        <datalist id={formId + '-services'}>
-                          {configuration.relayClients.flatMap((client) =>
-                            client.identities.map((id) => (
-                              <option key={id} value={id}>
-                                {client.id + ' · ' + id}
-                              </option>
-                            )),
-                          )}
-                        </datalist>
-                        <FieldDescription id={formId + '-subject-help'}>
-                          Use an onboarded service identity.
-                        </FieldDescription>
-                      </>
-                    ) : (
-                      <Input
+                  )}
+                />
+              </Field>
+              <Field data-invalid={Boolean(errors.subjectId)}>
+                <FieldLabel htmlFor={formId + '-subject'}>
+                  {subjectKind === 'workload' ? 'Service' : 'Person ID'}
+                </FieldLabel>
+                {subjectKind === 'workload' ? (
+                  <Controller
+                    name="subjectId"
+                    control={form.control}
+                    render={({ field }) => (
+                      <SettingsSelect
+                        {...field}
                         id={formId + '-subject'}
-                        placeholder="Verified Ofz human ID"
+                        disabled={blocked}
+                        onValueChange={field.onChange}
+                        options={serviceOptions}
+                        placeholder="Choose a service"
                         aria-invalid={Boolean(errors.subjectId)}
                         aria-describedby={formId + '-subject-error'}
-                        {...form.register('subjectId')}
                       />
                     )}
-                    <FieldError id={formId + '-subject-error'} errors={[errors.subjectId]} />
-                  </Field>
-                  <Field orientation="horizontal" className="col-span-full">
-                    <Controller
-                      name="enabled"
-                      control={form.control}
-                      render={({ field }) => (
-                        <Checkbox
-                          id={formId + '-enabled'}
-                          name={field.name}
-                          ref={field.ref}
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          onBlur={field.onBlur}
-                          disabled={blocked}
-                        />
-                      )}
+                  />
+                ) : (
+                  <Input
+                    id={formId + '-subject'}
+                    placeholder="Ofz person ID"
+                    {...form.register('subjectId')}
+                    aria-invalid={Boolean(errors.subjectId)}
+                    aria-describedby={formId + '-subject-error'}
+                  />
+                )}
+                <FieldError id={formId + '-subject-error'} errors={[errors.subjectId]} />
+              </Field>
+              <Field className="col-span-full" data-invalid={Boolean(errors.resource)}>
+                <FieldLabel htmlFor={formId + '-resource'}>Resource</FieldLabel>
+                <Controller
+                  name="resource"
+                  control={form.control}
+                  render={({ field }) => (
+                    <SettingsSelect
+                      {...field}
+                      id={formId + '-resource'}
+                      disabled={blocked}
+                      placeholder="Choose a resource"
+                      aria-invalid={Boolean(errors.resource)}
+                      aria-describedby={formId + '-resource-error'}
+                      options={targets.map((entry) => ({
+                        value: resourceKey(entry.resource),
+                        label: entry.name + ' · ' + entry.resource.id.split('/')[0],
+                      }))}
+                      onValueChange={(value) => {
+                        field.onChange(value)
+                        form.setValue('relations', [])
+                      }}
                     />
-                    <FieldLabel htmlFor={formId + '-enabled'}>Allow this permission. Clear to revoke it.</FieldLabel>
-                  </Field>
-                  <Field className="col-span-full" data-invalid={Boolean(errors.reason)}>
-                    <FieldLabel htmlFor={formId + '-reason'}>Reason</FieldLabel>
-                    <Input
-                      id={formId + '-reason'}
-                      aria-invalid={Boolean(errors.reason)}
-                      aria-describedby={formId + '-reason-error'}
-                      {...form.register('reason')}
-                    />
-                    <FieldError id={formId + '-reason-error'} errors={[errors.reason]} />
-                  </Field>
-                </FieldGroup>
+                  )}
+                />
+                {target ? <FieldDescription>{label(target.resource.kind)}</FieldDescription> : null}
+                <FieldError id={formId + '-resource-error'} errors={[errors.resource]} />
+              </Field>
+              <FieldSet className="col-span-full gap-2" aria-describedby={formId + '-permissions-error'}>
+                <FieldLegend variant="label">Permissions</FieldLegend>
+                {!target ? <FieldDescription>Choose a resource to see its permissions.</FieldDescription> : null}
+                {relations
+                  .filter((entry) => entry.subjects.includes(subjectKind))
+                  .map((entry) => (
+                    <Field key={entry.name} orientation="horizontal" className="gap-2">
+                      <Controller
+                        name="relations"
+                        control={form.control}
+                        render={({ field }) => (
+                          <Checkbox
+                            id={formId + '-' + entry.name}
+                            name={field.name}
+                            checked={field.value.includes(entry.name)}
+                            disabled={blocked}
+                            onBlur={field.onBlur}
+                            aria-invalid={Boolean(errors.relations)}
+                            aria-describedby={formId + '-permissions-error'}
+                            onCheckedChange={(checked) =>
+                              field.onChange(
+                                checked
+                                  ? [...field.value, entry.name]
+                                  : field.value.filter((name) => name !== entry.name),
+                              )
+                            }
+                          />
+                        )}
+                      />
+                      <FieldLabel htmlFor={formId + '-' + entry.name}>{label(entry.name)}</FieldLabel>
+                    </Field>
+                  ))}
+                {target && !relations.some((entry) => entry.subjects.includes(subjectKind)) ? (
+                  <FieldDescription>No permissions are available for this recipient.</FieldDescription>
+                ) : null}
+                <FieldError id={formId + '-permissions-error'} errors={[errors.relations]} />
               </FieldSet>
-            </CardContent>
-            <CardFooter className="flex-wrap gap-2">
-              <Button type="submit" size="sm" disabled={blocked}>
-                Apply policy
+              <Field>
+                <FieldLabel htmlFor={formId + '-change'}>Change</FieldLabel>
+                <Controller
+                  name="enabled"
+                  control={form.control}
+                  render={({ field }) => (
+                    <SettingsSelect
+                      name={field.name}
+                      ref={field.ref}
+                      onBlur={field.onBlur}
+                      id={formId + '-change'}
+                      value={field.value ? 'allow' : 'remove'}
+                      disabled={blocked}
+                      onValueChange={(value) => field.onChange(value === 'allow')}
+                      options={[
+                        { value: 'allow', label: 'Allow access' },
+                        { value: 'remove', label: 'Remove access' },
+                      ]}
+                    />
+                  )}
+                />
+              </Field>
+              <Field className="col-span-full" data-invalid={Boolean(errors.reason)}>
+                <FieldLabel htmlFor={formId + '-reason'}>Reason</FieldLabel>
+                <Input
+                  id={formId + '-reason'}
+                  placeholder="Why is this access changing?"
+                  aria-invalid={Boolean(errors.reason)}
+                  aria-describedby={formId + '-reason-error'}
+                  {...form.register('reason')}
+                />
+                <FieldError id={formId + '-reason-error'} errors={[errors.reason]} />
+              </Field>
+            </FieldGroup>
+          </FieldSet>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type={needsVerification ? 'button' : 'submit'}
+              size="sm"
+              disabled={needsVerification ? busy : blocked}
+              onClick={
+                needsVerification
+                  ? () =>
+                      void startTengriSignIn('step-up').catch(() =>
+                        setError(new PasskeyRequiredError('Verification could not start. Try again.')),
+                      )
+                  : undefined
+              }
+            >
+              {needsVerification ? 'Verify identity' : 'Save access'}
+            </Button>
+            {pending && !needsVerification ? (
+              <Button type="button" size="sm" disabled={busy} onClick={() => void execute(pending)}>
+                Retry exact change
               </Button>
-              {pending ? (
-                <Button type="button" size="sm" disabled={busy} onClick={() => void execute(pending)}>
-                  Retry exact change
-                </Button>
-              ) : null}
-              <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>
-                Refresh policies
-              </Button>
-            </CardFooter>
-          </form>
-        </Card>
+            ) : null}
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>
+              Refresh
+            </Button>
+          </div>
+        </form>
       )}
     </section>
   )
