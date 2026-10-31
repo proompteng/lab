@@ -1,4 +1,4 @@
-import { BigDecimal, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -7,7 +7,7 @@ import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import type { EntryInferenceInput } from './entry-inference-input'
 import type { JevProtocolMaterial } from './protocol'
-import { makeEntrySourceCandidates } from './entry-proposals'
+import { makeChartSourceCandidates, makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
 import {
   DecisionsRequestSchema,
@@ -57,14 +57,14 @@ const anchorQuestions = [
 ] as const
 const noBase = { value: 'no_base', description: 'No completed consolidation matches this question.' }
 const baseEndInstructions =
-  'Which offered bar ends the most recent completed consolidation before the newest directional move? The consolidation must contain at least two completed bars and end before the newest completed bar. Offered intervals satisfy code-owned price and cost checks, which do not prove a consolidation. Choose no_base if none is identifiable.'
+  'Which offered bar ends the most recent completed consolidation before the newest directional move? The consolidation must contain at least two completed bars and end before the newest completed bar. Identify the observed structure independently of whether trading it would cover costs. Choose no_base if none is identifiable.'
 const baseStartInstructions =
-  'Evaluate a possible consolidation ending at the specified completed bar. Which offered earlier bar begins that same consolidation? Identify the whole contiguous interval, rather than an isolated low or an uninterrupted trend. Financial eligibility does not establish visible structure. Choose no_base if none of the offered intervals is a consolidation with this end.'
+  'Evaluate a possible consolidation ending at the specified completed bar. Which offered earlier bar begins that same consolidation? Identify the whole contiguous interval, rather than an isolated low or an uninterrupted trend. Choose no_base if none of the offered intervals is a consolidation with this end.'
 const sharedInstructions =
-  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Support and base candidates pass code-owned price and cost checks; resistance candidates include every observed high above the current bid, whether or not it can fund a trade. Financial eligibility does not establish visible structure. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
+  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Anchor choices describe source price structure independently of fees and funding. Code checks whether a proposal based on the selected structure covers all modeled trading costs. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
 export const chartQuestionPolicy = {
   model: decisionsModel,
-  candidatePolicy: 'observed-overhead-resistance-with-funded-proposal-preflight-v2',
+  candidatePolicy: 'source-structure-with-funded-proposal-preflight-v3',
   presenceQuestions,
   anchorQuestions,
   baseEndInstructions,
@@ -109,22 +109,13 @@ export const buildChartDecisionsRequest = (
       capitalMicros: funding.capitalMicros,
       cryptoFeeTier: funding.cryptoFeeTier,
     })
-    const candidates =
+    const fundable =
       economics === null
         ? { supportBarIds: [], resistanceBarIds: [], baseWindows: [] }
         : yield* makeEntrySourceCandidates({ chart, protocol, economics, bidMicros: BigInt(funding.bidMicros) })
+    const candidates = makeChartSourceCandidates({ chart, bidMicros: BigInt(funding.bidMicros) })
     const anchors: DecisionsRequest['questions'][number][] = anchorQuestions.flatMap((question) => {
-      const ids =
-        question.name === 'support_anchor'
-          ? candidates.supportBarIds
-          : chart.bars
-              .filter((bar) =>
-                BigDecimal.isGreaterThan(
-                  BigDecimal.fromNumberUnsafe(bar.high),
-                  BigDecimal.make(BigInt(funding.bidMicros), 6),
-                ),
-              )
-              .map((bar) => bar.id)
+      const ids = question.name === 'support_anchor' ? candidates.supportBarIds : candidates.resistanceBarIds
       if (ids.length === 0) return []
       return [
         {
@@ -218,7 +209,6 @@ export const buildChartDecisionsRequest = (
                   bidMicros: funding.bidMicros,
                   askMicros: funding.askMicros,
                   maximumEntryPriceMicros: economics?.maximumEntryPriceMicros ?? null,
-                  takeProfitBreakEvenLimitUsd: economics?.takeProfitBreakEvenLimitUsd ?? null,
                   maximumHoldingMinutes: protocol.maximumHoldingMinutes,
                 },
               },
@@ -232,8 +222,7 @@ export const buildChartDecisionsRequest = (
       body: prepared.body,
       requestHash: prepared.requestHash,
       sourceFeasible:
-        candidates.baseWindows.length > 0 ||
-        (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0),
+        fundable.baseWindows.length > 0 || (fundable.supportBarIds.length > 0 && fundable.resistanceBarIds.length > 0),
     }
     // Two stages for a fifteen-candidate cohort fit without retaining an unbounded chart history.
     if (preparedChartRequests.size >= 64) {

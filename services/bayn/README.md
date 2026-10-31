@@ -126,9 +126,9 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 166 rejects v33 execution requests and dispatch while retaining their original financial readers and history.
+Migration 167 admits only v35 execution requests and dispatch while retaining original financial readers and history.
 
-The current source uses `jev` protocol v34, verified numerical input v23, batch v8 and entry target v7. It retains the
+The current source uses `jev` protocol v35, verified numerical input v23, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -139,12 +139,14 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v34 and its exact question-policy hash.
+current execution and database guards accept v35 and its exact question-policy hash.
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
-preflight still prevents provider calls when neither proposal template can fund an entry; it does not hide closer
-resistance from an otherwise feasible chart. Retained v26 through v32 chart requests reproduce their original filtered
-choices and request hashes for financial evidence only.
+preflight still prevents provider calls when neither proposal template can fund an entry. Once a source is feasible,
+chart anchors describe its price structure independently of capital and fee tiers. A recognized structure can still
+produce an unfunded proposal, which code rejects before Jev dispatch. The chart request does not include the trading
+break-even price. Retained v26 through v34 chart requests reproduce their original choices and request hashes for
+financial evidence only; they cannot authorize current execution.
 The current protocol funds each equity and crypto buy at the original inference ask rounded to a valid broker tick.
 Native order construction enforces that same funded ceiling. Equity DAY orders may rest at the funded cap when a
 fresh eligible ask rises above it; risk still uses the actual quote and the order cannot chase the ask. Quotes at or
@@ -762,8 +764,9 @@ of an already filled position remains valid after that deadline within the execu
 and accounted position evidence. It retains the original first-fill holding deadline and forced-close window,
 including continuous crypto cycles whose entry lease lasts one minute.
 
-Bayn supplies pinned `jev-1.13.0` with verified entry signals, quotes, benchmark relationships and net target economics.
-Bayn computes quantities, costs, sizing, risk and exit triggers. The model returns typed entry distributions.
+Bayn supplies pinned `jev-1.13.0` with source-bound chart judgments, verified candidate bars, quotes and funded proposal
+economics. Jev judges each proposal's setup and stop; crypto also requires the target-obstruction judgment. Bayn
+computes quantities, costs, sizing, risk and exit triggers. Candidate admission does not require a benchmark.
 
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
@@ -797,7 +800,7 @@ evidence deadline after persistence. Synchronous commit and standby durability a
 
 The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
 the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. Equities use up to 30 minutes and crypto uses up to 120 minutes of actual
-completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
+completed history and evaluates the source-controlled candidates independently until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before

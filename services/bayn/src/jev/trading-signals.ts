@@ -330,7 +330,7 @@ const requestFromSnapshot = (
     })
     return yield* prepareEntryInferenceInput({
       ...(selectionPolicy === null
-        ? { schemaVersion: 'bayn.entry-inference-input.v7' }
+        ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       protocol: native.protocol,
       chartSource: {
