@@ -514,6 +514,7 @@ export const verifyInferenceExpenseCoverage = (
   evidence: DecodedInferenceCostEvidence,
   accountId: string,
   frozen: readonly { readonly quote: InferenceExpenseQuote; readonly verifiedAt: string | null }[],
+  authorityGenerationHash?: string,
 ) =>
   Result.gen(function* () {
     const binding = yield* canonicalHashV1Result({ schemaVersion: 'bayn.inference-cost-account.v1', accountId }).pipe(
@@ -528,6 +529,14 @@ export const verifyInferenceExpenseCoverage = (
       rates: [],
     })
     const sources = new Map(evidence.requests.map((request) => [request.requestId, request]))
+    const selectedRequestIds = new Set(
+      evidence.requests
+        .filter(
+          (request) =>
+            authorityGenerationHash === undefined || request.authorityGenerationHash === authorityGenerationHash,
+        )
+        .map((request) => request.requestId),
+    )
     const byRequest = new Map<string, typeof frozen>()
     const prefixes = new Map<string, DecodedInferenceCostRequest>()
     for (const row of frozen) {
@@ -588,12 +597,17 @@ export const verifyInferenceExpenseCoverage = (
           ('stageSkipHash' in row.quote.line ? row.quote.line.stageSkipHash : null) ===
             ('stageSkipHash' in line ? line.stageSkipHash : null),
       )
+      if (matches.length > 1)
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
+        )
+      if (!selectedRequestIds.has(line.requestId)) continue
       if (matches.length === 0) {
         missingQuoteCount++
         issues.push(InferenceExpenseCoverageIssue.MissingQuote)
       } else {
         const current = matches[0]
-        if (matches.length !== 1 || current === undefined)
+        if (current === undefined)
           return yield* Result.fail(
             new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
           )
@@ -623,7 +637,7 @@ export const verifyInferenceExpenseCoverage = (
     }
     return {
       sourceAsOf: evidence.asOf,
-      claimedRequestCount: original.requestCount,
+      claimedRequestCount: selectedRequestIds.size,
       missingQuoteCount,
       unverifiedRequestCount,
       gapRequestCount,

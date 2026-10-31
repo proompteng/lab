@@ -257,6 +257,52 @@ export const makeEntrySourceCandidates = (input: {
     return { supportBarIds, resistanceBarIds, baseWindows } satisfies EntrySourceCandidates
   })
 
+export const makeChartSourceCandidates = (input: {
+  readonly chart: NativeChartEvidence
+  readonly bidMicros: bigint
+}) => {
+  const { chart, bidMicros } = input
+  const prices = chart.bars.map((bar) => ({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
+  const supportBarIds: string[] = []
+  const resistanceBarIds: string[] = []
+  const baseWindows: { firstBarId: string; lastBarId: string }[] = []
+  for (const [index, price] of prices.entries()) {
+    const bar = chart.bars[index]
+    if (bar === undefined) continue
+    if (Result.isSuccess(price.low)) {
+      const stop = quantizeInstrumentPriceMicros(chart.symbol, price.low.success - 1n, 'DOWN')
+      if (stop > 0n && stop < bidMicros) supportBarIds.push(bar.id)
+    }
+    if (BigDecimal.isGreaterThan(BigDecimal.fromNumberUnsafe(bar.high), BigDecimal.make(bidMicros, 6)))
+      resistanceBarIds.push(bar.id)
+  }
+  for (const [first, initial] of prices.entries()) {
+    const firstBar = chart.bars[first]
+    if (firstBar === undefined || Result.isFailure(initial.high) || Result.isFailure(initial.low)) continue
+    let high = initial.high.success
+    let low = initial.low.success
+    for (let last = first + 1; last < prices.length - 1; last++) {
+      const previousBar = chart.bars[last - 1]
+      const lastBar = chart.bars[last]
+      const price = prices[last]
+      if (
+        previousBar === undefined ||
+        lastBar === undefined ||
+        price === undefined ||
+        Result.isFailure(price.high) ||
+        Result.isFailure(price.low) ||
+        previousBar.minuteBeforeWindowEnd !== lastBar.minuteBeforeWindowEnd + 1
+      )
+        break
+      high = price.high.success > high ? price.high.success : high
+      low = price.low.success < low ? price.low.success : low
+      if (high > low && bidMicros > high && quantizeInstrumentPriceMicros(chart.symbol, low - 1n, 'DOWN') > 0n)
+        baseWindows.push({ firstBarId: firstBar.id, lastBarId: lastBar.id })
+    }
+  }
+  return { supportBarIds, resistanceBarIds, baseWindows } satisfies EntrySourceCandidates
+}
+
 export const makeEntryProposals = (input: {
   readonly chart: NativeChartEvidence
   readonly assessments: ChartAssessmentsMaterial

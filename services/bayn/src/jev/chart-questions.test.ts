@@ -10,6 +10,9 @@ import {
   stagedChartAssessments,
 } from './staged-chart-questions'
 import type { DecisionsRequest } from './decisions'
+import { buildChartDecisionsRequest } from './chart-questions'
+import { jevEntryEconomics } from './entry-economics'
+import { EntrySetup, makeEntryProposals, ProposalRejection } from './entry-proposals'
 
 const sourceFor = (chart: NativeChartEvidence) => ({
   chart,
@@ -72,6 +75,82 @@ const responseFor = (request: DecisionsRequest) => ({
 })
 
 describe('source-bound chart questions', () => {
+  test('keeps the same observed base available across fee tiers while independently rejecting an unfunded proposal', () => {
+    const chart = Result.getOrThrow(
+      makeNativeChartEvidence({
+        symbol: 'ETH/USD',
+        windowEndAt: '2026-10-31T08:00:00.000Z',
+        bars: [
+          { minuteBeforeWindowEnd: 4, open: 99.4, high: 100, low: 99, close: 99.8, volume: 100 },
+          { minuteBeforeWindowEnd: 3, open: 100.1, high: 100.4, low: 100, close: 100.3, volume: 100 },
+          { minuteBeforeWindowEnd: 2, open: 100.3, high: 100.4, low: 100, close: 100.2, volume: 100 },
+          { minuteBeforeWindowEnd: 1, open: 100.4, high: 100.405, low: 100.395, close: 100.4, volume: 100 },
+        ],
+      }),
+    )
+    const first = chart.bars[1]
+    const last = chart.bars[2]
+    if (first === undefined || last === undefined) throw new Error('Expected the observed two-bar base')
+    const requests: string[] = []
+    for (const cryptoFeeTier of [4, 8] as const) {
+      const funding = {
+        bidMicros: '100410000',
+        askMicros: '100420000',
+        capitalMicros: '100000000000',
+        cryptoFeeTier,
+      }
+      const prepared = Result.getOrThrow(
+        buildChartDecisionsRequest({ chart, protocol: defaultJevProtocolDocument, funding }, { selectedEnd: last.id }),
+      )
+      expect(prepared.sourceFeasible).toBe(true)
+      requests.push(prepared.body)
+      const start = prepared.request.questions.find((question) => question.name === 'base_first_bar_ending_2')
+      if (start?.type !== 'choice') throw new Error('Expected the selected base-start question')
+      expect(start.choices.map((choice) => choice.value)).toContain(first.id)
+      const economics = Result.getOrThrow(
+        jevEntryEconomics({
+          ...funding,
+          symbol: chart.symbol,
+          protocol: defaultJevProtocolDocument,
+          bidMicros: BigInt(funding.bidMicros),
+          askMicros: BigInt(funding.askMicros),
+        }),
+      )
+      if (economics === null) throw new Error('Expected a bounded entry quantity')
+      const absent = { status: 'NOT_IDENTIFIED' } as const
+      const result = Result.getOrThrow(
+        makeEntryProposals({
+          chart,
+          protocol: defaultJevProtocolDocument,
+          economics,
+          bidMicros: BigInt(funding.bidMicros),
+          assessments: {
+            schemaVersion: 'bayn.chart-assessments.v4',
+            symbol: chart.symbol,
+            windowEndAt: chart.windowEndAt,
+            barsHash: chart.barsHash,
+            pngHash: chart.pngHash,
+            support: { presence: { status: 'ASSESSED', probability: 0 }, anchor: absent },
+            resistance: { presence: { status: 'ASSESSED', probability: 0 }, anchor: absent },
+            base: {
+              presence: { status: 'ASSESSED', probability: 1 },
+              first: { status: 'ASSESSED', probability: 1, barId: first.id },
+              last: { status: 'ASSESSED', probability: 1, barId: last.id },
+            },
+          },
+        }),
+      )
+      if (cryptoFeeTier === 4) {
+        expect(result.proposals).toHaveLength(0)
+        expect(result.rejections).toContainEqual({ setup: EntrySetup.BaseBreakout, reason: ProposalRejection.Unfunded })
+      } else {
+        expect(result.proposals).toHaveLength(1)
+        expect(result.proposals[0]?.source.setup).toBe(EntrySetup.BaseBreakout)
+      }
+    }
+    expect(requests[0]).toBe(requests[1])
+  })
+
   test('reuses preparation work for identical source content', () => {
     const native = Result.getOrThrow(makeNativeChartEvidence({ ...source, windowEndAt: '2031-01-01T00:00:00.000Z' }))
     let barReads = 0

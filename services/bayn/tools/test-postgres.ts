@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 
 const files = [
+  'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
   'src/db/remove-unused-schema.integration.test.ts',
@@ -53,4 +54,9 @@ const run = (args: readonly string[]) => {
 }
 
 run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
-if (shard.startsWith('1/')) run(['src/shadow-decision.test.ts', '--test-name-pattern', 'migrated cycle guard'])
+if (shard.startsWith('1/'))
+  run([
+    'src/shadow-decision.test.ts',
+    '--test-name-pattern',
+    'migrated cycle guard|PostgreSQL entry binding and nested',
+  ])

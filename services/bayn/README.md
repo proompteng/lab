@@ -9,6 +9,24 @@ PostgreSQL transaction under the existing writer fence. This removes an immediat
 activation rolls back acquisition; retries read the committed cycle. Recovery and decision binding continue to enforce
 the original submission and inference deadlines.
 
+Protected entry decisions bind their approved intents in the same writer-fenced PostgreSQL transaction. Intent
+construction, current authority, durable risk approval and database deadline guards use the existing intent store.
+A rejected intent rolls back its decision binding. Broker submission starts after commit acknowledgement and retains
+the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
+mutation during persistence cannot change the approved intent identities or protection.
+
+Cycle discovery bounds the equity-calendar read to five seconds. Temporary transport, timeout, rate-limit and server
+failures exclude equity discovery for that attempt while continuous crypto discovery uses its own calendar. Fatal
+authentication, identity and malformed-response failures still stop discovery. The pass and inference deadlines remain
+unchanged, and later equity attempts require a successful authoritative calendar read.
+
+A system-restricted, previously traded generation can enter settlement after an idle failure when every account
+mutation is resolved, all intents are terminal, no cycle remains active and a trusted position observation after the
+restriction proves the account flat. Every retained decision must reproduce a completed cycle or a verified zero-target
+decision. Recovery reuses the existing settled-account predicate and still requires a later
+exact reconciliation before OBSERVE rollover. It preserves the plan and all trading history; capital reactivation
+continues through the existing mandate checks.
+
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
 snapshot, symbol, timestamp and exclusion check within the original inference window.
@@ -33,6 +51,13 @@ still require full reproduction. Newly inserted intents skip their intermediate 
 The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
 their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
 
+Forward reports capture performance and expense evidence in one PostgreSQL snapshot, then release the read-only
+transaction before reconstructing frozen expense coverage, checking the exact TigerBeetle ledger and hashing the report.
+CPU work cannot leave that read transaction idle beyond its unchanged connection deadline. Receipt persistence retains
+its enclosing writer transaction and deadline. Every session's frozen inference expenses are verified once.
+An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
+still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
@@ -56,6 +81,14 @@ preflight first, the pass reports a reconciliation failure and retries with a fr
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
+
+Equity position reporting replays the broker's intraday average rounded after each opening fill. Both reported
+average and cost basis must reproduce exactly from complete fill history and the unchanged native inventory cost.
+The replay uses immutable broker nanosecond timestamps, preserving execution order within a millisecond. Missing or
+ambiguous current-position timestamps cannot establish a reporting anchor. Prior flat positions do not affect it.
+A partial sale retains the entry average; closing the position resets it. An overnight position cannot use this
+intraday anchor. Crypto retains its verified coin-fee basis. Cash, quantities and posted ledger amounts remain exact;
+there is no cost-basis tolerance.
 
 Reconciliation requires the account, position and valuation observations to cover the current New York trading day
 before persistence and before publishing the result. A pass crossing midnight invalidates its cached broker snapshot
@@ -93,9 +126,9 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 166 rejects v33 execution requests and dispatch while retaining their original financial readers and history.
+Migration 167 admits only v35 execution requests and dispatch while retaining original financial readers and history.
 
-The current source uses `jev` protocol v34, verified numerical input v23, batch v8 and entry target v7. It retains the
+The current source uses `jev` protocol v35, verified numerical input v23, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -106,12 +139,14 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v34 and its exact question-policy hash.
+current execution and database guards accept v35 and its exact question-policy hash.
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
-preflight still prevents provider calls when neither proposal template can fund an entry; it does not hide closer
-resistance from an otherwise feasible chart. Retained v26 through v32 chart requests reproduce their original filtered
-choices and request hashes for financial evidence only.
+preflight still prevents provider calls when neither proposal template can fund an entry. Once a source is feasible,
+chart anchors describe its price structure independently of capital and fee tiers. A recognized structure can still
+produce an unfunded proposal, which code rejects before Jev dispatch. The chart request does not include the trading
+break-even price. Retained v26 through v34 chart requests reproduce their original choices and request hashes for
+financial evidence only; they cannot authorize current execution.
 The current protocol funds each equity and crypto buy at the original inference ask rounded to a valid broker tick.
 Native order construction enforces that same funded ceiling. Equity DAY orders may rest at the funded cap when a
 fresh eligible ask rises above it; risk still uses the actual quote and the order cannot chase the ask. Quotes at or
@@ -207,8 +242,9 @@ cycle's position management or recovery. No protection result is cached between 
 
 A quote side withdrawn by the provider retains its observed zero price and zero size in the source evidence. It
 supersedes the prior quote and excludes that candidate until a fresh two-sided quote arrives. It cannot authorize entry,
-pricing or liquidation, and a withdrawn required benchmark still blocks the snapshot. Negative, crossed and
-contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
+pricing or liquidation. Live Jev queries have no required benchmark; an independent momentum research query that
+explicitly requests a reference still requires that reference's valid data. Negative, crossed and contradictory
+quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
 schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
 rejection receipts cannot be relabeled as accepted evidence.
 
@@ -728,8 +764,9 @@ of an already filled position remains valid after that deadline within the execu
 and accounted position evidence. It retains the original first-fill holding deadline and forced-close window,
 including continuous crypto cycles whose entry lease lasts one minute.
 
-Bayn supplies pinned `jev-1.13.0` with verified entry signals, quotes, benchmark relationships and net target economics.
-Bayn computes quantities, costs, sizing, risk and exit triggers. The model returns typed entry distributions.
+Bayn supplies pinned `jev-1.13.0` with source-bound chart judgments, verified candidate bars, quotes and funded proposal
+economics. Jev judges each proposal's setup and stop; crypto also requires the target-obstruction judgment. Bayn
+computes quantities, costs, sizing, risk and exit triggers. Candidate admission does not require a benchmark.
 
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
@@ -763,7 +800,7 @@ evidence deadline after persistence. Synchronous commit and standby durability a
 
 The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
 the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. Equities use up to 30 minutes and crypto uses up to 120 minutes of actual
-completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
+completed history and evaluates the source-controlled candidates independently until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before

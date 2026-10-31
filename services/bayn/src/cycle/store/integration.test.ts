@@ -271,7 +271,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
   test('inserts and activates immediate admission in one real writer-fenced transaction', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
-        const store = withWriterFenceCycleStore(yield* CycleStore, yield* WriterFence)
+        const store = withWriterFenceCycleStore(yield* CycleStore, yield* WriterFence, {
+          commit: () => Effect.die('cycle acquisition cannot commit an intent'),
+        })
         const sql = yield* PgClient.PgClient
         yield* sql`CREATE TABLE test_cycle_admission_transactions (
           ordinal bigint GENERATED ALWAYS AS IDENTITY, operation text, transaction_id xid8
@@ -700,7 +702,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
             'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.jev.protocol.v34', ${'7'.repeat(64)}, ${accountId},
+            'bayn.jev.protocol.v35', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}
@@ -1416,9 +1418,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,
               qualification_run_id text, research_plan_hash text, strategy_protocol_hash text,
-              broker_environment text DEFAULT 'sandbox'
+              broker_environment text DEFAULT 'sandbox',
+              previous_generation_hash text, proof_plan_hash text, authority_version bigint, activated_at timestamptz,
+              broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
+              broker_identity_hash text DEFAULT 'identity', broker_provider text DEFAULT 'alpaca'
             ) ON COMMIT DROP`
-            yield* sql`INSERT INTO authority_generations VALUES (
+            yield* sql`INSERT INTO authority_generations (
+              generation_hash,account_id,maximum,activation_schema_version,
+              qualification_run_id,research_plan_hash,strategy_protocol_hash,broker_environment
+            ) VALUES (
               ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
               NULL, ${researchPlanHash}, 'protocol', 'sandbox'
             )`
@@ -1476,19 +1484,40 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE fills SET quantity_atoms = 500000`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE fills SET quantity_atoms = 1000000`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:03:40Z'`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
+              VALUES ('flat-after-idle-timeout', 'account', 0, '2026-09-08T17:03:45Z')`
+            yield* sql`INSERT INTO reconciliations VALUES (
+              'account', 'EXACT', 'state', 'state', '[]'::jsonb, '2026-09-08T17:03:50Z'
+            )`
+            expect(yield* settle, 'a fully evidenced trade before an idle timeout remains recoverable').toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: generationHash,
+              terminalIntentCount: 1,
+            })
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id,decision_hash,document) VALUES (
+              'incomplete-cycle', 'incomplete-decision',
+              ${sql.json({ bindings: { authorityGenerationHash: generationHash } })}
+            )`
+            expect(yield* settle, 'one completed trade cannot hide another incomplete decision').toEqual({
+              _tag: 'NoTerminalGeneration',
+            })
+            yield* sql`DELETE FROM autonomous_cycle_shadow_decisions WHERE cycle_id = 'incomplete-cycle'`
+            yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = false WHERE snapshot_id = 'flat-after-idle-timeout'`
+            expect(yield* settle, 'an untrusted later position cannot authorize idle recovery').toEqual({
+              _tag: 'NoTerminalGeneration',
+            })
+            yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = true WHERE snapshot_id = 'flat-after-idle-timeout'`
+            expect(yield* settle).toMatchObject({ _tag: 'TerminalGenerationSettled' })
+            yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
+            expect(yield* settle, 'an active cycle still owns recovery').toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE autonomous_cycles SET state = 'COMPLETED'`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:01:30Z'`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
             expect(authority).toEqual([{ effective: 'OBSERVE', kill_state: 'ACTIVE' }])
 
-            yield* sql`ALTER TABLE authority_generations
-              ADD previous_generation_hash text,
-              ADD proof_plan_hash text,
-              ADD authority_version bigint,
-              ADD activated_at timestamptz,
-              ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
-              ADD broker_identity_hash text DEFAULT 'identity',
-              ADD broker_provider text DEFAULT 'alpaca'`
             yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
             yield* sql`INSERT INTO authority_generations (
               generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id
