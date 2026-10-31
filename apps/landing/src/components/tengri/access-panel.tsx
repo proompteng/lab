@@ -2,8 +2,8 @@
 
 import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Button, Input } from '@proompteng/design/ui'
-import { useCallback, useEffect, useId, useState } from 'react'
+import { Button, Input, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import {
@@ -23,8 +23,15 @@ import {
   type ListAccessResponse,
   type ReadAuditResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
+import { ServicePolicyPanel } from './service-policy-panel'
 
-type View = 'workspace' | 'platform' | 'audit'
+type AccessView = 'workspace' | 'platform' | 'audit'
+type View = AccessView | 'policies'
+type ViewState =
+  | { view: AccessView; kind: 'loading' }
+  | { view: AccessView; kind: 'error'; message: string }
+  | { view: 'workspace' | 'platform'; kind: 'roster'; roster: ListAccessResponse }
+  | { view: 'audit'; kind: 'audit'; audit: ReadAuditResponse }
 const actions = ['membership', 'collaborator', 'quota', 'grant', 'revoke', 'transfer', 'emergency'] as const
 const lines = (value: string) => value.split('\n').filter(Boolean)
 const formSchema = z
@@ -106,8 +113,15 @@ type Form = z.infer<typeof formSchema>
 
 export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: string; active?: boolean }) {
   const [view, setView] = useState<View>(workspaceUid ? 'workspace' : 'platform')
-  const [roster, setRoster] = useState<ListAccessResponse>()
-  const [audit, setAudit] = useState<ReadAuditResponse>()
+  const [data, setData] = useState<ViewState>()
+  const loadController = useRef<AbortController | null>(null)
+  const accessView = view === 'policies' ? 'platform' : view
+  const current = data?.view === view ? data : undefined
+  const roster = current?.kind === 'roster' ? current.roster : undefined
+  const audit = current?.kind === 'audit' ? current.audit : undefined
+  const readError = current?.kind === 'error' ? current.message : ''
+  const loading = active && view !== 'policies' && (!current || current.kind === 'loading')
+  const viewTitle = view === 'audit' ? 'Audit log' : view === 'platform' ? 'Platform access' : 'Workspace access'
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<AccessCommand>()
@@ -147,20 +161,26 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const login = form.watch('login')
   const boundedViewer = role === 'viewer' && enabled && form.watch('viewerContent')
   const load = useCallback(
-    async (signal?: AbortSignal, cursor = '') => {
+    async (cursor = '') => {
+      if (view === 'policies') return
+      loadController.current?.abort()
+      const controller = new AbortController()
+      loadController.current = controller
+      setData({ view, kind: 'loading' })
       const query = new URLSearchParams({ view })
       if (cursor) query.set('cursor', cursor)
       if (view === 'workspace' && workspaceUid) query.set('workspace', workspaceUid)
       setError('')
       try {
-        const response = await fetch(`/api/tengri/access?${query}`, { cache: 'no-store', signal })
+        const response = await fetch(`/api/tengri/access?${query}`, { cache: 'no-store', signal: controller.signal })
         const json = z.json().parse(await response.json())
         if (!response.ok) throw new Error(errorMessage(json))
-        if (signal?.aborted) return
-        if (view === 'audit') setAudit(fromJson(ReadAuditResponseSchema, json))
-        else setRoster(fromJson(ListAccessResponseSchema, json))
+        if (controller.signal.aborted) return
+        if (view === 'audit') setData({ view, kind: 'audit', audit: fromJson(ReadAuditResponseSchema, json) })
+        else setData({ view, kind: 'roster', roster: fromJson(ListAccessResponseSchema, json) })
       } catch (cause) {
-        if (!signal?.aborted) setError(cause instanceof Error ? cause.message : 'Access is unavailable')
+        if (!controller.signal.aborted)
+          setData({ view, kind: 'error', message: cause instanceof Error ? cause.message : 'Access is unavailable' })
       }
     },
     [view, workspaceUid],
@@ -175,13 +195,11 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     setCredential('')
   }, [view, setValue])
   useEffect(() => {
-    setRoster(undefined)
-    setAudit(undefined)
+    setData(undefined)
     if (!active) return
-    const controller = new AbortController()
-    void load(controller.signal)
-    return () => controller.abort()
-  }, [active, load])
+    void load()
+    return () => loadController.current?.abort()
+  }, [active, load, receipt])
   const execute = async (input: AccessCommand) => {
     setBusy(true)
     setError('')
@@ -204,7 +222,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       setReceipt(`Operation ${result.operationId} · audit ${result.auditReceiptId} · policy version ${result.version}`)
       setCredential(result.agentCredential)
       setPending(undefined)
-      await load()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Change could not be confirmed. Retry the pending change.')
     } finally {
@@ -318,25 +335,43 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const selectClass =
     'rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-100 focus-visible:outline-2 focus-visible:outline-zinc-400'
   return (
-    <section className="space-y-4 text-zinc-200" aria-label="Access administration">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Access view">
-        {(['workspace', 'platform', 'audit'] as const)
-          .filter((item) => item !== 'workspace' || workspaceUid)
-          .map((item) => (
-            <Button
-              type="button"
-              key={item}
-              size="sm"
-              variant={view === item ? 'secondary' : 'ghost'}
-              onClick={() => setView(item)}
-              aria-pressed={view === item}
-            >
-              {item === 'workspace' ? 'Workspace' : item === 'platform' ? 'Platform' : 'Audit'}
-            </Button>
-          ))}
-        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
-          Refresh
-        </Button>
+    <Tabs
+      value={view}
+      onValueChange={(value) => {
+        if (value === 'workspace' || value === 'platform' || value === 'audit' || value === 'policies') setView(value)
+      }}
+      render={<section aria-label="Access administration" />}
+      className="gap-4 text-zinc-200"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <TabsList
+          activateOnFocus
+          aria-label="Access view"
+          className="h-auto min-h-9 max-w-full flex-wrap border border-white/10 bg-zinc-950/40 p-0.5"
+        >
+          {(['workspace', 'platform', 'audit', 'policies'] as const)
+            .filter((item) => item !== 'workspace' || workspaceUid)
+            .map((item) => (
+              <TabsTrigger
+                key={item}
+                value={item}
+                className="min-w-20 px-3 text-[13px] text-zinc-400 data-active:bg-zinc-600 data-active:text-white data-active:shadow-sm dark:data-active:bg-zinc-600"
+              >
+                {item === 'workspace'
+                  ? 'Workspace'
+                  : item === 'platform'
+                    ? 'Platform'
+                    : item === 'policies'
+                      ? 'Service policies'
+                      : 'Audit'}
+              </TabsTrigger>
+            ))}
+        </TabsList>
+        {view !== 'policies' ? (
+          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
+            Refresh
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="sm"
@@ -349,266 +384,269 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           Verify passkey
         </Button>
       </div>
-      <p className="text-xs leading-5 text-zinc-400">
-        Owners manage workspace collaborators and bounded diagnostic grants. Platform administrators manage membership,
-        quotas and platform policy. Developer access includes a root shell. Removing it quarantines the retained
-        workspace until credentials and the guest are recovered. Viewers see metadata unless the owner explicitly
-        approves bounded content access.
-      </p>
-      {error ? (
-        <p role="alert" className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-200">
-          {error}
-        </p>
-      ) : null}
-      {pending ? (
-        <div className="rounded-md border border-amber-800 p-3 text-xs">
-          <p>The result of operation {pending.operationId} is unconfirmed. Retry it before starting another change.</p>
-          <Button type="button" size="sm" disabled={busy} onClick={() => void execute(pending)}>
-            Retry pending change
-          </Button>
-        </div>
-      ) : null}
-      {credential ? (
-        <div className="space-y-2 rounded-md border border-amber-800 p-3">
-          <p className="text-xs text-amber-200">
-            Save this credential now. Ofz returns it once. The agent also needs its matching private proof key.
-          </p>
-          <Input aria-label="New diagnostic credential" readOnly value={credential} autoComplete="off" />
-          <Button type="button" size="sm" variant="ghost" onClick={() => setCredential('')}>
-            Dismiss credential
-          </Button>
-        </div>
-      ) : null}
-      {receipt ? (
-        <p role="status" className="break-all text-xs text-emerald-300">
-          {receipt}
-        </p>
-      ) : null}
-      {roster ? (
-        <>
-          <div className="overflow-x-auto rounded-md border border-zinc-700">
-            <table className="w-full text-left text-xs">
-              <caption className="p-2 text-left text-zinc-400">
-                Policy version {roster.version.toString()}
-                {roster.workspaceState ? ` · ${roster.workspaceState}` : ''}
-              </caption>
-              <thead className="bg-zinc-900">
-                <tr>
-                  <th className="p-2">Identity</th>
-                  <th className="p-2">Role</th>
-                  <th className="p-2">Scope / expiry</th>
-                </tr>
-              </thead>
-              <tbody>
-                {roster.entries.map((entry) => (
-                  <tr key={`${entry.subjectId}/${entry.role}/${entry.grantId}`} className="border-t border-zinc-800">
-                    <td className="max-w-56 break-all p-2">
-                      {entry.githubId ? (
-                        <a
-                          className="underline"
-                          href={`https://github.com/account/redirect?user_id=${encodeURIComponent(entry.githubId)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          GitHub #{entry.githubId}
-                        </a>
-                      ) : (
-                        entry.subjectId
-                      )}
-                      {entry.grantId ? <p className="text-zinc-400">Grant {entry.grantId}</p> : null}
-                    </td>
-                    <td className="p-2">{entry.role}</td>
-                    <td className="p-2">
-                      {entry.actions.map((permission) => Action[permission]).join(', ')}
-                      {entry.scope ? (
-                        <div className="text-zinc-400">
-                          <dl className="space-y-1">
-                            {[
-                              { label: 'File roots', targets: entry.scope.fileRoots },
-                              { label: 'Codex thread IDs', targets: entry.scope.threadIds },
-                              { label: 'Terminal IDs', targets: entry.scope.terminalIds },
-                            ].map(({ label, targets }) => (
-                              <div key={label}>
-                                <dt>{label}</dt>
-                                <dd className="break-all whitespace-pre-wrap font-mono">
-                                  {targets.length ? targets.map((target) => JSON.stringify(target)).join('\n') : 'None'}
-                                </dd>
-                              </div>
-                            ))}
-                          </dl>
-                          <p>
-                            {entry.role === 'viewer' || entry.actions.includes(Action.BROWSER_OBSERVE) ? (
-                              <>Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · </>
-                            ) : null}
-                            up to {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
-                          </p>
-                        </div>
-                      ) : entry.role === 'viewer' ? (
-                        <p className="text-zinc-400">Metadata only</p>
-                      ) : null}
-                      {entry.expiresAtUnixMs > BigInt(0) ? new Date(Number(entry.expiresAtUnixMs)).toISOString() : ''}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <TabsContent key={accessView} value={accessView} className="space-y-4" aria-busy={loading}>
+        <h2 className="text-[13px] font-medium">{viewTitle}</h2>
+        {loading ? (
+          <div role="status" aria-label={`Loading ${viewTitle}`} className="space-y-3">
+            <span className="sr-only">Loading {viewTitle}…</span>
+            <div aria-hidden="true" className="space-y-3">
+              <Skeleton className="h-8 w-full bg-zinc-700/40" />
+              <Skeleton className="h-5 w-3/4 bg-zinc-700/40" />
+              <Skeleton className="h-5 w-1/2 bg-zinc-700/40" />
+            </div>
           </div>
-          {roster.quotas.map((quota) => (
-            <p key={quota.humanId} className="text-xs text-zinc-400">
-              {quota.humanId.slice(0, 12)} · workspaces {quota.usedWorkspaces}/{quota.totalWorkspaces} · active{' '}
-              {quota.usedActive}/{quota.activeWorkspaces} · retained{' '}
-              {(Number(quota.usedBytes) / 1_073_741_824).toFixed(0)}/
-              {(Number(quota.retainedBytes) / 1_073_741_824).toFixed(0)} GiB
+        ) : null}
+        <p className="text-xs leading-5 text-zinc-400">
+          {view === 'workspace'
+            ? 'Manage collaborators and temporary diagnostic access for this workspace.'
+            : view === 'platform'
+              ? 'Manage platform membership and workspace quotas.'
+              : 'Review access decisions and policy changes.'}
+        </p>
+        {error || readError ? (
+          <p role="alert" className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-200">
+            {error || readError}
+          </p>
+        ) : null}
+        {pending ? (
+          <div className="rounded-md border border-amber-800 p-3 text-xs">
+            <p>
+              The result of operation {pending.operationId} is unconfirmed. Retry it before starting another change.
             </p>
-          ))}
-          {roster.cursor ? (
-            <Button type="button" size="sm" variant="ghost" onClick={() => void load(undefined, roster.cursor)}>
-              Next access page
+            <Button type="button" size="sm" disabled={busy} onClick={() => void execute(pending)}>
+              Retry pending change
             </Button>
-          ) : null}
-          <form noValidate onSubmit={submit} className="space-y-3 rounded-md border border-zinc-700 bg-zinc-900/60 p-3">
-            <fieldset disabled={busy || Boolean(pending)} className="space-y-3">
-              <legend className="mb-2 text-sm font-medium">Change access</legend>
-              <label className="flex items-center gap-2 text-xs">
-                Change
-                <select
-                  aria-label="Change"
-                  className={selectClass}
-                  {...form.register('action')}
-                  onChange={(event) => {
-                    const next = z.enum(actions).parse(event.target.value)
-                    form.setValue('action', next)
-                    form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
-
-                    if (['grant', 'emergency'].includes(next))
-                      form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
-                  }}
-                >
-                  {(view === 'workspace'
-                    ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
-                    : ['membership', 'quota']
-                  ).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
+          </div>
+        ) : null}
+        {credential ? (
+          <div className="space-y-2 rounded-md border border-amber-800 p-3">
+            <p className="text-xs text-amber-200">
+              Save this credential now. Ofz returns it once. The agent also needs its matching private proof key.
+            </p>
+            <Input aria-label="New diagnostic credential" readOnly value={credential} autoComplete="off" />
+            <Button type="button" size="sm" variant="ghost" onClick={() => setCredential('')}>
+              Dismiss credential
+            </Button>
+          </div>
+        ) : null}
+        {receipt ? (
+          <p role="status" className="break-all text-xs text-emerald-300">
+            {receipt}
+          </p>
+        ) : null}
+        {roster ? (
+          <>
+            <div className="overflow-x-auto rounded-md border border-zinc-700">
+              <table className="w-full text-left text-xs">
+                <caption className="p-2 text-left text-zinc-400">
+                  Policy version {roster.version.toString()}
+                  {roster.workspaceState ? ` · ${roster.workspaceState}` : ''}
+                </caption>
+                <thead className="bg-zinc-900">
+                  <tr>
+                    <th className="p-2">Identity</th>
+                    <th className="p-2">Role</th>
+                    <th className="p-2">Scope / expiry</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roster.entries.map((entry) => (
+                    <tr key={`${entry.subjectId}/${entry.role}/${entry.grantId}`} className="border-t border-zinc-800">
+                      <td className="max-w-56 break-all p-2">
+                        {entry.githubId ? (
+                          <a
+                            className="underline"
+                            href={`https://github.com/account/redirect?user_id=${encodeURIComponent(entry.githubId)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            GitHub #{entry.githubId}
+                          </a>
+                        ) : (
+                          entry.subjectId
+                        )}
+                        {entry.grantId ? <p className="text-zinc-400">Grant {entry.grantId}</p> : null}
+                      </td>
+                      <td className="p-2">{entry.role}</td>
+                      <td className="p-2">
+                        {entry.actions.map((permission) => Action[permission]).join(', ')}
+                        {entry.scope ? (
+                          <div className="text-zinc-400">
+                            <dl className="space-y-1">
+                              {[
+                                { label: 'File roots', targets: entry.scope.fileRoots },
+                                { label: 'Codex thread IDs', targets: entry.scope.threadIds },
+                                { label: 'Terminal IDs', targets: entry.scope.terminalIds },
+                              ].map(({ label, targets }) => (
+                                <div key={label}>
+                                  <dt>{label}</dt>
+                                  <dd className="break-all whitespace-pre-wrap font-mono">
+                                    {targets.length
+                                      ? targets.map((target) => JSON.stringify(target)).join('\n')
+                                      : 'None'}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                            <p>
+                              {entry.role === 'viewer' || entry.actions.includes(Action.BROWSER_OBSERVE) ? (
+                                <>Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · </>
+                              ) : null}
+                              up to {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
+                            </p>
+                          </div>
+                        ) : entry.role === 'viewer' ? (
+                          <p className="text-zinc-400">Metadata only</p>
+                        ) : null}
+                        {entry.expiresAtUnixMs > BigInt(0) ? new Date(Number(entry.expiresAtUnixMs)).toISOString() : ''}
+                      </td>
+                    </tr>
                   ))}
-                </select>
-              </label>
-              {['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(action)
-                ? field('login', 'GitHub username', 'The server verifies its numeric GitHub ID before changing policy.')
-                : null}
-              {['membership', 'collaborator'].includes(action) ? (
+                </tbody>
+              </table>
+            </div>
+            {roster.quotas.map((quota) => (
+              <p key={quota.humanId} className="text-xs text-zinc-400">
+                {quota.humanId.slice(0, 12)} · workspaces {quota.usedWorkspaces}/{quota.totalWorkspaces} · active{' '}
+                {quota.usedActive}/{quota.activeWorkspaces} · retained{' '}
+                {(Number(quota.usedBytes) / 1_073_741_824).toFixed(0)}/
+                {(Number(quota.retainedBytes) / 1_073_741_824).toFixed(0)} GiB
+              </p>
+            ))}
+            {roster.cursor ? (
+              <Button type="button" size="sm" variant="ghost" onClick={() => void load(roster.cursor)}>
+                Next access page
+              </Button>
+            ) : null}
+            <form
+              noValidate
+              onSubmit={submit}
+              className="space-y-3 rounded-md border border-zinc-700 bg-zinc-900/60 p-3"
+            >
+              <fieldset disabled={busy || Boolean(pending)} className="space-y-3">
+                <legend className="mb-2 text-sm font-medium">Change access</legend>
                 <label className="flex items-center gap-2 text-xs">
-                  Role
-                  <select aria-label="Role" {...form.register('role')} className={selectClass}>
-                    {(action === 'membership'
-                      ? ['member', 'administrator', 'auditor', 'operator']
-                      : ['developer', 'viewer']
-                    ).map((role) => (
-                      <option key={role}>{role}</option>
+                  Change
+                  <select
+                    aria-label="Change"
+                    className={selectClass}
+                    {...form.register('action')}
+                    onChange={(event) => {
+                      const next = z.enum(actions).parse(event.target.value)
+                      form.setValue('action', next)
+                      form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
+
+                      if (['grant', 'emergency'].includes(next))
+                        form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
+                    }}
+                  >
+                    {(view === 'workspace'
+                      ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
+                      : ['membership', 'quota']
+                    ).map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
                     ))}
                   </select>
                 </label>
-              ) : null}
-              {['membership', 'collaborator'].includes(action) ? (
-                <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" {...form.register('enabled')} /> Enable this access
-                </label>
-              ) : null}
-              {action === 'collaborator' && form.watch('role') === 'viewer' && form.watch('enabled') ? (
-                <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" {...form.register('viewerContent')} /> Approve bounded Viewer content access
-                </label>
-              ) : null}
-              {action === 'quota' ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {(['total', 'active', 'retainedGiB'] as const).map((name) => (
-                    <label key={name} className="space-y-1 text-xs">
-                      {name}
-                      <Input
-                        type="number"
-                        {...form.register(name, { valueAsNumber: true })}
-                        aria-invalid={Boolean(form.formState.errors[name])}
-                      />
-                      {form.formState.errors[name] ? (
-                        <span role="alert" className="text-red-300">
-                          {form.formState.errors[name]?.message}
-                        </span>
-                      ) : null}
-                    </label>
-                  ))}
-                </div>
-              ) : null}
-              {action === 'grant' ? (
-                <>
-                  {field('agentId', 'Diagnostic agent UUID')}
-                  {field('proofKeyThumbprint', 'Proof key thumbprint', 'The private key stays with the agent.')}
-                  <fieldset className="flex flex-wrap gap-3">
-                    <legend className="mb-1 text-xs">Observation permissions</legend>
-                    {diagnosticActions.map((permission) => (
-                      <label key={permission} className="flex items-center gap-1 text-xs">
-                        <input type="checkbox" value={permission} {...form.register('permissions')} />
-                        {permission}
+                {['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(action)
+                  ? field(
+                      'login',
+                      'GitHub username',
+                      'The server verifies its numeric GitHub ID before changing policy.',
+                    )
+                  : null}
+                {['membership', 'collaborator'].includes(action) ? (
+                  <label className="flex items-center gap-2 text-xs">
+                    Role
+                    <select aria-label="Role" {...form.register('role')} className={selectClass}>
+                      {(action === 'membership'
+                        ? ['member', 'administrator', 'auditor', 'operator']
+                        : ['developer', 'viewer']
+                      ).map((role) => (
+                        <option key={role}>{role}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {['membership', 'collaborator'].includes(action) ? (
+                  <label className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" {...form.register('enabled')} /> Enable this access
+                  </label>
+                ) : null}
+                {action === 'collaborator' && form.watch('role') === 'viewer' && form.watch('enabled') ? (
+                  <label className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" {...form.register('viewerContent')} /> Approve bounded Viewer content access
+                  </label>
+                ) : null}
+                {action === 'collaborator' ? (
+                  <p className="text-xs leading-5 text-zinc-400">
+                    Developer access includes a root shell. Removing it quarantines this workspace until credentials and
+                    the guest are recovered. Viewers see metadata unless you explicitly allow bounded content access.
+                  </p>
+                ) : null}
+                {action === 'quota' ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['total', 'active', 'retainedGiB'] as const).map((name) => (
+                      <label key={name} className="space-y-1 text-xs">
+                        {name}
+                        <Input
+                          type="number"
+                          {...form.register(name, { valueAsNumber: true })}
+                          aria-invalid={Boolean(form.formState.errors[name])}
+                        />
+                        {form.formState.errors[name] ? (
+                          <span role="alert" className="text-red-300">
+                            {form.formState.errors[name]?.message}
+                          </span>
+                        ) : null}
                       </label>
                     ))}
-                  </fieldset>
-                </>
-              ) : null}
-              {action === 'grant' || (action === 'collaborator' && boundedViewer) ? (
-                <fieldset className="space-y-3">
-                  <legend className="mb-1 text-xs">Approved observation scope</legend>
-                  <p className="text-xs text-zinc-400">
-                    Only the listed content targets are readable. Browser status is included; screenshots require
-                    separate approval. Observation does not start services or send input. Selected content can contain
-                    private information.
-                  </p>
-                  {(
-                    [
-                      ['fileRoots', 'File roots under /workspace'],
-                      ['threadIds', 'Codex thread IDs'],
-                      ['terminalIds', 'Terminal IDs'],
-                    ] as const
-                  ).map(([name, label]) => (
-                    <div key={name} className="space-y-1 text-xs">
-                      <label htmlFor={`${formId}-${name}`} className="block">
-                        {label}
-                      </label>
-                      <textarea
-                        id={`${formId}-${name}`}
-                        {...form.register(name)}
-                        rows={2}
-                        aria-invalid={Boolean(form.formState.errors[name])}
-                        aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
-                        className={`${selectClass} block w-full`}
-                        placeholder="One approved target per line"
-                      />
-                      {form.formState.errors[name] ? (
-                        <p id={`${formId}-${name}-error`} role="alert" className="text-red-300">
-                          {form.formState.errors[name]?.message}
-                        </p>
-                      ) : null}
-                    </div>
-                  ))}
-                  <label className="flex items-center gap-2 text-xs">
-                    <input type="checkbox" {...form.register('browserScreenshot')} /> Allow browser screenshots
-                  </label>
-                  <div className="flex gap-2">
+                  </div>
+                ) : null}
+                {action === 'grant' ? (
+                  <>
+                    {field('agentId', 'Diagnostic agent UUID')}
+                    {field('proofKeyThumbprint', 'Proof key thumbprint', 'The private key stays with the agent.')}
+                    <fieldset className="flex flex-wrap gap-3">
+                      <legend className="mb-1 text-xs">Observation permissions</legend>
+                      {diagnosticActions.map((permission) => (
+                        <label key={permission} className="flex items-center gap-1 text-xs">
+                          <input type="checkbox" value={permission} {...form.register('permissions')} />
+                          {permission}
+                        </label>
+                      ))}
+                    </fieldset>
+                  </>
+                ) : null}
+                {action === 'grant' || (action === 'collaborator' && boundedViewer) ? (
+                  <fieldset className="space-y-3">
+                    <legend className="mb-1 text-xs">Approved observation scope</legend>
+                    <p className="text-xs text-zinc-400">
+                      Only the listed content targets are readable. Browser status is included; screenshots require
+                      separate approval. Observation does not start services or send input. Selected content can contain
+                      private information.
+                    </p>
                     {(
                       [
-                        ['maxBytes', 'Maximum bytes'],
-                        ['maxItems', 'Maximum items'],
+                        ['fileRoots', 'File roots under /workspace'],
+                        ['threadIds', 'Codex thread IDs'],
+                        ['terminalIds', 'Terminal IDs'],
                       ] as const
                     ).map(([name, label]) => (
                       <div key={name} className="space-y-1 text-xs">
                         <label htmlFor={`${formId}-${name}`} className="block">
                           {label}
                         </label>
-                        <Input
+                        <textarea
                           id={`${formId}-${name}`}
-                          type="number"
-                          {...form.register(name, { valueAsNumber: true })}
+                          {...form.register(name)}
+                          rows={2}
                           aria-invalid={Boolean(form.formState.errors[name])}
                           aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
+                          className={`${selectClass} block w-full`}
+                          placeholder="One approved target per line"
                         />
                         {form.formState.errors[name] ? (
                           <p id={`${formId}-${name}-error`} role="alert" className="text-red-300">
@@ -617,73 +655,106 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                         ) : null}
                       </div>
                     ))}
-                  </div>
-                </fieldset>
-              ) : null}
-              {action === 'revoke' ? field('grantId', 'Grant UUID') : null}
-              {['grant', 'emergency'].includes(action)
-                ? field(
-                    'expiresAt',
-                    'Expiry in UTC',
-                    action === 'grant'
-                      ? 'Maximum one hour. Default fifteen minutes.'
-                      : 'Maximum thirty minutes. Both custodians must approve the same exact expiry.',
-                  )
-                : null}
-              {action === 'emergency' ? (
-                <>
-                  {field('incidentId', 'Incident reference')}
-                  {field(
-                    'approvalId',
-                    'First custodian operation UUID',
-                    'Leave empty for the first approval. A different custodian completes the second approval.',
-                  )}
-                </>
-              ) : null}
-              {action === 'transfer' ? (
-                <p className="text-xs text-amber-200">
-                  Transfer revokes existing diagnostic grants and quarantines the retained guest. Recovery must complete
-                  before the new owner can open content.
+                    <label className="flex items-center gap-2 text-xs">
+                      <input type="checkbox" {...form.register('browserScreenshot')} /> Allow browser screenshots
+                    </label>
+                    <div className="flex gap-2">
+                      {(
+                        [
+                          ['maxBytes', 'Maximum bytes'],
+                          ['maxItems', 'Maximum items'],
+                        ] as const
+                      ).map(([name, label]) => (
+                        <div key={name} className="space-y-1 text-xs">
+                          <label htmlFor={`${formId}-${name}`} className="block">
+                            {label}
+                          </label>
+                          <Input
+                            id={`${formId}-${name}`}
+                            type="number"
+                            {...form.register(name, { valueAsNumber: true })}
+                            aria-invalid={Boolean(form.formState.errors[name])}
+                            aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
+                          />
+                          {form.formState.errors[name] ? (
+                            <p id={`${formId}-${name}-error`} role="alert" className="text-red-300">
+                              {form.formState.errors[name]?.message}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </fieldset>
+                ) : null}
+                {action === 'revoke' ? field('grantId', 'Grant UUID') : null}
+                {['grant', 'emergency'].includes(action)
+                  ? field(
+                      'expiresAt',
+                      'Expiry in UTC',
+                      action === 'grant'
+                        ? 'Maximum one hour. Default fifteen minutes.'
+                        : 'Maximum thirty minutes. Both custodians must approve the same exact expiry.',
+                    )
+                  : null}
+                {action === 'emergency' ? (
+                  <>
+                    {field('incidentId', 'Incident reference')}
+                    {field(
+                      'approvalId',
+                      'First custodian operation UUID',
+                      'Leave empty for the first approval. A different custodian completes the second approval.',
+                    )}
+                  </>
+                ) : null}
+                {action === 'transfer' ? (
+                  <p className="text-xs text-amber-200">
+                    Transfer revokes existing diagnostic grants and quarantines the retained guest. Recovery must
+                    complete before the new owner can open content.
+                  </p>
+                ) : null}
+                {field(
+                  'reason',
+                  'Reason',
+                  'Keep credentials, personal data, prompts and file contents out of this audit reason.',
+                )}
+                {form.formState.errors.root?.server ? (
+                  <p role="alert" className="text-xs text-red-300">
+                    {form.formState.errors.root.server.message}
+                  </p>
+                ) : null}
+                <Button type="submit" size="sm">
+                  {busy ? 'Applying…' : 'Apply change'}
+                </Button>
+              </fieldset>
+            </form>
+          </>
+        ) : null}
+        {audit ? (
+          <div className="max-h-96 space-y-2 overflow-auto text-xs">
+            {audit.receipts.length === 0 ? <p className="text-zinc-400">No audit records.</p> : null}
+            {audit.receipts.map((entry) => (
+              <div key={entry.id} className="rounded border border-zinc-800 p-2">
+                <p>
+                  #{entry.sequence.toString()} · {new Date(Number(entry.createdAtUnixMs)).toISOString()} ·{' '}
+                  {entry.allowed ? 'Allow' : 'Deny'} · {Action[entry.action]}
                 </p>
-              ) : null}
-              {field(
-                'reason',
-                'Reason',
-                'Keep credentials, personal data, prompts and file contents out of this audit reason.',
-              )}
-              {form.formState.errors.root?.server ? (
-                <p role="alert" className="text-xs text-red-300">
-                  {form.formState.errors.root.server.message}
+                <p className="break-all text-zinc-400">
+                  {entry.id} · {entry.reason}
                 </p>
-              ) : null}
-              <Button type="submit" size="sm">
-                {busy ? 'Applying…' : 'Apply change'}
+              </div>
+            ))}
+            {audit.cursor ? (
+              <Button type="button" size="sm" onClick={() => void load(audit.cursor)}>
+                Next audit page
               </Button>
-            </fieldset>
-          </form>
-        </>
-      ) : null}
-      {audit ? (
-        <div className="max-h-96 space-y-2 overflow-auto text-xs">
-          {audit.receipts.map((entry) => (
-            <div key={entry.id} className="rounded border border-zinc-800 p-2">
-              <p>
-                #{entry.sequence.toString()} · {new Date(Number(entry.createdAtUnixMs)).toISOString()} ·{' '}
-                {entry.allowed ? 'Allow' : 'Deny'} · {Action[entry.action]}
-              </p>
-              <p className="break-all text-zinc-400">
-                {entry.id} · {entry.reason}
-              </p>
-            </div>
-          ))}
-          {audit.cursor ? (
-            <Button type="button" size="sm" onClick={() => void load(undefined, audit.cursor)}>
-              Next audit page
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+            ) : null}
+          </div>
+        ) : null}
+      </TabsContent>
+      <TabsContent value="policies" keepMounted>
+        <ServicePolicyPanel active={active && view === 'policies'} />
+      </TabsContent>
+    </Tabs>
   )
 }
 

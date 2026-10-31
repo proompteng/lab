@@ -53,9 +53,10 @@ connections. Adding a client requires no second identity allowlist in Relay.
 `packages/platform-client` supplies Rust protobuf types, exact-peer SPIFFE TLS and the shared execution body.
 The `relay-client` binary is an MCP stdio bridge for independent workloads such as OpenCode. Each operation asserts
 that workload's registered identity; it contains no Tengri workspace or human session.
-Successful tool responses include operation and receipt IDs in `_meta.relay`. After an uncertain transport outcome,
-the bridge performs one authorized status lookup with the retained original body. It never resends Execute. The MCP
-response remains an error because the original result is unavailable, and includes the confirmed outcome or `unknown`.
+Successful tool responses include operation and receipt IDs in `_meta.relay`. After a failed call or an unusable
+response, the bridge performs one authorized status lookup with the retained original body, including for
+Kubernetes RBAC and missing-resource failures. It never resends Execute. The MCP response remains an error because the
+original result is unavailable, and includes the confirmed outcome or `unknown` if lookup is denied or unavailable.
 
 The Tengri BFF installs a proof-bound delegation into the current guest. Ofz creates it inactive. The BFF activates it
 only after the guest acknowledges its exact delegation ID and proof-key thumbprint. Ofz checks the issuer's current
