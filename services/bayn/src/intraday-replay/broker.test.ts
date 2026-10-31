@@ -462,6 +462,57 @@ test('canceling a resting DAY order prevents execution on subsequent quotes', as
   expect(state.ledger.fills).toEqual([])
 })
 
+test.serial('expiration reads format one session date per working DAY order and none for terminal orders', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'format')
+  if (descriptor?.get === undefined) throw new Error('Missing Intl format getter')
+  const getFormat = (formatter: Intl.DateTimeFormat) => descriptor.get?.call(formatter) as Intl.DateTimeFormat['format']
+  let formats = 0
+  Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', {
+    ...descriptor,
+    get(this: Intl.DateTimeFormat) {
+      const format = getFormat(this)
+      return (value?: number | Date) => {
+        formats += 1
+        return format(value)
+      }
+    },
+  })
+  try {
+    await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          assumptions: { ...config.assumptions, slippageBps: 1 },
+          calendar: [
+            ...Array.from({ length: 19 }, (_, index) => ({
+              date: `2026-08-${String(index + 1).padStart(2, '0')}` as ReplayBrokerConfig['calendar'][number]['date'],
+              open: '09:30',
+              close: '16:00',
+              session_open: '0930',
+              session_close: '1600',
+            })),
+            ...config.calendar,
+          ],
+        })
+        const submitted = yield* submit(
+          broker,
+          intent({ limitPriceMicros: '100000000', notionalLimitMicros: '500000000' }),
+        )
+        formats = 0
+        const resting = yield* broker.snapshot
+        expect(resting.orders[0]?.order.status).toBe(OrderStatus.New)
+        expect(formats).toBe(1)
+        yield* broker.mutation.cancel(submitted.order.brokerOrderId)
+        formats = 0
+        const canceled = yield* broker.snapshot
+        expect(canceled.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+        expect(formats).toBe(0)
+      }),
+    )
+  } finally {
+    Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', descriptor)
+  }
+})
+
 test('an extended-hours DAY order expires at the broker session end, including without another quote', async () => {
   const result = await run(
     Effect.gen(function* () {
@@ -2245,6 +2296,33 @@ const laterMarket = (delay: number, bid: number, size = 100) => {
     at,
   )
 }
+
+test('regular-close expiration includes partially filled DAY entries and held DAY protection', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ quoteAt: () => Effect.succeed(observedQuote({ ...quote, askSize: 2 })) })
+      yield* submit(broker, intent({ protection: bracketTerms }))
+      const closeAt = Date.parse('2026-09-04T20:00:00.000Z')
+      yield* TestClock.setTime(closeAt - 1)
+      const before = yield* broker.snapshot
+      expect(before.orders.map(({ order }) => order.status)).toEqual([
+        OrderStatus.PartiallyFilled,
+        OrderStatus.Held,
+        OrderStatus.Held,
+      ])
+      yield* TestClock.setTime(closeAt)
+      const atClose = yield* broker.snapshot
+      expect(atClose.orders.map(({ order }) => order.status)).toEqual([
+        OrderStatus.Expired,
+        OrderStatus.Expired,
+        OrderStatus.Expired,
+      ])
+      expect(atClose.orders.every(({ order }) => order.updatedAt === '2026-09-04T20:00:00.000Z')).toBe(true)
+      expect(atClose.ledger).toEqual(before.ledger)
+      expect((yield* broker.snapshot).orders).toEqual(atClose.orders)
+    }),
+  )
+})
 
 test('native bracket children remain held after a partial entry and cancel with the entry', async () => {
   await run(

@@ -2,27 +2,24 @@ import { Clock, Context, Effect } from 'effect'
 
 import type { OperationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
-import { evaluateClaimedEntryInference } from './entry-inference'
-import { JevFailure } from './contract'
+import type { StagedDispatchClaim } from './staged-checkpoint'
 import {
   decodeJevEvaluationRequest,
   JevEvidenceError,
-  JevOutcome,
-  makeJevEvaluationReceipt,
-  entryInferenceAvailableAt,
   type JevEvaluationReceipt,
   type JevEvaluationRequest,
 } from './evidence'
-import { decodeJevResolution, JevResolutionStatus, type JevEvaluationEvidence, type JevResolution } from './resolution'
+import { type JevEvaluationEvidence, type JevResolution } from './resolution'
+
+export type JevEvaluationRecord = { readonly request: JevEvaluationRequest; readonly receipt: JevEvaluationReceipt }
 
 export class JevEvaluationStore extends Context.Service<
   JevEvaluationStore,
   {
     readonly read: (requestId: string) => Effect.Effect<JevEvaluationEvidence | null, OperationalError>
-    readonly record: (
-      request: JevEvaluationRequest,
-      receipt: JevEvaluationReceipt,
-    ) => Effect.Effect<JevResolution, OperationalError>
+    readonly recordAll: (
+      entries: readonly JevEvaluationRecord[],
+    ) => Effect.Effect<ReadonlyMap<string, JevResolution>, OperationalError>
     readonly abandon: (
       request: JevEvaluationRequest,
       abandonedAt: string,
@@ -33,72 +30,22 @@ export class JevEvaluationStore extends Context.Service<
 export interface JevDispatch {
   readonly request: JevEvaluationRequest
   readonly claimedAt: string
+  readonly visualClaim: StagedDispatchClaim | null
+  readonly consume: Effect.Effect<void, JevEvidenceError>
 }
 
-export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
-  Effect.gen(function* () {
-    const request = yield* Effect.fromResult(decodeJevEvaluationRequest(dispatch.request))
-    const started = Date.parse(dispatch.claimedAt)
-    if (
-      !Number.isFinite(started) ||
-      started < Date.parse(request.observedAt) ||
-      started >= Date.parse(request.expiresAt)
-    )
-      return yield* new JevEvidenceError({ message: 'Jev dispatch claim is outside its validity window' })
-    const store = yield* JevEvaluationStore
-    const now = yield* Clock.currentTimeMillis
-    if (now >= Date.parse(request.expiresAt) || now < started) {
-      if (now >= Date.parse(request.expiresAt)) {
-        const notDispatched = yield* Effect.fromResult(
-          makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
-            requestId: request.requestId,
-            startedAt: utcInstantFromEpochMillis(started),
-            completedAt: utcInstantFromEpochMillis(now),
-            outcome: {
-              status: JevOutcome.Failed,
-              failure: JevFailure.NotDispatched,
-            },
-          }),
-        )
-        yield* store.record(request, notDispatched)
-      }
-      return yield* new JevEvidenceError({ message: 'Jev request expired or its clock regressed during persistence' })
-    }
-    const completion = yield* evaluateClaimedEntryInference({
-      requestId: request.requestId,
-      input: request.request,
-      observedAt: request.observedAt,
-      expiresAt: request.expiresAt,
-      claimedAt: dispatch.claimedAt,
-    }).pipe(
-      Effect.catchTags({
-        EntryInferenceError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
-        JevContractError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
-      }),
-    )
-    const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
-    const receipt = yield* Effect.fromResult(
-      makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
-        requestId: request.requestId,
-        startedAt: utcInstantFromEpochMillis(started),
-        completedAt,
-        outcome: { status: JevOutcome.Completed, completion },
-      }),
-    )
-    const resolution = yield* Effect.fromResult(
-      decodeJevResolution(request, receipt, yield* store.record(request, receipt)),
-    )
-    if (resolution.status !== JevResolutionStatus.Recorded)
-      return yield* new JevEvidenceError({
-        message: 'Jev evidence arrived after permanent abandonment; entry is forbidden',
-      })
-    const inference = yield* Effect.fromResult(
-      entryInferenceAvailableAt(request, receipt, yield* Clock.currentTimeMillis, request.request.schemaVersion),
-    )
-    return { request, receipt, resolution, inference }
-  })
+export const makeJevDispatch = (input: Omit<JevDispatch, 'consume'>): JevDispatch => {
+  let consumed = false
+  return {
+    ...input,
+    consume: Effect.suspend(() => {
+      if (consumed)
+        return Effect.fail(new JevEvidenceError({ message: 'An admitted provider dispatch cannot be consumed twice' }))
+      consumed = true
+      return Effect.void
+    }),
+  }
+}
 
 export const recoverExpiredJevEvaluation = (input: unknown) =>
   Effect.gen(function* () {

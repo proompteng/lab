@@ -1,3 +1,9 @@
+import {
+  persistVisualClaimFixture,
+  persistVisualTransitionFixture,
+  persistHandoffFixture,
+  persistEvaluationFixture,
+} from '../jev/evaluation.test-support'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
 import { stageResponseIdentity } from '../jev/staged-checkpoint'
@@ -58,7 +64,7 @@ const plan = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const candidate = plan.candidates[0]
@@ -95,16 +101,17 @@ const retainCheckpoint = (journal: Effect.Success<typeof setup>['journal'], valu
   Effect.gen(function* () {
     const checkpoint = stagedCheckpointFixture(value, observation.observedAt)
     for (const claim of checkpoint.claims) {
-      yield* journal.handoffs.recordVisualClaim(claim)
+      yield* persistVisualClaimFixture(journal.handoffs, claim)
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-      if (terminal !== undefined) yield* journal.handoffs.recordVisualTerminal(terminal)
+      if (terminal !== undefined)
+        yield* persistVisualTransitionFixture(journal.handoffs, { terminal: terminal, successor: { kind: 'NONE' } })
     }
   })
 const record = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
   Effect.gen(function* () {
     yield* retainCheckpoint(journal, value)
-    yield* journal.handoffs.recordHandoff(entryCompletionFixture(value, observation.observedAt).handoff)
-    return yield* journal.evaluations.record(value, receipt(value))
+    yield* persistHandoffFixture(journal.handoffs, entryCompletionFixture(value, observation.observedAt).handoff)
+    return yield* persistEvaluationFixture(journal.evaluations, value, receipt(value))
   })
 
 test('native entry commits source and request before inference, reproduces its result, and consumes its window once', () =>
@@ -169,7 +176,7 @@ test('a durable pending claim forbids another call, expires once, and preserves 
       const { journal } = yield* setup
       yield* seed(journal)
       yield* retainCheckpoint(journal)
-      yield* journal.handoffs.recordHandoff(entryCompletionFixture(request, observation.observedAt).handoff)
+      yield* persistHandoffFixture(journal.handoffs, entryCompletionFixture(request, observation.observedAt).handoff)
       expect((yield* journal.batches.begin(plan, observation)).dispatches).toEqual([])
       expect((yield* journal.batches.finish(plan.batchId)).result).toBeNull()
       yield* TestClock.setTime(Date.parse(plan.expiresAt))
@@ -185,6 +192,37 @@ test('a durable pending claim forbids another call, expires once, and preserves 
     }),
   ))
 
+test.each([
+  ['malformed', {}],
+  ['different valid source', originalFixture.observation.payload],
+  ['changed observation time', { ...observation, observedAt: '2000-01-01T00:00:00.000Z' }],
+] as const)('batch reads revalidate stored observation bytes: %s', (_name, changed) =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      const path = `${directory}/observation-${plan.observationHash}.json`
+      yield* fs.writeFileString(path, JSON.stringify(changed))
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+      expect(Result.isFailure(yield* Effect.result(journal.batches.begin(plan, observation)))).toBeTrue()
+      yield* fs.writeFileString(path, JSON.stringify(observation))
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+    }),
+  ),
+)
+
+test('batch reads reject a missing stored observation even after an earlier successful read', () =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      yield* fs.remove(`${directory}/observation-${plan.observationHash}.json`)
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+    }),
+  ))
+
 test('terminal receipt and resolution are atomic, idempotent and reject conflicting evidence', () =>
   run(
     Effect.gen(function* () {
@@ -196,7 +234,9 @@ test('terminal receipt and resolution are atomic, idempotent and reject conflict
         JevResolutionStatus.Recorded,
       )
       const conflicting = { ...receipt(), receiptHash: 'a'.repeat(64) }
-      expect(Result.isFailure(yield* Effect.result(journal.evaluations.record(request, conflicting)))).toBeTrue()
+      expect(
+        Result.isFailure(yield* Effect.result(persistEvaluationFixture(journal.evaluations, request, conflicting))),
+      ).toBeTrue()
       yield* TestClock.setTime(Date.parse(request.expiresAt))
       expect(yield* journal.evaluations.abandon(request, request.expiresAt)).toEqual(first)
     }),
@@ -224,7 +264,6 @@ test('raw chart and Jev provider calls bind their parent through the committed s
   run(
     Effect.gen(function* () {
       const { journal } = yield* setup
-      yield* seed(journal)
       const completion = entryCompletionFixture(request, observation.observedAt)
       const disposition = completion.handoff.disposition
       if (disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
@@ -272,9 +311,10 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       )
         throw Error('Fixture requires staged evidence')
       expect(Result.isFailure(yield* journal.retainCall(chartCall).pipe(Effect.result))).toBe(true)
-      yield* journal.handoffs.recordVisualClaim(chartClaim)
+      yield* seed(journal)
+      yield* persistVisualClaimFixture(journal.handoffs, chartClaim)
       yield* journal.retainCall(chartCall)
-      yield* journal.handoffs.recordVisualTerminal(chartTerminal)
+      yield* persistVisualTransitionFixture(journal.handoffs, { terminal: chartTerminal, successor: { kind: 'NONE' } })
       const base = Result.getOrThrow(
         makeSelectedBaseStartStageRequest(
           {
@@ -295,16 +335,16 @@ test('raw chart and Jev provider calls bind their parent through the committed s
         outcome: baseTerminal.outcome,
       }
       expect(Result.isFailure(yield* journal.retainCall(baseCall).pipe(Effect.result))).toBe(true)
-      yield* journal.handoffs.recordVisualClaim(baseClaim)
+      yield* persistVisualClaimFixture(journal.handoffs, baseClaim)
       yield* journal.retainCall(baseCall)
-      yield* journal.handoffs.recordVisualTerminal(baseTerminal)
+      yield* persistVisualTransitionFixture(journal.handoffs, { terminal: baseTerminal, successor: { kind: 'NONE' } })
       expect(Result.isFailure(yield* journal.retainCall(jevCall).pipe(Effect.result))).toBe(true)
       expect(
         Result.isFailure(
           yield* journal.retainCall({ ...chartCall, requestHash: request.requestHash }).pipe(Effect.result),
         ),
       ).toBe(true)
-      yield* journal.handoffs.recordHandoff(completion.handoff)
+      yield* persistHandoffFixture(journal.handoffs, completion.handoff)
       yield* journal.retainCall(jevCall)
       expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'BASE_START', 'JEV'])
     }),

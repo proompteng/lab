@@ -1178,17 +1178,20 @@ data:
               summary: Ceph reports slow operations
               description: Ceph has reported one or more slow operations continuously for 5 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
-          - alert: CephOsdReadLatencyHigh
-            expr: ceph_storage:osd_read_latency_seconds:mean5m > 0.5
+          - alert: CephHostReadLatencyHigh
+            expr: max by (node) (ceph_storage:osd_read_latency_seconds:mean5m) > 0.5
             for: 5m
+            keep_firing_for: 10m
             labels:
               severity: critical
               service: ceph-storage
               team: platform
               notify: email
             annotations:
-              summary: Ceph client reads are severely delayed
-              description: "{{ $labels.node }}/{{ $labels.ceph_daemon }} has averaged more than 500 ms per client read for five minutes. This is a counter-derived mean, not a percentile."
+              summary: Ceph client reads are severely delayed on {{ $labels.node }}
+              description: >-
+                The highest OSD five-minute mean on {{ $labels.node }} has stayed above 500 ms per client read for five minutes.
+                Current above-threshold OSDs: {{ range query (printf "ceph_storage:osd_read_latency_seconds:mean5m{node=%q} > 0.5" $labels.node) | sortByLabel "ceph_daemon" }}{{ .Labels.ceph_daemon }}={{ .Value | humanizeDuration }}; {{ else }}no current samples above threshold; {{ end }}This is a counter-derived mean, not a percentile.
               runbook_url: docs/runbooks/ceph-performance-telemetry.md
           - alert: CephOsdQueueWaitHigh
             expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
@@ -3538,6 +3541,12 @@ data:
                   namespace="bayn",
                   service="bayn"
                 } == 0
+                or
+                (
+                  (up{job="bayn",namespace="bayn",service="bayn"} == 1)
+                  unless on(job, namespace, service, instance)
+                  bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn"}
+                )
               )
             for: 2m
             keep_firing_for: 5m
@@ -3548,7 +3557,7 @@ data:
               notify: email
             annotations:
               summary: Bayn cycle projection is unavailable
-              description: The bounded autonomous-cycle PostgreSQL projection has failed for two minutes.
+              description: The bounded autonomous-cycle PostgreSQL projection has reported unavailable, or its observation metric has been missing from a successfully scraped replica, for two minutes. Inspect the cycle projection error and scrape metric presence; idle or NO_TRADE cycles still report an available observation.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynRuntimeDegraded
             expr: |
@@ -4068,16 +4077,11 @@ data:
               runbook_url: docs/tengri/operations.md
           - alert: TengriBootLatencyHigh
             expr: |
-              (
-                sum(rate(tengri_agent_boot_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
-                /
-                clamp_min(
-                  sum(rate(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
-                  0.001
-                )
-              ) > 120
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_agent_boot_latency_seconds_bucket{job="tengri",namespace="tengri"}[15m]))
+              ) > 1
               and
-              sum(increase(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+              sum(increase(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 20
             for: 5m
             labels:
               severity: warning
@@ -4085,20 +4089,15 @@ data:
               service: tengri
             annotations:
               summary: Tengri agent boot latency is high
-              description: Average guest boot latency has exceeded two minutes across at least two boots in 15 minutes.
+              description: Successful CR creation to guest readiness p95 exceeds one second across at least twenty boots in 15 minutes. Includes reconciliation retries but excludes BFF admission; failed starts are not successful latency samples.
               runbook_url: docs/tengri/operations.md
           - alert: TengriResumeLatencyHigh
             expr: |
-              (
-                sum(rate(tengri_agent_resume_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
-                /
-                clamp_min(
-                  sum(rate(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
-                  0.001
-                )
-              ) > 60
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_agent_resume_latency_seconds_bucket{job="tengri",namespace="tengri"}[15m]))
+              ) > 1
               and
-              sum(increase(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+              sum(increase(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 20
             for: 5m
             labels:
               severity: warning
@@ -4106,7 +4105,23 @@ data:
               service: tengri
             annotations:
               summary: Tengri agent resume latency is high
-              description: Average guest resume latency has exceeded one minute across at least two resumes in 15 minutes.
+              description: Successful persisted resume intent to guest readiness p95 exceeds one second across at least twenty resumes in 15 minutes. Includes reconciliation retries but excludes BFF admission; failed resumes are not successful latency samples.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriInventoryStale
+            expr: |
+              (
+                time() - min(tengri_inventory_last_success_timestamp_seconds{job="tengri",namespace="tengri"}) > 60
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri inventory metrics are stale
+              description: At least one controller has not refreshed its dependency-backed inventory for over one minute. Process metrics remain available; inspect readiness failures by dependency before using guest or ticket gauges.
               runbook_url: docs/tengri/operations.md
           - alert: TengriTerminalHeartbeatLatencyHigh
             expr: |
@@ -4210,7 +4225,9 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynValkeyPublicationFailure
           expr: sum(increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m]))
-            > 0
+            > 0 or count((bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}
+            > time() - 300) and (bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}
+            <= time())) > 0
           for: 1m
           keep_firing_for: 5m
           labels:
@@ -4223,8 +4240,8 @@ data:
             summary: Bayn could not publish a replicated broker cache value
             description: >-
               Failed replicated puts in the last five minutes by category/cause:
-              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
-              Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.
+              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0 or count by (category, cause_category) ((bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"} > time() - 300) and (bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"} <= time())) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
+              Resolution only means no recent failure evidence is currently observed in this lookback, not verified publication recovery.
             runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
             dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
         - alert: BaynValkeyLatencyHigh

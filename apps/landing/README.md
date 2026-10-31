@@ -210,6 +210,8 @@ Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has i
 The agent's computer tool operates the same browser, with a human takeover control.
 Browser approvals use a compact "Allow browser control?" card with request details available on demand. One-use,
 session, and deny choices retain the scopes advertised by the request.
+Questions and approvals compose the shared design controls in bounded cards. The desktop and portaled conversation
+menus use the same neutral theme and Geist typography; chat rows remain 32 px tall and menu items use 12 px text.
 See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,

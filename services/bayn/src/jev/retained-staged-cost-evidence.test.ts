@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,35 +16,122 @@ import {
   retainedStagedQuestionPolicyHash,
   retainedMarketQuestionPolicyHash,
 } from './staged-inference-cost-evidence'
-import { makeEntryJudgmentRequest } from './entry-questions'
+import { makeRetainedMarketEntryJudgmentRequest } from './retained-market-entry-questions'
 import { deriveEntryDispositionForChart } from './entry-inference'
-import { stagedChartAssessments } from './staged-chart-questions'
+import {
+  stagedChartAssessments,
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+} from './retained-filtered-staged-chart-questions'
+import * as retainedCandidateChartStages from './retained-candidate-staged-chart-questions'
+import { makeEntryJudgmentRequest } from './entry-questions'
+import {
+  jevProtocolSchemaForQuestionPolicy,
+  RetainedJevProtocolV30Schema,
+  RetainedJevProtocolV31Schema,
+  RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
+  RetainedJevProtocolV34Schema,
+} from './protocol'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const fixture = (
   marketQuestions = false,
-  schemaVersion: 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' = 'bayn.jev.protocol.v26',
+  schemaVersion:
+    | 'bayn.jev.protocol.v26'
+    | 'bayn.jev.protocol.v27'
+    | 'bayn.jev.protocol.v28'
+    | 'bayn.jev.protocol.v29'
+    | 'bayn.jev.protocol.v30'
+    | 'bayn.jev.protocol.v31'
+    | 'bayn.jev.protocol.v32'
+    | 'bayn.jev.protocol.v33'
+    | 'bayn.jev.protocol.v34' = 'bayn.jev.protocol.v26',
 ) => {
   const current = entryEvaluationRequestFixture()
+  const baseProtocol = {
+    ...current.request.protocol,
+    inputDefinition:
+      schemaVersion === 'bayn.jev.protocol.v34'
+        ? ('bayn.jev-entry-state.v23' as const)
+        : ('bayn.jev-entry-state.v22' as const),
+    entryQuestionPolicyHash:
+      schemaVersion === 'bayn.jev.protocol.v33' || schemaVersion === 'bayn.jev.protocol.v34'
+        ? '864658b2565a176ecad7e6e2460a9f9be9340bf9f304d5af41db81ce49551158'
+        : schemaVersion === 'bayn.jev.protocol.v32'
+          ? 'c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'
+          : marketQuestions
+            ? retainedMarketQuestionPolicyHash
+            : retainedStagedQuestionPolicyHash,
+  }
+  const protocolMaterial =
+    schemaVersion === 'bayn.jev.protocol.v30' ||
+    schemaVersion === 'bayn.jev.protocol.v31' ||
+    schemaVersion === 'bayn.jev.protocol.v32' ||
+    schemaVersion === 'bayn.jev.protocol.v33' ||
+    schemaVersion === 'bayn.jev.protocol.v34'
+      ? {
+          ...baseProtocol,
+          schemaVersion,
+          candidateEvidencePolicy:
+            schemaVersion === 'bayn.jev.protocol.v31' ||
+            schemaVersion === 'bayn.jev.protocol.v32' ||
+            schemaVersion === 'bayn.jev.protocol.v33' ||
+            schemaVersion === 'bayn.jev.protocol.v34'
+              ? IntradayCandidateEvidencePolicy.MarketQuotesV2
+              : IntradayCandidateEvidencePolicy.MarketQuotes,
+        }
+      : {
+          ...baseProtocol,
+          schemaVersion,
+          lookbackMinutes: 30 as const,
+          candidateEvidencePolicy:
+            schemaVersion === 'bayn.jev.protocol.v29'
+              ? IntradayCandidateEvidencePolicy.MarketQuotes
+              : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+        }
+  const protocol = Schema.decodeUnknownSync(
+    Schema.Union([
+      jevProtocolSchemaForQuestionPolicy(baseProtocol.entryQuestionPolicyHash, 'bayn.jev.protocol.v26'),
+      jevProtocolSchemaForQuestionPolicy(baseProtocol.entryQuestionPolicyHash, 'bayn.jev.protocol.v27'),
+      jevProtocolSchemaForQuestionPolicy(baseProtocol.entryQuestionPolicyHash, 'bayn.jev.protocol.v28'),
+      jevProtocolSchemaForQuestionPolicy(baseProtocol.entryQuestionPolicyHash, 'bayn.jev.protocol.v29'),
+      RetainedJevProtocolV30Schema,
+      RetainedJevProtocolV31Schema,
+      RetainedJevProtocolV32Schema,
+      RetainedJevProtocolV33Schema,
+      RetainedJevProtocolV34Schema,
+    ]),
+  )(protocolMaterial)
   const input = {
     ...current.request,
-    protocol: {
-      ...current.request.protocol,
-      schemaVersion,
-      entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
-    },
+    numericalState: { ...current.request.numericalState, schemaVersion: protocol.inputDefinition },
+    schemaVersion:
+      schemaVersion === 'bayn.jev.protocol.v34'
+        ? ('bayn.entry-inference-input.v7' as const)
+        : schemaVersion === 'bayn.jev.protocol.v30' ||
+            schemaVersion === 'bayn.jev.protocol.v31' ||
+            schemaVersion === 'bayn.jev.protocol.v32' ||
+            schemaVersion === 'bayn.jev.protocol.v33'
+          ? ('bayn.entry-inference-input.v6' as const)
+          : ('bayn.entry-inference-input.v5' as const),
+    protocol,
   }
   const { requestId: _, ...originalRequest } = current
   const requestMaterial = { ...originalRequest, request: input, requestHash: hash(input) }
   const request = { ...requestMaterial, requestId: hash(requestMaterial) }
-  const checkpoint = stagedCheckpointFixture(request)
+  const stages =
+    schemaVersion === 'bayn.jev.protocol.v33' || schemaVersion === 'bayn.jev.protocol.v34'
+      ? retainedCandidateChartStages
+      : { stagedChartAssessments, makeInitialChartStageRequest, makeSelectedBaseStartStageRequest }
+  const checkpoint = stagedCheckpointFixture(request, request.observedAt, stages)
   const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
   const visual = checkpoint.terminals.find((row) => row.stage === 'CHART')
   const base = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
   if (visual?.outcome.status !== 'RECEIVED' || base?.outcome.status !== 'RECEIVED')
     throw new Error('Expected two original provider stages')
   const assessments = Result.getOrThrow(
-    stagedChartAssessments(
+    stages.stagedChartAssessments(
       { chart, protocol: input.protocol, funding: input.funding },
       stageResponseIdentity(visual.outcome.inference),
       stageResponseIdentity(base.outcome.inference),
@@ -55,7 +143,13 @@ const fixture = (
       visual.outcome.inference,
       chart,
       assessments,
-      marketQuestions ? makeEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest,
+      schemaVersion === 'bayn.jev.protocol.v32' ||
+        schemaVersion === 'bayn.jev.protocol.v33' ||
+        schemaVersion === 'bayn.jev.protocol.v34'
+        ? makeEntryJudgmentRequest
+        : marketQuestions
+          ? makeRetainedMarketEntryJudgmentRequest
+          : makeRetainedFundedEntryJudgmentRequest,
     ),
   )
   if (disposition.status !== 'READY') throw new Error('Expected a funded retained setup')
@@ -115,7 +209,17 @@ test('retained staged receipts cannot omit their original obstruction question a
   expect(Result.isFailure(readStagedInferenceCostEvidence({ ...row, handoff, receipt }))).toBe(true)
 })
 
-test.each(['bayn.jev.protocol.v26', 'bayn.jev.protocol.v27'] as const)(
+test.each([
+  'bayn.jev.protocol.v26',
+  'bayn.jev.protocol.v27',
+  'bayn.jev.protocol.v28',
+  'bayn.jev.protocol.v29',
+  'bayn.jev.protocol.v30',
+  'bayn.jev.protocol.v31',
+  'bayn.jev.protocol.v32',
+  'bayn.jev.protocol.v33',
+  'bayn.jev.protocol.v34',
+] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
     const row = fixture(true, version)

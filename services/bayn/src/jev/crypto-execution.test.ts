@@ -39,7 +39,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     `${symbol} honors model abstention and retains exact reducing precision with first-minute history=%s`,
     async (firstMinute) => {
       const { cut, query, snapshot } = cryptoMarketFixture(symbol, { firstMinute, observedPriceChoices: true })
-      expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 30)
+      expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 61)
       const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
       const { protocol, portfolio, observedAt } = native
       const broker = portfolio.brokerState
@@ -87,7 +87,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       const batchPlan = Result.getOrThrow(
         makeJevTradingSignalBatch({
           observation,
-          planVersion: JevBatchPlanVersion.V7,
+          planVersion: JevBatchPlanVersion.V8,
           expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
         }),
       )
@@ -100,13 +100,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
           decidedAt,
         }),
       )
-      const {
-        candidateSymbols: _candidates,
-        candidateEvidencePolicy: _evidencePolicy,
-        benchmarkEvidencePolicy: _benchmarkPolicy,
-        benchmarkSymbols: _benchmarkSymbols,
-        ...pricingQuery
-      } = query
+      const { candidateSymbols: _candidates, candidateEvidencePolicy: _evidencePolicy, ...pricingQuery } = query
       const pricingSnapshot = Result.getOrThrow(
         constructStreamingSnapshot(cut, {
           ...pricingQuery,

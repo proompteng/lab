@@ -280,13 +280,7 @@ mod tests {
         timings.input(&ping, start + Duration::from_millis(205));
         timings.output(&pong, start + Duration::from_millis(230));
         timings.output(&pong, start + Duration::from_millis(250));
-        let rendered = metrics.render(
-            &[],
-            crate::tickets::TicketStats {
-                pending: 0,
-                previews: 0,
-            },
-        );
+        let rendered = metrics.render();
         for (kind, sum) in [
             ("attach", "0.01"),
             ("first_output", "0.08"),

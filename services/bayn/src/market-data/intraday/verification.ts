@@ -4,7 +4,8 @@ import {
   snapshotMarketCloseAt,
   marketHoursAreCanonical,
 } from '../../market-hours'
-import { InstrumentSymbolSchema } from '../../instruments'
+import { InstrumentSymbolSchema, MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 import { equityClockSession } from '../../equity-hours'
@@ -35,6 +36,7 @@ import {
   IntradaySnapshotPurpose,
   intradaySnapshotSymbols,
   usesWindowTradeEvidence,
+  usesOptionalTradeEvidence,
 } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
@@ -46,7 +48,6 @@ import {
 import { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './time'
 
 const minuteMs = 60_000
-const maximumWindowMs = 30 * minuteMs
 export const maximumIntradayObservationLagMs = 20 * minuteMs
 export const maximumIntradayQuoteAgeMs = 5 * minuteMs
 export const minimumIntradayQuoteAgeMs = 1_000
@@ -258,16 +259,21 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'intraday range and observation must remain within the declared session'))
   }
+  const maximumWindowMinutes = marketHistoryMinutes[request.feed === 'us' ? MarketKind.Crypto : MarketKind.Equity]
   const duration = end - start
   if (
     duration <= 0 ||
-    duration > maximumWindowMs ||
+    duration > maximumWindowMinutes * minuteMs ||
     duration % minuteMs !== 0 ||
     start % minuteMs !== 0 ||
     end % minuteMs !== 0
   ) {
     return Result.fail(
-      failure('request', 'intraday range must contain one to 30 complete UTC-aligned one-minute bars', { duration }),
+      failure(
+        'request',
+        `intraday range must contain one to ${maximumWindowMinutes} complete UTC-aligned one-minute bars`,
+        { duration },
+      ),
     )
   }
   if (
@@ -322,7 +328,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   if (
     request.candidateEvidencePolicy !== undefined &&
-    (request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+    (!Object.values(IntradayCandidateEvidencePolicy).includes(request.candidateEvidencePolicy) ||
       request.candidateSymbols === undefined ||
       request.purpose !== undefined)
   ) {
@@ -332,7 +338,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
     request.benchmarkEvidencePolicy !== undefined &&
     (request.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
       request.feed !== 'us' ||
-      request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+      request.candidateEvidencePolicy === undefined ||
       request.purpose !== undefined)
   )
     return Result.fail(failure('request', 'completed-bar benchmarks require an independent crypto decision query'))
@@ -903,6 +909,7 @@ export const latestQuotes = (
       return Result.fail(failure('not-ready', 'intraday quote has a withdrawn bid or ask side', { symbol }))
     if (
       request.purpose === undefined &&
+      !usesOptionalTradeEvidence(request, symbol) &&
       (trade === undefined ||
         (!usesWindowTradeEvidence(request, symbol) &&
           intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)))

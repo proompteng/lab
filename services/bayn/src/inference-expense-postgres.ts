@@ -8,7 +8,7 @@ import {
   inferenceExpenseBatchSize,
   inferenceExpenseCoverageFrom,
   InferenceExpenseSourceSchema,
-  verifyInferenceExpenseQuote,
+  verifyPendingInferenceExpenses,
   type InferenceExpenseQuote,
 } from './inference-expense'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
@@ -181,16 +181,7 @@ export const makeInferenceExpenseStore = (
     ORDER BY quote.quote_hash COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
   `.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(FrozenRowSchema), strictParseOptions)),
-    Effect.flatMap((rows) =>
-      Effect.forEach(rows, (row) =>
-        Effect.gen(function* () {
-          const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
-          if (quote.quoteHash !== row.quoteHash)
-            return yield* new InferenceCostError({ message: 'Pending inference expense quote identity differs' })
-          return yield* Effect.fromResult(verifyInferenceExpenseQuote(row.source, quote))
-        }),
-      ),
-    ),
+    Effect.flatMap((rows) => Effect.fromResult(verifyPendingInferenceExpenses(rows))),
   )
   const acknowledge = (quotes: readonly InferenceExpenseQuote[]) =>
     quotes.length === 0

@@ -1,14 +1,21 @@
 import { Result, Schema } from 'effect'
 
-import { Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
+import { canonicalHashV1Result } from '../hash'
+import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import type { EntryInferenceInput } from './entry-inference-input'
 import type { JevProtocolMaterial } from './protocol'
-import { makeEntrySourceCandidates } from './entry-proposals'
+import { makeChartSourceCandidates, makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
-import { decisionsModel, prepareDecisionsRequest, type DecisionsRequest, type DecisionsResponse } from './decisions'
+import {
+  DecisionsRequestSchema,
+  decisionsModel,
+  prepareDecisionsRequest,
+  type DecisionsRequest,
+  type DecisionsResponse,
+} from './decisions'
 
 const presenceQuestions = [
   {
@@ -41,23 +48,23 @@ const anchorQuestions = [
   {
     name: 'resistance_anchor',
     instructions:
-      'Which offered completed bar has the high that anchors observed overhead resistance usable as a profit objective beyond the bounded entry? Choose no_resistance if none of the offered highs represents that structure. Financial eligibility alone does not establish visible resistance.',
+      'Which offered completed bar has the high that anchors the nearest identifiable overhead resistance above executionReference.bidUsd? Include resistance even when it is too close to cover trading costs. Choose no_resistance if none of the offered highs represents observed resistance.',
     noMatch: {
       value: 'no_resistance',
-      description: 'None of the eligible source highs identifies overhead resistance.',
+      description: 'None of the observed overhead highs identifies resistance.',
     },
   },
 ] as const
 const noBase = { value: 'no_base', description: 'No completed consolidation matches this question.' }
 const baseEndInstructions =
-  'Which offered bar ends the most recent completed consolidation before the newest directional move? The consolidation must contain at least two completed bars and end before the newest completed bar. Offered intervals satisfy code-owned price and cost checks, which do not prove a consolidation. Choose no_base if none is identifiable.'
+  'Which offered bar ends the most recent completed consolidation before the newest directional move? The consolidation must contain at least two completed bars and end before the newest completed bar. Identify the observed structure independently of whether trading it would cover costs. Choose no_base if none is identifiable.'
 const baseStartInstructions =
-  'Evaluate a possible consolidation ending at the specified completed bar. Which offered earlier bar begins that same consolidation? Identify the whole contiguous interval, rather than an isolated low or an uninterrupted trend. Financial eligibility does not establish visible structure. Choose no_base if none of the offered intervals is a consolidation with this end.'
+  'Evaluate a possible consolidation ending at the specified completed bar. Which offered earlier bar begins that same consolidation? Identify the whole contiguous interval, rather than an isolated low or an uninterrupted trend. Choose no_base if none of the offered intervals is a consolidation with this end.'
 const sharedInstructions =
-  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Code filters offered anchors by executable price and cost checks, not by visual support. Inspect all bars, including closer obstructions outside the offered objectives. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
+  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Anchor choices describe source price structure independently of fees and funding. Code checks whether a proposal based on the selected structure covers all modeled trading costs. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
 export const chartQuestionPolicy = {
   model: decisionsModel,
-  candidatePolicy: 'funded-source-anchors-for-bounded-entry-v1',
+  candidatePolicy: 'source-structure-with-funded-proposal-preflight-v3',
   presenceQuestions,
   anchorQuestions,
   baseEndInstructions,
@@ -72,12 +79,28 @@ export type ChartDecisionSource = {
   readonly funding: EntryInferenceInput['funding']
 }
 
+type PreparedChartRequest = {
+  readonly body: string
+  readonly requestHash: string
+  readonly sourceFeasible: boolean
+}
+const preparedChartRequests = new Map<string, PreparedChartRequest>()
+const detachedChartRequest = (prepared: PreparedChartRequest) =>
+  Schema.decodeUnknownResult(
+    Schema.fromJsonString(DecisionsRequestSchema),
+    strictParseOptions,
+  )(prepared.body).pipe(Result.map((request) => ({ ...prepared, request })))
+
 export const buildChartDecisionsRequest = (
   source: ChartDecisionSource,
   stage: 'CHART' | { readonly selectedEnd: string },
 ) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
+    // Revalidation must hash actual source content; claimed chart hashes cannot establish cache identity.
+    const key = yield* canonicalHashV1Result({ chart, protocol, funding, stage, questionPolicy: chartQuestionPolicy })
+    const cached = preparedChartRequests.get(key)
+    if (cached !== undefined) return yield* detachedChartRequest(cached)
     const economics = yield* jevEntryEconomics({
       protocol,
       symbol: chart.symbol,
@@ -86,10 +109,11 @@ export const buildChartDecisionsRequest = (
       capitalMicros: funding.capitalMicros,
       cryptoFeeTier: funding.cryptoFeeTier,
     })
-    const candidates =
+    const fundable =
       economics === null
         ? { supportBarIds: [], resistanceBarIds: [], baseWindows: [] }
         : yield* makeEntrySourceCandidates({ chart, protocol, economics, bidMicros: BigInt(funding.bidMicros) })
+    const candidates = makeChartSourceCandidates({ chart, bidMicros: BigInt(funding.bidMicros) })
     const anchors: DecisionsRequest['questions'][number][] = anchorQuestions.flatMap((question) => {
       const ids = question.name === 'support_anchor' ? candidates.supportBarIds : candidates.resistanceBarIds
       if (ids.length === 0) return []
@@ -185,7 +209,6 @@ export const buildChartDecisionsRequest = (
                   bidMicros: funding.bidMicros,
                   askMicros: funding.askMicros,
                   maximumEntryPriceMicros: economics?.maximumEntryPriceMicros ?? null,
-                  takeProfitBreakEvenLimitUsd: economics?.takeProfitBreakEvenLimitUsd ?? null,
                   maximumHoldingMinutes: protocol.maximumHoldingMinutes,
                 },
               },
@@ -195,12 +218,19 @@ export const buildChartDecisionsRequest = (
       ],
       questions: typeof stage === 'object' ? baseQuestions : [...presenceQuestions, ...anchors, ...baseQuestions],
     })
-    return {
-      ...prepared,
+    const reusable = {
+      body: prepared.body,
+      requestHash: prepared.requestHash,
       sourceFeasible:
-        candidates.baseWindows.length > 0 ||
-        (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0),
+        fundable.baseWindows.length > 0 || (fundable.supportBarIds.length > 0 && fundable.resistanceBarIds.length > 0),
     }
+    // Two stages for a fifteen-candidate cohort fit without retaining an unbounded chart history.
+    if (preparedChartRequests.size >= 64) {
+      const oldest = preparedChartRequests.keys().next()
+      if (oldest.done === false) preparedChartRequests.delete(oldest.value)
+    }
+    preparedChartRequests.set(key, reusable)
+    return yield* detachedChartRequest(reusable)
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Executable chart questions could not be prepared', cause }),

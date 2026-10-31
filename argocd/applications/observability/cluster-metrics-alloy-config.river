@@ -367,15 +367,52 @@ prometheus.relabel "tengri_metrics" {
 	}
 }
 
+discovery.kubernetes "tengri_controllers" {
+	role = "pod"
+
+	namespaces {
+		names = ["tengri"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name=tengri,app.kubernetes.io/component=control-plane"
+	}
+}
+
+discovery.relabel "tengri_controllers" {
+	targets = discovery.kubernetes.tengri_controllers.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "tengri;gateway"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		target_label = "service"
+		replacement  = "tengri"
+	}
+}
+
 prometheus.scrape "tengri" {
 	job_name = "tengri"
-	targets  = [
-		{
-			"__address__" = "tengri-gateway.tengri.svc.cluster.local:8080",
-			"namespace"   = "tengri",
-			"service"     = "tengri",
-		},
-	]
+	targets  = discovery.relabel.tengri_controllers.output
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
 	forward_to      = [prometheus.relabel.tengri_metrics.receiver]

@@ -1,3 +1,9 @@
+import {
+  persistVisualClaimFixture,
+  persistVisualTransitionFixture,
+  persistHandoffFixture,
+  persistEvaluationFixture,
+} from './evaluation.test-support'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { EntryInferenceJournal } from './entry-inference'
 import { entryCompletionFixture, stagedCheckpointFixture } from './entry-inference.test-support'
@@ -45,15 +51,17 @@ const main = Effect.gen(function* () {
       const journal = yield* EntryInferenceJournal
       const checkpoint = stagedCheckpointFixture(request, request.observedAt)
       for (const claim of checkpoint.claims) {
-        yield* journal.recordVisualClaim(claim)
+        yield* persistVisualClaimFixture(journal, claim)
         const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-        if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+        if (terminal !== undefined)
+          yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
       }
 
-      yield* journal.recordHandoff(entryCompletionFixture(request, request.observedAt).handoff)
+      yield* persistHandoffFixture(journal, entryCompletionFixture(request, request.observedAt).handoff)
     }
     if (mode === 'record')
-      yield* store.record(
+      yield* persistEvaluationFixture(
+        store,
         request,
         yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
