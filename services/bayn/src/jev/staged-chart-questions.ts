@@ -13,7 +13,7 @@ import { decodeDecisionsResponse, prepareDecisionsRequest, type DecisionsRequest
 
 export const stagedChartQuestionPolicy = {
   ...chartQuestionPolicy,
-  transport: 'funded-chart-then-selected-base-start.v2',
+  transport: 'source-chart-then-selected-base-start.v3',
   predecessor: 'canonical-chart-request-and-response-hashes',
   skip: ['INSUFFICIENT_BARS', 'NO_ELIGIBLE_BASE', 'END_REFUSED', 'NO_BASE'],
 } as const
@@ -51,7 +51,7 @@ const selectedBaseStartFromChart = (
       return yield* Result.fail(new JevContractError({ message: 'Selected base end is not an eligible source bar' }))
     const selected = yield* buildChartDecisionsRequest(source, { selectedEnd: end.id })
     if (selected.request.questions.length !== 1)
-      return yield* Result.fail(new JevContractError({ message: 'Selected base end has no funded source intervals' }))
+      return yield* Result.fail(new JevContractError({ message: 'Selected base end has no eligible source intervals' }))
     const input = selected.request.input
     const prepared = yield* prepareDecisionsRequest({
       ...selected.request,
