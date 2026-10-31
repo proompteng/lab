@@ -4,7 +4,6 @@ import { isCryptoMarketFeature } from '../features/crypto-contract'
 import { Result } from 'effect'
 
 import {
-  IntradayCandidateEvidencePolicy,
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   type IntradayBar,
@@ -159,13 +158,20 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         if (
           candidate.availableAtMs > observedAtMs ||
           (!isCryptoMarketFeature(candidate.value) && candidate.value.material.sessionDate !== request.sessionDate) ||
-          rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt) ||
+          (isCryptoMarketFeature(candidate.value)
+            ? rollingWindowStartMs(candidate.value) < Date.parse(request.rangeStartAt)
+            : rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt)) ||
           candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
         )
           continue
         const matches = yield* nativeFeatureMatchesBars(
           candidate.value,
-          bars.map((entry) => entry.value),
+          bars
+            .filter(
+              (entry) =>
+                intradayInstantNanos(entry.value.eventAt) >= BigInt(rollingWindowStartMs(candidate.value)) * 1_000_000n,
+            )
+            .map((entry) => entry.value),
         ).pipe(Result.mapError((cause) => failure('identity', 'Streaming feature inputs failed verification', cause)))
         if (!matches) continue
         selected = {
@@ -189,7 +195,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       if (selected !== undefined) featureReceipts.push(selected)
       else if (candidates.has(symbol)) {
         let message = 'matching complete rolling feature is unavailable'
-        if (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade) {
+        if (request.candidateEvidencePolicy !== undefined) {
           const present = new Set(bars.map((bar) => intradayInstantNanos(bar.value.eventAt)))
           const missing = missingMinuteBars(
             bars.map((bar) => bar.value),
@@ -268,7 +274,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
     }
     const excluded = new Set(exclusions.keys())
     const technicalFeatures =
-      request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+      request.candidateEvidencePolicy !== undefined
         ? technicalReceipts
         : technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
     const technical =

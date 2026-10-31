@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,35 +16,93 @@ import {
   retainedStagedQuestionPolicyHash,
   retainedMarketQuestionPolicyHash,
 } from './staged-inference-cost-evidence'
-import { makeEntryJudgmentRequest } from './entry-questions'
+import { makeRetainedMarketEntryJudgmentRequest } from './retained-market-entry-questions'
 import { deriveEntryDispositionForChart } from './entry-inference'
-import { stagedChartAssessments } from './staged-chart-questions'
+import {
+  stagedChartAssessments,
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+} from './retained-filtered-staged-chart-questions'
+import * as currentChartStages from './staged-chart-questions'
+import { makeEntryJudgmentRequest } from './entry-questions'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const fixture = (
   marketQuestions = false,
-  schemaVersion: 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' = 'bayn.jev.protocol.v26',
+  schemaVersion:
+    | 'bayn.jev.protocol.v26'
+    | 'bayn.jev.protocol.v27'
+    | 'bayn.jev.protocol.v28'
+    | 'bayn.jev.protocol.v29'
+    | 'bayn.jev.protocol.v30'
+    | 'bayn.jev.protocol.v31'
+    | 'bayn.jev.protocol.v32'
+    | 'bayn.jev.protocol.v33' = 'bayn.jev.protocol.v26',
 ) => {
   const current = entryEvaluationRequestFixture()
+  const baseProtocol = {
+    ...current.request.protocol,
+    inputDefinition: 'bayn.jev-entry-state.v22' as const,
+    entryQuestionPolicyHash:
+      schemaVersion === 'bayn.jev.protocol.v33'
+        ? current.request.protocol.entryQuestionPolicyHash
+        : schemaVersion === 'bayn.jev.protocol.v32'
+          ? 'c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'
+          : marketQuestions
+            ? retainedMarketQuestionPolicyHash
+            : retainedStagedQuestionPolicyHash,
+  }
+  const protocol =
+    schemaVersion === 'bayn.jev.protocol.v30' ||
+    schemaVersion === 'bayn.jev.protocol.v31' ||
+    schemaVersion === 'bayn.jev.protocol.v32' ||
+    schemaVersion === 'bayn.jev.protocol.v33'
+      ? {
+          ...baseProtocol,
+          schemaVersion,
+          candidateEvidencePolicy:
+            schemaVersion === 'bayn.jev.protocol.v31' ||
+            schemaVersion === 'bayn.jev.protocol.v32' ||
+            schemaVersion === 'bayn.jev.protocol.v33'
+              ? IntradayCandidateEvidencePolicy.MarketQuotesV2
+              : IntradayCandidateEvidencePolicy.MarketQuotes,
+        }
+      : {
+          ...baseProtocol,
+          schemaVersion,
+          lookbackMinutes: 30 as const,
+          candidateEvidencePolicy:
+            schemaVersion === 'bayn.jev.protocol.v29'
+              ? IntradayCandidateEvidencePolicy.MarketQuotes
+              : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+        }
   const input = {
     ...current.request,
-    protocol: {
-      ...current.request.protocol,
-      schemaVersion,
-      entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
-    },
+    numericalState: { ...current.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
+    schemaVersion:
+      schemaVersion === 'bayn.jev.protocol.v30' ||
+      schemaVersion === 'bayn.jev.protocol.v31' ||
+      schemaVersion === 'bayn.jev.protocol.v32' ||
+      schemaVersion === 'bayn.jev.protocol.v33'
+        ? ('bayn.entry-inference-input.v6' as const)
+        : ('bayn.entry-inference-input.v5' as const),
+    protocol,
   }
   const { requestId: _, ...originalRequest } = current
   const requestMaterial = { ...originalRequest, request: input, requestHash: hash(input) }
   const request = { ...requestMaterial, requestId: hash(requestMaterial) }
-  const checkpoint = stagedCheckpointFixture(request)
+  const stages =
+    schemaVersion === 'bayn.jev.protocol.v33'
+      ? currentChartStages
+      : { stagedChartAssessments, makeInitialChartStageRequest, makeSelectedBaseStartStageRequest }
+  const checkpoint = stagedCheckpointFixture(request, request.observedAt, stages)
   const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
   const visual = checkpoint.terminals.find((row) => row.stage === 'CHART')
   const base = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
   if (visual?.outcome.status !== 'RECEIVED' || base?.outcome.status !== 'RECEIVED')
     throw new Error('Expected two original provider stages')
   const assessments = Result.getOrThrow(
-    stagedChartAssessments(
+    stages.stagedChartAssessments(
       { chart, protocol: input.protocol, funding: input.funding },
       stageResponseIdentity(visual.outcome.inference),
       stageResponseIdentity(base.outcome.inference),
@@ -55,7 +114,11 @@ const fixture = (
       visual.outcome.inference,
       chart,
       assessments,
-      marketQuestions ? makeEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest,
+      schemaVersion === 'bayn.jev.protocol.v32' || schemaVersion === 'bayn.jev.protocol.v33'
+        ? makeEntryJudgmentRequest
+        : marketQuestions
+          ? makeRetainedMarketEntryJudgmentRequest
+          : makeRetainedFundedEntryJudgmentRequest,
     ),
   )
   if (disposition.status !== 'READY') throw new Error('Expected a funded retained setup')
@@ -115,7 +178,16 @@ test('retained staged receipts cannot omit their original obstruction question a
   expect(Result.isFailure(readStagedInferenceCostEvidence({ ...row, handoff, receipt }))).toBe(true)
 })
 
-test.each(['bayn.jev.protocol.v26', 'bayn.jev.protocol.v27'] as const)(
+test.each([
+  'bayn.jev.protocol.v26',
+  'bayn.jev.protocol.v27',
+  'bayn.jev.protocol.v28',
+  'bayn.jev.protocol.v29',
+  'bayn.jev.protocol.v30',
+  'bayn.jev.protocol.v31',
+  'bayn.jev.protocol.v32',
+  'bayn.jev.protocol.v33',
+] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
     const row = fixture(true, version)

@@ -52,6 +52,7 @@ import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayInferenceTiming } from './inference-timing'
 import { makeReplayTimeline } from './session'
 import { JevResearchPolicy } from '../jev/acceptance'
+import { withLatencyCliPhase } from './latency-cli-progress.test-support'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
@@ -324,7 +325,7 @@ durableTest.each([
               : { mode: 'measured-providers' }),
             maximumCalls: 1000,
             models: { jev: jevModel, chart: 'gpt-6-luna' },
-            inputDefinition: 'bayn.jev-entry-state.v22',
+            inputDefinition: 'bayn.jev-entry-state.v23',
             costs: replayRateCardFixture({
               jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
               chart: {
@@ -614,8 +615,10 @@ durableTest.each([
         })
         const executablePath = `${directory}/backtest-command.js`
         const workerPath = `${directory}/latency-cli.js`
-        yield* writeCompiledReplayCommand(executablePath)
-        yield* writeCompiledReplayCommand(workerPath, `${import.meta.dir}/latency-cli.test-support.ts`)
+        yield* Effect.gen(function* () {
+          yield* writeCompiledReplayCommand(executablePath, `${import.meta.dir}/replay-phase-command.test-support.ts`)
+          yield* writeCompiledReplayCommand(workerPath, `${import.meta.dir}/latency-cli.test-support.ts`)
+        }).pipe(withLatencyCliPhase('compile'))
         const node = Bun.which('node')
         if (node === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
@@ -626,7 +629,10 @@ durableTest.each([
             stderr: 'inherit',
           }),
         )
-        expect(Number(yield* child.exitCode)).toBe(0)
+        yield* child.exitCode.pipe(
+          Effect.tap((code) => Effect.sync(() => expect(Number(code)).toBe(0))),
+          withLatencyCliPhase('worker'),
+        )
         const result = yield* fs.readFileString(`${directory}/acceptance.json`).pipe(
           Effect.flatMap(
             Schema.decodeUnknownEffect(

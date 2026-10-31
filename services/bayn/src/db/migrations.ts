@@ -1,3 +1,10 @@
+import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
+import observedResistance from '../../migrations/0165_observed_resistance'
+import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
+import jevObservationWindowIndex from '../../migrations/0163_jev_observation_window_index'
+import equityBenchmarkContext from '../../migrations/0162_equity_benchmark_context'
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
+import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
 import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
 import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
 import systemAssessment from '../../migrations/0159_system_assessment'
@@ -161,6 +168,13 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '164_focused_entry_evidence': focusedEntryEvidence,
+  '165_observed_resistance': observedResistance,
+  '166_candidate_entry_evidence': candidateEntryEvidence,
+  '163_jev_observation_window_index': jevObservationWindowIndex,
+  '160_crypto_quote_evidence': cryptoQuoteEvidence,
+  '161_crypto_history_context': cryptoHistoryContext,
+  '162_equity_benchmark_context': equityBenchmarkContext,
   '157_crypto_entry_ask_cap': cryptoEntryAskCap,
   '158_equity_entry_ask_cap': equityEntryAskCap,
   '154_market_entry_questions': marketEntryQuestions,

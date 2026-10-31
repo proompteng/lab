@@ -20,12 +20,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     expect(plan.candidates).toMatchObject([{ symbol, status: JevCandidatePlanStatus.Requested }])
     const signals = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(observation, symbol)).body).numericalState
-    expect(signals.benchmark.symbol).toBe(symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD')
+    expect(signals).not.toHaveProperty('benchmark')
     expect(signals.session.schedule).toBe('CONTINUOUS')
     expect(signals.session.minutesUntilClose).toBeNull()
     expect(signals.candidate.technicalAvailability).toBe('RECORDED')
@@ -65,12 +65,8 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
     if (missing !== null) features.delete(missing)
     const snapshotResult = constructStreamingSnapshot(
       { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
-      { ...fixture.query, symbols, candidateSymbols: symbols, benchmarkSymbols: ['BTC/USD', 'ETH/USD'] },
+      { ...fixture.query, symbols, candidateSymbols: symbols },
     )
-    if (missing === 'BTC/USD') {
-      expect(snapshotResult).toMatchObject({ _tag: 'Failure', failure: { reason: 'not-ready' } })
-      return
-    }
     const snapshot = Result.getOrThrow(snapshotResult)
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol } = observation
@@ -78,7 +74,7 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observation.observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual(symbols)
@@ -88,8 +84,8 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
         protocol.candidateSymbols,
       ),
     ).toEqual(symbols)
-    if (missing === 'SOL/USD') {
-      expect(plan.candidates.find((candidate) => candidate.symbol === 'SOL/USD')).toMatchObject({
+    if (missing !== null) {
+      expect(plan.candidates.find((candidate) => candidate.symbol === missing)).toMatchObject({
         status: 'EXCLUDED',
         reason: 'not-ready',
       })

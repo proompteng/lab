@@ -19,28 +19,56 @@ import {
   CandidateEntryInferenceInputSchema,
   verifyEntryInferenceSource,
 } from './entry-inference-input'
-import { jevProtocolSchemaForQuestionPolicy } from './protocol'
-import { stagedChartQuestionPolicy } from './staged-chart-questions'
+import {
+  jevProtocolSchemaForQuestionPolicy,
+  RetainedJevProtocolV30Schema,
+  RetainedJevProtocolV31Schema,
+  RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
+} from './protocol'
+import * as retainedChartStages from './retained-filtered-staged-chart-questions'
+import * as currentChartStages from './staged-chart-questions'
+import { makeEntryJudgmentRequest } from './entry-questions'
 import {
   retainedFundedEntryJudgmentPolicy,
   makeRetainedFundedEntryJudgmentRequest,
 } from './retained-funded-entry-questions'
 import { strictParseOptions } from '../schemas'
-import { makeEntryJudgmentRequest } from './entry-questions'
+import { makeRetainedMarketEntryJudgmentRequest } from './retained-market-entry-questions'
 
 export const retainedStagedQuestionPolicyHash = Result.getOrThrow(
-  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: retainedFundedEntryJudgmentPolicy }),
+  canonicalHashV1Result({
+    chart: retainedChartStages.stagedChartQuestionPolicy,
+    jev: retainedFundedEntryJudgmentPolicy,
+  }),
 )
 export const retainedMarketQuestionPolicyHash = 'abf1e97da2d6a9bdef380aa224cde4245aa332c2686976bb9d755ad9a1a60910'
 const RetainedMarketProtocol = Schema.Union([
   jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v26'),
   jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v27'),
+  jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v28'),
+  jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v29'),
+  RetainedJevProtocolV30Schema,
+  RetainedJevProtocolV31Schema,
+  RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
 ])
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: Schema.Union([
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
+      schemaVersion: Schema.Literal('bayn.entry-inference-input.v6'),
+      protocol: Schema.Union([
+        RetainedJevProtocolV30Schema,
+        RetainedJevProtocolV31Schema,
+        RetainedJevProtocolV32Schema,
+        RetainedJevProtocolV33Schema,
+      ]),
+    }),
+    Schema.Struct({
+      ...CandidateEntryInferenceInputSchema.fields,
+      schemaVersion: Schema.Literal('bayn.entry-inference-input.v5'),
       protocol: Schema.Union([
         jevProtocolSchemaForQuestionPolicy(retainedStagedQuestionPolicyHash, 'bayn.jev.protocol.v26'),
         RetainedMarketProtocol,
@@ -134,16 +162,29 @@ export const readStagedInferenceCostEvidence = (row: {
     )(row.request)
     const retained =
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v26' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v27'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v27' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v29' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v30' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v31' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33'
     const retainedQuestions =
-      identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
-        ? makeRetainedFundedEntryJudgmentRequest
-        : makeEntryJudgmentRequest
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33'
+        ? makeEntryJudgmentRequest
+        : identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
+          ? makeRetainedFundedEntryJudgmentRequest
+          : makeRetainedMarketEntryJudgmentRequest
     const decoded = retained
       ? { _tag: 'Retained' as const, request: yield* decodeRetainedRequest(row.request) }
       : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
     const request = decoded.request
-    const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint)
+    const stages =
+      decoded._tag === 'Retained' && request.request.protocol.schemaVersion !== 'bayn.jev.protocol.v33'
+        ? retainedChartStages
+        : currentChartStages
+    const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint, stages)
     const source = {
       requestId: request.requestId,
       input: request.request,
@@ -154,7 +195,7 @@ export const readStagedInferenceCostEvidence = (row: {
       row.handoff === null
         ? null
         : yield* decoded._tag === 'Retained'
-            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions)
+            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions, stages)
             : decodeEntryHandoff({ ...source, input: decoded.request.request }, row.handoff)
     const receipt =
       row.receipt === null

@@ -1,13 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { ConnectionError, SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, canonicalHashV1Result, sha256 } from '../hash'
 import {
   decodeNativeArrivalChunk,
   makeNativeArrivalChunk,
   nativeArrival,
+  NativeArrivalCaptureError,
   type NativeArrivalChunk,
 } from '../market-data/streaming/native-arrival'
 import {
@@ -56,6 +58,174 @@ describePostgres('PostgreSQL native arrival retention', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('a lost append acknowledgement resumes from the exact committed prefix without losing the recorder', async () => {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          let acknowledgements = 0
+          const disconnected = new SqlError({
+            reason: new ConnectionError({
+              cause: new Error('PostgreSQL connection exceeded its inactivity deadline'),
+              message: 'PgConnection: Socket error',
+              operation: 'query',
+            }),
+          })
+          const losingAcknowledgement = new Proxy(sql, {
+            get(target, property, receiver) {
+              if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
+              return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                target.withTransaction(effect).pipe(
+                  Effect.tap(() =>
+                    Effect.suspend(() => {
+                      acknowledgements++
+                      return acknowledgements === 1 ? Effect.die(disconnected) : Effect.void
+                    }),
+                  ),
+                )
+            },
+          })
+          const capture = yield* makeNativeArrivalJournal(epoch, makeNativeArrivalStore(losingAcknowledgement), {
+            chunkBytes: 1,
+            queueBytes: 1024 * 1024,
+          })
+          const durable = (sequence: number) =>
+            Effect.gen(function* () {
+              while (capture.status().durableConsumerSequence < sequence) {
+                expect(capture.status()).toMatchObject({ status: 'RECORDING', failure: null })
+                yield* Effect.sleep('10 millis')
+              }
+            }).pipe(Effect.timeout('2 seconds'))
+          yield* capture.observe(observation(1))
+          yield* durable(1)
+          yield* capture.observe(observation(2))
+          yield* durable(2)
+          expect(capture.status()).toMatchObject({ status: 'RECORDING', failure: null })
+          expect(acknowledgements).toBe(3)
+          const first = chunk(0, null)
+          expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, chunk(1, first.contentHash)])
+        }),
+      ),
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [end] = yield* sql`SELECT payload FROM native_arrival_ends WHERE capture_id=${epoch.captureId}`
+        expect(end?.['payload']).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 2 })
+      }),
+    )
+  })
+
+  test.each(['connection-defect', 'connection-failure', 'defect', 'interruption', 'validation', 'mixed'] as const)(
+    'append recovery preserves failure boundaries: %s',
+    async (failure) => {
+      let attempts = 0
+      const disconnected = new SqlError({
+        reason: new ConnectionError({
+          cause: new Error('fixture socket disconnected'),
+          message: 'fixture connection lost',
+          operation: 'query',
+        }),
+      })
+      const unrelated = new Error('unrelated archive defect')
+      const failureEffect =
+        failure === 'connection-defect'
+          ? Effect.die(disconnected)
+          : failure === 'connection-failure'
+            ? Effect.fail(disconnected)
+            : failure === 'interruption'
+              ? Effect.interrupt
+              : failure === 'validation'
+                ? Effect.fail(new NativeArrivalCaptureError({ message: 'invalid archive evidence' }))
+                : failure === 'mixed'
+                  ? Effect.failCause(
+                      Cause.fromReasons([Cause.makeDieReason(disconnected), Cause.makeDieReason(unrelated)]),
+                    )
+                  : Effect.die(unrelated)
+      const store = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const broken = new Proxy(sql, {
+            get(target, property, receiver) {
+              if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
+              return () =>
+                Effect.suspend(() => {
+                  attempts++
+                  return failureEffect
+                })
+            },
+          })
+          const store = makeNativeArrivalStore(broken)
+          yield* store.begin(epoch)
+          return store
+        }),
+      )
+      const exit = await runtime.runPromiseExit(store.append([chunk(0, null)]))
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(attempts).toBe(failure.startsWith('connection-') ? 3 : 1)
+      if (Exit.isFailure(exit)) {
+        if (failure === 'interruption') expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+        if (failure === 'defect' || failure === 'mixed')
+          expect(exit.cause.reasons.some((reason) => reason._tag === 'Die' && reason.defect === unrelated)).toBe(true)
+        if (failure.startsWith('connection-') || failure === 'validation')
+          expect(Cause.squash(exit.cause)).toBeInstanceOf(NativeArrivalCaptureError)
+      }
+      expect(
+        await runtime.runPromise(
+          Effect.flatMap(PgClient.PgClient, (sql) => readNativeArrivalChunks(sql, epoch.captureId, -1)),
+        ),
+      ).toEqual([])
+    },
+  )
+
+  test('acknowledging an existing prefix still produces transactional WAL for synchronous durability', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const acknowledgements: { readonly xid: string | null; readonly walAdvanced: boolean }[] = []
+        const inspected = new Proxy(sql, {
+          get(target, property, receiver) {
+            if (property !== 'withTransaction') return Reflect.get(target, property, receiver)
+            return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+              target.withTransaction(
+                Effect.gen(function* () {
+                  const [before] = yield* target`SELECT pg_current_wal_insert_lsn()::text AS lsn`.pipe(
+                    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ lsn: Schema.String })]))),
+                  )
+                  const result = yield* effect
+                  const [after] = yield* target`
+                    SELECT pg_current_xact_id_if_assigned()::text AS xid,
+                      pg_current_wal_insert_lsn() > ${before.lsn}::pg_lsn AS "walAdvanced"
+                  `.pipe(
+                    Effect.flatMap(
+                      Schema.decodeUnknownEffect(
+                        Schema.Tuple([
+                          Schema.Struct({ xid: Schema.NullOr(Schema.String), walAdvanced: Schema.Boolean }),
+                        ]),
+                      ),
+                    ),
+                  )
+                  acknowledgements.push(after)
+                  return result
+                }),
+              )
+          },
+        })
+        const store = makeNativeArrivalStore(inspected)
+        const first = chunk(0, null)
+        yield* store.begin(epoch)
+        yield* store.append([first])
+        yield* store.append([first])
+        expect(acknowledgements).toHaveLength(2)
+        for (const acknowledgement of acknowledgements) {
+          expect(acknowledgement.xid).not.toBeNull()
+          expect(acknowledgement.walAdvanced).toBe(true)
+        }
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
+      }),
+    )
   })
 
   test('concurrent cold archive startup installs only its recorder schema and releases both clients', async () => {

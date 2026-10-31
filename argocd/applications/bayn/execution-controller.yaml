@@ -84,9 +84,9 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
+              value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "d4d9cef267f4d4fde8246ec0b345ce3ce52862588c207fbc247e1622b1f87801"
+              value: "6f1e3b1aeb093e1c2b8b6da5329865817580ab31592ac989bcb25e9d8a70a418"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -97,11 +97,11 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"3a90e09a910771071fbd9d17a2abb8a24468835b36704316839ecfd67f55fdc4","authoredActivation":{"sourceRevision":"0d09965a22d9cd8e8e26a80f903134f14497ac1f","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:58366c3a562d91a0e311557ae5b9e522e0f148cd68f775e735d8bada0ba8730c"},"activation":{"sourceRevision":"0d09965a22d9cd8e8e26a80f903134f14497ac1f","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:58366c3a562d91a0e311557ae5b9e522e0f148cd68f775e735d8bada0ba8730c"}}'
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"3eba10ba5a1a13448885195d681f2a303b27641af76f9e3cb50792d820d84ee0","authoredActivation":{"sourceRevision":"2045de12a70ac7d2747317cde36cc980ffdff742","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:e9d80af51f027c53119b154080d56962942d0dac02f9b9d4f09369396c7665f0"},"activation":{"sourceRevision":"2045de12a70ac7d2747317cde36cc980ffdff742","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:e9d80af51f027c53119b154080d56962942d0dac02f9b9d4f09369396c7665f0"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "0496265d4a4014357cfe8d7e5b42891c294c18e07bf9517279019a6304b4ac27"
+              value: "fd1adaf06499346446c83ee8beb29200bd3d0b3f82155e13ed4c850d153deb89"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -260,7 +260,7 @@ spec:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
-            defaultMode: 0440
+            defaultMode: 288
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi

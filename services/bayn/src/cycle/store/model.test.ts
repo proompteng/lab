@@ -81,6 +81,7 @@ test('writer-fenced cycle classification retains both the rejected binding and f
   const store = withWriterFenceCycleStore(
     { bindDecision: () => Effect.fail(expired) } as unknown as CycleStoreShape,
     fence,
+    { commit: () => Effect.die('failed binding cannot commit an intent') },
   )
   const result = await Effect.runPromiseExit(
     store.bindDecision('a'.repeat(64), {} as CycleDecisionDocument, '2026-10-21T00:00:00.000Z'),

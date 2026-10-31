@@ -16,7 +16,7 @@ import type {
   IntradaySnapshotManifest,
   IntradaySnapshotQuery,
 } from '../intraday/model'
-import { IntradayCandidateEvidencePolicy, IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
+import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { compareRecords, lineageOf, replayedBarRow, verifyIntradaySnapshotQuery } from '../intraday/verification'
 import type { NativeMarketFeature } from '../features/native-feature'
 import type { KafkaProjectionCut } from './kafka'
@@ -255,7 +255,7 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
         sequence: state.sequence,
         records: (yield* Result.all(entries.map(recordReceipt))).toSorted((a, b) => a.sequence - b.sequence),
         features:
-          request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+          request.candidateEvidencePolicy !== undefined
             ? featureReceipts
             : featureReceipts.filter((feature) => !excluded.has(feature.value.material.symbol)),
       },
