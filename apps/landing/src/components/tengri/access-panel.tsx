@@ -14,7 +14,7 @@ import {
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
 import {
   Action,
   ExecuteCommandResponseSchema,
@@ -123,11 +123,12 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const readError = current?.kind === 'error' ? current.message : ''
   const loading = active && view !== 'policies' && (!current || current.kind === 'loading')
   const viewTitle = view === 'audit' ? 'Audit log' : view === 'platform' ? 'Platform access' : 'Workspace access'
-  const [error, setError] = useState('')
+  const [error, setError] = useState<Error>()
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<AccessCommand>()
   const [credential, setCredential] = useState('')
   const [receipt, setReceipt] = useState('')
+  const needsVerification = error instanceof PasskeyRequiredError
   const formId = useId()
   const form = useForm<Form>({
     resolver: zodResolver(formSchema),
@@ -171,7 +172,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       const query = new URLSearchParams({ view })
       if (cursor) query.set('cursor', cursor)
       if (view === 'workspace' && workspaceUid) query.set('workspace', workspaceUid)
-      setError('')
+      setError(undefined)
       try {
         const response = await fetch(`/api/tengri/access?${query}`, { cache: 'no-store', signal: controller.signal })
         const json = z.json().parse(await response.json())
@@ -203,7 +204,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   }, [active, load, receipt])
   const execute = async (input: AccessCommand) => {
     setBusy(true)
-    setError('')
+    setError(undefined)
     setCredential('')
     setPending(input)
     try {
@@ -215,7 +216,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       const json = z.json().parse(await response.json())
       if (!response.ok) {
         if (response.status < 500) setPending(undefined)
-        if (response.status === 428) throw new Error('Verify with your passkey, then repeat this change.')
+        if (response.status === 428) throw new PasskeyRequiredError()
         throw new Error(errorMessage(json))
       }
       const result = fromJson(ExecuteCommandResponseSchema, json).receipt
@@ -224,7 +225,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       setCredential(result.agentCredential)
       setPending(undefined)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Change could not be confirmed. Retry the pending change.')
+      setError(cause instanceof Error ? cause : new Error('Change could not be confirmed. Retry the pending change.'))
     } finally {
       setBusy(false)
     }
@@ -365,17 +366,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
             Refresh
           </Button>
         ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={busy || Boolean(pending)}
-          onClick={() =>
-            void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
-          }
-        >
-          Verify passkey
-        </Button>
       </div>
       <TabsContent key={accessView} value={accessView} className="space-y-4" aria-busy={loading}>
         <h2 className="text-[13px] font-medium">{viewTitle}</h2>
@@ -398,7 +388,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
         </p>
         {error || readError ? (
           <p role="alert" className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-200">
-            {error || readError}
+            {error?.message || readError}
           </p>
         ) : null}
         {pending ? (
@@ -723,8 +713,20 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     {form.formState.errors.root.server.message}
                   </p>
                 ) : null}
-                <Button type="submit" size="sm">
-                  {busy ? 'Applying…' : 'Apply change'}
+                <Button
+                  type={needsVerification ? 'button' : 'submit'}
+                  size="sm"
+                  disabled={busy}
+                  onClick={
+                    needsVerification
+                      ? () =>
+                          void startTengriSignIn('step-up').catch(() =>
+                            setError(new PasskeyRequiredError('Verification could not start. Try again.')),
+                          )
+                      : undefined
+                  }
+                >
+                  {busy ? 'Applying…' : needsVerification ? 'Verify identity' : 'Apply change'}
                 </Button>
               </fieldset>
             </form>

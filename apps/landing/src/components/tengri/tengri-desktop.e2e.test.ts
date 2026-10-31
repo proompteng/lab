@@ -11076,6 +11076,7 @@ test('administers catalog-defined service policies and preserves the exact pendi
   const writes: Record<string, unknown>[] = []
   let version = 20
   let lostResponse = true
+  let requireVerification = false
   const workload = 'spiffe://proompteng.ai/ns/opencode/sa/opencode'
   await page.route('**/api/tengri/access**', (route) => route.fulfill({ json: { version: '20' } }))
   await page.route('**/api/platform/connectors', (route) =>
@@ -11097,6 +11098,10 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await page.route('**/api/platform/policies', async (route) => {
     if (route.request().method() === 'POST') {
       writes.push(policyWriteSchema.parse(route.request().postDataJSON()))
+      if (requireVerification) {
+        await route.fulfill({ status: 428, json: { error: 'Fresh verification required' } })
+        return
+      }
       if (lostResponse) {
         lostResponse = false
         await route.fulfill({ status: 503, json: { error: 'The policy result could not be confirmed.' } })
@@ -11133,6 +11138,7 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await openSettingsPane(settings, 'Privacy & Security')
   await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
   const policies = settings.getByRole('region', { name: 'Service access', exact: true })
+  await expect(settings.getByRole('button', { name: /Verify (passkey|identity)/ })).toHaveCount(0)
   await expect(policies.getByLabel('Service', { exact: true })).toBeVisible()
   await expect(settings.locator('select, datalist')).toHaveCount(0)
   await policies.getByRole('button', { name: 'Save access', exact: true }).click()
@@ -11225,6 +11231,11 @@ test('administers catalog-defined service policies and preserves the exact pendi
   )
   await policies.getByLabel('Reason', { exact: true }).scrollIntoViewIfNeeded()
   await settings.screenshot({ path: test.info().outputPath('service-policies-narrow.png') })
+  requireVerification = true
+  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
+  await expect(policies.getByRole('alert')).toHaveText('Verify your identity to save this change.')
+  await expect(policies.locator('form').getByRole('button', { name: 'Verify identity', exact: true })).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Verify passkey', exact: true })).toHaveCount(0)
 })
 
 for (const mode of ['idle', 'current', 'other', 'closed'] as const) {

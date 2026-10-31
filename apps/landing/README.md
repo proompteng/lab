@@ -54,6 +54,7 @@ query deadline, verified database TLS, and existing attempt expiry and capacity 
 The Service access tab uses registered service and named resource choices, with multiple permissions saved in one
 audited change. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
 portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
+Identity verification appears beside the affected save action only when Ofz requires a fresh passkey check.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits

@@ -19,6 +19,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, policyCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
 import type { PolicyWrite } from '@/lib/platform/policies'
+import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
 import {
   GetPlatformConfigurationResponseSchema,
   WritePolicyRelationshipsResponseSchema,
@@ -50,14 +51,9 @@ const resourceKey = (resource: { kind: string; id: string }) => JSON.stringify([
 async function read(response: Response) {
   const json = z.json().parse(await response.json())
   if (!response.ok) {
+    if (response.status === 428) throw new PasskeyRequiredError()
     const error = z.object({ error: z.string() }).safeParse(json)
-    throw new Error(
-      response.status === 428
-        ? 'Verify your passkey, then retry this change.'
-        : error.success
-          ? error.data.error
-          : 'Policy administration is unavailable',
-    )
+    throw new Error(error.success ? error.data.error : 'Policy administration is unavailable')
   }
   return json
 }
@@ -65,7 +61,7 @@ async function read(response: Response) {
 export function ServicePolicyPanel({ active }: { active: boolean }) {
   const [configuration, setConfiguration] = useState<GetPlatformConfigurationResponse>()
   const [catalog, setCatalog] = useState<ConnectorCatalog>()
-  const [error, setError] = useState('')
+  const [error, setError] = useState<Error>()
   const [receipt, setReceipt] = useState('')
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<PolicyWrite>()
@@ -123,14 +119,14 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
     const controller = new AbortController()
     void load(controller.signal).catch((cause: unknown) => {
       if (!controller.signal.aborted)
-        setError(cause instanceof Error ? cause.message : 'Policy administration is unavailable')
+        setError(cause instanceof Error ? cause : new Error('Policy administration is unavailable'))
     })
     return () => controller.abort()
   }, [active, load])
   const execute = async (request: PolicyWrite) => {
     setPending(request)
     setBusy(true)
-    setError('')
+    setError(undefined)
     try {
       const response = await fetch('/api/platform/policies', {
         method: 'POST',
@@ -144,7 +140,7 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
       setPending(undefined)
       await load()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The policy change could not be confirmed.')
+      setError(cause instanceof Error ? cause : new Error('The policy change could not be confirmed.'))
     } finally {
       setBusy(false)
     }
@@ -182,17 +178,18 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
   })
   const refresh = async () => {
     setBusy(true)
-    setError('')
+    setError(undefined)
     try {
       await load()
       setPending(undefined)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Policies are unavailable')
+      setError(cause instanceof Error ? cause : new Error('Policies are unavailable'))
     } finally {
       setBusy(false)
     }
   }
   const { errors } = form.formState
+  const needsVerification = error instanceof PasskeyRequiredError
   return (
     <section aria-label="Service access" className="@container/policies space-y-4">
       <div className="space-y-1">
@@ -201,7 +198,7 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
       </div>
       {error ? (
         <p role="alert" className="text-xs text-red-300">
-          {error}
+          {error.message}
         </p>
       ) : null}
       {receipt ? (
@@ -376,10 +373,22 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
             </FieldGroup>
           </FieldSet>
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" size="sm" disabled={blocked}>
-              Save access
+            <Button
+              type={needsVerification ? 'button' : 'submit'}
+              size="sm"
+              disabled={needsVerification ? busy : blocked}
+              onClick={
+                needsVerification
+                  ? () =>
+                      void startTengriSignIn('step-up').catch(() =>
+                        setError(new PasskeyRequiredError('Verification could not start. Try again.')),
+                      )
+                  : undefined
+              }
+            >
+              {needsVerification ? 'Verify identity' : 'Save access'}
             </Button>
-            {pending ? (
+            {pending && !needsVerification ? (
               <Button type="button" size="sm" disabled={busy} onClick={() => void execute(pending)}>
                 Retry exact change
               </Button>
