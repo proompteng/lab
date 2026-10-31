@@ -69,6 +69,26 @@
 }
 
 @layer utilities {
+  .tengri-theme {
+    --background: var(--color-zinc-950);
+    --foreground: var(--color-zinc-100);
+    --card: var(--color-zinc-900);
+    --card-foreground: var(--color-zinc-100);
+    --popover: var(--color-zinc-900);
+    --popover-foreground: var(--color-zinc-100);
+    --primary: var(--color-zinc-100);
+    --primary-foreground: var(--color-zinc-950);
+    --secondary: var(--color-zinc-800);
+    --secondary-foreground: var(--color-zinc-100);
+    --muted: var(--color-zinc-900);
+    --muted-foreground: var(--color-zinc-400);
+    --accent: var(--color-zinc-800);
+    --accent-foreground: var(--color-zinc-100);
+    --border: var(--color-zinc-800);
+    --input: var(--color-zinc-700);
+    --ring: var(--color-zinc-400);
+  }
+
   .tengri-chat-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: rgb(82 82 91 / 55%) transparent;
