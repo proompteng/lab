@@ -5,6 +5,7 @@ import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { SqlClient } from 'effect/sql'
 
 import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
+import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { PostgresClientLive } from './postgres-client'
 
@@ -197,7 +198,14 @@ describePostgres('candidate cutover failure diagnostics', () => {
     await runtime.dispose()
   })
 
-  test.each(cases)('$name preserves admission and atomicity', async ({ seed, labels }) => {
+  test.each(
+    cases.flatMap((testCase) =>
+      [
+        { cutover: 'candidate evidence', migration: candidateEntryEvidence },
+        { cutover: 'chart structure', migration: chartStructureBeforeFunding },
+      ].map((cutover) => ({ ...testCase, ...cutover })),
+    ),
+  )('$cutover: $name preserves admission and atomicity', async ({ seed, labels, migration }) => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -245,7 +253,7 @@ describePostgres('candidate cutover failure diagnostics', () => {
               },
             })
             const result = yield* sql
-              .withTransaction(candidateEntryEvidence.pipe(Effect.provideService(SqlClient.SqlClient, guarded)))
+              .withTransaction(migration.pipe(Effect.provideService(SqlClient.SqlClient, guarded)))
               .pipe(Effect.result)
             if (Result.isSuccess(result)) throw new Error('Expected guard outcome before authority update')
             if (labels.length === 0) {

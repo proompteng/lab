@@ -124,7 +124,7 @@ export const makeJevBatchPlan = (input: unknown) =>
         request.request.schemaVersion !==
           (material.schemaVersion === JevBatchPlanVersion.Ablation
             ? 'bayn.entry-ablation-input.v1'
-            : 'bayn.entry-inference-input.v7') ||
+            : 'bayn.entry-inference-input.v8') ||
         request.symbol !== candidate.symbol ||
         request.cycleId !== material.cycleId ||
         request.authorityGenerationHash !== material.authorityGenerationHash ||
@@ -231,7 +231,7 @@ export const usableEntryBatchInferences = (
         now,
         expectedVersion === JevBatchPlanVersion.Ablation
           ? 'bayn.entry-ablation-input.v1'
-          : 'bayn.entry-inference-input.v7',
+          : 'bayn.entry-inference-input.v8',
       )
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }

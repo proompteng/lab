@@ -1,6 +1,21 @@
 # Exception tracking
 
-## Candidate evidence cutover
+## Chart structure before funding
+
+Protocol v35 offers source chart anchors independently of capital and fee tiers. Code still skips inference when no
+source proposal can cover its costs, then checks the actual recognized structure before dispatching Jev. A fee change
+cannot substitute a different consolidation for the one visible in the same chart. Entry input v8 replaces v7;
+verified numerical input v23, batch v8, Jev questions and thresholds, prices, fees, and the fifteen-minute hold remain
+unchanged.
+
+Migration 167 requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete
+accounting and no unexpired inference claims. It retires v34 execution writes and dispatch while retaining original
+request bytes and financial readers. The source cutover removes the retired sealed mandate and runs OBSERVE. After
+the immutable v35 image and native cutover are verified, a reviewed same-account PAPER mandate must bind that image
+through normal Kargo delivery. Broker credentials, capital and loss history, and risk limits persist. Natural crypto
+and equity round trips after fees remain required deployment proof.
+
+## Historical candidate evidence cutover
 
 Protocol v34 removes the unused benchmark prerequisite from live Jev admission. Entry queries contain candidates
 only; numerical input v23 and entry input v7 omit benchmark and relative-momentum state, and batch v8 has no benchmark
