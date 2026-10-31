@@ -115,6 +115,31 @@ A retained withdrawal does not provide an executable bid or ask; Bayn continues 
 Previously discarded withdrawals require recovery from their original retained Kafka records before historical
 archive coverage can be claimed. Updating the writer alone does not repair those gaps.
 
+### Recover retained withdrawn quotes
+
+`QuoteArchiveRecoveryKt` reads one explicit contiguous quote partition range through the existing archive identity.
+It requires 1–10,000 original Kafka offsets, validates every record through the live quote decoder, and fails on a
+missing, expired, malformed or mismatched record. It uses manual assignment, disables automatic offset commits,
+and leaves the live archive consumer's group and checkpoints untouched. The read has a 30-second deadline and bounded Kafka calls.
+
+Run the command from the verified published archive image with its existing environment. The first invocation only
+prints the source manifest and its SHA-256. Review the topic, partition, range, route and payload hashes before applying:
+
+```bash
+java -cp '/opt/flink/usrlib/app.jar:/opt/flink/lib/*' \
+  ai.proompteng.dorvud.ta.flink.QuoteArchiveRecoveryKt torghut.quotes.v1 4 87886364 87886366
+```
+
+Repeat the command with the printed manifest hash as its fifth argument to restore that exact range. A changed source
+or route hash fails before any write. Recovery reuses the live archive's SQL and parameter binding and preserves
+original event and ingestion timestamps. Only the archive's existing writer credential performs these inserts.
+No producer, model or broker calls occur. Original source offsets make identical retries idempotent after ClickHouse replacement.
+
+After acknowledgement, independently read the exact rows and compare their fields and nanosecond timestamps with the
+original source. If acknowledgement is uncertain, perform this read before retrying. A successful command alone does
+not prove archive coverage. Rerun the native financial report only after the rows and required watermarks are verified.
+Never substitute later observations or invented rows for expired originals.
+
 ## Rolling feature branch
 
 Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. It requires the existing

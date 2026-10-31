@@ -691,18 +691,23 @@ internal fun applyArchiveKafkaSecurity(
   builder: KafkaSourceBuilder<ArchiveKafkaRecord>,
   config: MarketDataArchiveConfig,
 ) {
-  builder.setProperty("security.protocol", config.securityProtocol)
-  builder.setProperty("sasl.mechanism", config.saslMechanism)
-  config.saslPassword?.let { password ->
-    val escapedUsername = config.saslUsername.replace("\\", "\\\\").replace("\"", "\\\"")
-    val escapedPassword = password.replace("\\", "\\\\").replace("\"", "\\\"")
-    builder.setProperty(
-      "sasl.jaas.config",
-      "org.apache.kafka.common.security.scram.ScramLoginModule required " +
-        "username=\"$escapedUsername\" password=\"$escapedPassword\";",
-    )
-  }
+  archiveKafkaSecurityProperties(config).forEach { (name, value) -> builder.setProperty(name, value) }
 }
+
+internal fun archiveKafkaSecurityProperties(config: MarketDataArchiveConfig): Map<String, String> =
+  buildMap {
+    put("security.protocol", config.securityProtocol)
+    put("sasl.mechanism", config.saslMechanism)
+    config.saslPassword?.let { password ->
+      val escapedUsername = config.saslUsername.replace("\\", "\\\\").replace("\"", "\\\"")
+      val escapedPassword = password.replace("\\", "\\\\").replace("\"", "\\\"")
+      put(
+        "sasl.jaas.config",
+        "org.apache.kafka.common.security.scram.ScramLoginModule required " +
+          "username=\"$escapedUsername\" password=\"$escapedPassword\";",
+      )
+    }
+  }
 
 private fun archiveClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayBarRecord> {
   val execution =
@@ -769,40 +774,43 @@ internal fun archiveBarStatement(): JdbcStatementBuilder<IntradayBarRecord> =
     prepared.setTimestamp(24, Timestamp.from(bar.ingestionTime))
   }
 
-private fun archiveQuoteClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayQuoteRecord> {
-  val sql =
-    """
-    INSERT INTO signal.intraday_quotes_v1 (
-      provider, universe_id, universe_symbol_hash, feed, market_session, delay_class, symbol, event_ts, ingest_ts,
-      source_topic, source_partition, source_offset, bid_price, bid_size, ask_price, ask_size, schema_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """.trimIndent()
-  val statement =
-    JdbcStatementBuilder<IntradayQuoteRecord> { prepared, quote ->
-      prepared.setString(1, quote.provider)
-      prepared.setString(2, quote.universeId)
-      prepared.setString(3, quote.universeSymbolHash)
-      prepared.setString(4, quote.feed)
-      prepared.setString(5, quote.marketSession)
-      prepared.setString(6, quote.delayClass)
-      prepared.setString(7, quote.symbol)
-      prepared.setTimestamp(8, Timestamp.from(quote.eventTime))
-      prepared.setTimestamp(9, Timestamp.from(quote.ingestionTime))
-      prepared.setString(10, quote.sourceTopic)
-      prepared.setInt(11, quote.sourcePartition)
-      prepared.setLong(12, quote.sourceOffset)
-      prepared.setDouble(13, quote.bidPrice)
-      prepared.setDouble(14, quote.bidSize)
-      prepared.setDouble(15, quote.askPrice)
-      prepared.setDouble(16, quote.askSize)
-      prepared.setInt(17, quote.schemaVersion)
-    }
-  return JdbcSink
+internal val archiveQuoteInsertSql =
+  """
+  INSERT INTO signal.intraday_quotes_v1 (
+    provider, universe_id, universe_symbol_hash, feed, market_session, delay_class, symbol, event_ts, ingest_ts,
+    source_topic, source_partition, source_offset, bid_price, bid_size, ask_price, ask_size, schema_version
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  """.trimIndent()
+
+internal fun bindArchiveQuote(
+  prepared: java.sql.PreparedStatement,
+  quote: IntradayQuoteRecord,
+) {
+  prepared.setString(1, quote.provider)
+  prepared.setString(2, quote.universeId)
+  prepared.setString(3, quote.universeSymbolHash)
+  prepared.setString(4, quote.feed)
+  prepared.setString(5, quote.marketSession)
+  prepared.setString(6, quote.delayClass)
+  prepared.setString(7, quote.symbol)
+  prepared.setTimestamp(8, Timestamp.from(quote.eventTime))
+  prepared.setTimestamp(9, Timestamp.from(quote.ingestionTime))
+  prepared.setString(10, quote.sourceTopic)
+  prepared.setInt(11, quote.sourcePartition)
+  prepared.setLong(12, quote.sourceOffset)
+  prepared.setDouble(13, quote.bidPrice)
+  prepared.setDouble(14, quote.bidSize)
+  prepared.setDouble(15, quote.askPrice)
+  prepared.setDouble(16, quote.askSize)
+  prepared.setInt(17, quote.schemaVersion)
+}
+
+private fun archiveQuoteClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayQuoteRecord> =
+  JdbcSink
     .builder<IntradayQuoteRecord>()
-    .withQueryStatement(sql, statement)
+    .withQueryStatement(archiveQuoteInsertSql, JdbcStatementBuilder(::bindArchiveQuote))
     .withExecutionOptions(archiveJdbcExecutionOptions(config))
     .buildAtLeastOnce(archiveJdbcConnectionOptions(config))
-}
 
 private fun archiveTradeClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayTradeRecord> {
   val sql =

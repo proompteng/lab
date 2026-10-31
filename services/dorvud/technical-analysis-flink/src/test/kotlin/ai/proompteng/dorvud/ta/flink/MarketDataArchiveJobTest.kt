@@ -287,6 +287,46 @@ class MarketDataArchiveJobTest {
   }
 
   @Test
+  fun `quote recovery requires complete original records and binds the existing route`() {
+    val range = QuoteArchiveRecoveryRange("torghut.quotes.v1", 4, 87886364, 87886366)
+    val record =
+      quoteRecord(
+        range.topic,
+        quoteEnvelope("sip", "real_time_consolidated", bidPrice = 279.67, askPrice = 0.0, askSize = 0.0, symbol = "NVDA"),
+        partition = range.partition,
+        offset = range.firstOffset,
+      )
+    val records = listOf(record, record.copy(offset = range.firstOffset + 1))
+    val (manifest, quotes) = quoteArchiveRecoveryPlan(range, routes, records)
+    assertEquals(listOf(87886364L, 87886365L), manifest.records.map { it.offset })
+    assertEquals(records.map { it.offset }, quotes.map { it.sourceOffset })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askPrice })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askSize })
+    assertEquals("sip", manifest.feed)
+    assertEquals(coreUniverse.symbolHash, manifest.universeSymbolHash)
+    val hash = quoteArchiveRecoveryHash(manifest)
+    assertEquals(hash, quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, records).first))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(universeId = "other-universe")))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(records = manifest.records.reversed())))
+    listOf(
+      records.dropLast(1),
+      records.reversed(),
+      listOf(record, record),
+      records.map { it.copy(partition = 5) },
+      records.map { it.copy(value = "{}") },
+    ).forEach { changed ->
+      assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, routes, changed) }
+    }
+    val changed = records.map { it.copy(value = it.value.replace("279.67", "279.68")) }
+    assertTrue(hash != quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, changed).first))
+    assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, emptyMap(), records) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, -1, 0, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, -1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 0, 10001) }
+  }
+
+  @Test
   fun `archive configuration rejects duplicate topics and unbounded values`() {
     val valid = validEnvironment()
     val config = MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "16"))
