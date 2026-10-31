@@ -397,7 +397,19 @@ export const nativeLatencyBacktestFixture = (
     fractionalTrading: false,
     calendar: [
       ...calendar,
-      { date: '2026-11-30', open: '09:30', close: '16:00', session_open: '0930', session_close: '1600' },
+      {
+        date: (() => {
+          const next = new Date(last.closeAt)
+          do {
+            next.setUTCDate(next.getUTCDate() + 1)
+          } while (next.getUTCDay() === 0 || next.getUTCDay() === 6)
+          return next.toISOString().slice(0, 10)
+        })(),
+        open: '09:30',
+        close: '16:00',
+        session_open: '0930',
+        session_close: '1600',
+      },
     ],
     assets: f.registration.obligations.configuration.protocol.universe.map((symbol, index) => ({
       id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
