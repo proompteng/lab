@@ -7022,6 +7022,11 @@ for (const width of [1440, 390]) {
     await openSidebar()
     await expect(sidebar.getByText('Conversations', { exact: true })).toHaveCount(0)
     await sidebar.getByRole('button', { name: 'Chat actions for Alpha', exact: true }).click()
+    const archiveMenu = page.getByRole('menuitem', { name: 'Archive', exact: true })
+    await expect(archiveMenu).toHaveCSS('font-size', '12px')
+    expect(await archiveMenu.evaluate((item) => getComputedStyle(item).fontFamily)).toMatch(/geist/i)
+    expect((await archiveMenu.boundingBox())!.height).toBeLessThanOrEqual(32)
+    await page.getByRole('menu').screenshot({ path: test.info().outputPath(`session-menu-${width}.png`) })
     await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
     await expect.poll(() => store.threads.find((thread) => thread.id === 'thread-alpha')?.archived).toBe(true)
     await expect(sidebar.locator('[data-conversation-id="thread-alpha"]')).toHaveCount(0)
@@ -9471,6 +9476,9 @@ for (const width of [1440, 390]) {
     const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
     const question = chat.getByRole('article', { name: 'Agent question', exact: true })
     await expect(question).toContainText('Which environment?')
+    const bounds = await question.boundingBox()
+    expect(bounds!.width).toBeLessThanOrEqual(576)
+    expect(bounds!.height).toBeLessThanOrEqual(360)
     if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
     await question.screenshot({ path: test.info().outputPath(`async-question-${width}.png`) })
     await expect(question.getByRole('radio', { name: 'Staging', exact: true })).toBeChecked()
@@ -9611,6 +9619,63 @@ test('renders live async questions and retries their exact steering operation af
   expect(
     mock.actions.some((action) => action.action === 'answer-questions' || action.action === 'resolve-approval'),
   ).toBe(false)
+})
+
+test('retires an async question when its answer arrives before the steering response', async ({ page }) => {
+  const item = {
+    id: 'pending-question',
+    type: 'agentMessage',
+    text: '',
+    questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }],
+  }
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [item] }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+  const response = Promise.withResolvers<void>()
+  const sent = Promise.withResolvers<Record<string, unknown>>()
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'steer-turn') return route.fallback()
+    sent.resolve(action)
+    await response.promise
+    await route.fulfill({ status: 503, json: { error: 'The steering response was lost' } })
+  })
+  try {
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+    const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
+    await expect(question.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled()
+    await prompt.fill('Preserve my draft.')
+    await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+    const action = await sent.promise
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'user-message',
+      method: 'item/completed',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: 'confirmed-answer',
+      text: '',
+      approvalId: '',
+      rawJson: JSON.stringify({
+        params: {
+          item: { id: 'confirmed-answer', type: 'userMessage', content: [{ type: 'text', text: action.text }] },
+        },
+      }),
+    })
+    await expect(question).toHaveCount(0)
+    response.resolve()
+    await expect(prompt).toHaveValue('Preserve my draft.')
+    await expect(chat.getByRole('alert')).toHaveCount(0)
+    expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(0)
+  } finally {
+    response.resolve()
+  }
 })
 
 test('keeps async question dismissal scoped to its conversation', async ({ page }) => {

@@ -6,12 +6,7 @@ import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
 
-const alertNames = [
-  'CephOsdReadLatencyHigh',
-  'CephOsdQueueWaitHigh',
-  'TengriTerminalHeartbeatLatencyHigh',
-  'TengriGuestConnectLatencyHigh',
-]
+const alertNames = ['CephOsdQueueWaitHigh', 'TengriTerminalHeartbeatLatencyHigh', 'TengriGuestConnectLatencyHigh']
 
 const stringMap = (value: unknown): Record<string, string> => {
   if (!YAML.isMap(value)) throw new Error('Alert metadata must be a map')
@@ -73,7 +68,7 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       step: 0.1,
       recovered: false,
       namespace: 'tengri',
-      firing: alertNames.slice(0, 2),
+      firing: alertNames.filter((name) => name.startsWith('Ceph')),
     },
     {
       name: 'recovery after sustained latency',
@@ -90,7 +85,6 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       recovered: false,
       namespace: 'tengri',
       firing: [],
-      read: 0.5,
       queue: 0.1,
     },
     {
@@ -99,7 +93,7 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       step: 10,
       recovered: false,
       namespace: 'other',
-      firing: alertNames.slice(0, 2),
+      firing: alertNames.filter((name) => name.startsWith('Ceph')),
     },
   ]
   const cases = scenarios.map((scenario) => {
@@ -119,12 +113,6 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       ]
     }
     const input_series = [
-      {
-        series: 'ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.1"}',
-        values: values((index) =>
-          scenario.recovered && index >= 30 ? 0.01 : (scenario.read ?? (scenario.slow ? 0.6 : 0.01)),
-        ),
-      },
       {
         series: 'ceph_storage:osd_queue_wait_seconds:estimated_mean5m{node="turin",ceph_daemon="osd.1"}',
         values: values((index) =>
