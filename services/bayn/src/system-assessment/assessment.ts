@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { evaluateJevAcceptance, JevNumericalVerdict, JevResearchPolicy } from '../jev/acceptance'
+import { evaluateJevAcceptance, JevAcceptanceVersion, JevNumericalVerdict, JevResearchPolicy } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { SystemRegistrationSchema, validateSystemRegistration } from './policy'
@@ -78,7 +78,11 @@ export const SystemAssessmentInputSchema = Schema.Struct({
   }),
 })
 
-export const evaluateSystemAssessment = (input: unknown, verifiedSources: ReadonlySet<string>) =>
+export const evaluateSystemAssessment = (
+  input: unknown,
+  verifiedSources: ReadonlySet<string>,
+  version = JevAcceptanceVersion.Current,
+) =>
   Result.gen(function* () {
     const data = yield* Schema.decodeUnknownResult(
       SystemAssessmentInputSchema,
@@ -88,7 +92,7 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
         (cause) => new SystemAssessmentError({ message: 'System assessment evidence is malformed', cause }),
       ),
     )
-    const { registration, registrationHash } = yield* validateSystemRegistration(data.registration)
+    const { registration, registrationHash } = yield* validateSystemRegistration(data.registration, version)
     yield* validateOperatingCostWindow(
       data.policies.flatMap((policy) => policy.sessions.map((session) => session.operatingCosts)),
     )
@@ -256,21 +260,24 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
       requireSource(violation.sourceHash)
       violations.push(`SAFETY:${violation.kind}`)
     }
-    const numericalResult = evaluateJevAcceptance({
-      schemaVersion: 'bayn.jev-acceptance-input.v1',
-      protocolHash: registration.acceptanceProtocolHash,
-      registration: {
-        planHash: registrationHash,
-        lockedAt: registration.registeredAt,
-        attemptIndex: registration.attemptIndex,
-        sessions: registration.calendar.sessions,
+    const numericalResult = evaluateJevAcceptance(
+      {
+        schemaVersion: 'bayn.jev-acceptance-input.v1',
+        protocolHash: registration.acceptanceProtocolHash,
+        registration: {
+          planHash: registrationHash,
+          lockedAt: registration.registeredAt,
+          attemptIndex: registration.attemptIndex,
+          sessions: registration.calendar.sessions,
+        },
+        policies: evaluated.map((p) => ({
+          policy: p.policy,
+          definitionHash: p.definitionHash,
+          sessions: p.sessions.map((s) => s.numerical),
+        })),
       },
-      policies: evaluated.map((p) => ({
-        policy: p.policy,
-        definitionHash: p.definitionHash,
-        sessions: p.sessions.map((s) => s.numerical),
-      })),
-    })
+      version,
+    )
     const numerical = Result.isSuccess(numericalResult) ? numericalResult.success : null
     if (Result.isFailure(numericalResult))
       violations.push(

@@ -1,4 +1,5 @@
 import { BigDecimal, Data, Result, Schema } from 'effect'
+import retainedProtocol from '../../../../docs/bayn/jev-migration-acceptance-v2.json'
 
 import { decimalToMicrosResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1Result } from '../hash'
@@ -56,6 +57,23 @@ const protocol = {
     },
   },
 }
+
+export enum JevAcceptanceVersion {
+  Current = 'REGISTERED_WINDOW_V3',
+  RetainedV2 = 'RETAINED_V2',
+}
+
+const protocolFor = (version: JevAcceptanceVersion) =>
+  version === JevAcceptanceVersion.Current
+    ? protocol
+    : {
+        ...retainedProtocol,
+        programStartedAt: retainedProtocol.frozenAt,
+        requiredOutcomes: {
+          ...retainedProtocol.requiredOutcomes,
+          netPnlUsdAtLeast: retainedProtocol.requiredOutcomes.netPnlOver20SessionsUsdAtLeast,
+        },
+      }
 
 export enum JevResearchPolicy {
   Candidate = 'JEV',
@@ -128,10 +146,11 @@ export class JevAcceptanceError extends Data.TaggedError('JevAcceptanceError')<{
   readonly cause?: unknown
 }> {}
 
-export const jevAcceptanceProtocolHash = () => canonicalHashV1Result(protocol)
+export const jevAcceptanceProtocolHash = (version = JevAcceptanceVersion.Current) =>
+  canonicalHashV1Result(version === JevAcceptanceVersion.Current ? protocol : retainedProtocol)
 
-export const jevAcceptanceExecutionRiskLimits = () => {
-  const limits = protocol.riskAcceptance
+export const jevAcceptanceExecutionRiskLimits = (version = JevAcceptanceVersion.Current) => {
+  const limits = protocolFor(version).riskAcceptance
   return {
     maxOrderNotionalMicros: BigInt(limits.existingMaximumOrderAndSymbolNotionalUsd) * 1_000_000n,
     maxSymbolExposureMicros: BigInt(limits.existingMaximumOrderAndSymbolNotionalUsd) * 1_000_000n,
@@ -141,8 +160,9 @@ export const jevAcceptanceExecutionRiskLimits = () => {
   }
 }
 
-export const jevAcceptanceInferenceRateFloor = () =>
-  Result.all({
+export const jevAcceptanceInferenceRateFloor = (version = JevAcceptanceVersion.Current) => {
+  const protocol = protocolFor(version)
+  return Result.all({
     inputMicrosPerMillionTokens: decimalToMicrosResult(
       protocol.executionEvidence.modelCost.usdPerMillionInputTokens,
       false,
@@ -154,12 +174,13 @@ export const jevAcceptanceInferenceRateFloor = () =>
       'frozen Jev output tariff',
     ),
   }).pipe(Result.mapError((cause) => new JevAcceptanceError({ message: 'Invalid frozen inference tariff', cause })))
+}
 
 const sum = (values: ReadonlyArray<bigint>): bigint => values.reduce((total, value) => total + value, 0n)
 const maximum = (values: ReadonlyArray<bigint>): bigint =>
   values.reduce((largest, value) => (value > largest ? value : largest))
 
-const moneyScale = (series: ReadonlyArray<CompleteSeries>) => {
+const moneyScale = (series: ReadonlyArray<CompleteSeries>, protocol: ReturnType<typeof protocolFor>) => {
   const values = series.flatMap(({ sessions }) =>
     sessions.flatMap((session) => [
       ...Object.values(session).filter((value): value is number => typeof value === 'number'),
@@ -197,6 +218,7 @@ const confidenceBounds = (
   controls: ReadonlyArray<CompleteSeries>,
   attemptIndex: number,
   money: ReturnType<typeof moneyScale>,
+  protocol: ReturnType<typeof protocolFor>,
 ) => {
   let state = protocol.evaluation.uncertainty.seed >>> 0
   const nextStart = (): number => {
@@ -242,9 +264,14 @@ const confidenceBounds = (
   }
 }
 
-const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<CompleteSeries>, attemptIndex: number) => {
+const numericalReport = (
+  candidate: CompleteSeries,
+  controls: ReadonlyArray<CompleteSeries>,
+  attemptIndex: number,
+  protocol: ReturnType<typeof protocolFor>,
+) => {
   const rows = candidate.sessions
-  const money = moneyScale([candidate, ...controls])
+  const money = moneyScale([candidate, ...controls], protocol)
   const sessionCount = BigInt(rows.length)
   const netPnl = sum(rows.map((s) => money.units(s.netPnlUsd)))
   const filledNotional = sum(rows.map((s) => money.units(s.filledNotionalUsd)))
@@ -253,7 +280,7 @@ const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<Comp
     policy: control.policy,
     netPnl: sum(control.sessions.map((s) => money.units(s.netPnlUsd))),
   }))
-  const bounds = confidenceBounds(candidate, controls, attemptIndex, money)
+  const bounds = confidenceBounds(candidate, controls, attemptIndex, money, protocol)
   let peak = money.units(protocol.riskAcceptance.allocationUsd)
   let maximumDrawdown = 0n
   for (const session of rows) {
@@ -329,7 +356,7 @@ const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<Comp
   }
 }
 
-export const evaluateJevAcceptance = (input: unknown) =>
+export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVersion.Current) =>
   Schema.decodeUnknownResult(
     JevAcceptanceInputSchema,
     strictParseOptions,
@@ -337,7 +364,15 @@ export const evaluateJevAcceptance = (input: unknown) =>
     Result.mapError((cause) => new JevAcceptanceError({ message: 'Jev acceptance input is malformed', cause })),
     Result.flatMap((data) =>
       Result.gen(function* () {
-        const protocolHash = yield* jevAcceptanceProtocolHash()
+        const protocol = protocolFor(version)
+        const protocolHash = yield* jevAcceptanceProtocolHash(version)
+        if (
+          version === JevAcceptanceVersion.RetainedV2 &&
+          data.registration.sessions.length !== retainedProtocol.evaluation.consecutiveSessions
+        )
+          return yield* Result.fail(
+            new JevAcceptanceError({ message: 'Retained v2 evidence must retain its original calendar length' }),
+          )
         const inputHash = yield* canonicalHashV1Result(data)
         const invalid = (message: string) => Result.fail(new JevAcceptanceError({ message }))
         if (data.protocolHash !== protocolHash)
@@ -423,6 +458,7 @@ export const evaluateJevAcceptance = (input: unknown) =>
                 candidate,
                 series.filter((s) => s.policy !== JevResearchPolicy.Candidate),
                 data.registration.attemptIndex,
+                protocol,
               )),
         }
         const reportHash = yield* canonicalHashV1Result(report)

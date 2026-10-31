@@ -171,7 +171,9 @@ its prospectively registered operation timeout; the CLI does not replace it with
 
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
-assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing
+assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
+New registrations require the current policy. Retained v2 records keep their original terms and policy identities;
+they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
 Source inserts enqueue pending witnesses in the same PostgreSQL transaction. Controller observations consume only

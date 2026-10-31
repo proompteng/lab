@@ -2,10 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { evaluateSystemAssessment, EdgeStatus, ProfitabilityStatus, QualificationVerdict } from './assessment'
-import { JevNumericalVerdict } from '../jev/acceptance'
-import { assessmentFixture, supportedAssessmentFixture, testHash } from './fixtures.test-support'
+import { JevNumericalVerdict, JevAcceptanceVersion } from '../jev/acceptance'
+import {
+  assessmentFixture,
+  supportedAssessmentFixture,
+  registrationFixture,
+  withRegistrationCommitments,
+  testHash,
+} from './fixtures.test-support'
 import { assessSession, exactUsd } from './session'
-import { validateSystemRegistration } from './policy'
+import { validateSystemRegistration, verifyStoredSystemRegistration } from './policy'
 import { OperatingCostCoverage } from '../operating-costs'
 
 describe('complete system qualification', () => {
@@ -323,3 +329,28 @@ test.each([1, 3, 7, 21])(
     ).toBe(true)
   },
 )
+
+test('retained policy verification reproduces the original evaluator receipt and never admits it as a new policy', () => {
+  const registration = withRegistrationCommitments({
+    ...registrationFixture(),
+    policyHash: '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b',
+    acceptanceProtocolHash: '33be41cdb552c926fdf003dd9320d570db4cd0012ae15227bc8338fd5f571375',
+  })
+  expect(Result.isFailure(validateSystemRegistration(registration))).toBe(true)
+  const retained = Result.getOrThrow(verifyStoredSystemRegistration(registration))
+  expect(retained.version).toBe(JevAcceptanceVersion.RetainedV2)
+  const { input, verifiedSources } = assessmentFixture(registration)
+  const result = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources, retained.version))
+  // Golden receipt generated from the evaluator at 04bfb608d348b86f5a72f2e246ab238bf8dd2312.
+  expect(result.assessmentHash).toBe('fb1a3e418a32986bc16b60fb56a81da05765a69c389420c348b1a90a14e467d2')
+  expect(result.inputHash).toBe('cefaa1156583835084239478969ccdd7c872b7a91c1c540566021eecd68357a6')
+  expect(Result.isFailure(verifyStoredSystemRegistration({ ...registration, policyHash: '0'.repeat(64) }))).toBe(true)
+  expect(
+    Result.isFailure(
+      verifyStoredSystemRegistration({
+        ...registration,
+        calendar: { ...registration.calendar, sessions: registration.calendar.sessions.slice(0, 3) },
+      }),
+    ),
+  ).toBe(true)
+})
