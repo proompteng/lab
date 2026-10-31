@@ -3071,87 +3071,83 @@ formal('pinned Lean executable conformance', () => {
     ).toEqual([Result.getOrThrow(binaryTradeEdge(edge))])
   })
 
-  test('the registered-window paired bootstrap matches Lean for odd and even windows, losses and attempt tails', () => {
-    for (const [sessionCount, attemptIndex] of [
-      [1, 1],
-      [3, 2],
-      [7, 5],
-      [19, 12],
-      [20, 1],
-      [20, 2],
-      [20, 5],
-      [20, 12],
-      [21, 1],
-      [25, 2],
-    ]) {
-      const { input } = assessmentFixture(registrationFixture(undefined, sessionCount))
-      const series = [0, 1, 2, 3].map((policy) =>
-        Array.from(
-          { length: sessionCount },
-          (_, day) => BigInt(250 + (day % 5) * 17 - policy * 100 - (day % 7 === 0 ? 450 : 0)) * 1_000_000n,
-        ),
-      )
-      const acceptance = Schema.decodeUnknownSync(JevAcceptanceInputSchema)({
-        schemaVersion: 'bayn.jev-acceptance-input.v1',
-        protocolHash: input.registration.acceptanceProtocolHash,
-        registration: {
-          planHash: testHash(input.registration),
-          lockedAt: input.registration.registeredAt,
-          attemptIndex,
-          sessions: input.registration.calendar.sessions,
-        },
-        policies: input.registration.policies.map((p, index) => {
-          let equity = 100000
-          return {
-            policy: p.policy,
-            definitionHash: testHash(p),
-            sessions: input.registration.calendar.sessions.map((s, day) => {
-              const pnl = Number(series[index]?.[day]) / 1_000_000
-              const opening = equity
-              equity += pnl
-              return {
-                status: 'COMPLETE',
-                sessionDate: s.sessionDate,
-                evidenceHash: testHash({ index, day }),
-                completedEpisodes: 10,
-                filledNotionalUsd: 100000,
-                netPnlUsd: pnl,
-                openingEquityUsd: opening,
-                closingEquityUsd: equity,
-                minimumEquityUsd: Math.min(opening, equity),
-                maximumEquityUsd: Math.max(opening, equity),
-                maximumDrawdownUsd: Math.max(0, -pnl),
-                maximumMarkGapMs: 60000,
-                p95LatencyStress: { status: 'COMPLETE', netPnlUsd: pnl, evidenceHash: testHash({ day, stress: true }) },
-              }
-            }),
-          }
-        }),
-      })
-      const ts = Result.getOrThrow(evaluateJevAcceptance(acceptance))
-      expect(ts.verdict).not.toBe(JevNumericalVerdict.Inconclusive)
-      if (!('confidence' in ts)) throw new Error('Missing numerical result')
-      const [output] = model([
-        {
-          operation: 'bootstrap',
-          candidate: series[0]?.map(String),
-          controls: series.slice(1).map((s) => s.map(String)),
-          attemptIndex: String(attemptIndex),
-        },
-      ])
-      const lean = Schema.decodeUnknownSync(
-        Schema.Struct({
-          lowerProfitTotalMicros: Schema.String,
-          lowerIncrementalTotalsMicros: Schema.Array(Schema.String),
-        }),
-      )(output)
-      expect(ts.confidence.meanNetPnlUsdLowerBound).toBe(
-        Number(lean.lowerProfitTotalMicros) / (sessionCount * 1_000_000),
-      )
-      expect(ts.confidence.paired.map((p) => p.meanIncrementalNetPnlUsdLowerBound)).toEqual(
-        lean.lowerIncrementalTotalsMicros.map((n) => Number(n) / (sessionCount * 1_000_000)),
-      )
-    }
+  test.each([
+    [1, 1],
+    [3, 2],
+    [7, 5],
+    [19, 12],
+    [20, 1],
+    [20, 2],
+    [20, 5],
+    [20, 12],
+    [21, 1],
+    [25, 2],
+  ])('the paired bootstrap matches Lean for %i registered sessions and attempt %i', (sessionCount, attemptIndex) => {
+    const { input } = assessmentFixture(registrationFixture(undefined, sessionCount))
+    const series = [0, 1, 2, 3].map((policy) =>
+      Array.from(
+        { length: sessionCount },
+        (_, day) => BigInt(250 + (day % 5) * 17 - policy * 100 - (day % 7 === 0 ? 450 : 0)) * 1_000_000n,
+      ),
+    )
+    const acceptance = Schema.decodeUnknownSync(JevAcceptanceInputSchema)({
+      schemaVersion: 'bayn.jev-acceptance-input.v1',
+      protocolHash: input.registration.acceptanceProtocolHash,
+      registration: {
+        planHash: testHash(input.registration),
+        lockedAt: input.registration.registeredAt,
+        attemptIndex,
+        sessions: input.registration.calendar.sessions,
+      },
+      policies: input.registration.policies.map((p, index) => {
+        let equity = 100000
+        return {
+          policy: p.policy,
+          definitionHash: testHash(p),
+          sessions: input.registration.calendar.sessions.map((s, day) => {
+            const pnl = Number(series[index]?.[day]) / 1_000_000
+            const opening = equity
+            equity += pnl
+            return {
+              status: 'COMPLETE',
+              sessionDate: s.sessionDate,
+              evidenceHash: testHash({ index, day }),
+              completedEpisodes: 10,
+              filledNotionalUsd: 100000,
+              netPnlUsd: pnl,
+              openingEquityUsd: opening,
+              closingEquityUsd: equity,
+              minimumEquityUsd: Math.min(opening, equity),
+              maximumEquityUsd: Math.max(opening, equity),
+              maximumDrawdownUsd: Math.max(0, -pnl),
+              maximumMarkGapMs: 60000,
+              p95LatencyStress: { status: 'COMPLETE', netPnlUsd: pnl, evidenceHash: testHash({ day, stress: true }) },
+            }
+          }),
+        }
+      }),
+    })
+    const ts = Result.getOrThrow(evaluateJevAcceptance(acceptance))
+    expect(ts.verdict).not.toBe(JevNumericalVerdict.Inconclusive)
+    if (!('confidence' in ts)) throw new Error('Missing numerical result')
+    const [output] = model([
+      {
+        operation: 'bootstrap',
+        candidate: series[0]?.map(String),
+        controls: series.slice(1).map((s) => s.map(String)),
+        attemptIndex: String(attemptIndex),
+      },
+    ])
+    const lean = Schema.decodeUnknownSync(
+      Schema.Struct({
+        lowerProfitTotalMicros: Schema.String,
+        lowerIncrementalTotalsMicros: Schema.Array(Schema.String),
+      }),
+    )(output)
+    expect(ts.confidence.meanNetPnlUsdLowerBound).toBe(Number(lean.lowerProfitTotalMicros) / (sessionCount * 1_000_000))
+    expect(ts.confidence.paired.map((p) => p.meanIncrementalNetPnlUsdLowerBound)).toEqual(
+      lean.lowerIncrementalTotalsMicros.map((n) => Number(n) / (sessionCount * 1_000_000)),
+    )
   })
 })
 
