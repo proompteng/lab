@@ -332,6 +332,7 @@ pub(crate) async fn read(
     id: &str,
     digest: Option<String>,
 ) -> Result<Snapshot, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
     let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
     recover_status("status", || async {
         let query = Query {
@@ -356,6 +357,7 @@ pub(crate) async fn active(
     service: &ControlPlane,
     principal: &Principal,
 ) -> Result<Vec<Snapshot>, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
         let claims = active_claims(service, principal).await?;
         futures::future::try_join_all(

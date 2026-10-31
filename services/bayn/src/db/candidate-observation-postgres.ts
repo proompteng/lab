@@ -150,7 +150,7 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
             message: 'Jev observations must commit before inference',
           })
         if (observation.payload.schemaVersion !== 'bayn.jev-observation.v1')
-          return yield* recordCandidateObservation(sql, observation, undefined, JevBatchPlanVersion.V7)
+          return yield* recordCandidateObservation(sql, observation, undefined, JevBatchPlanVersion.V8)
         const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(observation.payload)).pipe(
           Effect.mapError((cause) =>
             operationalError({
@@ -195,7 +195,7 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
             }),
           )
         }
-        return yield* recordReproducedJevObservation(sql, reproduced, JevBatchPlanVersion.V7)
+        return yield* recordReproducedJevObservation(sql, reproduced, JevBatchPlanVersion.V8)
       }).pipe(
         Effect.mapError((cause) =>
           operationalError({

@@ -53,7 +53,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    uses: ./.github/workflows/bayn-ci.yml
+    secrets: inherit
+
   image:
+    needs: validation
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn

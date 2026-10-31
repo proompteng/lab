@@ -10,7 +10,7 @@ import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const CandidateEntryInferenceInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.entry-inference-input.v5'),
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v8'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
   protocol: JevProtocolSchema,
@@ -43,6 +43,8 @@ export type EntryInferenceMaterial =
         | 'bayn.entry-inference-input.v3'
         | 'bayn.entry-inference-input.v4'
         | 'bayn.entry-inference-input.v5'
+        | 'bayn.entry-inference-input.v6'
+        | 'bayn.entry-inference-input.v7'
       readonly protocol: JevProtocolMaterial
     })
   | (Omit<typeof AblationEntryInferenceInputSchema.Type, 'protocol'> & {
@@ -53,7 +55,7 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
   Result.gen(function* () {
     yield* Schema.decodeUnknownResult(
       Schema.Struct({
-        schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
+        schemaVersion: Schema.Literal(value.protocol.inputDefinition),
         task: Schema.Struct({ decisionPurpose: Schema.Literal('ENTRY') }),
       }),
     )(value.numericalState)

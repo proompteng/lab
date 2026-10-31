@@ -241,16 +241,14 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     }),
     Effect.provideService(JevEvaluationStore, {
       read: () => unexpected,
-      record: () => unexpected,
+      recordAll: () => unexpected,
       abandon: () => unexpected,
     }),
     Effect.provideService(JevClient, { evaluate: () => unexpected }),
     Effect.provideService(DecisionsClient, { evaluate: () => unexpected }),
     Effect.provideService(EntryInferenceJournal, {
-      recordVisualClaim: () => unexpected,
-      recordVisualTerminal: () => unexpected,
-
-      recordHandoff: () => unexpected,
+      recordVisualClaims: () => unexpected,
+      recordTransitions: () => unexpected,
     }),
     Effect.provideService(JevPositionStore, {
       read: () => unexpected,
@@ -4671,6 +4669,7 @@ describe('OBSERVE runtime composition', () => {
       readonly refreshMs?: number
       readonly refreshedAgeMs?: number
       readonly initialAgeMs?: number
+      readonly pricingAskIncrease?: number
       readonly pricingReadDelayMs?: number
       readonly brokerMaximumAgeMs?: number
       readonly admissionRemainingMs?: number
@@ -4756,7 +4755,25 @@ describe('OBSERVE runtime composition', () => {
               Effect.gen(function* () {
                 events.push(query.purpose === IntradaySnapshotPurpose.EntryPricing ? 'pricing' : 'signal')
                 snapshotRequests.push({ ...query, archiveWatermarks: [] })
-                return yield* fixture.input.intradayMarketData.loadSnapshot(query)
+                const snapshot = yield* fixture.input.intradayMarketData.loadSnapshot(query)
+                if (query.purpose !== IntradaySnapshotPurpose.EntryPricing || options.pricingAskIncrease === undefined)
+                  return snapshot
+                const increase = options.pricingAskIncrease
+                return streamingFixtureFromRaw(
+                  {
+                    ...snapshot,
+                    quotes: snapshot.quotes.map((quote) =>
+                      quote.symbol === 'NVDA'
+                        ? {
+                            ...quote,
+                            bidPrice: quote.bidPrice + increase,
+                            askPrice: quote.askPrice + increase,
+                          }
+                        : quote,
+                    ),
+                  },
+                  query,
+                ).snapshot
               }),
           },
         }).pipe(
@@ -4789,6 +4806,24 @@ describe('OBSERVE runtime composition', () => {
     )
     return { exit, events, snapshotRequests, refreshes, initial, refreshed, reconciliationReads }
   }
+
+  test('a funded equity entry binds the real higher ask to risk while capping its DAY order', async () => {
+    const result = await buildEntryWithHeadroom({ brokerMaximumAgeMs: 40_000, pricingAskIncrease: 0.01 })
+    if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
+    const document = result.exit.value
+    const entry = document.strategyDecision
+    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('expected funded Jev entry')
+    const plan = entry.exitPolicy.plans['NVDA']
+    const risk = document.deltaRisk[0]
+    if (plan === undefined || risk?.facts === undefined) throw new Error('expected complete risk binding')
+    expect(risk.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(risk.limitPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
+    expect(risk.facts.state.expectedExecutionPriceMicros).toBe(plan.levels.maximumEntryPriceMicros)
+    expect(BigInt(risk.facts.state.referencePriceMicros)).toBeGreaterThan(BigInt(risk.limitPriceMicros))
+    expect(document.entryLimitSlippageBps).toBe(0)
+    expect(risk.facts.state.entryQuote?.maximumAgeMs).toBe(10_000)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+  })
 
   test('Jev pricing follows committed refresh and uses current risk with immutable model evidence', async () => {
     const result = await buildEntryWithHeadroom({ brokerMaximumAgeMs: 40_000 })
@@ -5085,7 +5120,7 @@ describe('OBSERVE runtime composition', () => {
   test('binds a native Jev entry to its full signal batch and independent execution pricing', async () => {
     const fixture = await executionLifecycleFixture()
     expect(fixture.snapshotRequests).toHaveLength(2)
-    expect(fixture.snapshotRequests[0]).toMatchObject({ symbols: equityMarketProfile.universe })
+    expect(fixture.snapshotRequests[0]).toMatchObject({ symbols: equityMarketProfile.candidateSymbols })
     expect(fixture.snapshotRequests[1]).toMatchObject({
       symbols: ['NVDA'],
       purpose: IntradaySnapshotPurpose.EntryPricing,
@@ -5097,7 +5132,7 @@ describe('OBSERVE runtime composition', () => {
         strategyName: 'jev',
         accountId,
         cycleId: cycle.identity.cycleId,
-        decisionMarketData: { symbols: equityMarketProfile.universe },
+        decisionMarketData: { symbols: equityMarketProfile.candidateSymbols },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
       strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v7', selectedSymbols: ['NVDA'] },

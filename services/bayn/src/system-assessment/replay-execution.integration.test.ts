@@ -189,9 +189,14 @@ nativeTest.each([JevResearchPolicy.Candidate, JevResearchPolicy.Ablation, JevRes
           'proompteng.ai/bayn.strategy-protocol-hash': base.protocolHash,
         }
         const tag = `${repository}:fixture`
+        const uid = process.getuid?.()
+        const gid = process.getgid?.()
+        if (uid === undefined || gid === undefined) throw new Error('Replay container fixture requires POSIX ownership')
         const imageId = yield* Effect.acquireRelease(
           command([
             'commit',
+            '--change',
+            `USER ${uid}:${gid}`,
             ...Object.entries(labels).flatMap(([key, value]) => ['--change', `LABEL ${key}=${value}`]),
             builder,
             tag,

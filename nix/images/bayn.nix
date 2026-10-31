@@ -12,12 +12,12 @@ let
   frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.chart-first-entry.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5";
-  # Canonical hash of the compiled bayn.jev.protocol.v28 document.
-  strategyParameterHash = "d4d9cef267f4d4fde8246ec0b345ce3ce52862588c207fbc247e1622b1f87801";
+  strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
+  # Canonical hash of the compiled bayn.jev.protocol.v35 document.
+  strategyParameterHash = "f9e6e142d22de772dca147cae29c07e17010026ee7c156874c1f6a1cccc32878";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "6eec66ee07227020535297e03a0091b9fc5cba15d88e9ef2948a3e508192a502";
+  strategyProtocolHash = "224be13842b21f731e6ac0e97fd390dccb12c71149c3c44ca9dc5f7511a8c69f";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -186,6 +186,7 @@ import ./bun-workspace-service.nix {
     frozenControlCommand
     controlCommand
     gepaPython
+    pkgs.go-containerregistry
   ];
   exposedPorts = {
     "8080/tcp" = { };
