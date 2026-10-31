@@ -501,6 +501,11 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
     const valid = yield* decodeInferenceExpenseQuote(quote)
     // Validate the complete graph before projecting an older immutable quote cut.
     const evidence = yield* expenseSourceEvidence(source)
+    return yield* verifyQuoteFromSourceEvidence(evidence, valid)
+  })
+
+const verifyQuoteFromSourceEvidence = (evidence: DecodedInferenceCostEvidence, valid: InferenceExpenseQuote) =>
+  Result.gen(function* () {
     const current = evidence.requests[0]
     if (current === undefined) return yield* Result.fail(new InferenceCostError({ message: 'Missing expense source' }))
     const prefix = yield* quoteSourcePrefix(current, valid)
@@ -508,6 +513,40 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
       ? current
       : yield* decodeQuoteSourcePrefix(current, prefix, evidence.asOf)
     return yield* verifyQuoteFromEvidence({ ...evidence, requests: [prepared] }, valid)
+  })
+
+/** Reuse only identical complete source cuts within this bounded pending read. */
+export const verifyPendingInferenceExpenses = (
+  rows: readonly { readonly quoteHash: string; readonly payload: unknown; readonly source: InferenceExpenseSource }[],
+) =>
+  Result.gen(function* () {
+    if (rows.length > inferenceExpenseBatchSize)
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Pending inference expenses exceed the bounded batch size' }),
+      )
+    const sources = new Map<string, { readonly hash: string; readonly evidence: DecodedInferenceCostEvidence }>()
+    const verified: InferenceExpenseQuote[] = []
+    for (const row of rows) {
+      const valid = yield* decodeInferenceExpenseQuote(row.payload)
+      if (valid.quoteHash !== row.quoteHash)
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Pending inference expense quote identity differs' }),
+        )
+      const hash = yield* canonicalHashV1Result(row.source).pipe(
+        Result.mapError(
+          (cause) => new InferenceCostError({ message: 'Pending inference expense source cannot be hashed', cause }),
+        ),
+      )
+      let source = sources.get(row.source.requestId)
+      if (source !== undefined && source.hash !== hash)
+        return yield* Result.fail(new InferenceCostError({ message: 'Pending inference expense source cuts conflict' }))
+      if (source === undefined) {
+        source = { hash, evidence: yield* expenseSourceEvidence(row.source) }
+        sources.set(row.source.requestId, source)
+      }
+      verified.push(yield* verifyQuoteFromSourceEvidence(source.evidence, valid))
+    }
+    return verified
   })
 
 export const verifyInferenceExpenseCoverage = (
