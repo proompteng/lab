@@ -64,7 +64,7 @@ const plan = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const candidate = plan.candidates[0]
@@ -189,6 +189,37 @@ test('a durable pending claim forbids another call, expires once, and preserves 
       expect((yield* journal.evaluations.read(request.requestId))?.resolution?.status).toBe(
         JevResolutionStatus.Abandoned,
       )
+    }),
+  ))
+
+test.each([
+  ['malformed', {}],
+  ['different valid source', originalFixture.observation.payload],
+  ['changed observation time', { ...observation, observedAt: '2000-01-01T00:00:00.000Z' }],
+] as const)('batch reads revalidate stored observation bytes: %s', (_name, changed) =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      const path = `${directory}/observation-${plan.observationHash}.json`
+      yield* fs.writeFileString(path, JSON.stringify(changed))
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+      expect(Result.isFailure(yield* Effect.result(journal.batches.begin(plan, observation)))).toBeTrue()
+      yield* fs.writeFileString(path, JSON.stringify(observation))
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+    }),
+  ),
+)
+
+test('batch reads reject a missing stored observation even after an earlier successful read', () =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      yield* fs.remove(`${directory}/observation-${plan.observationHash}.json`)
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
     }),
   ))
 

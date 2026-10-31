@@ -39,20 +39,25 @@ export const summarizeForwardInferenceExpenses = (
   authorityGenerationHash?: string,
 ) =>
   Result.gen(function* () {
-    const selected = {
-      ...evidence,
-      requests: evidence.requests.filter(
-        (request) =>
-          authorityGenerationHash === undefined || request.authorityGenerationHash === authorityGenerationHash,
-      ),
-    }
-    const sourceReport = yield* makeInferenceCostReport(selected, {
+    const sourceReport = yield* makeInferenceCostReport(evidence, {
       schemaVersion: 'bayn.inference-rate-card.v1',
       rates: [],
     })
-    const requests = new Map(sourceReport.requests.map((request) => [inferenceStageKey(request), request]))
+    const selectedRequestIds = new Set(
+      evidence.requests
+        .filter(
+          (request) =>
+            authorityGenerationHash === undefined || request.authorityGenerationHash === authorityGenerationHash,
+        )
+        .map((request) => request.requestId),
+    )
+    const requests = new Map(
+      sourceReport.requests
+        .filter((request) => selectedRequestIds.has(request.requestId))
+        .map((request) => [inferenceStageKey(request), request]),
+    )
     const rows = frozen.filter(({ quote }) => requests.has(inferenceStageKey(quote.line)))
-    const coverage = yield* verifyInferenceExpenseCoverage(selected, accountId, rows)
+    const coverage = yield* verifyInferenceExpenseCoverage(evidence, accountId, frozen, authorityGenerationHash)
     let known = 0n
     for (const { quote } of rows) {
       const request = requests.get(inferenceStageKey(quote.line))
@@ -81,8 +86,7 @@ export const summarizeForwardInferenceExpenses = (
     >
   })
 
-export const readForwardInferenceExpenses = (
-  config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+export const readForwardInferenceExpenseSnapshots = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -105,18 +109,40 @@ export const readForwardInferenceExpenses = (
         message: 'Forward inference expense sessions exceed the complete-report limit',
       })
     if (sessions.length === 0) return []
+    return yield* Effect.forEach(sessions, ({ sessionDate }) =>
+      readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence),
+    )
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof InferenceCostError
+        ? cause
+        : new InferenceCostError({ message: 'Forward inference expense read failed', cause }),
+    ),
+  )
+
+export type ForwardInferenceExpenseSnapshot = Effect.Success<ReturnType<typeof readInferenceExpenseSnapshot>>
+
+export const readForwardInferenceExpenses = (
+  config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+  sql: PgClient.PgClient,
+  accountId: string,
+  snapshots: readonly ForwardInferenceExpenseSnapshot[],
+  authorityGenerationHash?: string,
+) =>
+  Effect.gen(function* () {
+    if (snapshots.length === 0) return []
     const client = yield* makeTigerBeetleRequestClient(config)
     const store = makeInferenceExpenseStore(sql, accountId)
-    return yield* Effect.forEach(sessions, ({ sessionDate }) =>
+    return yield* Effect.forEach(snapshots, (snapshot) =>
       Effect.gen(function* () {
-        const snapshot = yield* readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence)
         const { evidence, quotes: frozen } = snapshot
-        yield* Effect.fromResult(verifyInferenceExpenseCoverage(evidence, accountId, frozen))
+        const sessionDate = evidence.sessionDate
+        const summary = yield* Effect.fromResult(
+          summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
+        )
         const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
         return {
-          ...(yield* Effect.fromResult(
-            summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
-          )),
+          ...summary,
           exactSessionLedger: true as const,
           ledgerTimestampMax: ledger.ledgerTimestampMax,
           verifiedSessionTransferCount: ledger.verifiedSessionTransferCount,

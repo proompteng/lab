@@ -501,6 +501,11 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
     const valid = yield* decodeInferenceExpenseQuote(quote)
     // Validate the complete graph before projecting an older immutable quote cut.
     const evidence = yield* expenseSourceEvidence(source)
+    return yield* verifyQuoteFromSourceEvidence(evidence, valid)
+  })
+
+const verifyQuoteFromSourceEvidence = (evidence: DecodedInferenceCostEvidence, valid: InferenceExpenseQuote) =>
+  Result.gen(function* () {
     const current = evidence.requests[0]
     if (current === undefined) return yield* Result.fail(new InferenceCostError({ message: 'Missing expense source' }))
     const prefix = yield* quoteSourcePrefix(current, valid)
@@ -510,10 +515,45 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
     return yield* verifyQuoteFromEvidence({ ...evidence, requests: [prepared] }, valid)
   })
 
+/** Reuse only identical complete source cuts within this bounded pending read. */
+export const verifyPendingInferenceExpenses = (
+  rows: readonly { readonly quoteHash: string; readonly payload: unknown; readonly source: InferenceExpenseSource }[],
+) =>
+  Result.gen(function* () {
+    if (rows.length > inferenceExpenseBatchSize)
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Pending inference expenses exceed the bounded batch size' }),
+      )
+    const sources = new Map<string, { readonly hash: string; readonly evidence: DecodedInferenceCostEvidence }>()
+    const verified: InferenceExpenseQuote[] = []
+    for (const row of rows) {
+      const valid = yield* decodeInferenceExpenseQuote(row.payload)
+      if (valid.quoteHash !== row.quoteHash)
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Pending inference expense quote identity differs' }),
+        )
+      const hash = yield* canonicalHashV1Result(row.source).pipe(
+        Result.mapError(
+          (cause) => new InferenceCostError({ message: 'Pending inference expense source cannot be hashed', cause }),
+        ),
+      )
+      let source = sources.get(row.source.requestId)
+      if (source !== undefined && source.hash !== hash)
+        return yield* Result.fail(new InferenceCostError({ message: 'Pending inference expense source cuts conflict' }))
+      if (source === undefined) {
+        source = { hash, evidence: yield* expenseSourceEvidence(row.source) }
+        sources.set(row.source.requestId, source)
+      }
+      verified.push(yield* verifyQuoteFromSourceEvidence(source.evidence, valid))
+    }
+    return verified
+  })
+
 export const verifyInferenceExpenseCoverage = (
   evidence: DecodedInferenceCostEvidence,
   accountId: string,
   frozen: readonly { readonly quote: InferenceExpenseQuote; readonly verifiedAt: string | null }[],
+  authorityGenerationHash?: string,
 ) =>
   Result.gen(function* () {
     const binding = yield* canonicalHashV1Result({ schemaVersion: 'bayn.inference-cost-account.v1', accountId }).pipe(
@@ -528,6 +568,14 @@ export const verifyInferenceExpenseCoverage = (
       rates: [],
     })
     const sources = new Map(evidence.requests.map((request) => [request.requestId, request]))
+    const selectedRequestIds = new Set(
+      evidence.requests
+        .filter(
+          (request) =>
+            authorityGenerationHash === undefined || request.authorityGenerationHash === authorityGenerationHash,
+        )
+        .map((request) => request.requestId),
+    )
     const byRequest = new Map<string, typeof frozen>()
     const prefixes = new Map<string, DecodedInferenceCostRequest>()
     for (const row of frozen) {
@@ -588,12 +636,17 @@ export const verifyInferenceExpenseCoverage = (
           ('stageSkipHash' in row.quote.line ? row.quote.line.stageSkipHash : null) ===
             ('stageSkipHash' in line ? line.stageSkipHash : null),
       )
+      if (matches.length > 1)
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
+        )
+      if (!selectedRequestIds.has(line.requestId)) continue
       if (matches.length === 0) {
         missingQuoteCount++
         issues.push(InferenceExpenseCoverageIssue.MissingQuote)
       } else {
         const current = matches[0]
-        if (matches.length !== 1 || current === undefined)
+        if (current === undefined)
           return yield* Result.fail(
             new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
           )
@@ -623,7 +676,7 @@ export const verifyInferenceExpenseCoverage = (
     }
     return {
       sourceAsOf: evidence.asOf,
-      claimedRequestCount: original.requestCount,
+      claimedRequestCount: selectedRequestIds.size,
       missingQuoteCount,
       unverifiedRequestCount,
       gapRequestCount,

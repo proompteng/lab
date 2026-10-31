@@ -17,7 +17,10 @@ import { runInferenceExpensePass } from './inference-expense-runtime'
 import { readInferenceExpenseLedger } from './inference-expense-journal'
 import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeTigerBeetleRequestClient } from './tigerbeetle-client'
-import { readForwardInferenceExpenses } from './forward-performance/inference-expenses'
+import {
+  readForwardInferenceExpenses,
+  readForwardInferenceExpenseSnapshots,
+} from './forward-performance/inference-expenses'
 import { readInferenceExpenseSession } from './inference-cost-command'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
@@ -476,8 +479,13 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
                     },
                     sql,
                     source.accountId,
+                    yield* readForwardInferenceExpenseSnapshots(
+                      sql,
+                      source.accountId,
+                      source.authorityGenerationHash,
+                      fence,
+                    ),
                     source.authorityGenerationHash,
-                    fence,
                   )
                 }),
               )
@@ -489,6 +497,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
               },
               sql,
               source.accountId,
+              yield* readForwardInferenceExpenseSnapshots(sql, source.accountId, 'f'.repeat(64)),
               'f'.repeat(64),
             )
             const openReaderConnections = yield* sql<{

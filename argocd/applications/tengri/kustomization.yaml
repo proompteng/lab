@@ -19,9 +19,9 @@ resources:
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:91e0c29817c0d5e0196bfd45a3145bc78e2e5e6ad2214844eee8a4d289d724ee
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:4ba35b76faa9d89c5820db305227fab7dcdba8e7fa2752aec9b7ffe9de1ce11f
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:0a523d94640c920909a4ef669d4486602330a8d70571df4a963c377429d51515
+  digest: sha256:28e464fa0d6a54f6e58712e722e82c1acea0a69fbbd14709af5bc06ee2c85982

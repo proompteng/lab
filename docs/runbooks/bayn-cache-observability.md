@@ -59,6 +59,9 @@ are excluded from metric labels.
   one-second command deadline, cancellation and one-replica requirement remain in force.
 - `bayn_valkey_reads_total` counts successful GET results as `hit` or `miss`. A required materialization miss still
   fails closed. Transport failures are counted separately in `bayn_valkey_failures_total` by bounded category.
+- `bayn_valkey_last_failure_timestamp_seconds` records the failure's wall-clock time with the same bounded labels.
+  It is created only by a command failure, never by startup, success or invalid input. This catches a first failure
+  whose counter is already one at its first export; preinitializing zero cannot cover failures before that export.
 - `bayn_valkey_unacknowledged_waits_total` counts WAIT replies below one acknowledgement, including eventual
   successful retries. It is not a count of failed publications.
 - Materialization latency includes GET, JSON decoding, schema checks and content hashing; payload-byte histograms
@@ -96,8 +99,11 @@ per service is observed; existing replica alerts cover missing workers/APIs. No 
 Publication notifications include the observed bounded `category/cause_category` pairs from the same five-minute
 failed-put window, deduplicated across API and execution-worker replicas. Missing labels are reported as `unknown`,
 not inferred from a timeout. The annotation does not change the single alert identity, one-minute hold or trigger.
+Recent failure timestamps must be no later than the evaluator's clock and less than five minutes old. The counter
+increase branch remains for older retained workers during rolling deployments. The timestamp branch expires by event
+time even if a constant sample returns after a scrape gap; it is not treated as a newly observed counter increment.
 It describes recent failures, not necessarily a failure still in progress. A resolved notification only means no
-failure increase is currently observed in that window; missing telemetry or aged-out samples do not prove a successful
+recent failure evidence is currently observed in that window; missing telemetry or aged-out samples do not prove a successful
 publication. Verify a subsequent successful replicated put and fresh telemetry before declaring recovery.
 
 Follow the notification's dashboard link, expand broker/cache diagnostics and inspect **Cache failures per second**.

@@ -241,7 +241,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           })
           if (
             input.portfolio.purpose === JevPurpose.Entry &&
-            (plan.schemaVersion === JevBatchPlanVersion.V7 || plan.schemaVersion === JevBatchPlanVersion.Ablation)
+            (plan.schemaVersion === JevBatchPlanVersion.V8 || plan.schemaVersion === JevBatchPlanVersion.Ablation)
           )
             yield* Effect.annotateCurrentSpan('bayn.entry_timing.deterministic_selected_at', yield* currentUtcInstant)
         }),
@@ -318,7 +318,7 @@ export const evaluateJevObservation = (input: Parameters<typeof makeJevObservati
     input,
     input.snapshot.manifest.rangeEndAt,
     Effect.succeed(input.snapshot),
-    JevBatchPlanVersion.V7,
+    JevBatchPlanVersion.V8,
   ).pipe(Effect.map(({ evidence }) => evidence))
 
 export const compileJevEntry = (

@@ -21,10 +21,12 @@ import {
 export const makeFundedEvaluationRequest = (current: ReturnType<typeof currentRequestFixture>) => {
   const input = {
     ...current.request,
+    numericalState: { ...current.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
     schemaVersion: 'bayn.entry-inference-input.v4' as const,
     protocol: {
       ...current.request.protocol,
       schemaVersion: 'bayn.jev.protocol.v25' as const,
+      inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: retainedFundedQuestionPolicyHash,

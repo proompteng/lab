@@ -306,6 +306,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             const readers: ForwardPerformanceReaders = {
               postgres: readForwardPerformancePostgres,
               marketVolume: () => Effect.succeed([]),
+              inferenceExpenseSnapshots: () => Effect.succeed([]),
               inferenceExpenses: () => Effect.succeed([]),
               ledger: () =>
                 Effect.succeed({
