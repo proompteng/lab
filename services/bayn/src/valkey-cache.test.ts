@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { NodeRedis } from '@effect/platform-node'
 import { ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
+import { TestClock } from 'effect/testing'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 
 import {
@@ -72,7 +73,8 @@ const transportFixture = async (
         } else if (args[0]?.toUpperCase() === 'SET') {
           writes++
           values.set(args[1] ?? '', args[2] ?? '')
-          if (response !== 'set-timeout') socket.write('+OK\r\n')
+          if (response === 'error') socket.write('-WRONGTYPE fixture\r\n')
+          else if (response !== 'set-timeout') socket.write('+OK\r\n')
         } else if (args[0]?.toUpperCase() === 'DEL') {
           values.delete(args[1] ?? '')
           socket.write(':1\r\n')
@@ -201,6 +203,32 @@ describe('required native Effect Valkey binding', () => {
       expect(result.success).toMatch(/bayn_valkey_reads_total\{[^\n]*outcome="miss"[^\n]*\} 1/)
       expect(result.success).not.toContain('bayn:large')
       expect(result.success).not.toContain('x'.repeat(100))
+      expect(result.success).not.toContain('bayn_valkey_last_failure_timestamp_seconds')
+    }
+  })
+  test('the first put failure exports its event time without a prior counter sample', async () => {
+    const result = await runTransport(
+      'error',
+      operation((cache) =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(60_000)
+          expect(yield* PrometheusMetrics.format()).not.toContain('bayn_valkey_last_failure_timestamp_seconds')
+          yield* cache.put({ key: 'invalid', value: 'value', ttlMs: 1000 }).pipe(Effect.exit)
+          expect(yield* PrometheusMetrics.format()).not.toContain('bayn_valkey_last_failure_timestamp_seconds')
+          yield* cache.put({ key: 'bayn:private-key', value: 'value', ttlMs: 1000 }).pipe(Effect.exit)
+          yield* TestClock.setTime(120_000)
+          return yield* PrometheusMetrics.format()
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success).toMatch(
+        /bayn_valkey_last_failure_timestamp_seconds\{(?=[^\n]*category="command_failed")(?=[^\n]*cause_category="command_failed")(?=[^\n]*operation="put")[^\n]*\} 60/,
+      )
+      expect(result.success).toMatch(/bayn_valkey_failures_total\{[^\n]*operation="put"[^\n]*\} 1/)
+      expect(result.success).not.toContain('bayn:private-key')
+      expect(result.success).not.toContain('WRONGTYPE')
     }
   })
   test('exports bounded failure categories without keys or native error text', async () => {

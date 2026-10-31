@@ -24,9 +24,12 @@ import {
   RetainedJevProtocolV30Schema,
   RetainedJevProtocolV31Schema,
   RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
+  RetainedJevProtocolV34Schema,
 } from './protocol'
 import * as retainedChartStages from './retained-filtered-staged-chart-questions'
 import * as currentChartStages from './staged-chart-questions'
+import * as retainedCandidateChartStages from './retained-candidate-staged-chart-questions'
 import { makeEntryJudgmentRequest } from './entry-questions'
 import {
   retainedFundedEntryJudgmentPolicy,
@@ -50,16 +53,24 @@ const RetainedMarketProtocol = Schema.Union([
   RetainedJevProtocolV30Schema,
   RetainedJevProtocolV31Schema,
   RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
 ])
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: Schema.Union([
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
+      schemaVersion: Schema.Literal('bayn.entry-inference-input.v7'),
+      protocol: RetainedJevProtocolV34Schema,
+    }),
+    Schema.Struct({
+      ...CandidateEntryInferenceInputSchema.fields,
+      schemaVersion: Schema.Literal('bayn.entry-inference-input.v6'),
       protocol: Schema.Union([
         RetainedJevProtocolV30Schema,
         RetainedJevProtocolV31Schema,
         RetainedJevProtocolV32Schema,
+        RetainedJevProtocolV33Schema,
       ]),
     }),
     Schema.Struct({
@@ -70,7 +81,10 @@ const RetainedRequest = Schema.Struct({
         RetainedMarketProtocol,
       ]),
     }),
-    Schema.Struct({ ...AblationEntryInferenceInputSchema.fields, protocol: RetainedMarketProtocol }),
+    Schema.Struct({
+      ...AblationEntryInferenceInputSchema.fields,
+      protocol: Schema.Union([RetainedMarketProtocol, RetainedJevProtocolV34Schema]),
+    }),
   ]),
 })
 const decodeRetainedRequest = (input: unknown) =>
@@ -163,9 +177,13 @@ export const readStagedInferenceCostEvidence = (row: {
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v29' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v30' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v31' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
     const retainedQuestions =
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
         ? makeEntryJudgmentRequest
         : identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
           ? makeRetainedFundedEntryJudgmentRequest
@@ -174,11 +192,14 @@ export const readStagedInferenceCostEvidence = (row: {
       ? { _tag: 'Retained' as const, request: yield* decodeRetainedRequest(row.request) }
       : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
     const request = decoded.request
-    const checkpoint = yield* decodeStagedCheckpointForRequest(
-      request,
-      row.stagedCheckpoint,
-      decoded._tag === 'Retained' ? retainedChartStages : currentChartStages,
-    )
+    const stages =
+      decoded._tag === 'Current'
+        ? currentChartStages
+        : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+            request.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
+          ? retainedCandidateChartStages
+          : retainedChartStages
+    const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint, stages)
     const source = {
       requestId: request.requestId,
       input: request.request,
@@ -189,7 +210,7 @@ export const readStagedInferenceCostEvidence = (row: {
       row.handoff === null
         ? null
         : yield* decoded._tag === 'Retained'
-            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions, retainedChartStages)
+            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions, stages)
             : decodeEntryHandoff({ ...source, input: decoded.request.request }, row.handoff)
     const receipt =
       row.receipt === null

@@ -1,4 +1,15 @@
+import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
+import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
 import observedResistance from '../../migrations/0165_observed_resistance'
+import * as retainedCandidateChartStages from '../jev/retained-candidate-staged-chart-questions'
+import {
+  jevProtocolSchemaForQuestionPolicy,
+  RetainedJevProtocolV30Schema,
+  RetainedJevProtocolV31Schema,
+  RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
+  RetainedJevProtocolV34Schema,
+} from '../jev/protocol'
 import * as retainedChartStages from '../jev/retained-filtered-staged-chart-questions'
 import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
 import equityBenchmarkContext from '../../migrations/0162_equity_benchmark_context'
@@ -104,7 +115,7 @@ const batch = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const candidate = batch.candidates.find((value) => value.status === JevCandidatePlanStatus.Requested)
@@ -122,10 +133,12 @@ const receipt = Result.getOrThrow(
 )
 const conditionalInput = {
   ...request.request,
+  numericalState: { ...request.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
   schemaVersion: 'bayn.entry-inference-input.v3' as const,
   protocol: {
     ...request.request.protocol,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
+    inputDefinition: 'bayn.jev-entry-state.v22' as const,
     lookbackMinutes: 30 as const,
     entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
@@ -173,7 +186,7 @@ const expiredBatch = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(expiredFixture.observation.payload.observedAt) + expiredFixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const expiredCandidate = expiredBatch.candidates.find((value) => value.status === JevCandidatePlanStatus.Requested)
@@ -285,6 +298,8 @@ integration('committed sequential provider handoff', () => {
     [162, equityBenchmarkContext, 'bayn.jev.protocol.v30'],
     [164, focusedEntryEvidence, 'bayn.jev.protocol.v31'],
     [165, observedResistance, 'bayn.jev.protocol.v32'],
+    [166, candidateEntryEvidence, 'bayn.jev.protocol.v33'],
+    [167, chartStructureBeforeFunding, 'bayn.jev.protocol.v34'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -303,25 +318,37 @@ integration('committed sequential provider handoff', () => {
           yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
           VALUES (${request.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${request.observedAt})`
           const { requestId: _, ...current } = request
-          const protocol =
+          const protocolMaterial =
             retiredProtocol === 'bayn.jev.protocol.v30' ||
             retiredProtocol === 'bayn.jev.protocol.v31' ||
-            retiredProtocol === 'bayn.jev.protocol.v32'
+            retiredProtocol === 'bayn.jev.protocol.v32' ||
+            retiredProtocol === 'bayn.jev.protocol.v33' ||
+            retiredProtocol === 'bayn.jev.protocol.v34'
               ? {
                   ...request.request.protocol,
                   schemaVersion: retiredProtocol,
+                  inputDefinition:
+                    retiredProtocol === 'bayn.jev.protocol.v34'
+                      ? ('bayn.jev-entry-state.v23' as const)
+                      : ('bayn.jev-entry-state.v22' as const),
                   entryQuestionPolicyHash:
-                    retiredProtocol === 'bayn.jev.protocol.v32'
-                      ? 'c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'
-                      : retainedMarketQuestionPolicyHash,
+                    retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
+                      ? '864658b2565a176ecad7e6e2460a9f9be9340bf9f304d5af41db81ce49551158'
+                      : retiredProtocol === 'bayn.jev.protocol.v32'
+                        ? 'c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'
+                        : retainedMarketQuestionPolicyHash,
                   candidateEvidencePolicy:
-                    retiredProtocol === 'bayn.jev.protocol.v31' || retiredProtocol === 'bayn.jev.protocol.v32'
+                    retiredProtocol === 'bayn.jev.protocol.v31' ||
+                    retiredProtocol === 'bayn.jev.protocol.v32' ||
+                    retiredProtocol === 'bayn.jev.protocol.v33' ||
+                    retiredProtocol === 'bayn.jev.protocol.v34'
                       ? IntradayCandidateEvidencePolicy.MarketQuotesV2
                       : IntradayCandidateEvidencePolicy.MarketQuotes,
                 }
               : {
                   ...request.request.protocol,
                   schemaVersion: retiredProtocol,
+                  inputDefinition: 'bayn.jev-entry-state.v22' as const,
                   entryQuestionPolicyHash: retainedMarketQuestionPolicyHash,
                   lookbackMinutes: 30 as const,
                   candidateEvidencePolicy:
@@ -329,21 +356,44 @@ integration('committed sequential provider handoff', () => {
                       ? IntradayCandidateEvidencePolicy.MarketQuotes
                       : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
                 }
+          const protocol = yield* Schema.decodeUnknownEffect(
+            Schema.Union([
+              jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v26'),
+              jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v27'),
+              jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v28'),
+              jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v29'),
+              RetainedJevProtocolV30Schema,
+              RetainedJevProtocolV31Schema,
+              RetainedJevProtocolV32Schema,
+              RetainedJevProtocolV33Schema,
+              RetainedJevProtocolV34Schema,
+            ]),
+          )(protocolMaterial)
           const input = {
             ...request.request,
+            numericalState: { ...request.request.numericalState, schemaVersion: protocol.inputDefinition },
             schemaVersion:
-              retiredProtocol === 'bayn.jev.protocol.v30' ||
-              retiredProtocol === 'bayn.jev.protocol.v31' ||
-              retiredProtocol === 'bayn.jev.protocol.v32'
-                ? ('bayn.entry-inference-input.v6' as const)
-                : ('bayn.entry-inference-input.v5' as const),
+              retiredProtocol === 'bayn.jev.protocol.v34'
+                ? ('bayn.entry-inference-input.v7' as const)
+                : retiredProtocol === 'bayn.jev.protocol.v30' ||
+                    retiredProtocol === 'bayn.jev.protocol.v31' ||
+                    retiredProtocol === 'bayn.jev.protocol.v32' ||
+                    retiredProtocol === 'bayn.jev.protocol.v33'
+                  ? ('bayn.entry-inference-input.v6' as const)
+                  : ('bayn.entry-inference-input.v5' as const),
             protocol,
           }
           const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
           const original = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
           yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
           VALUES (${original.requestId},${original.cycleId},${original.authorityGenerationHash},${sql.json(original)})`
-          const checkpoint = stagedCheckpointFixture(original, original.observedAt, retainedChartStages)
+          const checkpoint = stagedCheckpointFixture(
+            original,
+            original.observedAt,
+            retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
+              ? retainedCandidateChartStages
+              : retainedChartStages,
+          )
           const first = checkpoint.claims[0]
           const terminal = checkpoint.terminals[0]
           if (first === undefined || terminal === undefined) throw new Error('Expected original chart evidence')
@@ -690,6 +740,7 @@ integration('committed sequential provider handoff', () => {
           protocol: {
             ...request.request.protocol,
             schemaVersion: 'bayn.jev.protocol.v26',
+            inputDefinition: 'bayn.jev-entry-state.v22' as const,
             lookbackMinutes: 30,
             candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
             entryQuestionPolicyHash: retainedStagedQuestionPolicyHash,
@@ -1436,7 +1487,7 @@ integration('committed sequential provider handoff', () => {
           makeJevTradingSignalBatch({
             observation: sourceFixture.observation.payload,
             expiresAt: request.expiresAt,
-            planVersion: JevBatchPlanVersion.V7,
+            planVersion: JevBatchPlanVersion.V8,
           }),
         )
         const planned = sourceBatch.candidates.find((value) => value.status === JevCandidatePlanStatus.Requested)
@@ -1914,10 +1965,12 @@ integration('committed sequential provider handoff', () => {
           const { requestId: _, ...original } = request
           const oldInput = {
             ...request.request,
+            numericalState: { ...request.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
             schemaVersion: retiredVersion,
             protocol: {
               ...request.request.protocol,
               schemaVersion: 'bayn.jev.protocol.v24',
+              inputDefinition: 'bayn.jev-entry-state.v22' as const,
               entryQuestionPolicyHash: 'd35ee4093641285aa36385c4ab35de978de7485ff754bebb523648adf80c8939',
             },
           }

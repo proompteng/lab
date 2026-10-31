@@ -232,7 +232,17 @@ class Exporter:
 
     def tick(self) -> int:
         try:
-            return self._tick()
+            try:
+                return self._tick()
+            except urllib3.exceptions.HTTPError as failure:
+                # A broken connection can recover on a fresh request. Repeat the
+                # complete verification; uncertain uploads already reuse their key.
+                print(
+                    json.dumps(failure_report(failure, "audit_archive_verify_retry")),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return self._tick()
         except Exception:
             try:
                 self.database.execute(

@@ -2,7 +2,7 @@ import type { InferenceRateCardSchema } from '../inference-costs'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
-import { makeJevEntryQuery } from '../jev/observation-query'
+import { makeJevEntryQuery, makeMomentumEntryQuery } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -545,7 +545,7 @@ export const runControlSession = (input: {
           const observedAt = utcInstantFromEpochMillis(atMs)
           const candidates =
             input.training === undefined ? controlCandidates(input.policy, protocol) : [input.training.candidateSymbol]
-          const query = makeJevEntryQuery({
+          const query = (input.policy === ControlPolicy.JevEntry ? makeJevEntryQuery : makeMomentumEntryQuery)({
             protocol,
             sessionDate,
             calendar: input.calendar,

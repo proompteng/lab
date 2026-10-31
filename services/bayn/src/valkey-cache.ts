@@ -1,11 +1,25 @@
 import { isNativeError } from 'node:util/types'
 import { NodeRedis, NodeServices } from '@effect/platform-node'
-import { Config, Context, Data, Effect, FileSystem, Layer, Metric, Option, Redacted, Schema, Semaphore } from 'effect'
+import {
+  Clock,
+  Config,
+  Context,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Metric,
+  Option,
+  Redacted,
+  Schema,
+  Semaphore,
+} from 'effect'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 import { withObservedStage } from './telemetry'
 
 const reads = Metric.counter('bayn_valkey_reads_total', { incremental: true })
 const failures = Metric.counter('bayn_valkey_failures_total', { incremental: true })
+const lastFailure = Metric.gauge('bayn_valkey_last_failure_timestamp_seconds')
 const replicaWaits = Metric.counter('bayn_valkey_unacknowledged_waits_total', { incremental: true })
 type CacheOperation = 'get' | 'put' | 'remove'
 
@@ -126,19 +140,20 @@ export const makeValkeyCache = Effect.gen(function* () {
             )
           },
         }),
-        Effect.tapError((error) =>
-          Metric.update(
-            failures.pipe(
-              Metric.withAttributes({
-                namespace: 'bayn',
-                operation,
-                category: error.category ?? ValkeyFailureCategory.CommandFailed,
-                cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
-              }),
-            ),
-            1,
-          ),
-        ),
+        Effect.tapError((error) => {
+          const attributes = {
+            namespace: 'bayn',
+            operation,
+            category: error.category ?? ValkeyFailureCategory.CommandFailed,
+            cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
+          }
+          return Effect.gen(function* () {
+            yield* Metric.update(failures.pipe(Metric.withAttributes(attributes)), 1)
+            // The first exported counter sample can already be one; retain its event time without needing a prior zero.
+            const now = yield* Clock.currentTimeMillis
+            yield* Metric.update(lastFailure.pipe(Metric.withAttributes(attributes)), now / 1000)
+          })
+        }),
         withObservedStage(`bayn.valkey.${operation}`, { dependency: 'valkey', slowAfterMs: 250 }),
       )
 

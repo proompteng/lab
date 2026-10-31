@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import fc from 'fast-check'
 
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
-import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { cryptoMomentumFixture as cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { checkProperty } from '../testing/property-test-support'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'

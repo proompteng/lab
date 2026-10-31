@@ -1,7 +1,7 @@
 import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
 import { effectiveCryptoFeeTier } from '../broker/crypto-fees'
-import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
+import { jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
 import { missingMinuteBars } from '../market-data/streaming/inputs'
@@ -9,10 +9,6 @@ import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { BigDecimal, Result } from 'effect'
 
 import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
-import {
-  deriveIntradayBidBreakoutBps,
-  deriveIntradayMomentumSignalMetrics,
-} from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
 import {
@@ -300,7 +296,6 @@ export const commonMomentumPrices = (
 const requestFromSnapshot = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
-  benchmarkSymbol: string,
   native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
   selectionPolicy: EntryAblationSelection | null,
 ) =>
@@ -309,16 +304,7 @@ const requestFromSnapshot = (
       return yield* unavailable(
         'Model inference is restricted to flat entry observations; held positions use their bound exit policy',
       )
-    if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
     const candidate = yield* jevSignalFor(snapshot, symbol)
-    const benchmark = yield* jevBenchmarkSignalFor(snapshot, benchmarkSymbol)
-    const common = yield* commonMomentumPrices(snapshot, symbol, benchmarkSymbol, candidate, benchmark)
-    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
-    const { metrics: currentPriceMetrics } = yield* deriveIntradayMomentumSignalMetrics(
-      { ...candidate.prices, reference: common.candidate.reference },
-      symbol,
-      { ...benchmark.prices, reference: common.benchmark.reference },
-    )
     const continuous = isContinuousMarket(snapshot.manifest.calendar)
     const session = continuous
       ? undefined
@@ -344,7 +330,7 @@ const requestFromSnapshot = (
     })
     return yield* prepareEntryInferenceInput({
       ...(selectionPolicy === null
-        ? { schemaVersion: 'bayn.entry-inference-input.v6' }
+        ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       protocol: native.protocol,
       chartSource: {
@@ -416,44 +402,14 @@ const requestFromSnapshot = (
           feed: snapshot.manifest.feed,
           coverage: continuous ? 'Alpaca crypto US venue' : 'exchange-only; not the consolidated market',
         },
-        candidate: {
-          ...candidate.state,
-          currentPriceSignals: {
-            lookbackReturnBps: currentPriceMetrics.lookbackReturnBps,
-            breakoutBps: usesWindowTradeEvidence(snapshot.manifest, symbol)
-              ? yield* deriveIntradayBidBreakoutBps(candidate.prices, symbol)
-              : currentPriceMetrics.breakoutBps,
-            breakoutPricingBasis: usesWindowTradeEvidence(snapshot.manifest, symbol)
-              ? 'CURRENT_BID'
-              : 'CURRENT_ASK_AND_FRESH_TRADE',
-            spreadBps: currentPriceMetrics.spreadBps,
-            rangeLocationPpm: currentPriceMetrics.rangeLocationPpm,
-            referenceAt: common.referenceAt,
-            observedAt: snapshot.manifest.observedAt,
-            lookbackMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
-          },
-        },
-        benchmark: benchmark.state,
-        relativeSignals: {
-          lookbackReturnBps: metrics.lookbackReturnBps,
-          benchmarkReturnBps: metrics.benchmarkReturnBps,
-          excessReturnBps: metrics.excessReturnBps,
-          pricingBasis: common.pricingBasis,
-          referenceAt: common.referenceAt,
-          comparisonAt: common.comparisonAt,
-          lookbackMinutes: (Date.parse(common.comparisonAt) - Date.parse(common.referenceAt)) / 60_000,
-          candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
-          benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
-        },
+        candidate: candidate.state,
       },
     })
   })
 
 export const makeJevTradingSignalRequest = (input: unknown, symbol: string) =>
   reproduceJevCandidateObservation(input).pipe(
-    Result.flatMap((observation) =>
-      requestFromSnapshot(observation.snapshot, symbol, jevBenchmarkSymbol(symbol), observation, null),
-    ),
+    Result.flatMap((observation) => requestFromSnapshot(observation.snapshot, symbol, observation, null)),
   )
 
 export const reproduceJevRequestFromObservation = (request: JevEvaluationRequest, input: unknown) =>
@@ -477,7 +433,6 @@ export const reproduceJevRequestFromVerifiedObservation = (
     const prepared = yield* requestFromSnapshot(
       observation.snapshot,
       request.symbol,
-      jevBenchmarkSymbol(request.symbol),
       observation,
       request.request.schemaVersion === 'bayn.entry-ablation-input.v1' ? request.request.selectionPolicy : null,
     )
@@ -505,26 +460,9 @@ const batchFromObservation = (
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
       }
-      const benchmarkExclusion = manifest.candidateExclusions?.find(
-        (candidate) => candidate.symbol === jevBenchmarkSymbol(symbol),
-      )
-      if (
-        benchmarkExclusion !== undefined &&
-        (snapshot.manifest.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
-          Result.isFailure(jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(symbol))))
-      ) {
-        candidates.push({
-          symbol,
-          status: JevCandidatePlanStatus.Excluded,
-          reason: benchmarkExclusion.reason,
-          message: `Required benchmark ${benchmarkExclusion.symbol}: ${benchmarkExclusion.message}`,
-        })
-        continue
-      }
       const prepared = yield* requestFromSnapshot(
         snapshot,
         symbol,
-        jevBenchmarkSymbol(symbol),
         observation,
         planVersion === JevBatchPlanVersion.Ablation ? EntryAblationSelection.LowestModeledLoss : null,
       )
@@ -570,7 +508,6 @@ const batchFromObservation = (
       snapshotId: manifest.snapshotId,
       observedAt: manifest.observedAt,
       expiresAt,
-      benchmarkSymbol: jevBenchmarkSymbol(manifest.candidateSymbols[0] ?? 'SPY'),
       questionSetHash: yield* jevBatchQuestionSetHash(candidates),
       candidates,
     })
