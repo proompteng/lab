@@ -4,7 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { createReplayLedger, applyReplayFill } from '../intraday-replay/ledger'
 import { registeredReplayInferenceTariff } from '../intraday-replay/inference-costs'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { assessmentFixture, testHash } from './fixtures.test-support'
+import { assessmentFixture, registrationFixture, testHash } from './fixtures.test-support'
 import { frozenControlReplayFixture } from './frozen-control.test-support'
 import { prepareFrozenControlReplay } from './frozen-control-replay'
 import {
@@ -460,3 +460,34 @@ test('frozen financial reproduction retains a partial IOC fill and an admissible
     ),
   ).toBe(true)
 })
+
+test.each([1, 3, 21])(
+  'frozen control reproduces every session and cost in a %i-session registration',
+  async (sessionCount) => {
+    const windows = registrationFixture(undefined, sessionCount).calendar.sessions.map((session) => ({
+      ...session,
+      closeAt: `${session.sessionDate}T21:00:00.000Z`,
+    }))
+    const retained = await frozenControlReplayFixture(windows)
+    const prepared = Result.getOrThrow(
+      prepareFrozenControlReplay(retained.input, retained.capture, retained.captureHash),
+    )
+    const report = makeReport(prepared)
+    const costs = makeCosts(prepared)
+    const result = Result.getOrThrow(reproduceFrozenControlReport(prepared, seal(report), costs.costs, costs.sources))
+    expect(result.economics?.complete).toBe(true)
+    expect(result.economics?.sessions).toHaveLength(sessionCount)
+    expect(result.economics?.sessions.every((session) => BigInt(session.qualificationPnlMicros ?? '0') < 0n)).toBe(true)
+    expect(
+      Result.isFailure(
+        reproduceFrozenControlReport(
+          prepared,
+          seal({ ...report, sessions: report.sessions.slice(0, -1) }),
+          costs.costs,
+          costs.sources,
+        ),
+      ),
+    ).toBe(true)
+  },
+  30000,
+)

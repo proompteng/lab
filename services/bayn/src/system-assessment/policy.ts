@@ -39,7 +39,8 @@ import {
 } from './frozen-control-identity'
 
 export const systemQualificationPolicy = {
-  schemaVersion: 'bayn.system-qualification-policy.v1',
+  schemaVersion: 'bayn.system-qualification-policy.v2',
+  evaluationWindowRule: 'PROSPECTIVE_NONEMPTY_REGISTERED_CALENDAR',
   program: 'BAYN_SYSTEM_QUALIFICATION',
   environment: 'PAPER',
   allocationMicros: '100000000000',
@@ -142,7 +143,7 @@ export const validateSystemRegistration = (input: unknown) =>
       registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash()) ||
       registration.latencyStressProtocolHash !== (yield* systemLatencyStressProtocolHash())
     )
-      return yield* invalid('Registration must bind the current system policy and frozen acceptance contract')
+      return yield* invalid('Registration must bind the current system and acceptance policies')
     if (new Set(registration.policies.map((p) => p.policy)).size !== Object.values(JevResearchPolicy).length)
       return yield* invalid('Registration requires the candidate and each distinct matched control')
     if (new Set(registration.policies.map((p) => p.accountBindingHash)).size !== registration.policies.length)

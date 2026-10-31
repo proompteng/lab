@@ -300,3 +300,26 @@ describe('complete system qualification', () => {
     expect(Result.isFailure(exactUsd(999999999999999999n))).toBe(true)
   })
 })
+
+test.each([1, 3, 7, 21])(
+  'assesses a complete %i-session window and rejects missing trailing evidence',
+  (sessionCount) => {
+    const { input, verifiedSources } = supportedAssessmentFixture(sessionCount)
+    const report = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+    expect(report.policies.every((policy) => policy.sessions.length === sessionCount)).toBe(true)
+    expect(report.profitability.status).toBe(ProfitabilityStatus.Profitable)
+    expect(
+      Result.isFailure(
+        evaluateSystemAssessment(
+          {
+            ...input,
+            policies: input.policies.map((policy, index) =>
+              index === 0 ? { ...policy, sessions: policy.sessions.slice(0, -1) } : policy,
+            ),
+          },
+          verifiedSources,
+        ),
+      ),
+    ).toBe(true)
+  },
+)

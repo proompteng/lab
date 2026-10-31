@@ -57,7 +57,7 @@ export const SystemAssessmentInputSchema = Schema.Struct({
   policies: Schema.Array(
     Schema.Struct({
       policy: Schema.Enum(JevResearchPolicy),
-      sessions: Schema.Array(SessionEvidenceSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
+      sessions: Schema.Array(SessionEvidenceSchema).check(Schema.isMinLength(1)),
     }),
   ).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
   reliability: ReliabilityInputSchema,
@@ -151,6 +151,10 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
       const definition = registration.policies.find((p) => p.policy === policy.policy)
       if (definition === undefined)
         return yield* Result.fail(new SystemAssessmentError({ message: 'Unregistered policy' }))
+      if (policy.sessions.length !== registration.calendar.sessions.length)
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Policy evidence does not cover the complete registered calendar' }),
+        )
       const sessions = []
       for (const [index, session] of policy.sessions.entries()) {
         if (session.sessionDate !== registration.calendar.sessions[index]?.sessionDate)

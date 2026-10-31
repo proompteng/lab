@@ -56,7 +56,6 @@ if (
     '--untracked-files=normal',
     '--',
     'services/bayn',
-    'docs/bayn/jev-migration-acceptance-v2.json',
     '.npmrc',
     'bunfig.toml',
     'tsconfig.base.json',

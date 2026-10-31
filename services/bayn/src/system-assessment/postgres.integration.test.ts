@@ -90,10 +90,10 @@ const makeRuntime = (url: string) =>
 postgres('PostgreSQL prospective system qualification', () => {
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
-  const registration = () => {
+  const registration = (sessionCount = 20) => {
     if (databaseObservedAt === undefined) throw new Error('Database clock must precede fixture construction')
     return {
-      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString()),
+      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString(), sessionCount),
       priorAttemptHash: testHash(history),
     }
   }
@@ -143,6 +143,70 @@ postgres('PostgreSQL prospective system qualification', () => {
         }),
       )
     })
+
+  test.each([1, 3, 21])('persists a %i-session registration with its actual closing boundary', async (sessionCount) => {
+    const first = registration(sessionCount)
+    const saved = await runtime.runPromise(asApplication(registerFixture(first)))
+    expect(await runtime.runPromise(readSystemRegistration(saved.registrationHash))).toEqual(first)
+    const next = withRegistrationCommitments({ ...first, attemptIndex: 2, priorAttemptHash: saved.registrationHash })
+    const payload = Result.getOrThrow(canonicalJsonV1Result(next))
+    const opening = next.calendar.sessions[0]
+    const closing = next.calendar.sessions.at(-1)
+    if (opening === undefined || closing === undefined) throw Error('Missing registered boundaries')
+    const rejected = await runtime.runPromiseExit(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO system_qualification_registrations
+        (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+        VALUES (${testHash(next)}, ${next.program}, ${next.attemptIndex}, ${next.priorAttemptHash}, ${next.registeredAt},
+          ${opening.openAt}, ${new Date(Date.parse(closing.closeAt) + 1).toISOString()}, ${payload})`
+        }),
+      ),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
+    const accepted = await runtime.runPromise(asApplication(registerFixture(next)))
+    expect(accepted.registration.attemptIndex).toBe(2)
+    expect(accepted.registration.calendar.sessions).toHaveLength(sessionCount)
+  })
+
+  test('the window migration preserves existing registration bytes, hashes and attempt order', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 167))),
+          table: 'schema_migrations',
+        })
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
+      }),
+    )
+    const original = await runtime.runPromise(registerFixture(registration()))
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const before = yield* sql`SELECT registration_hash, payload_text, attempt_index, prior_attempt_hash, created_at
+        FROM system_qualification_registrations`
+        yield* postgresMigrations
+        expect(
+          yield* sql`SELECT registration_hash, payload_text, attempt_index, prior_attempt_hash, created_at
+        FROM system_qualification_registrations`,
+        ).toEqual(before)
+      }),
+    )
+    const next = withRegistrationCommitments({
+      ...registration(3),
+      attemptIndex: 2,
+      priorAttemptHash: original.registrationHash,
+    })
+    const saved = await runtime.runPromise(registerFixture(next))
+    expect(saved.registration.attemptIndex).toBe(2)
+    expect(saved.registration.calendar.sessions).toHaveLength(3)
+    expect(await runtime.runPromise(readSystemRegistration(original.registrationHash))).toEqual(original.registration)
+  })
 
   test('registers and replays exact content, while preserving failed attempts and rejecting resets', async () => {
     const first = registration()

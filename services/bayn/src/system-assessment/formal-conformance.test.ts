@@ -2917,11 +2917,15 @@ formal('pinned Lean executable conformance', () => {
     const failed = { ...input, reliability: { ...input.reliability, completions: [] } }
     const incompleteSources = new Set(verifiedSources)
     incompleteSources.delete(input.obligationCoverageHash)
+    const shorter = supportedAssessmentFixture(7)
+    const longer = supportedAssessmentFixture(21)
     const reports = [
       [input, verifiedSources],
       [unsafe, verifiedSources],
       [failed, verifiedSources],
       [input, incompleteSources],
+      [shorter.input, shorter.verifiedSources],
+      [longer.input, longer.verifiedSources],
     ].map(([data, sources]) => {
       if (!(sources instanceof Set)) throw new Error('Expected verified source set')
       return Result.getOrThrow(evaluateSystemAssessment(data, sources))
@@ -2933,11 +2937,14 @@ formal('pinned Lean executable conformance', () => {
         if (numerical === null || !('metrics' in numerical)) throw new Error('Expected complete numerical fixture')
         return {
           operation: 'qualification',
+          sessionCount: String(report.policies[0]?.sessions.length),
           netProfit: micros(numerical.metrics.netPnlUsd),
           bestControlProfit: micros(Math.max(...numerical.metrics.controlNetPnlUsd.map((c) => c.netPnlUsd))),
-          profitLowerBoundTotal: micros(numerical.confidence.meanNetPnlUsdLowerBound * 20),
+          profitLowerBoundTotal: micros(
+            numerical.confidence.meanNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length),
+          ),
           pairedLowerBoundTotals: numerical.confidence.paired.map((p) =>
-            micros(p.meanIncrementalNetPnlUsdLowerBound * 20),
+            micros(p.meanIncrementalNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length)),
           ),
           profitWithoutBest: micros(numerical.metrics.netAfterDroppingBestSessionUsd),
           additionalCostProfit: micros(numerical.metrics.netAfterAdditionalCostUsd),
@@ -2954,7 +2961,7 @@ formal('pinned Lean executable conformance', () => {
       }),
     )
     expect(lean).toEqual(reports.map((report) => report.verdict === 'QUALIFIED_PAPER'))
-    expect(lean).toEqual([true, false, false, false])
+    expect(lean).toEqual([true, false, false, false, false, true])
   })
   test('integer economics, reliability error budgets, and negative expectancy agree across languages', () => {
     const cash = fc
@@ -3064,12 +3071,23 @@ formal('pinned Lean executable conformance', () => {
     ).toEqual([Result.getOrThrow(binaryTradeEdge(edge))])
   })
 
-  test('the frozen 10000-replicate paired bootstrap matches Lean for varying dependence, losses and attempt tails', () => {
-    const { input } = assessmentFixture()
-    for (const attemptIndex of [1, 2, 5, 12]) {
+  test('the registered-window paired bootstrap matches Lean for odd and even windows, losses and attempt tails', () => {
+    for (const [sessionCount, attemptIndex] of [
+      [1, 1],
+      [3, 2],
+      [7, 5],
+      [19, 12],
+      [20, 1],
+      [20, 2],
+      [20, 5],
+      [20, 12],
+      [21, 1],
+      [25, 2],
+    ]) {
+      const { input } = assessmentFixture(registrationFixture(undefined, sessionCount))
       const series = [0, 1, 2, 3].map((policy) =>
         Array.from(
-          { length: 20 },
+          { length: sessionCount },
           (_, day) => BigInt(250 + (day % 5) * 17 - policy * 100 - (day % 7 === 0 ? 450 : 0)) * 1_000_000n,
         ),
       )
@@ -3127,9 +3145,11 @@ formal('pinned Lean executable conformance', () => {
           lowerIncrementalTotalsMicros: Schema.Array(Schema.String),
         }),
       )(output)
-      expect(ts.confidence.meanNetPnlUsdLowerBound).toBe(Number(lean.lowerProfitTotalMicros) / 20_000_000)
+      expect(ts.confidence.meanNetPnlUsdLowerBound).toBe(
+        Number(lean.lowerProfitTotalMicros) / (sessionCount * 1_000_000),
+      )
       expect(ts.confidence.paired.map((p) => p.meanIncrementalNetPnlUsdLowerBound)).toEqual(
-        lean.lowerIncrementalTotalsMicros.map((n) => Number(n) / 20_000_000),
+        lean.lowerIncrementalTotalsMicros.map((n) => Number(n) / (sessionCount * 1_000_000)),
       )
     }
   })
