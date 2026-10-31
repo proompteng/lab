@@ -1,6 +1,6 @@
 use super::{authorization, catalog, onboarding};
 use crate::{
-    native::{Check, Native},
+    native::{Check, Native, Relationship, Update},
     proto::{self, platform_subject},
     registry::{self, ServiceRegistration},
     store::{self, Database, sql_error},
@@ -71,6 +71,96 @@ pub(crate) async fn scope_authority(
         ));
     }
     Ok(())
+}
+
+pub(crate) async fn connection_changes(
+    database: &Database,
+    native: &Native,
+    client: &ServiceRegistration,
+    request: &proto::PutPlatformConnectionRequest,
+    human: &str,
+) -> Result<Vec<Update>, Status> {
+    match scope_authority(
+        database,
+        native,
+        client,
+        &request.actions,
+        &request.resources,
+        request.binding.as_ref(),
+        human,
+    )
+    .await
+    {
+        Ok(()) => return Ok(Vec::new()),
+        Err(error) if error.code() != tonic::Code::PermissionDenied => return Err(error),
+        Err(_) => {}
+    }
+    if !client
+        .roles
+        .iter()
+        .any(|role| role == "platform.administration")
+    {
+        return Err(Status::permission_denied(
+            "administrator approval required for this connection scope",
+        ));
+    }
+    let mut checks =
+        authorization::binding_checks(database, client, request.binding.as_ref(), human).await?;
+    checks.push(Check::new("platform", "lab", "admit", "human", human));
+    checks.push(Check::new(
+        "platform",
+        "lab",
+        "manage_targets",
+        "human",
+        human,
+    ));
+    if !native.check(&checks).await?.0 {
+        return Err(Status::permission_denied(
+            "administrator approval required for this connection scope",
+        ));
+    }
+    let catalog = catalog::configured()?;
+    let mut changes = Vec::new();
+    let mut keys = std::collections::BTreeSet::new();
+    for action in &request.actions {
+        let action = catalog.action(action)?;
+        let resource = catalog.resource(&action.resource_kind)?;
+        let relation = action
+            .grant_relation
+            .as_ref()
+            .and_then(|name| {
+                resource.relations.iter().find(|relation| {
+                    &relation.name == name
+                        && relation.subjects.iter().any(|subject| subject == "human")
+                })
+            })
+            .ok_or_else(|| {
+                Status::permission_denied(
+                    "selected action requires a separately assigned permission",
+                )
+            })?;
+        for target in request
+            .resources
+            .iter()
+            .filter(|target| target.kind == action.resource_kind)
+        {
+            if keys.insert((&resource.native_type, &target.id, &relation.name)) {
+                changes.push(Update::touch(Relationship::new(
+                    &resource.native_type,
+                    &target.id,
+                    &relation.name,
+                    "human",
+                    human,
+                )));
+            }
+        }
+    }
+    if changes.len() > 128 {
+        return Err(Status::invalid_argument(
+            "connection permission changes exceed their limit",
+        ));
+    }
+    Ok(changes)
 }
 
 pub(crate) async fn list(

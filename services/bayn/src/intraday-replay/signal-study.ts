@@ -123,7 +123,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
     const usable =
       batch.batchResult === null
         ? null
-        : usableEntryBatchInferences(plan, batch.batchResult, Date.parse(decidedAt), JevBatchPlanVersion.V7)
+        : usableEntryBatchInferences(plan, batch.batchResult, Date.parse(decidedAt), JevBatchPlanVersion.V8)
     const inferences = usable !== null && Result.isSuccess(usable) ? usable.success : []
     const snapshot = observation.snapshot
     const signals = []

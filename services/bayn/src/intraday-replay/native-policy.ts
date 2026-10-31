@@ -65,7 +65,7 @@ export const nativeReplayPolicyIdentity = (policy: NativeReplayPolicy, protocol:
       policy,
       strategy,
       protocolHash: yield* makeStrategyProtocolHashResult(strategy),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }
   })
 

@@ -4,6 +4,7 @@ import { canonicalHashV1Result } from '../../hash'
 import { Cause, Effect, Option, pipe, Schema } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
@@ -86,6 +87,32 @@ export const discoverAutonomousCyclePass = <R>(
     if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
       const broker = yield* BrokerRead
       const calendar = yield* broker.marketCalendar(query).pipe(
+        Effect.timeoutOrElse({
+          duration: 5_000,
+          orElse: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation: 'market-calendar',
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: 'Equity calendar discovery exceeded its five-second read budget',
+              }),
+            ),
+        }),
+        Effect.catchTag('BrokerReadError', (cause) =>
+          cause.operation === 'market-calendar' &&
+          cause.retryable &&
+          [
+            BrokerReadErrorKind.Timeout,
+            BrokerReadErrorKind.Transport,
+            BrokerReadErrorKind.RateLimited,
+            BrokerReadErrorKind.Server,
+          ].includes(cause.kind)
+            ? Effect.logWarning(
+                'Equity discovery excluded unavailable calendar; continuous discovery remains eligible',
+              ).pipe(Effect.annotateLogs({ operation: cause.operation, kind: cause.kind }), Effect.as(null))
+            : Effect.fail(cause),
+        ),
         Effect.mapError((cause) =>
           runnerError({
             operation: 'market-calendar',
@@ -95,8 +122,12 @@ export const discoverAutonomousCyclePass = <R>(
           }),
         ),
       )
-      const session = selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
+      const session =
+        calendar === null
+          ? undefined
+          : selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
       if (
+        calendar !== null &&
         session !== undefined &&
         firstIntradayObservationAtMs(session, candidate.executionPolicy) <= Date.parse(observedAt)
       ) {

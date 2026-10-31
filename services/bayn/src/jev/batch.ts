@@ -3,7 +3,6 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 import { Result, Schema } from 'effect'
-import { jevBenchmarkSymbol } from './markets'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -39,7 +38,7 @@ export enum JevEntryExclusion {
 }
 
 export enum JevBatchPlanVersion {
-  V7 = 'bayn.jev-batch-plan.v7',
+  V8 = 'bayn.jev-batch-plan.v8',
   Ablation = 'bayn.entry-ablation-batch.v1',
 }
 
@@ -67,7 +66,6 @@ const PlanMaterialSchema = Schema.Struct({
   snapshotId: Sha256Schema,
   observedAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
-  benchmarkSymbol: SymbolSchema,
   questionSetHash: Sha256Schema,
   candidates: Schema.Array(CandidatePlanSchema),
 })
@@ -114,9 +112,6 @@ export const makeJevBatchPlan = (input: unknown) =>
     const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
     if (lifetime <= 0 || lifetime > 10_000 || material.candidates.length === 0)
       return yield* invalid('Jev batch requires candidates and a bounded validity window')
-    const firstCandidate = material.candidates[0]
-    if (firstCandidate === undefined || material.benchmarkSymbol !== jevBenchmarkSymbol(firstCandidate.symbol))
-      return yield* invalid('Jev batch benchmark anchor differs from its first candidate')
     let previous = ''
     for (const candidate of material.candidates) {
       if (candidate.symbol <= previous) return yield* invalid('Jev batch candidates must be unique and sorted')
@@ -129,7 +124,7 @@ export const makeJevBatchPlan = (input: unknown) =>
         request.request.schemaVersion !==
           (material.schemaVersion === JevBatchPlanVersion.Ablation
             ? 'bayn.entry-ablation-input.v1'
-            : 'bayn.entry-inference-input.v5') ||
+            : 'bayn.entry-inference-input.v8') ||
         request.symbol !== candidate.symbol ||
         request.cycleId !== material.cycleId ||
         request.authorityGenerationHash !== material.authorityGenerationHash ||
@@ -236,7 +231,7 @@ export const usableEntryBatchInferences = (
         now,
         expectedVersion === JevBatchPlanVersion.Ablation
           ? 'bayn.entry-ablation-input.v1'
-          : 'bayn.entry-inference-input.v5',
+          : 'bayn.entry-inference-input.v8',
       )
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }

@@ -151,6 +151,7 @@ const partialExit = (
     accountId,
     openingCash: { cash_micros: '100000000000', observed_at: '2026-10-19T03:00:00.000Z' },
     transactions,
+    fillExecutionTimes: new Map<string, string>(),
     fees: [],
     brokerFeeAccruals: accruals,
     brokerFeeCashDeltaMicros: '0',

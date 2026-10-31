@@ -46,20 +46,19 @@ export const makeJevEntryQuery = (input: {
     calendar: input.calendar,
     observedAt: utcInstantFromEpochMillis(input.observedAtMs),
     rangeStartAt: utcInstantFromEpochMillis(
-      jevHistoryStartMs(input.calendar, input.sessionDate, rangeEndMs, protocol.lookbackMinutes),
+      jevHistoryStartMs(
+        input.calendar,
+        input.sessionDate,
+        rangeEndMs,
+        isContinuousMarket(input.calendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+      ),
     ),
     rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
     universeId: market.universeId,
     universeSymbolHash: market.universeSymbolHash,
     universe: market.universe,
-    symbols: [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort(),
+    symbols: [...candidates].sort(),
     candidateSymbols: candidates,
-    ...('benchmarkEvidencePolicy' in market
-      ? {
-          benchmarkEvidencePolicy: market.benchmarkEvidencePolicy,
-          benchmarkSymbols: [...new Set(candidates.map(jevBenchmarkSymbol))].sort(),
-        }
-      : {}),
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
@@ -68,5 +67,19 @@ export const makeJevEntryQuery = (input: {
     sourceTopics: market.sourceTopics,
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
+  }
+}
+
+/** Independent momentum qualification requires its actual reference series. */
+export const makeMomentumEntryQuery = (input: Parameters<typeof makeJevEntryQuery>[0]): IntradaySnapshotQuery => {
+  const query = makeJevEntryQuery(input)
+  const market = jevMarketForSymbol(input.candidates[0] ?? 'SPY')
+  const benchmarkSymbols = [...new Set(input.candidates.map(jevBenchmarkSymbol))].sort()
+  return {
+    ...query,
+    symbols: [...new Set([...input.candidates, ...benchmarkSymbols])].sort(),
+    ...('benchmarkEvidencePolicy' in market
+      ? { benchmarkEvidencePolicy: market.benchmarkEvidencePolicy, benchmarkSymbols }
+      : {}),
   }
 }

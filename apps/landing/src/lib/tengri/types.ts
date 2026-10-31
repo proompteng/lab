@@ -13,6 +13,8 @@ export type TengriErrorCode =
   | 'lifecycle_superseded'
   | 'model_catalog_invalid'
   | 'runtime_upgrade_required'
+  | 'connection_access_denied'
+  | 'connection_scope_changed'
 
 export type TengriCondition = {
   type: string

@@ -48,6 +48,7 @@ import {
   captureExecutionFills,
 } from '../system-assessment/execution-evidence'
 import { resolveExecutionOrderTerms } from '../system-assessment/execution-order-terms'
+import { withLatencyCliPhase } from './latency-cli-progress.test-support'
 
 // Compression is part of each chart request hash, so retained receipts use the release runtime throughout.
 const main = Effect.gen(function* () {
@@ -167,7 +168,10 @@ const main = Effect.gen(function* () {
         },
       ),
     )
-    assert.equal(Number(yield* child.exitCode), 0)
+    yield* child.exitCode.pipe(
+      Effect.tap((code) => Effect.sync(() => assert.equal(Number(code), 0))),
+      withLatencyCliPhase('replay-child'),
+    )
     const reportBytes = yield* fs.readFile(`${outputPath}/report.json`)
     const report = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(
@@ -192,7 +196,7 @@ const main = Effect.gen(function* () {
           ),
         }),
       ),
-    )(new TextDecoder().decode(reportBytes))
+    )(new TextDecoder().decode(reportBytes)).pipe(withLatencyCliPhase('report-validation'))
     const executableHash = sha256(yield* fs.readFile(executablePath))
     assert.equal(report.executableSha256, executableHash)
     assert.equal(
@@ -201,156 +205,164 @@ const main = Effect.gen(function* () {
       JSON.stringify({ issues: report.issues, sessions: report.sessions }),
     )
     if (trading) {
-      assert.deepEqual(report.brokerCheckpoint.state.ledger.positions, [])
-      const identities = yield* Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ accountId: Schema.String, generationHash: Schema.String })),
-      )(
-        yield* sql`SELECT DISTINCT intents.account_id AS "accountId", intents.authority_generation_hash AS "generationHash"
+      yield* Effect.gen(function* () {
+        assert.deepEqual(report.brokerCheckpoint.state.ledger.positions, [])
+        const identities = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ accountId: Schema.String, generationHash: Schema.String })),
+        )(
+          yield* sql`SELECT DISTINCT intents.account_id AS "accountId", intents.authority_generation_hash AS "generationHash"
         FROM autonomous_cycles JOIN intents USING (cycle_id)`,
-      )
-      assert.ok(identities.length > 0)
-      const firstSession = registration.calendar.sessions[0]
-      const lastSession = registration.calendar.sessions.at(-1)
-      assert.ok(firstSession !== undefined && lastSession !== undefined)
-      const documents = yield* Effect.forEach(
-        yield* sql`SELECT document FROM (${executionDecisionRows(sql)}) decisions`,
-        (row) => Effect.fromResult(decodeExecutionDecisionDocument(row['document'])),
-      )
-      const orders = yield* Effect.forEach(identities, (identity) =>
-        Effect.gen(function* () {
-          const scope = {
-            ...identity,
-            openAt: firstSession.openAt,
-            firstSession: firstSession.sessionDate,
-            lastSession: lastSession.sessionDate,
-            asOf: lastSession.closeAt,
-          }
-          const protection = yield* readSystemProtectionIntents(scope, definition.riskPolicy.maxBrokerStateAgeMs)
-          const plans = yield* Effect.fromResult(
-            executionOrderPlans(
-              documents
+        )
+        assert.ok(identities.length > 0)
+        const firstSession = registration.calendar.sessions[0]
+        const lastSession = registration.calendar.sessions.at(-1)
+        assert.ok(firstSession !== undefined && lastSession !== undefined)
+        const documents = yield* Effect.forEach(
+          yield* sql`SELECT document FROM (${executionDecisionRows(sql)}) decisions`,
+          (row) => Effect.fromResult(decodeExecutionDecisionDocument(row['document'])),
+        )
+        const orders = yield* Effect.forEach(identities, (identity) =>
+          Effect.gen(function* () {
+            const scope = {
+              ...identity,
+              openAt: firstSession.openAt,
+              firstSession: firstSession.sessionDate,
+              lastSession: lastSession.sessionDate,
+              asOf: lastSession.closeAt,
+            }
+            const protection = yield* readSystemProtectionIntents(scope, definition.riskPolicy.maxBrokerStateAgeMs)
+            const plans = yield* Effect.fromResult(
+              executionOrderPlans(
+                documents
+                  .filter(
+                    (document) =>
+                      document.bindings.accountId === identity.accountId &&
+                      document.bindings.authorityGenerationHash === identity.generationHash,
+                  )
+                  .map((document) => ({ document })),
+                protection,
+              ),
+            )
+            const orders = yield* Effect.fromResult(
+              captureExecutionOrders(
+                plans,
+                yield* readSystemExecutionOrders(scope),
+                identity.accountId,
+                identity.generationHash,
+              ),
+            )
+            const fills = yield* Effect.fromResult(
+              captureExecutionFills(
+                plans,
+                yield* readSystemExecutionFills(scope, firstSession.openAt, lastSession.closeAt),
+                identity.accountId,
+                identity.generationHash,
+              ),
+            )
+            const mutations = yield* readSystemMutationEvidence(
+              identity.accountId,
+              identity.generationHash,
+              firstSession.openAt,
+            )
+            const decisionAdmissions = yield* readSystemDecisionAdmissions({
+              ...identity,
+              openAt: firstSession.openAt,
+              firstSession: firstSession.sessionDate,
+              lastSession: lastSession.sessionDate,
+              asOf: scope.asOf,
+            })
+            const executionCut = {
+              ...cut,
+              asOf: scope.asOf,
+              protectionIntents: protection,
+              orders,
+              fills,
+              mutations,
+              decisionAdmissions,
+              decisions: documents
                 .filter(
                   (document) =>
-                    document.bindings.accountId === identity.accountId &&
-                    document.bindings.authorityGenerationHash === identity.generationHash,
+                    document.bindings.authorityGenerationHash === identity.generationHash &&
+                    document.bindings.accountId === identity.accountId,
                 )
-                .map((document) => ({ document })),
-              protection,
-            ),
-          )
-          const orders = yield* Effect.fromResult(
-            captureExecutionOrders(
-              plans,
-              yield* readSystemExecutionOrders(scope),
-              identity.accountId,
-              identity.generationHash,
-            ),
-          )
-          const fills = yield* Effect.fromResult(
-            captureExecutionFills(
-              plans,
-              yield* readSystemExecutionFills(scope, firstSession.openAt, lastSession.closeAt),
-              identity.accountId,
-              identity.generationHash,
-            ),
-          )
-          const mutations = yield* readSystemMutationEvidence(
-            identity.accountId,
-            identity.generationHash,
-            firstSession.openAt,
-          )
-          const decisionAdmissions = yield* readSystemDecisionAdmissions({
-            ...identity,
-            openAt: firstSession.openAt,
-            firstSession: firstSession.sessionDate,
-            lastSession: lastSession.sessionDate,
-            asOf: scope.asOf,
-          })
-          const executionCut = {
-            ...cut,
-            asOf: scope.asOf,
-            protectionIntents: protection,
-            orders,
-            fills,
-            mutations,
-            decisionAdmissions,
-            decisions: documents
-              .filter(
-                (document) =>
-                  document.bindings.authorityGenerationHash === identity.generationHash &&
-                  document.bindings.accountId === identity.accountId,
-              )
-              .map((document) => {
-                assert.ok(document.executionSession !== undefined)
-                return { sessionDate: document.executionSession.executionSession.date, document }
-              }),
-          }
-          const template = supportedAssessmentFixture().input.realism.fills[0]
-          assert.ok(template !== undefined)
-          const supplied = fills.map((fill) => ({
-            ...template,
-            fillId: fill.fillId,
-            intentId: fill.intentId,
-            decisionId: fill.decisionId,
-            orderId: fill.brokerOrderId,
-            sourceHash: fill.sourceHash,
-            positionOwnerGenerationHash: identity.generationHash,
-            side: fill.side,
-            fillQuantityAtoms: fill.quantityAtoms,
-            fillPriceAtoms: fill.priceAtoms,
-            filledAt: fill.occurredAt,
-          }))
-          const bound = yield* Effect.fromResult(bindExecutionEvidence(supplied, executionCut, identity.generationHash))
-          assert.deepEqual(bound.missing, [])
-          const admissions = yield* Effect.fromResult(decisionAdmissionWitnesses(executionCut, identity.generationHash))
-          for (const evidence of protection)
-            assert.ok(
-              admissions.witnesses.some((row) => row.sourceHash === evidence.intentId),
-              'Missing replacement admission',
+                .map((document) => {
+                  assert.ok(document.executionSession !== undefined)
+                  return { sessionDate: document.executionSession.executionSession.date, document }
+                }),
+            }
+            const template = supportedAssessmentFixture().input.realism.fills[0]
+            assert.ok(template !== undefined)
+            const supplied = fills.map((fill) => ({
+              ...template,
+              fillId: fill.fillId,
+              intentId: fill.intentId,
+              decisionId: fill.decisionId,
+              orderId: fill.brokerOrderId,
+              sourceHash: fill.sourceHash,
+              positionOwnerGenerationHash: identity.generationHash,
+              side: fill.side,
+              fillQuantityAtoms: fill.quantityAtoms,
+              fillPriceAtoms: fill.priceAtoms,
+              filledAt: fill.occurredAt,
+            }))
+            const bound = yield* Effect.fromResult(
+              bindExecutionEvidence(supplied, executionCut, identity.generationHash),
             )
-          for (const fill of fills) assert.ok(plans.has(fill.intentId))
-          return { orders, plans, fills, protection }
-        }),
-      )
-      const plans = new Map(orders.flatMap((group) => [...group.plans]))
-      assert.ok(
-        orders.some((group) => group.protection.length > 0),
-        'Expected separately armed native protection',
-      )
-      assert.equal(orders.flatMap((group) => group.fills).length, report.brokerCheckpoint.state.ledger.fills.length)
-      const receipts = orders.flatMap((group) => group.orders)
-      const byBrokerId = new Map(receipts.map((row) => [row.order.brokerOrderId, row]))
-      for (const brokerId of new Set(report.brokerCheckpoint.state.ledger.fills.map((fill) => fill.brokerOrderId))) {
-        const receipt = byBrokerId.get(brokerId)
-        assert.ok(receipt !== undefined, `Missing captured native broker order ${brokerId}`)
-        const root =
-          receipt.order.parentBrokerOrderId === undefined ? receipt : byBrokerId.get(receipt.order.parentBrokerOrderId)
-        assert.ok(root !== undefined)
-        const plan = plans.get(root.intentId)
-        assert.ok(plan !== undefined)
-        const terms = yield* Effect.fromResult(
-          resolveExecutionOrderTerms(
-            brokerId,
-            root,
-            receipts.filter((row) => row.order.parentBrokerOrderId === root.order.brokerOrderId),
-            plan,
-          ),
+            assert.deepEqual(bound.missing, [])
+            const admissions = yield* Effect.fromResult(
+              decisionAdmissionWitnesses(executionCut, identity.generationHash),
+            )
+            for (const evidence of protection)
+              assert.ok(
+                admissions.witnesses.some((row) => row.sourceHash === evidence.intentId),
+                'Missing replacement admission',
+              )
+            for (const fill of fills) assert.ok(plans.has(fill.intentId))
+            return { orders, plans, fills, protection }
+          }),
         )
-        assert.equal(terms._tag, 'Bound')
-      }
-      for (const session of registration.calendar.sessions) {
-        const fills = report.brokerCheckpoint.state.ledger.fills.filter(
-          (fill) => fill.observedAt >= session.openAt && fill.observedAt <= session.closeAt,
-        )
+        const plans = new Map(orders.flatMap((group) => [...group.plans]))
         assert.ok(
-          fills.some((fill) => fill.side === BrokerOrderSide.Buy),
-          session.sessionDate,
+          orders.some((group) => group.protection.length > 0),
+          'Expected separately armed native protection',
         )
-        assert.ok(
-          fills.some((fill) => fill.side === BrokerOrderSide.Sell),
-          session.sessionDate,
-        )
-      }
+        assert.equal(orders.flatMap((group) => group.fills).length, report.brokerCheckpoint.state.ledger.fills.length)
+        const receipts = orders.flatMap((group) => group.orders)
+        const byBrokerId = new Map(receipts.map((row) => [row.order.brokerOrderId, row]))
+        for (const brokerId of new Set(report.brokerCheckpoint.state.ledger.fills.map((fill) => fill.brokerOrderId))) {
+          const receipt = byBrokerId.get(brokerId)
+          assert.ok(receipt !== undefined, `Missing captured native broker order ${brokerId}`)
+          const root =
+            receipt.order.parentBrokerOrderId === undefined
+              ? receipt
+              : byBrokerId.get(receipt.order.parentBrokerOrderId)
+          assert.ok(root !== undefined)
+          const plan = plans.get(root.intentId)
+          assert.ok(plan !== undefined)
+          const terms = yield* Effect.fromResult(
+            resolveExecutionOrderTerms(
+              brokerId,
+              root,
+              receipts.filter((row) => row.order.parentBrokerOrderId === root.order.brokerOrderId),
+              plan,
+            ),
+          )
+          assert.equal(terms._tag, 'Bound')
+        }
+        for (const session of registration.calendar.sessions) {
+          const fills = report.brokerCheckpoint.state.ledger.fills.filter(
+            (fill) => fill.observedAt >= session.openAt && fill.observedAt <= session.closeAt,
+          )
+          assert.ok(
+            fills.some((fill) => fill.side === BrokerOrderSide.Buy),
+            session.sessionDate,
+          )
+          assert.ok(
+            fills.some((fill) => fill.side === BrokerOrderSide.Sell),
+            session.sessionDate,
+          )
+        }
+      }).pipe(withLatencyCliPhase('execution-evidence'))
     }
     assert.deepEqual(report.inference, { calls: [], providerDispatchCount: 0, retainedCallCount: 0 })
     assert.deepEqual(
@@ -429,22 +441,24 @@ const main = Effect.gen(function* () {
       reportFileHash: retain(reportBytes),
       costsFileHash: retain(new TextEncoder().encode(JSON.stringify(costs))),
     }
-    const receipts = yield* Effect.fromResult(
-      bindLatencyStressSources([descriptor], registration, cut, artifacts, sources),
-    )
+    const receipts = yield* Effect.suspend(() =>
+      Effect.fromResult(bindLatencyStressSources([descriptor], registration, cut, artifacts, sources)),
+    ).pipe(withLatencyCliPhase('cost-binding'))
     assert.equal(receipts.length, 1)
     assert.equal(receipts[0]?.image, null)
     assert.equal(receipts[0]?.executionReceiptHash, null)
     assert.equal(receipts[0]?.economics, null)
-    const accounting = yield* Effect.fromResult(
-      reproduceReplaySessionEconomics(
-        registration,
-        Result.getOrThrow(backtestBrokerEvidenceConfig(prepared)),
-        report.brokerCheckpoint,
-        costs,
-        sources,
+    const accounting = yield* Effect.suspend(() =>
+      Effect.fromResult(
+        reproduceReplaySessionEconomics(
+          registration,
+          Result.getOrThrow(backtestBrokerEvidenceConfig(prepared)),
+          report.brokerCheckpoint,
+          costs,
+          sources,
+        ),
       ),
-    )
+    ).pipe(withLatencyCliPhase('economics'))
     assert.equal(accounting.complete, true)
     assert.equal(accounting.sessions.length, 20)
     if (trading) {
@@ -452,51 +466,55 @@ const main = Effect.gen(function* () {
         accounting.sessions.every((s) => s.qualificationPnlMicros !== null && BigInt(s.qualificationPnlMicros) > 0n),
       )
     } else assert.ok(accounting.sessions.every((s) => s.qualificationPnlMicros === '-1000000'))
-    const { reportHash: _reportHash, ...reportMaterial } = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-    )(new TextDecoder().decode(reportBytes))
-    const relabeled = { ...reportMaterial, completion: 'COMPLETE', issues: [] }
-    const relabeledHash = retain(
-      new TextEncoder().encode(JSON.stringify({ ...relabeled, reportHash: testHash(relabeled) })),
-    )
-    const relabeledResult = bindLatencyStressSources(
-      [{ ...descriptor, reportFileHash: relabeledHash }],
-      registration,
-      cut,
-      artifacts,
-      sources,
-    )
-    assert.equal(Result.isFailure(relabeledResult), !trading)
-    if (Result.isFailure(relabeledResult))
-      assert.match(String(relabeledResult.failure.cause), /Latency report hides an incomplete registered session/)
-    artifacts.set(descriptor.reportFileHash, new TextEncoder().encode('{}'))
-    assert.ok(Result.isFailure(bindLatencyStressSources([descriptor], registration, cut, artifacts, sources)))
-    yield* fs.writeFileString(
-      `${directory}/acceptance.json`,
-      JSON.stringify({
-        policy,
-        trading,
-        sessionCount: accounting.sessions.length,
-        filledSessions: registration.calendar.sessions.filter((session) =>
-          report.brokerCheckpoint.state.ledger.fills.some(
-            (fill) => fill.observedAt >= session.openAt && fill.observedAt <= session.closeAt,
-          ),
-        ).length,
-        executionProfitMicros: accounting.sessions
-          .reduce((sum, session) => sum + BigInt(session.executionPnlMicros), 0n)
-          .toString(),
-        qualificationProfitMicros: accounting.sessions
-          .reduce((sum, session) => {
-            assert.ok(session.qualificationPnlMicros !== null)
-            return sum + BigInt(session.qualificationPnlMicros)
-          }, 0n)
-          .toString(),
-        complete: accounting.complete,
-        providerDispatchCount: report.inference.providerDispatchCount,
-        receiptEconomicsComplete: receipts[0]?.economics !== null,
-        executableHash,
-      }),
-    )
+    yield* Effect.gen(function* () {
+      const { reportHash: _reportHash, ...reportMaterial } = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+      )(new TextDecoder().decode(reportBytes))
+      const relabeled = { ...reportMaterial, completion: 'COMPLETE', issues: [] }
+      const relabeledHash = retain(
+        new TextEncoder().encode(JSON.stringify({ ...relabeled, reportHash: testHash(relabeled) })),
+      )
+      const relabeledResult = bindLatencyStressSources(
+        [{ ...descriptor, reportFileHash: relabeledHash }],
+        registration,
+        cut,
+        artifacts,
+        sources,
+      )
+      assert.equal(Result.isFailure(relabeledResult), !trading)
+      if (Result.isFailure(relabeledResult))
+        assert.match(String(relabeledResult.failure.cause), /Latency report hides an incomplete registered session/)
+      artifacts.set(descriptor.reportFileHash, new TextEncoder().encode('{}'))
+      assert.ok(Result.isFailure(bindLatencyStressSources([descriptor], registration, cut, artifacts, sources)))
+    }).pipe(withLatencyCliPhase('tamper-validation'))
+    yield* fs
+      .writeFileString(
+        `${directory}/acceptance.json`,
+        JSON.stringify({
+          policy,
+          trading,
+          sessionCount: accounting.sessions.length,
+          filledSessions: registration.calendar.sessions.filter((session) =>
+            report.brokerCheckpoint.state.ledger.fills.some(
+              (fill) => fill.observedAt >= session.openAt && fill.observedAt <= session.closeAt,
+            ),
+          ).length,
+          executionProfitMicros: accounting.sessions
+            .reduce((sum, session) => sum + BigInt(session.executionPnlMicros), 0n)
+            .toString(),
+          qualificationProfitMicros: accounting.sessions
+            .reduce((sum, session) => {
+              assert.ok(session.qualificationPnlMicros !== null)
+              return sum + BigInt(session.qualificationPnlMicros)
+            }, 0n)
+            .toString(),
+          complete: accounting.complete,
+          providerDispatchCount: report.inference.providerDispatchCount,
+          receiptEconomicsComplete: receipts[0]?.economics !== null,
+          executableHash,
+        }),
+      )
+      .pipe(withLatencyCliPhase('acceptance-write'))
   }).pipe(Effect.provide(PostgresClientLive(databases)))
 }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
 

@@ -169,7 +169,7 @@ export const makeChartEntryTargetMaterial = (
 
 export const decideJevEntry = (input: unknown) =>
   Result.gen(function* () {
-    const source = yield* reproduceDecisionEvidence(input, JevBatchPlanVersion.V7)
+    const source = yield* reproduceDecisionEvidence(input, JevBatchPlanVersion.V8)
     if (source.observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* unavailable('An entry decision requires a flat entry observation')
     const selection = yield* selectJevEntryCandidates(
@@ -209,16 +209,23 @@ const TargetBase = Schema.Struct({
   ...ChartEntryTargetFields,
 })
 
+// Reuse only the latest exact value. A claimed evidence hash cannot establish that its source is unchanged.
+let lastVerifiedEntryTargetHash: string | undefined
+
 export const JevEntryTargetSchema = TargetBase.check(
   Schema.makeFilter((target) => {
+    const fingerprint = canonicalHashV1Result(target)
+    if (Result.isSuccess(fingerprint) && fingerprint.success === lastVerifiedEntryTargetHash) return []
     const { evidence, ...material } = target
     const reproduced = decideJevEntry(evidence).pipe(
       Result.flatMap(({ evidence: _, ...derived }) => canonicalHashV1Result(derived)),
     )
     const supplied = canonicalHashV1Result(material)
-    return Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success
-      ? []
-      : [{ path: ['evidence'], issue: 'complete recorded candidate evidence must reproduce the exact Jev target' }]
+    if (Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success) {
+      if (Result.isSuccess(fingerprint)) lastVerifiedEntryTargetHash = fingerprint.success
+      return []
+    }
+    return [{ path: ['evidence'], issue: 'complete recorded candidate evidence must reproduce the exact Jev target' }]
   }),
 )
 export type JevEntryTarget = typeof JevEntryTargetSchema.Type

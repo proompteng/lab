@@ -1,3 +1,4 @@
+import { evaluateFixtureEntry } from '../src/jev/evaluation.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Exit, FileSystem, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -12,7 +13,7 @@ import { JevClient } from '../src/jev/client'
 import { DecisionsClient } from '../src/jev/decisions'
 import { decodeEntryInferenceCompletion } from '../src/jev/entry-inference-evidence'
 import { prepareEntryInferenceInput } from '../src/jev/entry-inference-input'
-import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../src/jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from '../src/jev/resolution'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
@@ -51,7 +52,10 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       Schema.Struct({ request: Schema.Struct({ schemaVersion: Schema.String }) }),
     )(raw.request)
     const original =
-      version.request.schemaVersion === 'bayn.entry-inference-input.v5'
+      version.request.schemaVersion === 'bayn.entry-inference-input.v5' ||
+      version.request.schemaVersion === 'bayn.entry-inference-input.v6' ||
+      version.request.schemaVersion === 'bayn.entry-inference-input.v7' ||
+      version.request.schemaVersion === 'bayn.entry-inference-input.v8'
         ? yield* Effect.fromResult(readStagedInferenceCostEvidence({ ...raw, stagedCheckpoint: raw.stagedCheckpoint }))
         : yield* Effect.fromResult(readSequentialInferenceCostEvidence(raw))
     const input = original.request.request
@@ -67,7 +71,10 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     // Original model responses retain their contracts; the dispatch probe never calls either provider.
     const protocol = {
       ...input.protocol,
-      schemaVersion: 'bayn.jev.protocol.v28' as const,
+      schemaVersion: defaultJevProtocolDocument.schemaVersion,
+      inputDefinition: defaultJevProtocolDocument.inputDefinition,
+      lookbackMinutes: defaultJevProtocolDocument.lookbackMinutes,
+      candidateEvidencePolicy: defaultJevProtocolDocument.candidateEvidencePolicy,
       entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
     }
     const funding = {
@@ -88,10 +95,10 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     const current = yield* Effect.fromResult(
       prepareEntryInferenceInput({
         ...input,
-        schemaVersion: 'bayn.entry-inference-input.v5',
+        schemaVersion: 'bayn.entry-inference-input.v8',
         protocol,
         funding,
-        numericalState: { ...input.numericalState, entryEconomics: economics },
+        numericalState: { ...input.numericalState, schemaVersion: protocol.inputDefinition, entryEconomics: economics },
       }),
     )
     const visualSource = yield* Effect.fromResult(
@@ -126,9 +133,15 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       terminals: StagedCheckpoint['terminals'][number][]
       skips: StagedCheckpoint['skips'][number][]
     } = { claims: [], terminals: [], skips: [] }
+    const recordHandoff: (handoff: EntryHandoff) => Effect.Effect<{ readonly dispatchAllowed: boolean }> = (handoff) =>
+      Effect.sync(() => {
+        if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
+        committedHandoffs++
+        return { dispatchAllowed: true }
+      })
     const branch = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
       Effect.andThen(
-        evaluateClaimedEntryInference({
+        evaluateFixtureEntry({
           requestId: request.requestId,
           input: request.request,
           observedAt: request.observedAt,
@@ -137,21 +150,26 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
         }),
       ),
       Effect.provideService(EntryInferenceJournal, {
-        recordVisualClaim: (claim) =>
-          Effect.sync(() => {
-            checkpoint.claims.push(claim)
-            return { dispatchAllowed: true }
-          }),
-        recordVisualTerminal: (terminal) =>
-          Effect.sync(() => {
-            checkpoint.terminals.push(terminal)
-          }),
-        recordHandoff: (handoff) =>
-          Effect.sync(() => {
-            if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
-            committedHandoffs++
-            return { dispatchAllowed: true }
-          }),
+        recordVisualClaims: (claims) =>
+          Effect.sync(() =>
+            claims.map((claim) => {
+              checkpoint.claims.push(claim)
+              return { requestId: claim.requestId, dispatchAllowed: true }
+            }),
+          ),
+        recordTransitions: (inputs) =>
+          Effect.forEach(inputs, ({ terminal, successor }) =>
+            Effect.gen(function* () {
+              if (terminal !== null) checkpoint.terminals.push(terminal)
+              const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
+              if (successor.kind === 'NONE') return { requestId, dispatchAllowed: false }
+              if (successor.kind === 'VISUAL') {
+                checkpoint.claims.push(successor.claim)
+                return { requestId, dispatchAllowed: true }
+              }
+              return { requestId, ...(yield* recordHandoff(successor.handoff)) }
+            }),
+          ),
       }),
       Effect.provideService(DecisionsClient, {
         evaluate: () =>
@@ -264,8 +282,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     possibleChartBranches: chartBranches,
     originalFundedSourcesStillFeasible: fundedRequests,
     actualProviderCalls: 0,
-    inputProjection:
-      'Same source, observed quotes, capital and fees. The offline dispatch probe recomputes v28 entry economics and its inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.',
+    inputProjection: `Same source, observed quotes, capital and fees. The offline dispatch probe recomputes ${defaultJevProtocolDocument.schemaVersion} entry economics and its inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.`,
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

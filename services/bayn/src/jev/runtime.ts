@@ -3,6 +3,7 @@ import { jevProfitTargetCrossed } from './profit-target'
 import { maximumFundedBuyQuantities } from './entry-sizing'
 import { jevMaximumEntryAskMicros } from './entry-economics'
 import { jevMarketForSymbol } from './markets'
+import { MarketKind } from '../instruments'
 import { jevMarketForCycle, jevCycleCandidates } from './markets'
 import { isContinuousMarket, type MarketHours } from '../market-hours'
 import {
@@ -240,7 +241,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           })
           if (
             input.portfolio.purpose === JevPurpose.Entry &&
-            (plan.schemaVersion === JevBatchPlanVersion.V7 || plan.schemaVersion === JevBatchPlanVersion.Ablation)
+            (plan.schemaVersion === JevBatchPlanVersion.V8 || plan.schemaVersion === JevBatchPlanVersion.Ablation)
           )
             yield* Effect.annotateCurrentSpan('bayn.entry_timing.deterministic_selected_at', yield* currentUtcInstant)
         }),
@@ -317,7 +318,7 @@ export const evaluateJevObservation = (input: Parameters<typeof makeJevObservati
     input,
     input.snapshot.manifest.rangeEndAt,
     Effect.succeed(input.snapshot),
-    JevBatchPlanVersion.V7,
+    JevBatchPlanVersion.V8,
   ).pipe(Effect.map(({ evidence }) => evidence))
 
 export const compileJevEntry = (
@@ -351,10 +352,20 @@ export const compileJevEntry = (
         BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
         jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, originalAsk)
       const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
-      if (exclusion !== null || !withinCostBound || bid <= BigInt(plan.levels.stopPriceMicros))
+      const requiresMarketableLimit = jevMarketForSymbol(symbol).market === MarketKind.Crypto
+      const ineligibleReason =
+        exclusion ??
+        (requiresMarketableLimit && !withinCostBound
+          ? 'entry cost price ceiling'
+          : bid <= BigInt(plan.levels.stopPriceMicros)
+            ? 'protective stop crossed'
+            : bid >= BigInt(plan.levels.profitLimitPriceMicros)
+              ? 'profit target already reached'
+              : null)
+      if (ineligibleReason !== null)
         return yield* Result.fail(
           new JevAwaitingEvidence({
-            message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion ?? 'entry cost price ceiling'}`,
+            message: `Jev target ${symbol} no longer has an eligible execution quote: ${ineligibleReason}`,
             readiness: DecisionReadinessReason.NoEligibleCandidate,
           }),
         )
