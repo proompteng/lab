@@ -1158,6 +1158,11 @@ identityTest(
       await page.getByRole('button', { name: 'Apply change', exact: true }).click()
       expect((await result).status()).toBe(status)
     }
+    const selectAccessOption = async (field: 'Change' | 'Role', label: string) => {
+      await page.getByLabel(field, { exact: true }).click()
+      await page.getByRole('option', { name: label, exact: true }).click()
+      await browserExpect(page.getByRole('listbox')).toHaveCount(0)
+    }
     const postAccess = (command: Record<string, unknown>) =>
       page.evaluate(async (input) => {
         const response = await fetch('/api/tengri/access', {
@@ -1167,7 +1172,7 @@ identityTest(
         })
         return { status: response.status, body: await response.json() }
       }, command)
-    await page.getByLabel('Change', { exact: true }).selectOption('quota')
+    await selectAccessOption('Change', 'Quota')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
     await page.getByLabel('total', { exact: true }).fill('3')
     await page.getByLabel('active', { exact: true }).fill('2')
@@ -1187,9 +1192,9 @@ identityTest(
       ).rows[0],
     ).toMatchObject({ total_workspaces: 3, active_workspaces: 2, retained_bytes: String(96 * 1_073_741_824) })
 
-    await page.getByLabel('Change', { exact: true }).selectOption('membership')
+    await selectAccessOption('Change', 'Membership')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
-    await page.getByLabel('Role', { exact: true }).selectOption('administrator')
+    await selectAccessOption('Role', 'Administrator')
     await page.getByLabel('Enable this access', { exact: true }).uncheck()
     await page.getByLabel('Reason', { exact: true }).fill('Attempt to remove required second administrator')
     await applyChange(422)
@@ -1197,7 +1202,7 @@ identityTest(
     expect((await control.query('SELECT count(*) FROM ofz.memberships WHERE role=2')).rows[0]?.count).toBe('2')
 
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
-    await page.getByLabel('Role', { exact: true }).selectOption('member')
+    await selectAccessOption('Role', 'Member')
     await page.getByLabel('Enable this access', { exact: true }).check()
     await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
     await applyChange(200)
@@ -1415,12 +1420,12 @@ identityTest(
     await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
 
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])
-    await page.getByLabel('Change', { exact: true }).selectOption('quota')
+    await selectAccessOption('Change', 'Quota')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
     await page.getByLabel('Reason', { exact: true }).fill('A stale passkey must not authorize this change')
     await applyChange(428)
-    await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify with your passkey' })).toBeVisible()
-    await page.getByRole('button', { name: 'Verify passkey', exact: true }).click()
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify your identity' })).toBeVisible()
+    await page.getByRole('button', { name: 'Verify identity', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
@@ -1590,7 +1595,12 @@ identityTest(
         'access.token.claim': 'false',
       },
     })
-    await page.getByRole('button', { name: 'Verify passkey', exact: true }).click()
+    const stepUp = await page.evaluate(async () => {
+      const response = await fetch('/api/auth/step-up', { method: 'POST' })
+      if (!response.ok) throw new Error('The fixture step-up could not start')
+      return response.json()
+    })
+    await page.goto(z.object({ url: z.url() }).parse(stepUp).url)
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL((url) => url.origin === base)

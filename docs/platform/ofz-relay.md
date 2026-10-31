@@ -100,8 +100,11 @@ not prove connector execution. Production rollout and this acceptance remain out
 - `DELETE /api/tengri/connections` revokes saved consent and all child credentials before guest cleanup. Cleanup can
   remain pending while the guest is unavailable; revocation is already authoritative. Guest generation checks reject
   delayed installs and prevent an old cleanup from removing a newer connection.
-- Access → Service policies assigns or revokes catalog-declared relationships for human or registered workload
-  identities through Ofz. Each change requires current administrator authority, passkey verification and an audit reason.
+- Settings → Privacy & Security → Service access assigns or revokes catalog-declared relationships for human or registered workload
+  identities through Ofz. Choose a registered service and a named resource, then select the permissions to allow or
+  remove in one audited change. The editor derives resource and permission choices from the policy and connector
+  catalogs; resource IDs and SPIFFE identities stay in the request. Each change requires current administrator
+  authority, passkey verification and an audit reason.
 - `/api/platform/relay/agent` forwards the guest's proof-bound exact request body to Relay. Its strict envelope requires
   `kind: "execute"` or `kind: "lookup"` and a canonical base64 body. Lookup signs a distinct body containing the original
   execution bytes. The proxy cannot select an identity or client on the guest's behalf.

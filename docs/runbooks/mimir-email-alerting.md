@@ -72,10 +72,11 @@ MX records, delegating nameservers, enabling link tracking, or forwarding DMARC 
 
 Email requires `notify: email` and one of these severity labels:
 
-| Severity | Group updates | Repeat interval while unchanged |
-| -------- | ------------- | ------------------------------- |
-| `critical` | Five minutes | One hour |
-| `warning` | Fifteen minutes | Four hours |
+| Severity                             | Group updates   | Repeat interval while unchanged |
+| ------------------------------------ | --------------- | ------------------------------- |
+| `critical`, except host read latency | Five minutes    | One hour                        |
+| `CephHostReadLatencyHigh`            | Fifteen minutes | Four hours                      |
+| `warning`                            | Fifteen minutes | Four hours                      |
 
 The first notification still waits ten seconds. A group membership change uses the group-update interval, not the
 repeat interval. Both routes send resolved notifications through the existing `critical-email` receiver. Alerts without the email
@@ -84,6 +85,12 @@ opt-in remain visible in Mimir/Grafana without sending email.
 Ceph opts `CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` into this route with
 `notify: email`. The route repeats firing notifications every hour and sends a resolved notification.
 Ceph health warnings, scrub debt, and warning-level latency alerts remain visible without sending email.
+
+`CephHostReadLatencyHigh` uses a dedicated route before the general critical route. It groups by alert name,
+service, and node, so each affected host owns one incident. It preserves ten-second first delivery and resolved
+notifications, with fifteen-minute group updates and four-hour unchanged repeats. The rule holds recovery for ten
+minutes and lists affected OSDs in annotations. Other critical Ceph conditions retain five-minute updates and
+one-hour repeats. Scrub concurrency remains three.
 
 ## Email links and alert UI
 
