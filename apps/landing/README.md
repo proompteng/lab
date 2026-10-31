@@ -51,8 +51,15 @@ a session. Sessions, policies, audits, replay protection, and capabilities remai
 query deadline, verified database TLS, and existing attempt expiry and capacity limits.
 
 `/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
-The Service access tab uses registered service and named resource choices, with multiple permissions saved in one
-audited change. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
+Workspace and Platform open with one row per person and focused add/manage actions. Workspace limits show usage
+beside the configured allowance. Diagnostic grants, ownership transfer and emergency recovery are under Advanced.
+Sign-in and passkey management is a separate disclosure below the access tabs. Audit starts with recent activity and
+keeps receipt IDs inside details.
+The Service access tab starts with registered clients. Choose a service and named resource to load its current
+SpiceDB relationships, then save only changed permissions in one audited command. Platform members can be selected
+under People’s resource permissions; the normal flow does not require SPIFFE IDs or Ofz identity hashes.
+The internal access command API uses a typed `recipient`: `github-login` for a new lookup, or `github-id` for an
+existing immutable roster identity. The former top-level `login` field is removed. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
 portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
 Identity verification appears beside the affected save action only when Ofz requires a fresh passkey check.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
