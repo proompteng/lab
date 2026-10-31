@@ -61,6 +61,15 @@ audit history are retained. The old policy is present only as a migration-test i
 
 ## Assign access
 
+`ReadPolicyRelationships` reads the fully consistent direct relationships for one declared resource and recipient.
+The BFF exposes it through `GET /api/platform/policies?kind=...&id=...&subjectKind=...&subjectId=...`.
+It requires a registered `platform.administration` and `platform.human-session` gateway, its exact allowed origin,
+an active human administrator session and native `manage_targets` permission. Reads are audited and recheck current
+authority after the receipt commits. They do not require fresh MFA. `GetPlatformConfiguration` remains metadata-only;
+ordinary registered clients cannot inspect permission assignments through that RPC.
+The Settings editor loads this snapshot before enabling changes and submits only the added/removed relationships
+against its policy version. An unconfirmed write retains the exact request and operation ID until retried.
+
 An authenticated administrator with fresh passkey verification uses `POST /api/platform/policies`. The Ofz RPC is
 `WritePolicyRelationships`. It requires the expected policy version, exact resource, declared relation and subject,
 and an audit reason. Policy commands use a durable intent and native version marker; retries return the original
