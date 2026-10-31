@@ -28,7 +28,7 @@ export const ReplaySessionCostsSchema = Schema.Struct({
   asOf: UtcInstantSchema,
   inferenceCalls: Schema.Array(ReplayInferenceCallSchema),
   inferenceTariff: InferenceRateCardSchema,
-  sessions: Schema.Array(OperatingCostEvidenceSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
+  sessions: Schema.Array(OperatingCostEvidenceSchema).check(Schema.isMinLength(1)),
 })
 
 interface ReplayEconomicConfig {

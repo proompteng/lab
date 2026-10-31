@@ -1178,17 +1178,20 @@ data:
               summary: Ceph reports slow operations
               description: Ceph has reported one or more slow operations continuously for 5 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
-          - alert: CephOsdReadLatencyHigh
-            expr: ceph_storage:osd_read_latency_seconds:mean5m > 0.5
+          - alert: CephHostReadLatencyHigh
+            expr: max by (node) (ceph_storage:osd_read_latency_seconds:mean5m) > 0.5
             for: 5m
+            keep_firing_for: 10m
             labels:
               severity: critical
               service: ceph-storage
               team: platform
               notify: email
             annotations:
-              summary: Ceph client reads are severely delayed
-              description: "{{ $labels.node }}/{{ $labels.ceph_daemon }} has averaged more than 500 ms per client read for five minutes. This is a counter-derived mean, not a percentile."
+              summary: Ceph client reads are severely delayed on {{ $labels.node }}
+              description: >-
+                The highest OSD five-minute mean on {{ $labels.node }} has stayed above 500 ms per client read for five minutes.
+                Current above-threshold OSDs: {{ range query (printf "ceph_storage:osd_read_latency_seconds:mean5m{node=%q} > 0.5" $labels.node) | sortByLabel "ceph_daemon" }}{{ .Labels.ceph_daemon }}={{ .Value | humanizeDuration }}; {{ else }}no current samples above threshold; {{ end }}This is a counter-derived mean, not a percentile.
               runbook_url: docs/runbooks/ceph-performance-telemetry.md
           - alert: CephOsdQueueWaitHigh
             expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1

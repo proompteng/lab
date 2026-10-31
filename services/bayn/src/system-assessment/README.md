@@ -44,7 +44,7 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` binds the twenty-session calendar, candidate and three controls, source/image/prompt
+`validateSystemRegistration` binds a nonempty prospectively registered calendar, candidate and three controls, source/image/prompt
 identities, operating-cost weights, inference tariffs, risk policy, original deadlines, and statistical assumptions.
 The deployed control retains its frozen identity. The ablation and momentum definitions derive from their native
 runtime policies. Expanded risk limits, substituted control identities, overlapping calendars, and reduced Jev tariffs
@@ -125,8 +125,9 @@ and observed intraminute marks retain losses across sessions. Unknown valuations
 complete marked-risk assessment. Failed inference remains chargeable even when its provider start is unknown.
 
 `evaluateSystemAssessment` keeps actual net profit, conservative qualification profit, statistical edge, reliability,
-realism, and safety separate. Numerical qualification uses the frozen acceptance implementation and every registered
-session. The result exposes assumptions, missing evidence, and contradictions. Only the conjunction of all gates can
+realism, and safety separate. Numerical qualification uses the active TypeScript acceptance policy and every registered
+session. There is no fixed session count. Candidate, controls, costs, and replay evidence must cover exactly the
+registered calendar; an empty, shortened, extended, reordered, or substituted series is rejected. The result exposes assumptions, missing evidence, and contradictions. Only the conjunction of all gates can
 produce `QUALIFIED_PAPER`; a complete rejected window and an incomplete window retain distinct outcomes.
 
 Latency stress replays the selected native policy with recorded response occurrences and the registered execution
@@ -142,7 +143,7 @@ carry this executable. The original three policy identities, execution model, em
 remain frozen at both application and PostgreSQL admission. The image verifier reads the dedicated executable and
 compiler receipt, and the execution observer requires that exact offline command.
 
-`bayn.frozen-control-replay.v1` binds the complete original protocol, captured-arrival bytes, all twenty registered
+`bayn.frozen-control-replay.v1` binds the complete original protocol, captured-arrival bytes, every registered
 sessions, common instrument terms and execution assumptions, original operation deadlines, and the measured candidate
 calibration. Its replica derives from this complete scope, preventing a different stress from reusing a broker account.
 The adapter releases each original committed entry or closing document after both its actual completion and the
@@ -170,7 +171,9 @@ its prospectively registered operation timeout; the CLI does not replace it with
 
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
-assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing
+assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
+New registrations require the current policy. Retained v2 records keep their original terms and policy identities;
+they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
 Source inserts enqueue pending witnesses in the same PostgreSQL transaction. Controller observations consume only
@@ -207,8 +210,9 @@ evidence obligation.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective
-evidence; implementation tests do not establish those claims. Pinned offline Lean proofs and mandatory conformance
-release gates remain the next integration boundary.
+evidence; implementation tests do not establish those claims. Pinned offline Lean proofs and production conformance
+are mandatory PR and exact-main image-publication gates. Run `bun run --filter @proompteng/bayn verify:formal` from
+the repository root on Linux; see the [formal verification prerequisites and coverage](../../formal/README.md).
 
 ## Validation
 

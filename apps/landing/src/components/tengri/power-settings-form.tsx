@@ -2,11 +2,12 @@
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useRef } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from '@/lib/tengri/schemas'
 import type { TengriAgent } from '@/lib/tengri/types'
 import { runTengriAction } from './client'
+import { SettingsSelect } from './settings-select'
 
 const sleepIntervals = [1, 2, 5, 10, 15, 30, 60, 120, 240, 480, 1440, 0]
 
@@ -31,12 +32,12 @@ export function PowerSettingsForm({
   onSavingChange: (saving: boolean) => void
 }) {
   const saving = useRef(false)
+  const timeoutTrigger = useRef<HTMLButtonElement>(null)
   const {
-    register,
+    control,
     reset,
     handleSubmit,
     setError,
-    setValue,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<TengriPowerSettings>({
@@ -79,38 +80,43 @@ export function PowerSettingsForm({
         <label htmlFor={`${instanceId}-idle-timeout`} className="text-[13px] text-zinc-100">
           Sleep when inactive
         </label>
-        <select
-          {...register('idleTimeoutMinutes', { valueAsNumber: true })}
-          id={`${instanceId}-idle-timeout`}
-          aria-describedby={`${instanceId}-idle-timeout-help`}
-          aria-invalid={Boolean(errors.idleTimeoutMinutes)}
-          disabled={disabled || isSubmitting}
-          className="max-w-[55%] rounded-md border border-white/10 bg-zinc-600/45 px-2 py-1 text-[12px] text-zinc-100 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
-          onChange={(event) => {
-            const control = event.currentTarget
-            const restoreFocus = document.activeElement === control
-            setValue('idleTimeoutMinutes', Number(control.value), { shouldDirty: true })
-            void save().finally(() => {
-              if (!restoreFocus) return
-              window.requestAnimationFrame(() => {
-                if (
-                  document.hasFocus() &&
-                  document.activeElement === document.body &&
-                  control.isConnected &&
-                  !control.disabled &&
-                  control.getClientRects().length > 0
+        <Controller
+          name="idleTimeoutMinutes"
+          control={control}
+          render={({ field }) => (
+            <SettingsSelect
+              name={field.name}
+              ref={(element) => {
+                field.ref(element)
+                timeoutTrigger.current = element
+              }}
+              onBlur={field.onBlur}
+              value={String(field.value)}
+              id={`${instanceId}-idle-timeout`}
+              aria-describedby={`${instanceId}-idle-timeout-help`}
+              aria-invalid={Boolean(errors.idleTimeoutMinutes)}
+              disabled={disabled || isSubmitting}
+              className="w-auto max-w-[55%]"
+              options={intervals.map((value) => ({ value: String(value), label: intervalLabel(value) }))}
+              onValueChange={(value) => {
+                field.onChange(Number(value))
+                void save().finally(() =>
+                  window.requestAnimationFrame(() => {
+                    const trigger = timeoutTrigger.current
+                    if (
+                      document.hasFocus() &&
+                      document.activeElement === document.body &&
+                      trigger?.isConnected &&
+                      !trigger.disabled &&
+                      trigger.getClientRects().length > 0
+                    )
+                      trigger.focus({ preventScroll: true })
+                  }),
                 )
-                  control.focus({ preventScroll: true })
-              })
-            })
-          }}
-        >
-          {intervals.map((value) => (
-            <option key={value} value={value}>
-              {intervalLabel(value)}
-            </option>
-          ))}
-        </select>
+              }}
+            />
+          )}
+        />
       </div>
       <p id={`${instanceId}-idle-timeout-help`} className="px-3 text-[12px] leading-[1.45] text-zinc-400">
         Your workspace sleeps after you and your agent stop working. Open windows and connection checks won’t keep it

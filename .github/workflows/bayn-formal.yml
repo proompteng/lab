@@ -47,16 +47,8 @@ jobs:
           key: bayn-lean-linux-${{ hashFiles('services/bayn/formal/lean-toolchain', 'services/bayn/formal/lake-manifest.json') }}
       - name: Install TypeScript dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
-      - name: Build and independently recheck proofs
-        working-directory: services/bayn/formal
-        run: |
-          set -euo pipefail
-          lake -q build
-          bash check.sh
-      - name: Verify production TypeScript against the executable Lean model
-        env:
-          BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
-        run: bun test services/bayn/src/system-assessment/formal-conformance.test.ts
+      - name: Build, independently recheck proofs, and verify production conformance
+        run: bun run --filter @proompteng/bayn verify:formal
       - name: Verify committed visual stage claims and inference handoffs against Lean
         env:
           BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
