@@ -79,6 +79,7 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
   const [configuration, setConfiguration] = useState<GetPlatformConfigurationResponse>()
   const [catalog, setCatalog] = useState<ConnectorCatalog>()
   const [people, setPeople] = useState<AccessEntry[]>([])
+  const [peopleCursor, setPeopleCursor] = useState('')
   const [recipient, setRecipient] = useState<Recipient>()
   const [snapshot, setSnapshot] = useState<{ key: string; refresh: number; value: ReadPolicyRelationshipsResponse }>()
   const [error, setError] = useState<Error>()
@@ -129,9 +130,9 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
     policyCatalogSchema.parse(JSON.parse(next.policyCatalogJson))
     setConfiguration(next)
     setCatalog(connectorCatalogSchema.parse(connectors))
-    setPeople([
-      ...new Map(fromJson(ListAccessResponseSchema, roster).entries.map((entry) => [entry.subjectId, entry])).values(),
-    ])
+    const page = fromJson(ListAccessResponseSchema, roster)
+    setPeople([...new Map(page.entries.map((entry) => [entry.subjectId, entry])).values()])
+    setPeopleCursor(page.cursor)
   }, [])
   useEffect(() => {
     if (!active) return
@@ -176,6 +177,25 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
     setError(undefined)
     setReceipt('')
     setRecipient(next)
+  }
+  const morePeople = async () => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const json = await fetch(
+        '/api/tengri/access?' + new URLSearchParams({ view: 'platform', cursor: peopleCursor }),
+        { cache: 'no-store' },
+      ).then(read)
+      const page = fromJson(ListAccessResponseSchema, json)
+      setPeople((previous) => [
+        ...new Map([...previous, ...page.entries].map((entry) => [entry.subjectId, entry])).values(),
+      ])
+      setPeopleCursor(page.cursor)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error('More people could not be loaded'))
+    } finally {
+      setBusy(false)
+    }
   }
   const execute = async (request: PolicyWrite) => {
     setPending(request)
@@ -357,6 +377,11 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
                   {person.displayName || 'GitHub #' + person.githubId}
                 </Button>
               ))}
+              {peopleCursor ? (
+                <Button type="button" size="sm" variant="outline" disabled={blocked} onClick={() => void morePeople()}>
+                  {busy ? 'Loading…' : 'More people'}
+                </Button>
+              ) : null}
             </div>
           </details>
         </div>

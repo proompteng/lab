@@ -11369,6 +11369,150 @@ test('access tabs present people, limits and recent activity before focused edit
   await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeVisible()
 })
 
+test('managing a Viewer preserves their exact saved scope and identifies diagnostic agents', async ({ page }) => {
+  await mockTengri(page)
+  const writes: Record<string, unknown>[] = []
+  const scope = {
+    fileRoots: ['/workspace/approved '],
+    threadIds: ['saved-thread'],
+    terminalIds: ['saved-terminal'],
+    browserScreenshot: true,
+    maxBytes: 4096,
+    maxItems: 20,
+  }
+  const agent = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+  await page.route('**/api/tengri/access**', async (route) => {
+    if (route.request().method() === 'POST') {
+      writes.push(route.request().postDataJSON())
+      await route.fulfill({
+        json: {
+          receipt: {
+            operationId: route.request().postDataJSON().operationId,
+            version: '21',
+            auditReceiptId: 'fixture-audit',
+          },
+        },
+      })
+      return
+    }
+    await route.fulfill({
+      json: {
+        version: '20',
+        workspaceState: 'active',
+        entries: [
+          { subjectId: 'viewer-person', githubId: '123', displayName: 'Alex Chen', role: 'viewer', scope },
+          { subjectId: agent, role: 'diagnostic', grantId: 'ffffffff-ffff-4fff-8fff-ffffffffffff', scope },
+        ],
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const access = settings.getByRole('region', { name: 'Access administration', exact: true })
+  const diagnostic = access.locator('[data-slot="item"]').filter({ hasText: 'Diagnostic agent' })
+  await diagnostic.getByText('Access details', { exact: true }).click()
+  await expect(diagnostic.getByText('Agent ' + agent, { exact: true })).toBeVisible()
+  await access.getByRole('button', { name: 'Manage Alex Chen viewer', exact: true }).click()
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).toBeChecked()
+  await expect(access.getByLabel('File roots under /workspace', { exact: true })).toHaveValue('/workspace/approved ')
+  await expect(access.getByLabel('Codex thread IDs', { exact: true })).toHaveValue('saved-thread')
+  await expect(access.getByLabel('Terminal IDs', { exact: true })).toHaveValue('saved-terminal')
+  await expect(access.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true })).toBeChecked()
+  await expect(access.getByLabel('Maximum bytes', { exact: true })).toHaveValue('4096')
+  await expect(access.getByLabel('Maximum items', { exact: true })).toHaveValue('20')
+  await access.getByLabel('Reason', { exact: true }).fill('Keep this existing Viewer scope unchanged')
+  await access.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect.poll(() => writes.length).toBe(1)
+  expect(writes[0]).toMatchObject({ action: 'collaborator', recipient: { kind: 'github-id', githubId: '123' }, scope })
+  await expect(access.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible()
+  await selectOption(page, access.getByLabel('Role', { exact: true }), 'Developer')
+  await selectOption(page, access.getByLabel('Role', { exact: true }), 'Viewer')
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).not.toBeChecked()
+  await access.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await access.getByRole('button', { name: 'Add collaborator', exact: true }).click()
+  await access.getByLabel('GitHub username', { exact: true }).fill('another-person')
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).not.toBeChecked()
+  await access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }).check()
+  await expect(access.getByLabel('File roots under /workspace', { exact: true })).toHaveValue('/workspace/project')
+  await access.getByLabel('GitHub username', { exact: true }).fill('different-person')
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).not.toBeChecked()
+})
+
+test('service resource permissions can be managed for a person on a later roster page', async ({ page }) => {
+  await mockTengri(page)
+  await page.route('**/api/tengri/access**', (route) => {
+    const later = new URL(route.request().url()).searchParams.get('cursor') === 'next-people'
+    return route.fulfill({
+      json: later
+        ? {
+            version: '20',
+            entries: [{ subjectId: 'later-person', githubId: '456', displayName: 'Later Member', role: 'member' }],
+          }
+        : {
+            version: '20',
+            entries: [{ subjectId: 'first-person', githubId: '123', displayName: 'First Member', role: 'member' }],
+            cursor: 'next-people',
+          },
+    })
+  })
+  await page.route('**/api/platform/connectors', (route) =>
+    route.fulfill({
+      json: {
+        operations: [
+          {
+            connectorId: 'fixture',
+            name: 'read',
+            description: 'Read a resource',
+            action: 'fixture.read',
+            readOnly: true,
+            targets: [{ name: 'Tenant A', resource: { kind: 'fixture.service', id: 'fixture/tenant-a' } }],
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/platform/policies**', (route) => {
+    const query = new URL(route.request().url()).searchParams
+    if (query.size) {
+      expect(query.get('subjectId')).toBe('later-person')
+      expect(query.get('subjectKind')).toBe('human')
+      return route.fulfill({ json: { policyVersion: '20', relations: ['reader'] } })
+    }
+    return route.fulfill({
+      json: {
+        policyVersion: '20',
+        policyCatalogJson: JSON.stringify({
+          version: 1,
+          resources: [{ kind: 'fixture.service', relations: [{ name: 'reader', subjects: ['human'] }] }],
+        }),
+        relayClients: [],
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
+  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
+  await policies.getByText('People’s resource permissions', { exact: true }).click()
+  await expect(policies.getByRole('button', { name: 'Later Member', exact: true })).toHaveCount(0)
+  await policies.getByRole('button', { name: 'More people', exact: true }).click()
+  await policies.getByRole('button', { name: 'Later Member', exact: true }).click()
+  await selectOption(page, policies.getByLabel('Resource', { exact: true }), 'Tenant A · fixture')
+  await expect(policies.getByRole('checkbox', { name: 'Reader', exact: true })).toBeChecked()
+})
+
 for (const mode of ['idle', 'current', 'other', 'closed'] as const) {
   test(`renews connections during active work without an idle renewal loop: ${mode}`, async ({ page }) => {
     const activeRun = mode !== 'idle'

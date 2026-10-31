@@ -1204,7 +1204,7 @@ identityTest(
     await selectAccessOption('Change', 'Membership')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
     await selectAccessOption('Role', 'Administrator')
-    await page.getByLabel('Enable this access', { exact: true }).uncheck()
+    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).uncheck()
     await page.getByLabel('Reason', { exact: true }).fill('Attempt to remove required second administrator')
     await applyChange(422)
     await browserExpect(page.getByRole('alert').filter({ hasText: 'constraint' })).toBeVisible()
@@ -1212,7 +1212,7 @@ identityTest(
 
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
     await selectAccessOption('Role', 'Member')
-    await page.getByLabel('Enable this access', { exact: true }).check()
+    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).check()
     await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
     await applyChange(200)
     await browserExpect(
@@ -1239,7 +1239,7 @@ identityTest(
     })
     await page.goto(base + '/?workspace=' + scopedWorkspace)
     await page.getByRole('button', { name: 'Add collaborator', exact: true }).click()
-    const contentOptIn = page.getByLabel('Approve bounded Viewer content access', { exact: true })
+    const contentOptIn = page.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true })
     await browserExpect(contentOptIn).not.toBeChecked()
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
     await page.getByLabel('Reason', { exact: true }).fill('Grant metadata-only Viewer access')
@@ -1286,7 +1286,9 @@ identityTest(
     await page.getByLabel('Terminal IDs', { exact: true }).fill(' shared-id ')
     await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
     await page.getByLabel('Maximum items', { exact: true }).fill('20')
-    await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
+    await browserExpect(
+      page.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true }),
+    ).not.toBeChecked()
     await applyChange(200)
     await viewerRow.getByText('Access details', { exact: true }).click()
     for (const [label, target] of [
@@ -1316,7 +1318,7 @@ identityTest(
     await roots.fill('/workspace/narrow')
     await page.getByLabel('Codex thread IDs', { exact: true }).fill('')
     await page.getByLabel('Terminal IDs', { exact: true }).fill('')
-    await page.getByLabel('Allow browser screenshots', { exact: true }).check()
+    await page.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true }).check()
     await applyChange(200)
     await viewerRow.getByText('Access details', { exact: true }).click()
     await browserExpect(viewerRow.getByText(JSON.stringify('/workspace/narrow'), { exact: true })).toBeVisible()
