@@ -19,8 +19,6 @@ ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
 ARG NATSCLI_VERSION=v0.4.0
 ARG NEOVIM_VERSION=stable
-ARG DOCKER_CLI_VERSION=29.1.2
-ARG BUILDX_VERSION=0.30.1
 ARG GO_VERSION=1.25.5
 ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
 ARG TEMURIN25_JDK_VERSION=25.0.1_8
@@ -40,8 +38,6 @@ ARG KN_VERSION
 ARG CNPG_VERSION
 ARG NATSCLI_VERSION
 ARG NEOVIM_VERSION
-ARG DOCKER_CLI_VERSION
-ARG BUILDX_VERSION
 ARG GO_VERSION
 ARG TEMURIN25_JDK_TAG
 ARG TEMURIN25_JDK_VERSION
@@ -358,38 +354,6 @@ RUN set -eux; \
   cat <<'PROFILE' > /etc/profile.d/jangar-kubectl.sh
 alias k=kubectl
 PROFILE
-
-# Install Docker CLI (client only; daemon runs in sidecar)
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
-  case "$ARCH" in \
-  amd64|x86_64) DOCKER_ARCH=x86_64 ;; \
-  arm64|aarch64) DOCKER_ARCH=aarch64 ;; \
-  *) echo "Unsupported arch for docker cli: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
-    -o /tmp/docker.tgz; \
-  tar -xzf /tmp/docker.tgz -C /tmp; \
-  install /tmp/docker/docker /usr/local/bin/docker; \
-  rm -rf /tmp/docker.tgz /tmp/docker; \
-  docker --version
-
-# Install docker buildx
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
-  case "$ARCH" in \
-  amd64|x86_64) BUILDX_ARCH=linux-amd64 ;; \
-  arm64|aarch64) BUILDX_ARCH=linux-arm64 ;; \
-  *) echo "Unsupported arch for buildx: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  VERSION="${BUILDX_VERSION#v}"; \
-  mkdir -p /usr/lib/docker/cli-plugins; \
-  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "https://github.com/docker/buildx/releases/download/v${VERSION}/buildx-v${VERSION}.${BUILDX_ARCH}" \
-    -o /usr/lib/docker/cli-plugins/docker-buildx; \
-  chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
-  /usr/lib/docker/cli-plugins/docker-buildx version
 
 # Install Codex CLI with Bun so the app-server binary is available at runtime
 RUN --mount=type=cache,id=bun-install-cache-codex-cli,target=/root/.bun/install/cache \

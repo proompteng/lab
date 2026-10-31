@@ -641,6 +641,56 @@ data:
                 AgentRun step pods are active while agents-alloy has no available replicas.
                 Logs can be lost once Job pods terminate.
               runbook_url: docs/runbooks/agents-log-observability.md
+      - name: mimir-ingestion.rules
+        rules:
+          - alert: MimirSeriesCapacityHigh
+            expr: |
+              sum(cortex_ingester_memory_series{job="mimir-ingester"})
+              / (sum(cortex_ingester_local_limits{job="mimir-ingester",limit="max_global_series_per_user",user="anonymous"}) > 0)
+              > 0.8
+            for: 10m
+            keep_firing_for: 5m
+            labels:
+              severity: warning
+              team: platform
+              namespace: observability
+              service: mimir
+              notify: email
+            annotations:
+              summary: Mimir is approaching its shared metric series limit
+              description: The tenant head has used over 80% of the live ingester series allowance for ten minutes. Inspect growing metric families and deployment churn before new series are rejected.
+              runbook_url: docs/runbooks/mimir-email-alerting.md
+          - alert: MimirSeriesLimitExceeded
+            expr: |
+              sum(increase(cortex_discarded_samples_total{job="mimir-ingester",reason="per_user_series_limit"}[5m])) > 0
+            for: 1m
+            keep_firing_for: 5m
+            labels:
+              severity: critical
+              team: platform
+              namespace: observability
+              service: mimir
+              notify: email
+            annotations:
+              summary: Mimir is rejecting new metric series
+              description: The shared tenant has exceeded its series budget. New Pods and revisions can lose metrics while older series remain visible. Inspect CI cardinality and the tenant runtime limit before treating downstream missing-metrics alerts as application outages.
+              runbook_url: docs/runbooks/mimir-email-alerting.md
+          - alert: MimirIngestionObservationUnavailable
+            expr: |
+              count(cortex_ingester_memory_series{job="mimir-ingester"}) < 3
+              or absent(cortex_ingester_memory_series{job="mimir-ingester"})
+            for: 2m
+            keep_firing_for: 5m
+            labels:
+              severity: critical
+              team: platform
+              namespace: observability
+              service: mimir
+              notify: email
+            annotations:
+              summary: Mimir ingestion telemetry is incomplete
+              description: Fewer than three ingesters have recent head-series telemetry in Mimir. Check the collector, Kafka acknowledgements and ingester rejections. Missing application metrics during this incident do not establish application failure or recovery.
+              runbook_url: docs/runbooks/mimir-email-alerting.md
       - name: ci-build-performance.rules
         rules:
           - alert: CiObservabilityUnavailable
@@ -724,9 +774,12 @@ data:
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiBuildQueueDelay
             expr: |
-              ci_job_oldest_queue_seconds > 600
+              max by (namespace, runner_pool, architecture) (
+                ci_job_oldest_queue_seconds{job_role="build"}
+              ) > 600
               and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
             for: 5m
+            keep_firing_for: 5m
             labels:
               severity: warning
               team: platform
@@ -734,7 +787,7 @@ data:
               notify: email
             annotations:
               summary: Image build jobs have sustained queue delays
-              description: "{{ $labels.workflow }} on {{ $labels.architecture }} has a job queued for more than ten minutes across five minutes of fresh observations."
+              description: "The {{ $labels.runner_pool }} {{ $labels.architecture }} pool has image build jobs queued for more than ten minutes across five minutes of fresh observations. Workflow changes share one pool incident; inspect the dashboard for the individual jobs."
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiBuildDurationRegression
             expr: |
@@ -3392,6 +3445,7 @@ data:
                 ) == 0
               )
             for: 1m
+            keep_firing_for: 5m
             labels:
               severity: warning
               team: trading
@@ -3421,6 +3475,7 @@ data:
                 (up{job="bayn",namespace="bayn",service="bayn"} == 1)
               )
             for: 0s
+            keep_firing_for: 5m
             labels:
               severity: warning
               team: trading
@@ -3477,12 +3532,21 @@ data:
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleObservationUnavailable
             expr: |
-              bayn_cycle_observation_available{
-                job="bayn",
-                namespace="bayn",
-                service="bayn"
-              } == 0
+              max by (job, namespace, service) (
+                bayn_cycle_observation_available{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } == 0
+                or
+                (
+                  (up{job="bayn",namespace="bayn",service="bayn"} == 1)
+                  unless on(job, namespace, service, instance)
+                  bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn"}
+                )
+              )
             for: 2m
+            keep_firing_for: 5m
             labels:
               severity: critical
               team: trading
@@ -3490,42 +3554,44 @@ data:
               notify: email
             annotations:
               summary: Bayn cycle projection is unavailable
-              description: The bounded autonomous-cycle PostgreSQL projection has failed for two minutes.
+              description: The bounded autonomous-cycle PostgreSQL projection has reported unavailable, or its observation metric has been missing from a successfully scraped replica, for two minutes. Inspect the cycle projection error and scrape metric presence; idle or NO_TRADE cycles still report an available observation.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynRuntimeDegraded
             expr: |
-              (
-                bayn_runtime_ready{
-                  job="bayn",
-                  namespace="bayn",
-                  service="bayn"
-                } == 0
-              )
-              and on(job, namespace, service, instance)
-              (
-                bayn_cycle_observation_available{
-                  job="bayn",
-                  namespace="bayn",
-                  service="bayn"
-                } == 1
-              )
-              and on(job, namespace, service, instance)
-              (
-                bayn_cycle_condition{
-                  job="bayn",
-                  namespace="bayn",
-                  service="bayn",
-                  condition="stalled"
-                } == 0
-              )
-              and on(job, namespace, service, instance)
-              (
-                bayn_cycle_condition{
-                  job="bayn",
-                  namespace="bayn",
-                  service="bayn",
-                  condition="failed"
-                } == 0
+              max by (job, namespace, service) (
+                (
+                  bayn_runtime_ready{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn"
+                  } == 0
+                )
+                and on(job, namespace, service, instance)
+                (
+                  bayn_cycle_observation_available{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn"
+                  } == 1
+                )
+                and on(job, namespace, service, instance)
+                (
+                  bayn_cycle_condition{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn",
+                    condition="stalled"
+                  } == 0
+                )
+                and on(job, namespace, service, instance)
+                (
+                  bayn_cycle_condition{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn",
+                    condition="failed"
+                  } == 0
+                )
               )
             for: 1m
             keep_firing_for: 5m
@@ -3542,13 +3608,16 @@ data:
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleStalled
             expr: |
-              bayn_cycle_condition{
-                job="bayn",
-                namespace="bayn",
-                service="bayn",
-                condition="stalled"
-              } == 1
+              max by (job, namespace, service) (
+                bayn_cycle_condition{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn",
+                  condition="stalled"
+                } == 1
+              )
             for: 1m
+            keep_firing_for: 5m
             labels:
               severity: critical
               team: trading
@@ -3560,13 +3629,16 @@ data:
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleFailed
             expr: |
-              bayn_cycle_condition{
-                job="bayn",
-                namespace="bayn",
-                service="bayn",
-                condition="failed"
-              } == 1
+              max by (job, namespace, service) (
+                bayn_cycle_condition{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn",
+                  condition="failed"
+                } == 1
+              )
             for: 1m
+            keep_firing_for: 5m
             labels:
               severity: critical
               team: trading
@@ -3743,6 +3815,134 @@ data:
               summary: Critical Argo CD application is degraded
               description: A critical Kafka, dependent-service, or observability Argo CD application is not Healthy for 10 minutes.
               runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+      - name: ofz-relay-platform.rules
+        rules:
+          - alert: PlatformApplicationUnhealthy
+            expr: argocd_app_info{name=~"ofz|relay|tengri|proompteng|opencode",health_status!="Healthy"} == 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform application is unhealthy
+              description: Argo CD reports {{ $labels.name }} unhealthy. Inspect its workloads and dependencies before testing connector access.
+              runbook_url: docs/platform/ofz-relay.md
+          - alert: PlatformApplicationMissing
+            expr: |
+              absent(argocd_app_info{name="ofz"})
+              or absent(argocd_app_info{name="relay"})
+              or absent(argocd_app_info{name="tengri"})
+              or absent(argocd_app_info{name="proompteng"})
+              or absent(argocd_app_info{name="opencode"})
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform application is missing from Argo telemetry
+              description: No Argo CD observation exists for {{ $labels.name }}. Check metrics collection and the root-owned ApplicationSet entry; a missing Application must not appear healthy.
+              runbook_url: docs/platform/ofz-relay.md
+          - alert: PlatformApplicationOutOfSync
+            expr: argocd_app_info{name=~"ofz|relay|tengri|proompteng|opencode",sync_status!="Synced"} == 1
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform application is not reconciled
+              description: '{{ $labels.name }} has not reached its committed desired state for fifteen minutes. Compare its exact Kargo revision with Argo and the live workload.'
+              runbook_url: docs/release-automation.md
+          - alert: PlatformPromotionFailed
+            expr: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode",phase=~"Failed|Errored"} == 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform image promotion failed
+              description: The last {{ $labels.stage }} promotion {{ $labels.phase }}. Inspect its selected Freight, failed step and exact source receipt; retain the previous deployed image.
+              runbook_url: docs/release-automation.md
+          - alert: PlatformPromotionStalled
+            expr: time() - kube_kargo_stage_current_promotion_started_at{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode"} > 1800
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform promotion has not finished
+              description: The current {{ $labels.stage }} promotion has been active for over thirty minutes. Inspect migration, upstream Freight verification and Argo health gates without bypassing them.
+              runbook_url: docs/release-automation.md
+          - alert: PlatformPromotionTelemetryMissing
+            expr: |
+              absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="relay"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode"})
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: Platform promotion observations are missing
+              description: No last-promotion observation exists for {{ $labels.stage }}. Check the Stage, kube-state-metrics watch permissions and Alloy forwarding.
+              runbook_url: docs/release-automation.md
+          - alert: OfzDatabaseUnavailable
+            expr: |
+              sum(up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}) < 1
+              or absent(up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"})
+              or max(cnpg_collector_last_collection_error{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}) > 0
+            for: 2m
+            labels:
+              severity: critical
+              team: platform
+              namespace: ofz
+              service: ofz-db
+              notify: email
+            annotations:
+              summary: Ofz database observations are unavailable or failing
+              description: No Ofz PostgreSQL target is healthy, or a database collector cannot query PostgreSQL. Check the CNPG primary, storage, connections and collector error before restoring service.
+              runbook_url: argocd/applications/ofz/README.md
+          - alert: OfzDatabaseReplicaDegraded
+            expr: sum(up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}) < 3
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              namespace: ofz
+              service: ofz-db
+              notify: email
+            annotations:
+              summary: Ofz has fewer than three healthy database metrics targets
+              description: The three-instance Ofz database has lost a metrics target for ten minutes. Inspect instance readiness and metrics collection; scrape health alone does not prove replication health.
+              runbook_url: argocd/applications/ofz/README.md
+          - alert: OfzDatabaseBackupStale
+            expr: |
+              time() - max(kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed"}) > 129600
+              or absent(kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed"})
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              namespace: ofz
+              service: ofz-db
+              notify: email
+            annotations:
+              summary: Ofz has no recent completed database backup
+              description: No completed ofz-db backup with the CNPG cluster label is newer than thirty-six hours. Check the daily ScheduledBackup, Barman plugin, object store and WAL archive. A completed backup still requires an independent restore proof.
+              runbook_url: argocd/applications/ofz/README.md
       - name: tengri-production.rules
         rules:
           - record: tengri_rollout_enabled
@@ -3874,16 +4074,11 @@ data:
               runbook_url: docs/tengri/operations.md
           - alert: TengriBootLatencyHigh
             expr: |
-              (
-                sum(rate(tengri_agent_boot_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
-                /
-                clamp_min(
-                  sum(rate(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
-                  0.001
-                )
-              ) > 120
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_agent_boot_latency_seconds_bucket{job="tengri",namespace="tengri"}[15m]))
+              ) > 1
               and
-              sum(increase(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+              sum(increase(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 20
             for: 5m
             labels:
               severity: warning
@@ -3891,20 +4086,15 @@ data:
               service: tengri
             annotations:
               summary: Tengri agent boot latency is high
-              description: Average guest boot latency has exceeded two minutes across at least two boots in 15 minutes.
+              description: Successful CR creation to guest readiness p95 exceeds one second across at least twenty boots in 15 minutes. Includes reconciliation retries but excludes BFF admission; failed starts are not successful latency samples.
               runbook_url: docs/tengri/operations.md
           - alert: TengriResumeLatencyHigh
             expr: |
-              (
-                sum(rate(tengri_agent_resume_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
-                /
-                clamp_min(
-                  sum(rate(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
-                  0.001
-                )
-              ) > 60
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_agent_resume_latency_seconds_bucket{job="tengri",namespace="tengri"}[15m]))
+              ) > 1
               and
-              sum(increase(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+              sum(increase(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 20
             for: 5m
             labels:
               severity: warning
@@ -3912,7 +4102,23 @@ data:
               service: tengri
             annotations:
               summary: Tengri agent resume latency is high
-              description: Average guest resume latency has exceeded one minute across at least two resumes in 15 minutes.
+              description: Successful persisted resume intent to guest readiness p95 exceeds one second across at least twenty resumes in 15 minutes. Includes reconciliation retries but excludes BFF admission; failed resumes are not successful latency samples.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriInventoryStale
+            expr: |
+              (
+                time() - min(tengri_inventory_last_success_timestamp_seconds{job="tengri",namespace="tengri"}) > 60
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri inventory metrics are stale
+              description: At least one controller has not refreshed its dependency-backed inventory for over one minute. Process metrics remain available; inspect readiness failures by dependency before using guest or ticket gauges.
               runbook_url: docs/tengri/operations.md
           - alert: TengriTerminalHeartbeatLatencyHigh
             expr: |
@@ -4016,8 +4222,11 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynValkeyPublicationFailure
           expr: sum(increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m]))
-            > 0
+            > 0 or count((bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}
+            > time() - 300) and (bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}
+            <= time())) > 0
           for: 1m
+          keep_firing_for: 5m
           labels:
             team: trading
             namespace: bayn
@@ -4028,8 +4237,8 @@ data:
             summary: Bayn could not publish a replicated broker cache value
             description: >-
               Failed replicated puts in the last five minutes by category/cause:
-              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
-              Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.
+              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0 or count by (category, cause_category) ((bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"} > time() - 300) and (bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"} <= time())) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
+              Resolution only means no recent failure evidence is currently observed in this lookback, not verified publication recovery.
             runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
             dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
         - alert: BaynValkeyLatencyHigh
@@ -4037,6 +4246,7 @@ data:
             > 0.25) and on(stage) (sum by (stage) (increase(bayn_operation_duration_seconds_count{namespace="bayn",service=~"bayn|bayn-execution-controller",stage=~"bayn.valkey.get|bayn.valkey.put",outcome="succeeded"}[5m]))
             >= 20)
           for: 5m
+          keep_firing_for: 5m
           labels:
             team: trading
             namespace: bayn

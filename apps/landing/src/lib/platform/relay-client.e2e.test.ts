@@ -31,7 +31,22 @@ test.skipIf(!binary)(
     let lookups = 0
     let server: grpc.Server | undefined
     try {
-      for (const scenario of ['success', 'lost', 'started', 'unavailable', 'invalid', 'wrong-peer']) {
+      for (const scenario of [
+        'success',
+        'lost',
+        'started',
+        'forbidden',
+        'not-found',
+        'denied',
+        'invalid-receipt',
+        'invalid-text',
+        'unavailable',
+        'invalid',
+        'wrong-peer',
+      ]) {
+        const upstreamFailure = scenario === 'forbidden' ? 403 : scenario === 'not-found' ? 404 : 0
+        const recordedOutcome = upstreamFailure ? 'failed' : scenario === 'started' ? 'started' : 'succeeded'
+        const providerResult = scenario === 'invalid-text' ? Buffer.from([0xff]) : Buffer.from('fixture pod status')
         const peerId = scenario === 'wrong-peer' ? 'spiffe://proompteng.ai/ns/tengri/sa/tengri' : relayId
         const certificate = fixture.certificate(scenario, peerId)
         let executionBody: Buffer | undefined
@@ -75,15 +90,22 @@ test.skipIf(!binary)(
             expect(payload.binding).toBeNull()
             expect(payload.delegationId).toBeNull()
             executionBody = Buffer.from(call.request.body)
-            if (scenario !== 'success') {
-              callback({ code: grpc.status.UNAVAILABLE, details: 'fixture lost response' })
+            if (!['success', 'invalid-receipt', 'invalid-text'].includes(scenario)) {
+              const code =
+                upstreamFailure === 403 || scenario === 'denied'
+                  ? grpc.status.PERMISSION_DENIED
+                  : upstreamFailure === 404
+                    ? grpc.status.NOT_FOUND
+                    : grpc.status.UNAVAILABLE
+              callback({ code, details: 'private fixture provider response' })
               return
             }
             callback(null, {
               operationId: payload.operationId,
-              result: Buffer.from('fixture pod status'),
+              result: scenario === 'invalid-receipt' ? Buffer.from('private fixture result') : providerResult,
               contentType: 'application/json',
-              authorizationReceiptId: '11111111-1111-4111-8111-111111111111',
+              authorizationReceiptId:
+                scenario === 'invalid-receipt' ? 'invalid' : '11111111-1111-4111-8111-111111111111',
               executionReceiptId: '22222222-2222-4222-8222-222222222222',
             })
           },
@@ -103,20 +125,25 @@ test.skipIf(!binary)(
             expect(lookup.binding).toBeNull()
             expect(lookup.delegationId).toBeNull()
             expect(call.request.body.equals(executionBody!)).toBe(false)
-            if (scenario === 'unavailable') {
-              callback({ code: grpc.status.UNAVAILABLE, details: 'fixture lookup unavailable' })
+            if (scenario === 'unavailable' || scenario === 'denied') {
+              callback({
+                code: scenario === 'denied' ? grpc.status.PERMISSION_DENIED : grpc.status.UNAVAILABLE,
+                details: 'private fixture lookup response',
+              })
               return
             }
             const payload = JSON.parse(lookup.executionBody)
             callback(null, {
               execution: {
                 operationId: scenario === 'invalid' ? '33333333-3333-4333-8333-333333333333' : payload.operationId,
-                outcome: scenario === 'started' ? 'started' : 'succeeded',
+                outcome: recordedOutcome,
                 authorizationReceiptId: '11111111-1111-4111-8111-111111111111',
                 executionReceiptId: '22222222-2222-4222-8222-222222222222',
-                upstreamStatus: scenario === 'started' ? 0 : 200,
+                upstreamStatus: upstreamFailure || (scenario === 'started' ? 0 : 200),
                 resultHash:
-                  scenario === 'started' ? Buffer.alloc(0) : createHash('sha256').update('fixture pod status').digest(),
+                  recordedOutcome === 'succeeded'
+                    ? createHash('sha256').update(providerResult).digest()
+                    : Buffer.alloc(0),
                 requestHash: createHash('sha256').update(executionBody!).digest(),
                 updatedAtUnixMs: Date.now().toString(),
               },
@@ -176,6 +203,8 @@ test.skipIf(!binary)(
         if (scenario !== 'wrong-peer') {
           expect(replies[1].result.tools[0].name).toBe('galactic__status')
           const result = replies[2].result
+          expect(result).toBeDefined()
+          expect(stdout).not.toContain('private fixture')
           const operationId = JSON.parse(executionBody!.toString('utf8')).operationId
           expect(result._meta.relay.operationId).toBe(operationId)
           expect(executions - beforeExecutions).toBe(1)
@@ -190,8 +219,22 @@ test.skipIf(!binary)(
             expect(result.isError).toBe(true)
             expect(result.content[0].text).toContain('The request was not resent.')
             expect(result._meta.relay.outcome).toBe(
-              scenario === 'started' ? 'started' : scenario === 'lost' ? 'succeeded' : 'unknown',
+              ['unavailable', 'invalid', 'denied'].includes(scenario) ? 'unknown' : recordedOutcome,
             )
+            if (upstreamFailure) {
+              expect(result.content[0].text).toContain(upstreamFailure === 403 ? 'PermissionDenied' : 'NotFound')
+              expect(result._meta.relay).toMatchObject({
+                upstreamStatus: upstreamFailure,
+                authorizationReceiptId: '11111111-1111-4111-8111-111111111111',
+                executionReceiptId: '22222222-2222-4222-8222-222222222222',
+                lookupReceiptId: '44444444-4444-4444-8444-444444444444',
+              })
+            }
+            if (scenario === 'denied') expect(result._meta.relay).toEqual({ operationId, outcome: 'unknown' })
+            if (['invalid-receipt', 'invalid-text'].includes(scenario)) {
+              expect(result.content[0].text).toContain('DataLoss')
+              expect(result._meta.relay.executionReceiptId).toBe('22222222-2222-4222-8222-222222222222')
+            }
             expect(lookups - beforeLookups).toBe(1)
           }
         } else {
@@ -201,8 +244,8 @@ test.skipIf(!binary)(
         server.forceShutdown()
         server = undefined
       }
-      expect(executions).toBe(5)
-      expect(lookups).toBe(4)
+      expect(executions).toBe(10)
+      expect(lookups).toBe(9)
     } finally {
       server?.forceShutdown()
       fixture.close()

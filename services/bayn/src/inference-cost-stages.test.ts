@@ -1,8 +1,15 @@
+import { costReportFromEvidence } from './inference-expense.test-support'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { InferenceCostCoverage, InferenceStage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
+import {
+  InferenceCostCoverage,
+  InferenceStage,
+  InferenceUsageStatus,
+  decodeInferenceCostEvidence,
+  makeInferenceCostReport,
+} from './inference-costs'
 import {
   buildInferenceExpensePlan,
   decodeInferenceExpenseQuote,
@@ -14,14 +21,36 @@ import {
   type InferenceExpenseSource,
 } from './inference-expense'
 import { JevFailure } from './jev/contract'
-import { JevOutcome, makeJevEvaluationReceipt } from './jev/evidence'
-import { type EntryInferenceCompletion, type EntryHandoff } from './jev/entry-inference'
-import { entryCompletionFixture, entryEvaluationRequestFixture } from './jev/entry-inference.test-support'
+import { JevOutcome } from './jev/evidence'
+import {
+  entryCompletionFixture,
+  entryEvaluationRequestFixture,
+  makeConditionalEvaluationReceipt,
+} from './jev/conditional-entry.test-support'
+import { readSequentialInferenceCostEvidence } from './jev/sequential-inference-cost-evidence'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
 import { summarizeForwardInferenceExpenses } from './forward-performance/inference-expenses'
 
 const request = entryEvaluationRequestFixture()
-const completion = entryCompletionFixture(request)
+const completedReceipt = Result.getOrThrow(
+  makeConditionalEvaluationReceipt(request, {
+    startedAt: request.observedAt,
+    completedAt: request.observedAt,
+    outcome: { status: JevOutcome.Completed, completion: entryCompletionFixture(request) },
+  }),
+)
+if (completedReceipt.outcome.status !== JevOutcome.Completed) throw new Error('Expected retained completed receipt')
+const completion = completedReceipt.outcome.completion
+type EntryInferenceCompletion = typeof completion
+type EntryHandoff = EntryInferenceCompletion['handoff']
+const makeRetainedReceipt = (material: unknown, handoff: unknown) =>
+  Result.gen(function* () {
+    if (typeof material !== 'object' || material === null) throw new Error('Expected receipt fixture material')
+    const receipt = { ...material, receiptHash: yield* canonicalHashV1Result(material) }
+    const graph = yield* readSequentialInferenceCostEvidence({ request, receipt, handoff, resolution: null })
+    if (graph.receipt === null) throw new Error('Expected retained receipt')
+    return graph.receipt
+  })
 const source = (
   completed: EntryInferenceCompletion | null = completion,
   handoff = completed?.handoff ?? completion.handoff,
@@ -31,13 +60,16 @@ const source = (
     completed === null
       ? null
       : Result.getOrThrow(
-          makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
-            requestId: request.requestId,
-            startedAt: request.observedAt,
-            completedAt: completed.completedAt,
-            outcome: { status: JevOutcome.Completed, completion: completed },
-          }),
+          makeRetainedReceipt(
+            {
+              schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+              requestId: request.requestId,
+              startedAt: request.observedAt,
+              completedAt: completed.completedAt,
+              outcome: { status: JevOutcome.Completed, completion: completed },
+            },
+            handoff,
+          ),
         )
   const resolution = Result.getOrThrow(
     makeJevResolution(
@@ -91,19 +123,35 @@ const evidence = (value: InferenceExpenseSource) => ({
   ],
 })
 const report = (value: InferenceExpenseSource) =>
-  Result.getOrThrow(makeInferenceCostReport(evidence(value), inferenceExpenseRateCard))
+  Result.getOrThrow(costReportFromEvidence(evidence(value), inferenceExpenseRateCard))
 const sealHandoff = (disposition: EntryHandoff['disposition']): EntryHandoff => {
   const { handoffHash: _, ...material } = { ...completion.handoff, disposition }
-  return { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const graph = Result.getOrThrow(
+    readSequentialInferenceCostEvidence({
+      request,
+      receipt: null,
+      resolution: null,
+      handoff: { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) },
+    }),
+  )
+  if (graph.handoff === null) throw new Error('Expected retained handoff')
+  return graph.handoff
 }
 
 test('prices both providers and posts separate deterministic expenses for one parent request', () => {
+  expect(request.schemaVersion).toBe('bayn.jev-evaluation-request.v2')
+  expect(request.request.schemaVersion).toBe('bayn.entry-inference-input.v3')
+  expect(completion.handoff.schemaVersion).toBe('bayn.entry-handoff.v2')
   const value = source()
   const result = report(value)
   expect(result.requestCount).toBe(1)
   expect(result.providerRequestCount).toBe(2)
   expect(result.knownEstimatedCostPicoUsd).toBe('18400000')
   expect(result.estimatedTotalCostMicros).toBe('19')
+  expect(result.requestTimings).toEqual([
+    { requestKey: request.requestId, startedAt: request.observedAt, estimatedCostPicoUsd: '8400000' },
+    { requestKey: `${request.requestId}:CHART`, startedAt: request.observedAt, estimatedCostPicoUsd: '10000000' },
+  ])
   const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard))
   expect(quotes).toHaveLength(2)
   expect(Result.isFailure(makeInferenceExpenseQuote(value, inferenceExpenseRateCard))).toBe(true)
@@ -113,6 +161,30 @@ test('prices both providers and posts separate deterministic expenses for one pa
   expect(new Set(plan.transfers.map((row) => row.id)).size).toBe(2)
   expect(plan.transfers.reduce((sum, row) => sum + row.amount, 0n)).toBe(18_400_000n)
   expect(result.invoiceReconciled).toBe(false)
+})
+
+test('metered failures retain their cost without inventing a provider start time', () => {
+  const value = source({
+    ...completion,
+    jev: {
+      status: 'FAILED',
+      failure: JevFailure.Response,
+      httpStatus: 429,
+      responseHash: null,
+      usage: { input_tokens: 200, output_tokens: 0 },
+    },
+  })
+  const result = report(value)
+  expect(result.estimatedTotalCostMicros).toBe('19')
+  expect(result.requestTimings.find((timing) => timing.requestKey === request.requestId)).toEqual({
+    requestKey: request.requestId,
+    startedAt: null,
+    estimatedCostPicoUsd: '8400000',
+  })
+  const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard))
+  expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers.map((row) => row.amount)).toEqual(
+    expect.arrayContaining([10000000n, 8400000n]),
+  )
 })
 
 test('retains known chart charges and explicit unknown Jev usage after a provider failure', () => {
@@ -196,13 +268,16 @@ test('accounts for a metered visual refusal while proving no dependent request w
 test('uses a positive expiry receipt to record zero for both undispatched stages', () => {
   const value = source()
   const receipt = Result.getOrThrow(
-    makeJevEvaluationReceipt(request, {
-      schemaVersion: 'bayn.jev-evaluation-receipt.v2',
-      requestId: request.requestId,
-      startedAt: request.observedAt,
-      completedAt: request.expiresAt,
-      outcome: { status: JevOutcome.Failed, failure: JevFailure.NotDispatched },
-    }),
+    makeRetainedReceipt(
+      {
+        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+        requestId: request.requestId,
+        startedAt: request.observedAt,
+        completedAt: request.expiresAt,
+        outcome: { status: JevOutcome.Failed, failure: JevFailure.NotDispatched },
+      },
+      null,
+    ),
   )
   const resolution = Result.getOrThrow(
     makeJevResolution(request, receipt, {
@@ -227,17 +302,50 @@ test('a late Jev receipt completes coverage without repricing or posting the cha
   expect(quotes).toHaveLength(3)
   expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(2)
   const frozen = quotes.map((quote) => ({ quote, verifiedAt: late.asOf }))
+  const decoded = Result.getOrThrow(decodeInferenceCostEvidence(evidence(late)))
   expect(
-    Result.getOrThrow(verifyInferenceExpenseCoverage(evidence(late), late.accountId, frozen)).completeMeteredCoverage,
+    Result.getOrThrow(verifyInferenceExpenseCoverage(decoded, late.accountId, frozen)).completeMeteredCoverage,
   ).toBe(true)
   expect(
-    Result.getOrThrow(summarizeForwardInferenceExpenses(evidence(late), late.accountId, frozen))
-      .knownEstimatedCostPicoUsd,
+    Result.getOrThrow(summarizeForwardInferenceExpenses(decoded, late.accountId, frozen)).knownEstimatedCostPicoUsd,
   ).toBe('18400000')
+})
+
+test('reuses one decoded source cut for pricing and both frozen provider charges', () => {
+  const value = structuredClone(source())
+  const frozen = Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard)).map((quote) => ({
+    quote,
+    verifiedAt: value.asOf,
+  }))
+  const decoded = Result.getOrThrow(decodeInferenceCostEvidence(evidence(value)))
+  const report = Result.getOrThrow(makeInferenceCostReport(decoded, inferenceExpenseRateCard))
+  const requestPayload = value.request
+  if (typeof requestPayload !== 'object' || requestPayload === null) throw new Error('Fixture request is not an object')
+  Object.defineProperty(requestPayload, 'schemaVersion', {
+    get: () => {
+      throw new Error('Decoded cost facts must not reopen the source payload')
+    },
+  })
+  expect(Result.getOrThrow(makeInferenceCostReport(decoded, inferenceExpenseRateCard))).toEqual(report)
+  expect(
+    Result.getOrThrow(verifyInferenceExpenseCoverage(decoded, value.accountId, frozen)).completeMeteredCoverage,
+  ).toBe(true)
+})
+
+test('wire evidence cannot inject previously decoded cost facts', () => {
+  const input = evidence(source())
+  expect(
+    Result.isFailure(
+      decodeInferenceCostEvidence({
+        ...input,
+        requests: input.requests.map((row) => ({ ...row, sourceFingerprint: 'f'.repeat(64), stages: [] })),
+      }),
+    ),
+  ).toBe(true)
 })
 
 test('refuses a completed cost graph with a missing committed handoff', () => {
   expect(
-    Result.isFailure(makeInferenceCostReport(evidence({ ...source(), handoff: null }), inferenceExpenseRateCard)),
+    Result.isFailure(costReportFromEvidence(evidence({ ...source(), handoff: null }), inferenceExpenseRateCard)),
   ).toBe(true)
 })

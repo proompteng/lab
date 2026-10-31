@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 import { StreamingPerformanceManifestSchema } from '../intraday-schema'
 
 import { PostgresClientLive } from '../../db/postgres-client'
@@ -25,6 +26,7 @@ import { defaultJevProtocolDocument } from '../../jev/protocol'
 import { planAccountingReceipt } from '../../db/execution-store/decisions'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../../broker/identity'
 import { config as runtimeConfig } from '../../testing/runtime-fixtures'
+import { executionDecisionRows } from '../../db/execution-decision-query'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -36,6 +38,55 @@ const config = {
 const hash = (character: string): string => character.repeat(64)
 
 describePostgres('Forward-performance PostgreSQL read boundary', () => {
+  test('the shared decision source retains entry, closure and residual-close instructions without admitting an unbound entry', async () => {
+    const runtime = ManagedRuntime.make(
+      PostgresClientLive(config, { maxConnections: 1, applicationName: 'bayn-decision-query-test' }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    )
+    try {
+      const rows = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE autonomous_cycles (cycle_id text, decision_hash text) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (cycle_id text, decision_hash text, schema_version text, document jsonb, created_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_closures (cycle_id text, document jsonb) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_close_replans (cycle_id text, document jsonb) ON COMMIT DROP`
+              yield* sql`INSERT INTO autonomous_cycles VALUES (${'a'.repeat(64)}, ${'b'.repeat(64)}), (${'c'.repeat(64)}, ${'d'.repeat(64)})`
+              const at = '2026-10-25T14:30:00.000Z'
+              for (const [source, cycle, hash] of [
+                ['entry', 'a', 'b'],
+                ['unbound', 'c', 'e'],
+              ] as const) {
+                yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (${cycle.repeat(64)}, ${hash.repeat(64)}, 'bayn.paper-cycle-decision.v2', ${sql.json({ source })}, ${at})`
+              }
+              for (const source of ['closure', 'replan'] as const) {
+                const document = {
+                  createdAt: at,
+                  document: {
+                    schemaVersion: 'bayn.paper-cycle-decision.v2',
+                    contentHash: (source === 'closure' ? 'f' : '0').repeat(64),
+                    source,
+                  },
+                }
+                if (source === 'closure')
+                  yield* sql`INSERT INTO autonomous_cycle_paper_closures VALUES (${'a'.repeat(64)}, ${sql.json(document)})`
+                else
+                  yield* sql`INSERT INTO autonomous_cycle_paper_close_replans VALUES (${'a'.repeat(64)}, ${sql.json(document)})`
+              }
+              return yield* sql`SELECT document->>'source' AS source FROM (${executionDecisionRows(sql)}) evidence ORDER BY source`
+            }),
+          )
+        }),
+      )
+      expect(rows).toEqual([{ source: 'closure' }, { source: 'entry' }, { source: 'replan' }])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   test('composes gross fills and observed coin fees with an independent cumulative inventory boundary', async () => {
     const parsed = new URL(testUrl)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
@@ -188,9 +239,74 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             yield* sql`CREATE TEMP TABLE intents AS SELECT * FROM public.intents`
             yield* sql`UPDATE pg_temp.intents SET state='TERMINAL'`
             const postgres = yield* readForwardPerformancePostgres(sql, accountId)
+            yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL)`
+            yield* sql`CREATE TRIGGER broker_event_projection_hash BEFORE INSERT ON pg_temp.broker_events
+                  FOR EACH ROW EXECUTE FUNCTION initialize_broker_event_projection_hash()`
+            yield* sql`CREATE TEMP TABLE account_snapshots (LIKE public.account_snapshots INCLUDING ALL)`
+            yield* sql`INSERT INTO broker_events SELECT * FROM public.broker_events`
+            yield* sql`INSERT INTO account_snapshots
+                  (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros,crypto_fee_tier)
+                  SELECT event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros,crypto_fee_tier
+                  FROM public.account_snapshots`
+            yield* sql`INSERT INTO broker_events
+                  (event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,
+                    source_sequence,occurred_at,observed_at)
+                  SELECT md5('history-event-' || n) || md5('event-' || n),'bayn.paper-broker-event.v1',
+                    md5('history-content-' || n) || md5('content-' || n),
+                    CASE WHEN n % 4 = 0 THEN 'ORDER' ELSE 'ACCOUNT' END,'ALPACA',
+                    CASE WHEN n % 4 = 1 THEN 'foreign-account' ELSE ${accountId} END,
+                    'history-' || n,1000+n,'2026-09-17T15:28:00Z'::timestamptz,
+                    CASE WHEN n % 4 IN (0,1,2) THEN '2026-09-19T21:00:00Z'::timestamptz
+                      ELSE '2026-09-17T15:28:00Z'::timestamptz END
+                  FROM generate_series(1,16384) AS n`
+            yield* sql`INSERT INTO account_snapshots
+                  (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
+                  SELECT event_id,account_id,'bayn.paper-account-snapshot.v2','ACTIVE','USD',
+                    999000000,999000000,999000000
+                  FROM broker_events WHERE source_event_id LIKE 'history-%' AND event_kind='ACCOUNT'`
+            yield* sql`ANALYZE broker_events`
+            yield* sql`ANALYZE account_snapshots`
+            const lookups: Statement<Record<string, unknown>>[] = []
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (statement.compile()[0].includes('FROM account_snapshots AS snapshot')) lookups.push(statement)
+                return statement
+              },
+            })
+            expect(yield* readForwardPerformancePostgres(monitored, accountId)).toEqual(postgres)
+            expect(lookups).toHaveLength(5)
+            for (const lookup of lookups) {
+              const [query, parameters] = lookup.compile()
+              const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+              const plans = yield* Schema.decodeUnknownEffect(
+                Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+              )(explanation)
+              const snapshotRowsRead = (node: unknown): number => {
+                if (node === null || typeof node !== 'object') return 0
+                const rows =
+                  'Relation Name' in node &&
+                  (node['Relation Name'] === 'broker_events' || node['Relation Name'] === 'account_snapshots') &&
+                  'Actual Rows' in node &&
+                  typeof node['Actual Rows'] === 'number' &&
+                  'Actual Loops' in node &&
+                  typeof node['Actual Loops'] === 'number'
+                    ? node['Actual Rows'] * node['Actual Loops']
+                    : 0
+                return (
+                  rows +
+                  ('Plans' in node && Array.isArray(node.Plans)
+                    ? node.Plans.reduce((sum: number, child: unknown) => sum + snapshotRowsRead(child), 0)
+                    : 0)
+                )
+              }
+              expect(snapshotRowsRead(plans[0]?.['QUERY PLAN'][0]?.Plan)).toBeLessThan(128)
+            }
+            yield* sql`DROP TABLE pg_temp.account_snapshots, pg_temp.broker_events`
             const readers: ForwardPerformanceReaders = {
               postgres: readForwardPerformancePostgres,
               marketVolume: () => Effect.succeed([]),
+              inferenceExpenseSnapshots: () => Effect.succeed([]),
               inferenceExpenses: () => Effect.succeed([]),
               ledger: () =>
                 Effect.succeed({

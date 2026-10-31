@@ -152,7 +152,7 @@ export interface IntradayMomentumSignalPrices {
   readonly low: bigint
   readonly bid: bigint
   readonly ask: bigint
-  readonly trade: bigint
+  readonly trade: bigint | null
 }
 
 export type IntradayMomentumBenchmarkPrices = Pick<IntradayMomentumSignalPrices, 'reference' | 'bid' | 'ask'>
@@ -190,7 +190,7 @@ export const deriveIntradayMomentumSignalMetrics = (
   const doubledReference = 2n * prices.reference
   const doubledBenchmarkMidpoint = benchmarkPrices.bid + benchmarkPrices.ask
   const doubledBenchmarkReference = 2n * benchmarkPrices.reference
-  const breakoutReference = prices.ask < prices.trade ? prices.ask : prices.trade
+  const breakoutReference = prices.trade === null ? prices.bid : prices.ask < prices.trade ? prices.ask : prices.trade
   const lookbackReturnBps = floorDivide((doubledMidpoint - doubledReference) * 10_000n, doubledReference)
   const benchmarkReturnBps = floorDivide(
     (doubledBenchmarkMidpoint - doubledBenchmarkReference) * 10_000n,

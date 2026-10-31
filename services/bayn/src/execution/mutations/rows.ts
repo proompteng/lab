@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { MutationOperation } from '../../broker/alpaca-mutations/model'
+import { MutationOperation, MutationRoutingSchema } from '../../broker/alpaca-mutations/model'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import {
@@ -40,6 +40,7 @@ const StoredEventRows = Schema.Array(
     request_id: Schema.NullOr(NonEmptyString),
     response_status: Schema.NullOr(HttpStatus),
     response_content_hash: Schema.NullOr(Sha256),
+    routing: Schema.NullOr(MutationRoutingSchema),
     denial_reason: Schema.optionalKey(Schema.NullOr(SubmissionDenialReasonSchema)),
     occurred_at: UtcInstant,
   }),
@@ -107,6 +108,7 @@ const toEvent = (row: (typeof StoredEventRows.Type)[number]): MutationEvent => (
   ...(row.request_id === null ? {} : { requestId: row.request_id }),
   ...(row.response_status === null ? {} : { responseStatus: row.response_status }),
   ...(row.response_content_hash === null ? {} : { responseContentHash: row.response_content_hash }),
+  ...(row.routing === null ? {} : { routing: row.routing }),
   ...(row.denial_reason == null ? {} : { denialReason: row.denial_reason }),
   occurredAt: row.occurred_at,
 })
