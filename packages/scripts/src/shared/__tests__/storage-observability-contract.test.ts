@@ -319,22 +319,18 @@ test('alert email uses Brevo SMTP credentials from the existing secret store', (
   expect(externalSecret.spec.secretStoreRef).toEqual({ kind: 'ClusterSecretStore', name: 'onepassword-infra' })
   expect(alertmanager.global).toMatchObject({
     smtp_smarthost: 'smtp-relay.brevo.com:587',
-    smtp_auth_username: '{{ .smtp_username }}',
-    smtp_auth_password: '{{ .smtp_password }}',
+    smtp_auth_username: '{{ .username }}',
+    smtp_auth_password: '{{ .password }}',
     smtp_require_tls: true,
   })
-  expect(template['smtp-username']).toBe('{{ .smtp_username }}')
-  expect(
-    externalSecret.spec.data.map((entry: { secretKey: string; remoteRef: { key: string } }) => [
-      entry.secretKey,
-      entry.remoteRef.key,
-    ]),
-  ).toEqual([
-    ['smtp_username', 'brevo/username'],
-    ['smtp_password', 'brevo/password'],
-    ['smtp_from', 'brevo/from'],
-    ['email_to', 'brevo/to'],
-  ])
+  expect(template['smtp-username']).toBe('{{ .username }}')
+  expect(template['smtp-password']).toBe('{{ .password }}')
+  expect(template['smtp-from']).toBe('{{ .from }}')
+  expect(template['email-to']).toBe('{{ .to }}')
+  expect(externalSecret.spec.refreshInterval).toBe('24h')
+  expect(externalSecret.spec.target.template.mergePolicy).toBe('Replace')
+  expect(externalSecret.spec.data).toBeUndefined()
+  expect(externalSecret.spec.dataFrom).toEqual([{ extract: { key: 'brevo' } }])
 })
 
 test('Ceph catch-up scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {
