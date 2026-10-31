@@ -50,7 +50,10 @@ replicas. A database crash or failover discards unfinished attempts and requires
 a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
 query deadline, verified database TLS, and existing attempt expiry and capacity limits.
 
-`/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+`/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+The Service access tab uses registered service and named resource choices, with multiple permissions saved in one
+audited change. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
+portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits

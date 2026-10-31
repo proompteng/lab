@@ -4,7 +4,7 @@ import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Button, Input, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import {
   accessCommandSchema,
@@ -24,6 +24,7 @@ import {
   type ReadAuditResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 import { ServicePolicyPanel } from './service-policy-panel'
+import { SettingsSelect } from './settings-select'
 
 type AccessView = 'workspace' | 'platform' | 'audit'
 type View = AccessView | 'policies'
@@ -332,7 +333,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       ) : null}
     </div>
   )
-  const selectClass =
+  const textareaClass =
     'rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-100 focus-visible:outline-2 focus-visible:outline-zinc-400'
   return (
     <Tabs
@@ -341,28 +342,20 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
         if (value === 'workspace' || value === 'platform' || value === 'audit' || value === 'policies') setView(value)
       }}
       render={<section aria-label="Access administration" />}
-      className="gap-4 text-zinc-200"
+      className="min-w-0 gap-4 text-zinc-200"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <TabsList
-          activateOnFocus
-          aria-label="Access view"
-          className="h-auto min-h-9 max-w-full flex-wrap border border-white/10 bg-zinc-950/40 p-0.5"
-        >
+        <TabsList activateOnFocus aria-label="Access view" className="max-w-full justify-start overflow-x-auto">
           {(['workspace', 'platform', 'audit', 'policies'] as const)
             .filter((item) => item !== 'workspace' || workspaceUid)
             .map((item) => (
-              <TabsTrigger
-                key={item}
-                value={item}
-                className="min-w-20 px-3 text-[13px] text-zinc-400 data-active:bg-zinc-600 data-active:text-white data-active:shadow-sm dark:data-active:bg-zinc-600"
-              >
+              <TabsTrigger key={item} value={item} className="shrink-0 px-2.5">
                 {item === 'workspace'
                   ? 'Workspace'
                   : item === 'platform'
                     ? 'Platform'
                     : item === 'policies'
-                      ? 'Service policies'
+                      ? 'Service access'
                       : 'Audit'}
               </TabsTrigger>
             ))}
@@ -527,28 +520,28 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 <legend className="mb-2 text-sm font-medium">Change access</legend>
                 <label className="flex items-center gap-2 text-xs">
                   Change
-                  <select
-                    aria-label="Change"
-                    className={selectClass}
-                    {...form.register('action')}
-                    onChange={(event) => {
-                      const next = z.enum(actions).parse(event.target.value)
-                      form.setValue('action', next)
-                      form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
-
-                      if (['grant', 'emergency'].includes(next))
-                        form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
-                    }}
-                  >
-                    {(view === 'workspace'
-                      ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
-                      : ['membership', 'quota']
-                    ).map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  <Controller
+                    name="action"
+                    control={form.control}
+                    render={({ field }) => (
+                      <SettingsSelect
+                        {...field}
+                        aria-label="Change"
+                        disabled={busy || Boolean(pending)}
+                        onValueChange={(value) => {
+                          const next = z.enum(actions).parse(value)
+                          field.onChange(next)
+                          form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
+                          if (['grant', 'emergency'].includes(next))
+                            form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
+                        }}
+                        options={(view === 'workspace'
+                          ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
+                          : ['membership', 'quota']
+                        ).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))}
+                      />
+                    )}
+                  />
                 </label>
                 {['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(action)
                   ? field(
@@ -560,14 +553,22 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 {['membership', 'collaborator'].includes(action) ? (
                   <label className="flex items-center gap-2 text-xs">
                     Role
-                    <select aria-label="Role" {...form.register('role')} className={selectClass}>
-                      {(action === 'membership'
-                        ? ['member', 'administrator', 'auditor', 'operator']
-                        : ['developer', 'viewer']
-                      ).map((role) => (
-                        <option key={role}>{role}</option>
-                      ))}
-                    </select>
+                    <Controller
+                      name="role"
+                      control={form.control}
+                      render={({ field }) => (
+                        <SettingsSelect
+                          {...field}
+                          aria-label="Role"
+                          disabled={busy || Boolean(pending)}
+                          onValueChange={field.onChange}
+                          options={(action === 'membership'
+                            ? ['member', 'administrator', 'auditor', 'operator']
+                            : ['developer', 'viewer']
+                          ).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))}
+                        />
+                      )}
+                    />
                   </label>
                 ) : null}
                 {['membership', 'collaborator'].includes(action) ? (
@@ -645,7 +646,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                           rows={2}
                           aria-invalid={Boolean(form.formState.errors[name])}
                           aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
-                          className={`${selectClass} block w-full`}
+                          className={`${textareaClass} block w-full`}
                           placeholder="One approved target per line"
                         />
                         {form.formState.errors[name] ? (

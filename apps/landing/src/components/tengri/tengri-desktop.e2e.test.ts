@@ -2064,7 +2064,7 @@ test('offers old-editor drafts for download without overwriting guest files or e
   await expect(code).toHaveCount(0)
 })
 
-async function selectCodexOption(page: Page, picker: Locator, label: string) {
+async function selectOption(page: Page, picker: Locator, label: string) {
   await picker.click()
   await page.getByRole('option', { name: label, exact: true }).click()
   await expect(page.getByRole('listbox')).toHaveCount(0)
@@ -2197,7 +2197,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
       model: 'gpt-6.1-sol',
       reasoningEffort: 'high',
     })
-  await selectCodexOption(page, model, 'GPT-5.6 Luna')
+  await selectOption(page, model, 'GPT-5.6 Luna')
   await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Low')
   await reasoning.click()
   await expect(page.getByRole('listbox')).toBeVisible()
@@ -2247,7 +2247,7 @@ for (const savedThread of [false, true]) {
       options.codexModelsError = undefined
       await tengri.getByRole('button', { name: 'Retry models' }).click()
       await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
-      await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
+      await selectOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
       await tengri.getByRole('button', { name: 'Send message' }).click()
       await expect
         .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
@@ -2632,10 +2632,10 @@ for (const unavailable of ['model', 'effort']) {
     await expect(tengri.getByText('Saved Codex settings are unavailable', { exact: true })).toBeVisible()
     const model = tengri.getByRole('combobox', { name: 'Model', exact: true })
     await expect(model).toBeEnabled()
-    if (unavailable === 'model') await selectCodexOption(page, model, 'GPT-6.1 Sol')
+    if (unavailable === 'model') await selectOption(page, model, 'GPT-6.1 Sol')
     const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
     await expect(reasoning).toBeEnabled()
-    await selectCodexOption(page, reasoning, 'Low')
+    await selectOption(page, reasoning, 'Low')
     await tengri.getByRole('button', { name: 'Retry', exact: true }).click()
     await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
     expect(mock.actions.filter((action) => action.action === 'resume-thread').at(-1)).toMatchObject({
@@ -2658,7 +2658,7 @@ test('keeps an unavailable default visible until the user selects an available m
   await expect(model.locator('[data-slot="select-value"]')).toHaveText('gpt-6.1-sol (unavailable)')
   await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
   await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
-  await selectCodexOption(page, model, 'GPT-5.6 Luna')
+  await selectOption(page, model, 'GPT-5.6 Luna')
   await expect(tengri.getByRole('button', { name: 'Send message' })).toBeEnabled()
   await expect(tengri.getByRole('alert')).toHaveCount(0)
 })
@@ -6211,7 +6211,9 @@ test('renders focused macOS settings panes with accessible navigation', async ({
   await expect(settings.getByText('Firecracker')).toBeVisible()
   await expect(settings.getByLabel('Sleep when inactive')).toHaveCount(0)
   await openSettingsPane(settings, 'Power & Sleep')
-  await expect(settings.getByLabel('Sleep when inactive')).toHaveValue('60')
+  await expect(settings.getByLabel('Sleep when inactive').locator('[data-slot="select-value"]')).toHaveText(
+    'After 1 hour',
+  )
   expect(fixture.actions.filter((action) => action.action === 'codex-account')).toHaveLength(accountRequests)
   await settings.getByRole('button', { name: 'Back to General' }).click()
   await expect(settings.getByRole('button', { name: 'Open About', exact: true })).toBeVisible()
@@ -6239,18 +6241,18 @@ test('saves the sleep timeout immediately and reads it back after reload', async
   await openSettingsPane(settings, 'Power & Sleep')
   const timeout = settings.getByLabel('Sleep when inactive')
   await timeout.focus()
-  await timeout.selectOption('1')
+  await selectOption(page, timeout, 'After 1 minute')
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(1)
   await expect(timeout).toBeEnabled()
   await expect(timeout).toBeFocused()
   await page.reload()
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   await openSettingsPane(settings, 'Power & Sleep')
-  await expect(timeout).toHaveValue('1')
-  await timeout.selectOption('0')
+  await expect(timeout.locator('[data-slot="select-value"]')).toHaveText('After 1 minute')
+  await selectOption(page, timeout, 'Never')
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(0)
   await expect(timeout).toBeEnabled()
-  await timeout.selectOption('60')
+  await selectOption(page, timeout, 'After 1 hour')
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(60)
   expect(
     fixture.actions.filter((action) => action.action === 'update-power-settings').map((action) => action.power),
@@ -6280,7 +6282,7 @@ test('keeps a failed sleep preference visible and retries the same value', async
   const settings = page.getByRole('region', { name: 'Settings window' })
   await openSettingsPane(settings, 'Power & Sleep')
   const timeout = settings.getByLabel('Sleep when inactive')
-  await timeout.selectOption('5')
+  await selectOption(page, timeout, 'After 5 minutes')
   await started.promise
   await openSettingsPane(settings, 'About')
   release.resolve()
@@ -6290,7 +6292,7 @@ test('keeps a failed sleep preference visible and retries the same value', async
   ).toBeFocused()
   await openSettingsPane(settings, 'Power & Sleep')
   await expect(settings.getByRole('alert')).toContainText('Sleep settings could not be saved')
-  await expect(timeout).toHaveValue('5')
+  await expect(timeout.locator('[data-slot="select-value"]')).toHaveText('After 5 minutes')
   expect(fixture.getAgent()?.power.idleTimeoutMinutes).toBe(60)
   await settings.getByRole('button', { name: 'Try Again' }).click()
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(5)
@@ -6412,7 +6414,7 @@ for (const outcome of ['success', 'uncertain'] as const) {
     await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
     const settings = page.getByRole('region', { name: 'Settings window' })
     await openSettingsPane(settings, 'Privacy & Security')
-    await settings.getByLabel('Change', { exact: true }).selectOption('grant')
+    await selectOption(page, settings.getByLabel('Change', { exact: true }), 'Grant')
     await settings.getByLabel('Diagnostic agent UUID').fill('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
     await settings.getByLabel('Proof key thumbprint').fill('a'.repeat(43))
     await settings.getByLabel('Reason', { exact: true }).fill('Settings navigation regression fixture')
@@ -6450,8 +6452,8 @@ test('prepares suggested prompts and grows multiline drafts without sending them
   await expect.poll(async () => (await prompt.boundingBox())!.height).toBeGreaterThan(initialHeight)
   expect((await prompt.boundingBox())!.height).toBeLessThanOrEqual(160)
   expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
-  await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Model', exact: true }), 'GPT-5.6 Luna')
-  await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
+  await selectOption(page, tengri.getByRole('combobox', { name: 'Model', exact: true }), 'GPT-5.6 Luna')
+  await selectOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
   await page.setViewportSize({ width: 390, height: 680 })
   await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeInViewport()
   await expect(tengri.getByRole('combobox', { name: 'Reasoning effort' })).toBeInViewport()
@@ -8677,7 +8679,7 @@ test('retains pasted images and text after a failed send and supports retry', as
   await expect(prompt).toHaveValue('Inspect this screenshot')
   await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
   const original = mock.actions.find((action) => action.action === 'send-turn')
-  await selectCodexOption(page, page.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
+  await selectOption(page, page.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(2)
   const retry = mock.actions.filter((action) => action.action === 'send-turn')[1]
@@ -9739,7 +9741,7 @@ test('auto-approves actions while keeping questions and elicitation forms manual
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByRole('combobox', { name: 'Approvals', exact: true })).toBeVisible()
-  await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Approvals', exact: true }), 'Auto approve')
+  await selectOption(page, tengri.getByRole('combobox', { name: 'Approvals', exact: true }), 'Auto approve')
   const base = {
     kind: 'approval',
     threadId: 'thread-active',
@@ -9830,7 +9832,7 @@ test('auto-approves actions while keeping questions and elicitation forms manual
   await expect(question).toHaveCount(0)
   await expect(tengri.getByRole('combobox', { name: 'Approvals', exact: true })).toContainText('Auto approve')
   expect(await page.evaluate(() => localStorage.getItem('tengri-approval-mode:microvm-ada'))).toBe('auto')
-  await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Approvals', exact: true }), 'Ask first')
+  await selectOption(page, tengri.getByRole('combobox', { name: 'Approvals', exact: true }), 'Ask first')
   await emitCodexEvent(page, {
     ...base,
     sequence: 5,
@@ -9989,7 +9991,7 @@ for (const resolution of ['local response', 'server event'] as const) {
         await card.getByRole('button', { name: 'Approve once', exact: true }).click()
       }
       if (mode === 'automatic')
-        await selectCodexOption(page, chat.getByRole('combobox', { name: 'Approvals', exact: true }), 'Auto approve')
+        await selectOption(page, chat.getByRole('combobox', { name: 'Approvals', exact: true }), 'Auto approve')
       const expectedControls = resolution === 'local response' ? 1 : 0
       await expect
         .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length)
@@ -11112,7 +11114,13 @@ test('administers catalog-defined service policies and preserves the exact pendi
         policyCatalogJson: JSON.stringify({
           version: 1,
           resources: [
-            { kind: 'fixture.service', relations: [{ name: 'can_inspect', subjects: ['human', 'workload'] }] },
+            {
+              kind: 'fixture.service',
+              relations: [
+                { name: 'can_inspect', subjects: ['human', 'workload'] },
+                { name: 'can_list', subjects: ['human', 'workload'] },
+              ],
+            },
           ],
         }),
         relayClients: [{ id: 'opencode', identities: [workload] }],
@@ -11123,32 +11131,57 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const settings = page.getByRole('region', { name: 'Settings window', exact: true })
   await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Service policies', exact: true }).click()
-  const policies = settings.getByRole('region', { name: 'Service policies', exact: true })
-  await expect(policies.getByLabel('Policy', { exact: true })).toBeVisible()
-  const controlHeights = await policies
-    .locator('select, input:not([type="checkbox"]):not([type="hidden"])')
-    .evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height))
-  expect(controlHeights).toHaveLength(6)
-  expect(Math.max(...controlHeights) - Math.min(...controlHeights)).toBeLessThanOrEqual(1)
-  await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
-  await expect(policies.getByLabel('Resource identity', { exact: true })).toHaveAttribute('aria-invalid', 'true')
-  await expect(policies.getByLabel('Resource identity', { exact: true })).toHaveAccessibleDescription(
-    'Choose a target or enter its exact resource ID. Choose a resource',
-  )
+  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
+  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
+  await expect(policies.getByLabel('Service', { exact: true })).toBeVisible()
+  await expect(settings.locator('select, datalist')).toHaveCount(0)
+  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
+  await expect(policies.getByLabel('Resource', { exact: true })).toHaveAttribute('aria-invalid', 'true')
+  await expect(policies.getByLabel('Resource', { exact: true })).toHaveAccessibleDescription('Choose a resource')
   expect(writes).toHaveLength(0)
-  await policies.getByLabel('Policy', { exact: true }).selectOption('fixture.service')
-  await policies.getByLabel('Resource identity', { exact: true }).fill('fixture/tenant-a')
-  await policies.getByLabel('Permission', { exact: true }).selectOption('can_inspect')
-  await policies.getByLabel('Registered service identity', { exact: true }).fill(workload)
+  const servicePicker = policies.getByLabel('Service', { exact: true })
+  await servicePicker.focus()
+  await servicePicker.press('ArrowDown')
+  await expect(page.getByRole('option', { name: 'OpenCode', exact: true })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(servicePicker).toBeFocused()
+  await policies.getByLabel('Resource', { exact: true }).click()
+  const resourceMenu = page.getByRole('listbox')
+  await expect(resourceMenu).toContainText('Tenant A · fixture')
+  await expect(resourceMenu).not.toContainText('tenant-a')
+  const menuStyle = await resourceMenu.evaluate((element) => {
+    const style = getComputedStyle(element.closest('[data-slot="select-content"]') ?? element)
+    const context = document.createElement('canvas').getContext('2d')
+    if (!context) throw new Error('A canvas is required to normalize computed colors')
+    const rgb = (color: string) => {
+      context.fillStyle = color
+      context.fillRect(0, 0, 1, 1)
+      return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
+    }
+    return { background: rgb(style.backgroundColor), color: rgb(style.color), font: style.fontFamily }
+  })
+  expect(menuStyle.background).toEqual([24, 24, 27])
+  expect(menuStyle.color).toEqual([244, 244, 245])
+  expect(menuStyle.font).toMatch(/geist/i)
+  await settings.screenshot({ path: test.info().outputPath('service-access-resource-menu.png') })
+  await page.getByRole('option', { name: 'Tenant A · fixture', exact: true }).click()
+  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).check()
+  await policies.getByRole('checkbox', { name: 'Can list', exact: true }).check()
+  const controlHeights = await policies
+    .locator('[data-slot="select-trigger"], [data-slot="input"]')
+    .evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height))
+  expect(controlHeights).toHaveLength(5)
+  expect(Math.max(...controlHeights) - Math.min(...controlHeights)).toBeLessThanOrEqual(1)
   await policies.getByLabel('Reason', { exact: true }).fill('Allow the standalone client to inspect Tenant A')
-  await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
+  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
   await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
   await settings.getByRole('tab', { name: 'Audit', exact: true }).click()
   await expect(policies).toBeHidden()
-  await settings.getByRole('tab', { name: 'Service policies', exact: true }).click()
+  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
   await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
   await policies.getByRole('button', { name: 'Retry exact change', exact: true }).click()
+  await expect(policies.getByRole('status')).toContainText('Access updated.')
+  await policies.getByText('View receipt', { exact: true }).click()
   await expect(policies.getByRole('status')).toContainText('audit 55555555')
   expect(writes).toHaveLength(2)
   expect(writes[1]).toEqual(writes[0])
@@ -11162,16 +11195,24 @@ test('administers catalog-defined service policies and preserves the exact pendi
         subjectId: workload,
         enabled: true,
       },
+      {
+        relation: 'can_list',
+        subjectKind: 'workload',
+        subjectId: workload,
+        enabled: true,
+        resource: { kind: 'fixture.service', id: 'fixture/tenant-a' },
+      },
     ],
   })
-  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).focus()
-  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).press('Space')
-  await expect(policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' })).not.toBeChecked()
-  await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
+  await selectOption(page, policies.getByLabel('Change', { exact: true }), 'Remove access')
+  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
   await expect.poll(() => writes.length).toBe(3)
-  expect(writes[2]).toMatchObject({ expectedPolicyVersion: '21', relationships: [{ enabled: false }] })
-  await expect(policies.getByRole('button', { name: 'Apply policy', exact: true })).toBeEnabled()
-  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service policies"]').analyze()
+  expect(writes[2]).toMatchObject({
+    expectedPolicyVersion: '21',
+    relationships: [{ enabled: false }, { enabled: false }],
+  })
+  await expect(policies.getByRole('button', { name: 'Save access', exact: true })).toBeEnabled()
+  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service access"]').analyze()
   expect(accessibility.violations).toEqual([])
   await settings.getByRole('button', { name: 'Maximize Settings', exact: true }).click()
   await settings.screenshot({ path: test.info().outputPath('service-policies-desktop.png') })
@@ -11179,7 +11220,9 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await expect
     .poll(() => policies.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
     .toBeLessThanOrEqual(1)
-  await expect(policies.getByLabel('Registered service identity', { exact: true })).toHaveValue(workload)
+  await expect(policies.getByLabel('Service', { exact: true }).locator('[data-slot="select-value"]')).toHaveText(
+    'OpenCode',
+  )
   await policies.getByLabel('Reason', { exact: true }).scrollIntoViewIfNeeded()
   await settings.screenshot({ path: test.info().outputPath('service-policies-narrow.png') })
 })
