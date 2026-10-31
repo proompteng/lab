@@ -172,13 +172,16 @@ after version-specific readback and COMPLIANCE retention verification. An uncert
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
 Idle polls continue verifying the archive every second, but refresh its durable heartbeat only when it reaches ten
-seconds old. New batches still acknowledge immediately. A verification failure immediately clears archive health;
+seconds old. New batches still acknowledge immediately. A transient HTTP transport failure repeats the complete
+verification once before declaring failure; uncertain uploads reuse the existing immutable key and must pass the same
+version-specific readback. A persistent transport failure or an integrity failure immediately clears archive health;
 repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
 unchanged.
 
-The worker retries HTTP transport failures after one second while archive health remains invalid. Recovery requires
-fresh bucket, retention and payload verification before another acknowledgement. Database, integrity and policy
-failures still terminate the worker. `--once` reports a transport failure immediately instead of retrying.
+After that bounded retry, the worker retries HTTP transport failures after one second while archive health remains
+invalid. Recovery requires fresh bucket, retention and payload verification before another acknowledgement. Database, integrity and policy
+failures still terminate the worker. `--once` performs the same bounded verification retry and reports any remaining
+failure without entering the worker's retry loop.
 
 If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
 the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit
