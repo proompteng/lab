@@ -35,7 +35,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { startSignIn } from '@/lib/platform/auth-client'
 import {
   completePendingConnection,
   connectionConnector,
@@ -201,7 +201,7 @@ export function ConnectionsPanel({
           if ((cause.status === 401 || cause.status === 428) && !afterSignIn) {
             try {
               retainPendingConnection(sessionStorage, pendingKey, request, true)
-              await startTengriSignIn(cause.status === 401 ? 'login' : 'step-up')
+              await startSignIn(cause.status === 401 ? 'login' : 'step-up')
             } catch {
               setError('Verification could not start. Your choices are saved. Try again when you’re ready.')
             }

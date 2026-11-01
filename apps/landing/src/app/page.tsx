@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import DesktopHero from '@/components/desktop-hero'
 import DesktopOnboarding from '@/components/tengri/desktop-onboarding'
-import { isTengriAuthConfigured } from '@/lib/tengri/auth'
+import { isPlatformAuthConfigured } from '@/lib/platform/auth'
 import { shouldRenderTengriDesktop } from '@/lib/tengri/desktop-gate'
 import { isTengriControlPlaneConfigured } from '@/lib/tengri/grpc'
 import { TENGRI_PRODUCT_IDENTITY } from '@/lib/tengri/product-identity'
@@ -51,5 +51,5 @@ export default function Home() {
 }
 
 function tengriAvailable() {
-  return shouldRenderTengriDesktop(isTengriAuthConfigured(), isTengriControlPlaneConfigured())
+  return shouldRenderTengriDesktop(isPlatformAuthConfigured(), isTengriControlPlaneConfigured())
 }

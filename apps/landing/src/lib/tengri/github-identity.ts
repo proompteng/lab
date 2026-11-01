@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { request } from 'node:https'
 import { z } from 'zod'
 import { githubLoginSchema } from './access-schemas'
-import { OfzError } from './ofz'
+import { OfzError } from '../platform/ofz'
 
 const profile = z.object({
   id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),

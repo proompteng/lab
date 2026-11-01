@@ -16,7 +16,7 @@ import {
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
-import { ofzCall } from '@/lib/tengri/ofz'
+import { ofzCall } from '@/lib/platform/ofz'
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {

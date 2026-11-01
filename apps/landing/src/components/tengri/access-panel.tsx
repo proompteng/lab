@@ -30,7 +30,7 @@ import {
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
-import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
+import { PasskeyRequiredError, startSignIn } from '@/lib/platform/auth-client'
 import {
   Action,
   ExecuteCommandResponseSchema,
@@ -1026,7 +1026,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     onClick={
                       needsVerification
                         ? () =>
-                            void startTengriSignIn('step-up').catch(() =>
+                            void startSignIn('step-up').catch(() =>
                               setError(new PasskeyRequiredError('Verification could not start. Try again.')),
                             )
                         : undefined

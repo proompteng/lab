@@ -1031,6 +1031,21 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   }
 }
 
+test('signs out of the desktop through shared platform authentication', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  await settings.getByText('Sign-in & passkeys', { exact: true }).click()
+  const response = page.waitForResponse('**/api/auth/logout')
+  await settings.getByRole('button', { name: 'Sign Out', exact: true }).click()
+  const logout = await response
+  expect(logout.request().method()).toBe('POST')
+  expect(logout.request().headers()['x-platform-operation-id']).toMatch(/^[0-9a-f-]{36}$/)
+  await expect(page.getByRole('button', { name: 'Continue with GitHub', exact: true })).toBeVisible()
+})
+
 test('aborts cold browser startup on close so guest lifecycle actions can proceed', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.addInitScript(() => {

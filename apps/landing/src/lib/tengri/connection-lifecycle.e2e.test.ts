@@ -11,15 +11,15 @@ import {
   type PlatformConnection,
 } from './generated/proompteng/authz/v1/platform_pb'
 import { ConnectorOperationSchema } from './generated/proompteng/relay/v1/relay_pb'
-import type { TengriIdentity } from './auth'
+import type { PlatformIdentity } from '../platform/auth'
 
 void mock.module('server-only', () => ({}))
-const { OfzError } = await import('./ofz')
+const { OfzError } = await import('../platform/ofz')
 const { TengriUnavailableError } = await import('./grpc')
 const workspace = '11111111-1111-4111-8111-111111111111'
 const connectionId = '22222222-2222-4222-8222-222222222222'
 const firstRuntime = '33333333-3333-4333-8333-333333333333'
-const identity: TengriIdentity = {
+const identity: PlatformIdentity = {
   subject: '7',
   user: { id: '7', name: 'Fixture', email: 'fixture@example.test', image: null },
   session: create(SessionSchema, {
@@ -56,7 +56,7 @@ const revokedDelegations = new Set<string>()
 const decision = () =>
   create(PlatformDecisionSchema, { allowed: true, auditReceiptId: randomUUID(), recoveryGeneration: BigInt(3) })
 
-void mock.module('./ofz', () => ({
+void mock.module('../platform/ofz', () => ({
   OfzError,
   ofzCall: async (method: { name: string }, input: unknown) => {
     const body = z.record(z.string(), z.unknown()).parse(input)
@@ -234,7 +234,7 @@ beforeEach(() => {
   completed.clear()
   revocations.clear()
   revokedDelegations.clear()
-  process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+  process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
 })
 
 test('BFF keeps idle workspaces untouched and activates only after exact guest acknowledgement', async () => {

@@ -1,4 +1,4 @@
-import { isTengriAuthConfigured } from '@/lib/tengri/auth'
+import { isPlatformAuthConfigured } from '@/lib/platform/auth'
 import { observeRequest } from '@/lib/observability/server'
 import {
   answerCodexQuestions,
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
 async function getSnapshot(request: Request) {
   try {
     requireSameOriginGet(request)
-    const authConfigured = isTengriAuthConfigured()
+    const authConfigured = isPlatformAuthConfigured()
     const previewGatewayOrigin = normalizePreviewGatewayOrigin(process.env.TENGRI_PUBLIC_URL || '')
     const controlPlaneConfigured = isTengriControlPlaneConfigured() && Boolean(previewGatewayOrigin)
     if (!authConfigured) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })

@@ -39,6 +39,11 @@ The homepage shows a “convex backend” badge once it can reach the Convex hea
 
 ## Tengri BFF development
 
+Browser identity lives in `src/lib/platform/auth.ts` and uses the platform authorization API. Each web deployment sets
+`PLATFORM_WEB_ORIGIN`, `PLATFORM_OIDC_CLIENT_ID`, `PLATFORM_OIDC_ISSUER` and `PLATFORM_OIDC_CLIENT_SECRET_FILE`, with
+its own SPIFFE identity. The deployed host-only cookie names remain stable, preserving active browser sessions during the move. Cookies
+remain isolated between origins, and Ofz binds each session to its gateway. The retired session RPCs are removed.
+
 The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and required verified passkeys. Ofz
 verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
@@ -173,8 +178,8 @@ The conversation follows new events while the reader is at the bottom. Reading e
 position until the reader chooses **Jump to latest**.
 
 1. Set the Ofz endpoint, exact SPIFFE identity, TLS control database files and OIDC client secret file from `.env.example`.
-2. Set `TENGRI_DESKTOP_ORIGIN` to the HTTPS desktop origin and `TENGRI_OIDC_ISSUER` to the dedicated realm. The issuer
-   registers the exact `${TENGRI_DESKTOP_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
+2. Set `PLATFORM_WEB_ORIGIN` to the HTTPS desktop origin and `PLATFORM_OIDC_ISSUER` to the dedicated realm. The issuer
+   registers the exact `${PLATFORM_WEB_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
    broker callback documented in [`keycloak/tengri`](../../argocd/applications/keycloak/tengri/README.md).
 3. Keep `TENGRI_PUBLIC_URL` as the separate browser/preview gateway origin. It is not the desktop authentication origin.
 4. Start the Rust Tengri service against the isolated migrated control plane. Direct GitHub/Better Auth cookies and

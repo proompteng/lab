@@ -4,11 +4,11 @@ import { GetExecutionResponseSchema, RelayService } from '@/lib/tengri/generated
 import { relayCall } from '@/lib/platform/relay'
 import { relayEnvelope } from '@/lib/platform/relay-envelope'
 import { noStoreHeaders, readTengriJsonBody, tengriRouteError } from '@/lib/tengri/http'
-import { OfzError } from '@/lib/tengri/ofz'
+import { OfzError } from '@/lib/platform/ofz'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const expected = new URL(process.env.TENGRI_DESKTOP_ORIGIN?.trim() || 'https://proompteng.ai')
+    const expected = new URL(process.env.PLATFORM_WEB_ORIGIN?.trim() || 'https://proompteng.ai')
     if (
       request.headers.get('host') !== expected.host ||
       request.headers.get('sec-fetch-site') === 'cross-site' ||

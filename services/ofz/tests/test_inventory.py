@@ -480,7 +480,7 @@ class InventoryTests(unittest.TestCase):
         read_text = Path.read_text
         for suffix, anchor in [
             ("api/tengri/access/route.ts", "case 'membership':"),
-            ("lib/tengri/auth.ts", "case 'POST /api/auth/login':"),
+            ("lib/platform/auth.ts", "case 'POST /api/auth/login':"),
         ]:
             with self.subTest(suffix=suffix):
 

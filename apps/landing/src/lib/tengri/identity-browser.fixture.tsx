@@ -2,7 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { AccessPanel } from '@/components/tengri/access-panel'
 import { PasskeyRegistration } from '@/components/tengri/passkey-registration'
-import { startTengriSignIn, signOutTengri } from './auth-client'
+import { startSignIn, signOut } from '../platform/auth-client'
 
 function Fixture() {
   const workspaceUid = new URLSearchParams(window.location.search).get('workspace') || undefined
@@ -19,7 +19,7 @@ function Fixture() {
           <button
             type="button"
             onClick={() =>
-              void signOutTengri()
+              void signOut()
                 .then(() => setAuthenticated(false))
                 .catch((cause) => setError(String(cause)))
             }
@@ -29,7 +29,7 @@ function Fixture() {
           <AccessPanel workspaceUid={workspaceUid} />
         </>
       ) : (
-        <button type="button" onClick={() => void startTengriSignIn().catch((cause) => setError(String(cause)))}>
+        <button type="button" onClick={() => void startSignIn().catch((cause) => setError(String(cause)))}>
           Sign in with GitHub
         </button>
       )}

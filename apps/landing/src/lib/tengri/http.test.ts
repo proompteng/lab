@@ -294,7 +294,7 @@ describe('Tengri BFF request bodies', () => {
   })
 
   test('requires JSON and rejects cross-origin state-changing requests', async () => {
-    process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+    process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
     const wrongType = new Request('https://proompteng.ai/api/tengri', {
       method: 'POST',
       body: '{}',

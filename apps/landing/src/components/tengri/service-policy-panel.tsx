@@ -29,7 +29,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, policyCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
 import type { PolicyWrite } from '@/lib/platform/policies'
-import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
+import { PasskeyRequiredError, startSignIn } from '@/lib/platform/auth-client'
 import { ListAccessResponseSchema, type AccessEntry } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 import {
   GetPlatformConfigurationResponseSchema,
@@ -496,7 +496,7 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
               onClick={
                 needsVerification
                   ? () =>
-                      void startTengriSignIn('step-up').catch(() =>
+                      void startSignIn('step-up').catch(() =>
                         setError(new PasskeyRequiredError('Verification could not start. Try again.')),
                       )
                   : undefined

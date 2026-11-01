@@ -30,7 +30,7 @@ import {
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
-import { OfzError, ofzCall } from '@/lib/tengri/ofz'
+import { OfzError, ofzCall } from '@/lib/platform/ofz'
 
 export const dynamic = 'force-dynamic'
 const actions = {

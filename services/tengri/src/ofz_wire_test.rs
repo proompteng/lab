@@ -267,7 +267,7 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
         session_id: std::env::var("TENGRI_OFZ_FIXTURE_SESSION").unwrap(),
         trace_id: uuid::Uuid::new_v4().to_string(),
         deadline_unix_ms: now_ms().unwrap() + 5000,
-        origin: std::env::var("TENGRI_DESKTOP_ORIGIN").unwrap(),
+        origin: std::env::var("PLATFORM_WEB_ORIGIN").unwrap(),
         contract_version: 1,
         ..Default::default()
     };

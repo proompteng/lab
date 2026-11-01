@@ -1,9 +1,9 @@
 import 'server-only'
 
-import { getTengriIdentity } from '@/lib/tengri/auth'
+import { getPlatformIdentity } from '@/lib/platform/auth'
 import { TengriUnavailableError } from '@/lib/tengri/grpc'
 import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
-import { OfzError } from './ofz'
+import { OfzError } from '../platform/ofz'
 import { reportServerError } from '@/lib/observability/server'
 
 type RateWindow = { count: number; resetsAt: number }
@@ -54,7 +54,7 @@ export function requireSameOriginGet(request: Request) {
 }
 
 export async function getRateLimitedTengriIdentity(request: Request) {
-  const identity = await getTengriIdentity(request.headers)
+  const identity = await getPlatformIdentity(request.headers)
   if (!identity) return null
   const blocked = isTengriRateLimited(identity.subject)
   if (blocked) throw new TengriUnavailableError('Request rate limit exceeded', 429)
@@ -329,7 +329,7 @@ function exceeds(windows: Map<string, RateWindow>, key: string, limit: number, n
 }
 
 function configuredAuthOrigin() {
-  const configuredUrl = process.env.TENGRI_DESKTOP_ORIGIN?.trim() || 'https://proompteng.ai'
+  const configuredUrl = process.env.PLATFORM_WEB_ORIGIN?.trim() || 'https://proompteng.ai'
   try {
     const url = new URL(configuredUrl)
     if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash)

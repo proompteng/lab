@@ -443,7 +443,7 @@ identityTest(
       { stdio: 'ignore' },
     )
     // The HTTPS adapter executes the actual route functions. Only HTML and GitHub are fixtures.
-    const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('./ofz')
+    const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('../platform/ofz')
     let loseEstablishmentReply = true
     let loseCommandReply = false
     const establishmentAttempts: string[] = []
@@ -467,8 +467,8 @@ identityTest(
       return result
     }
     // Simulate one lost reply after the real Ofz transaction and RPC have succeeded.
-    void mock.module('./ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
-    const { getTengriIdentity } = await import('./auth')
+    void mock.module('../platform/ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
+    const { getPlatformIdentity } = await import('../platform/auth')
     const authRoute = await import('@/app/api/auth/[...all]/route')
     const { verifyGithubIdentity } = await import('./github-identity')
     let identityLookups = 0
@@ -494,7 +494,7 @@ identityTest(
     // This functional fixture omits Tailwind; keep empty checkbox roots actionable when unchecked.
     const bff = httpsServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, async (request, response) => {
       try {
-        const url = new URL(request.url || '/', process.env.TENGRI_DESKTOP_ORIGIN)
+        const url = new URL(request.url || '/', process.env.PLATFORM_WEB_ORIGIN)
         if (url.pathname === '/') {
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
@@ -519,7 +519,7 @@ identityTest(
         })
         let outgoing: Response
         if (url.pathname === '/fixture/session')
-          outgoing = new Response(null, { status: (await getTengriIdentity(headers)) ? 204 : 401 })
+          outgoing = new Response(null, { status: (await getPlatformIdentity(headers)) ? 204 : 401 })
         else if (url.pathname.startsWith('/api/auth/')) {
           outgoing =
             request.method === 'GET'
@@ -582,11 +582,12 @@ identityTest(
     gateway.proof_audience = base + '/api/platform/relay/agent'
     const gatewayRegistryFile = secret('session-gateways.json', JSON.stringify(gateways))
     Object.assign(process.env, {
-      TENGRI_DESKTOP_ORIGIN: base,
-      TENGRI_OIDC_ISSUER: issuer,
-      TENGRI_OIDC_CLIENT_SECRET_FILE: secret('oidc-secret', 'fixture-bff-secret-not-production-0000000'),
-      TENGRI_OIDC_CONNECT_IP: '127.0.0.1',
-      TENGRI_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
+      PLATFORM_WEB_ORIGIN: base,
+      PLATFORM_OIDC_ISSUER: issuer,
+      PLATFORM_OIDC_CLIENT_SECRET_FILE: secret('oidc-secret', 'fixture-bff-secret-not-production-0000000'),
+      PLATFORM_OIDC_CLIENT_ID: 'tengri-bff',
+      PLATFORM_OIDC_CONNECT_IP: '127.0.0.1',
+      PLATFORM_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
       OFZ_GRPC_ENDPOINT: `localhost:${ofzPort}`,
       SPIFFE_ID: fixture.ownId,
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
@@ -787,7 +788,7 @@ identityTest(
     const firstApi = await startApi(firstApiPort)
     await startApi(secondApiPort)
     const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
-    const { ofzCall } = await import('./ofz')
+    const { ofzCall } = await import('../platform/ofz')
     const { TengriAuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
     const { PlatformAuthorizationService } = await import('./generated/proompteng/authz/v1/platform_pb')
     await ofzCall(TengriAuthorizationService.method.getPolicyState, {}).catch((error) => {
@@ -1024,7 +1025,7 @@ identityTest(
     const opaque = cookies.find((cookie) => cookie.name === '__Host-tengri-session')
     expect(opaque?.httpOnly).toBe(true)
     expect(opaque?.secure).toBe(true)
-    const inspected = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
+    const inspected = await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
     expect(inspected?.session.githubId).toBe('1')
     const retiredSessionRoute = await realOfzCall(
       { ...PlatformAuthorizationService.method.inspectSession, parent: TengriAuthorizationService },
@@ -1090,11 +1091,11 @@ identityTest(
     apiEndpoint.route(secondApiPort)
     firstApi.kill('SIGKILL')
     await once(firstApi, 'exit')
-    let survivingIdentity: Awaited<ReturnType<typeof getTengriIdentity>> | undefined
+    let survivingIdentity: Awaited<ReturnType<typeof getPlatformIdentity>> | undefined
     let failoverError: unknown
     while (Date.now() - failoverStarted < 30_000) {
       try {
-        survivingIdentity = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
+        survivingIdentity = await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
         break
       } catch (error) {
         failoverError = error
@@ -1169,7 +1170,7 @@ identityTest(
     }
     await adminCall('/identity-provider/instances/github', 'PUT', currentProvider)
     await adminCall(`/clients/${client.id}`, 'PUT', { redirectUris: [base + '/api/auth/callback'], webOrigins: [base] })
-    writeFileSync(z.string().parse(process.env.TENGRI_OIDC_CLIENT_SECRET_FILE), rotatedBffSecret)
+    writeFileSync(z.string().parse(process.env.PLATFORM_OIDC_CLIENT_SECRET_FILE), rotatedBffSecret)
     for (const [secretValue, status] of [
       ['fixture-bff-secret-not-production-0000000', 401],
       [rotatedBffSecret, 400],
@@ -1510,12 +1511,12 @@ identityTest(
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
-    expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
+    expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
     expect(Date.now() - keycloakFailoverStarted).toBeLessThan(30_000)
     expect(await credentialIdentities()).toEqual(passkeysBeforeFailover)
-    const survivingSession = await getTengriIdentity(
+    const survivingSession = await getPlatformIdentity(
       new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }),
     )
     expect(survivingSession?.session.humanId).toBe(inspected.session.humanId)
@@ -1583,7 +1584,9 @@ identityTest(
             )
           })
         const credential = (await secondContext.cookies(base)).find((value) => value.name === '__Host-tengri-session')
-        const identity = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${credential?.value}` }))
+        const identity = await getPlatformIdentity(
+          new Headers({ cookie: `__Host-tengri-session=${credential?.value}` }),
+        )
         expect(identity?.session.githubId).toBe(id)
       }
     }
@@ -1751,7 +1754,7 @@ identityTest(
     ).toBe(401)
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()
     await browserExpect(page.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
-    expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }))).toBeNull()
+    expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }))).toBeNull()
     expect(
       (
         await control.query(
@@ -1822,7 +1825,7 @@ identityTest(
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
-    const phoneIdentity = await getTengriIdentity(
+    const phoneIdentity = await getPlatformIdentity(
       new Headers({ cookie: `__Host-tengri-session=${phoneSession?.value}` }),
     )
     expect(phoneIdentity?.session.githubId).toBe('1')

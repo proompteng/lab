@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
-import type { TengriIdentity } from './auth'
+import type { PlatformIdentity } from '../platform/auth'
 import { humanContext } from './authorization'
 import {
   connectionReference,
@@ -17,10 +17,10 @@ import {
 import { PlatformAuthorizationService, type PlatformConnection } from './generated/proompteng/authz/v1/platform_pb'
 import { RelayService, type ConnectorOperation } from './generated/proompteng/relay/v1/relay_pb'
 import { connectorAgent, getAgent, TengriUnavailableError } from './grpc'
-import { ofzCall, OfzError } from './ofz'
+import { ofzCall, OfzError } from '../platform/ofz'
 import { relayCall } from '../platform/relay'
 
-async function authority(identity: TengriIdentity, agentId: string, signal?: AbortSignal) {
+async function authority(identity: PlatformIdentity, agentId: string, signal?: AbortSignal) {
   const agent = await getAgent(identity, agentId)
   const context = humanContext(identity)
   return {
@@ -42,11 +42,11 @@ function list(context: Authority) {
   )
 }
 
-export async function listConnections(identity: TengriIdentity, agentId: string, signal?: AbortSignal) {
+export async function listConnections(identity: PlatformIdentity, agentId: string, signal?: AbortSignal) {
   return list(await authority(identity, agentId, signal))
 }
 
-export async function saveConnection(identity: TengriIdentity, request: SaveConnection, signal?: AbortSignal) {
+export async function saveConnection(identity: PlatformIdentity, request: SaveConnection, signal?: AbortSignal) {
   const context = await authority(identity, request.agentId, signal)
   requireReady(context)
   const catalog = await relayCall(RelayService.method.listOperations, { clientService: 'tengri-web' }, signal)
@@ -94,7 +94,7 @@ export async function saveConnection(identity: TengriIdentity, request: SaveConn
   return reconcile(context)
 }
 
-export async function reconcileConnections(identity: TengriIdentity, agentId: string, signal?: AbortSignal) {
+export async function reconcileConnections(identity: PlatformIdentity, agentId: string, signal?: AbortSignal) {
   return reconcile(await authority(identity, agentId, signal))
 }
 
@@ -268,7 +268,7 @@ function removeGuest(context: Authority, connection: PlatformConnection, recover
 }
 
 export async function disconnectConnection(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   request: { operationId: string; agentId: string; connectionId: string },
   signal?: AbortSignal,
 ) {
