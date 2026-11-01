@@ -6,8 +6,10 @@ import stat
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from email.message import Message
-from io import BytesIO
+from io import BytesIO, StringIO
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "browser_mcp_tunnel", Path(__file__).with_name("browser-mcp-tunnel.py")
@@ -145,6 +147,65 @@ class BrowserTunnelTest(unittest.TestCase):
             profile["mcp"]["discovery_extra_headers"],
             {"Cookie": "file:/private/cookie"},
         )
+
+    def test_interrupt_stops_the_child_and_removes_credentials(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "connection.json"
+            path.write_text(json.dumps(self.connection()))
+            profiles = []
+
+            class Child:
+                stopped = False
+
+                def wait(self, timeout):
+                    if not self.stopped:
+                        raise KeyboardInterrupt
+                    return 0
+
+                def poll(self):
+                    return 0 if self.stopped else None
+
+                def terminate(self):
+                    self.stopped = True
+
+            child = Child()
+
+            def start(arguments, env):
+                profile = Path(arguments[-1])
+                profiles.append(profile)
+                self.assertTrue((profile.parent / "cookie").exists())
+                self.assertNotIn("MCP_SERVER_URL", env)
+                return child
+
+            with (
+                patch.object(tunnel.sys, "argv", ["browser-mcp-tunnel.py", str(path)]),
+                patch.object(tunnel.shutil, "which", return_value="tunnel-client"),
+                patch.object(
+                    tunnel,
+                    "exchange_connection",
+                    return_value=(
+                        self.connection()["previewOrigin"],
+                        "private-cookie",
+                        1800,
+                    ),
+                ),
+                patch.object(tunnel.subprocess, "Popen", side_effect=start),
+                patch.dict(
+                    os.environ,
+                    {
+                        "CONTROL_PLANE_TUNNEL_ID": "tunnel_" + "a" * 32,
+                        "CONTROL_PLANE_API_KEY": "test-key",
+                        "MCP_SERVER_URL": "https://unrelated.example/mcp",
+                    },
+                ),
+                redirect_stdout(StringIO()),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                tunnel.main()
+            self.assertTrue(child.stopped)
+            self.assertFalse(path.exists())
+            self.assertEqual(len(profiles), 1)
+            self.assertFalse(profiles[0].parent.exists())
 
 
 if __name__ == "__main__":

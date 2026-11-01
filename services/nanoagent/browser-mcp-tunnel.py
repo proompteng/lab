@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -218,11 +219,11 @@ def main():
         child = subprocess.Popen(
             [binary, "run", "--profile-file", str(profile_file)], env=environment
         )
-        print(
-            "Private browser tunnel started. Take control pauses tools; closing Tengri Chrome revokes access.",
-            flush=True,
-        )
         try:
+            print(
+                "Private browser tunnel started. Take control pauses tools; closing Tengri Chrome revokes access.",
+                flush=True,
+            )
             result = child.wait(timeout=lifetime)
             if result:
                 raise ConnectionError(
@@ -243,6 +244,8 @@ def main():
 
 
 if __name__ == "__main__":
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(stop_signal, signal.default_int_handler)
     try:
         main()
     except KeyboardInterrupt:
