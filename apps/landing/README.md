@@ -132,6 +132,7 @@ An existing-conversation resume conflict follows that read-recovery path instead
 Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
 an explicit retry; recovery never submits or retries a turn. Closing chat or choosing another conversation cancels
 the pending startup retry. Manual conversation recovery cancels the automatic request before taking over.
+Run-status recovery also clears its own reconnect notice after turn changes; unrelated errors remain visible.
 Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
 Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
