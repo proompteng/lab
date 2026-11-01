@@ -18,78 +18,6 @@ const OPENCODE: &str = "spiffe://proompteng.ai/ns/opencode/sa/opencode";
 const FIXTURE_FIRST: &str = "spiffe://proompteng.ai/ns/fixture/sa/first";
 const FIXTURE_SECOND: &str = "spiffe://proompteng.ai/ns/fixture/sa/second";
 
-struct FixtureConnector {
-    resource_id: String,
-}
-#[tonic::async_trait]
-impl relay::connector::Connector for FixtureConnector {
-    fn id(&self) -> &str {
-        "fixture"
-    }
-    fn operations(
-        &self,
-        access: Option<&[sdk::PlatformConnectionScope]>,
-    ) -> Vec<wire::ConnectorOperation> {
-        vec![wire::ConnectorOperation {
-            connector_id: "fixture".into(),
-            name: "read".into(),
-            description: "Read a fixture value without HTTP".into(),
-            action: "fixture.status.read".into(),
-            input_schema_json: br#"{"type":"object","properties":{},"additionalProperties":false}"#
-                .to_vec(),
-            targets: vec![wire::ConnectorTarget {
-                name: "fixture".into(),
-                resource: Some(sdk::PlatformResource {
-                    kind: "kubernetes.namespace".into(),
-                    id: self.resource_id.clone(),
-                    target: String::new(),
-                }),
-            }],
-            read_only: true,
-        }]
-        .into_iter()
-        .filter(|operation| {
-            operation.targets.iter().all(|target| {
-                target.resource.as_ref().is_some_and(|resource| {
-                    relay::connector::allows_operation(access, &operation.action, resource)
-                })
-            })
-        })
-        .collect()
-    }
-    fn normalize(
-        &self,
-        operation: &str,
-        arguments: &[u8],
-    ) -> Result<relay::connector::Normalized, tonic::Status> {
-        if operation != "read"
-            || serde_json::from_slice::<serde_json::Value>(arguments).ok()
-                != Some(serde_json::json!({}))
-        {
-            return Err(tonic::Status::invalid_argument("invalid fixture operation"));
-        }
-        Ok(relay::connector::Normalized {
-            action: "fixture.status.read".into(),
-            resources: vec![sdk::PlatformResource {
-                kind: "kubernetes.namespace".into(),
-                id: self.resource_id.clone(),
-                target: String::new(),
-            }],
-            prepared_request: b"second adapter".to_vec(),
-        })
-    }
-    async fn execute(
-        &self,
-        prepared: &relay::connector::Normalized,
-    ) -> Result<relay::connector::Output, relay::connector::Failure> {
-        Ok(relay::connector::Output {
-            bytes: prepared.prepared_request.clone(),
-            content_type: "text/plain".into(),
-            upstream_status: 0,
-        })
-    }
-}
-
 fn workload_lookup(
     body: &[u8],
     client: &str,
@@ -1657,7 +1585,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let _config=relay::config::Config::parse(&serde_json::to_vec(&serde_json::json!({"version":1,"connectors":[{"type":"kubernetes","id":"galactic","endpoint":kube_endpoint,"ca_file":config_dir.join("ca.crt"),"token_file":token_file,"namespaces":[{"name":"fixture","uid":namespace}]}]})).unwrap()).unwrap();
     let adapter = relay::kubernetes::Kubernetes::new(
         "galactic".into(),
-        kube_endpoint,
+        kube_endpoint.clone(),
         config_dir.join("ca.crt").to_str().unwrap(),
         token_file.to_str().unwrap().into(),
         vec![
@@ -1683,13 +1611,95 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .unwrap()
         .into_inner()
         .relay_clients;
+    let operation = relay::registered::Operation {
+        name: "read".into(),
+        description: "Read a fixture account".into(),
+        action: "fixture.status.read".into(),
+        target: relay::registered::Target {
+            name: "Fixture account".into(),
+            kind: "kubernetes.namespace".into(),
+            id: resource_id.clone(),
+        },
+        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+    };
+    let python = std::process::Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap().trim().to_owned();
+    let cli = relay::cli::Cli::new(
+        "fixture".into(),
+        vec![relay::cli::CliOperation {
+            operation: operation.clone(),
+            process: relay::process::Profile {
+                program: python.clone(),
+                arguments: vec![
+                    "-c".into(),
+                    "import json,sys; json.load(sys.stdin); print(json.dumps('second adapter'))"
+                        .into(),
+                ],
+                directory: config_dir.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
+        }],
+    )
+    .unwrap();
+    let http = relay::http::Http::new(
+        "fixture-http".into(),
+        &kube_endpoint,
+        Some(config_dir.join("ca.crt").to_str().unwrap()),
+        Some(token_file.to_str().unwrap().into()),
+        vec![relay::http::HttpOperation {
+            operation: operation.clone(),
+            method: relay::http::Method::Get,
+            path: "/fixture/status".into(),
+        }],
+    )
+    .unwrap();
+    let mcp_script = config_dir.join("upstream-mcp.py");
+    std::fs::write(
+        &mcp_script,
+        include_str!("../../../relay/tests/fixtures/mcp.py"),
+    )
+    .unwrap();
+    let mcp_schema = config_dir.join("upstream-mcp-schema.json");
+    std::fs::write(
+        &mcp_schema,
+        serde_json::to_vec(&operation.input_schema).unwrap(),
+    )
+    .unwrap();
+    let mcp_calls = config_dir.join("upstream-mcp-calls.jsonl");
+    let mcp = relay::mcp::Mcp::new(
+        "fixture-mcp".into(),
+        relay::mcp::Transport::Stdio {
+            process: relay::process::Profile {
+                program: python,
+                arguments: vec![
+                    mcp_script.to_str().unwrap().into(),
+                    mcp_schema.to_str().unwrap().into(),
+                    "normal".into(),
+                    mcp_calls.to_str().unwrap().into(),
+                ],
+                directory: config_dir.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
+        },
+        vec![relay::mcp::McpOperation {
+            operation,
+            tool: "fixture_read".into(),
+        }],
+    )
+    .unwrap();
     let relay = relay::service::Service::new(
         clients,
         vec![
             Box::new(adapter),
-            Box::new(FixtureConnector {
-                resource_id: resource_id.clone(),
-            }),
+            Box::new(cli),
+            Box::new(http),
+            Box::new(mcp),
         ],
         channel,
     )
@@ -1808,61 +1818,76 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         provider_requests
     );
 
-    let fixture_payload = ExecutionPayload {
-        operation_id: Uuid::new_v4().to_string(),
-        client_service: "fixture-client".into(),
-        connector_id: "fixture".into(),
-        operation: "read".into(),
-        arguments: serde_json::json!({}),
-        binding: None,
-        delegation_id: None,
-    };
-    let fixture_body = serde_json::to_vec(&fixture_payload).unwrap();
-    let mut fixture_request = platform_client::request(wire::ExecuteRequest {
-        subject: Some(sdk::PlatformSubject {
+    for connector in ["fixture", "fixture-http", "fixture-mcp"] {
+        let before = requests.load(std::sync::atomic::Ordering::SeqCst);
+        let fixture_payload = ExecutionPayload {
+            operation_id: Uuid::new_v4().to_string(),
             client_service: "fixture-client".into(),
-            identity: Some(sdk::platform_subject::Identity::WorkloadId(
-                FIXTURE_FIRST.into(),
-            )),
-        }),
-        body: fixture_body.clone(),
-    });
-    fixture_request
-        .extensions_mut()
-        .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
-    let fixture_output = relay.execute(fixture_request).await.unwrap().into_inner();
-    assert_eq!(fixture_output.result, b"second adapter");
-    assert_eq!(
-        relay
-            .get_execution(workload_lookup(
-                &fixture_body,
-                "fixture-client",
-                FIXTURE_FIRST
-            ))
-            .await
-            .unwrap()
-            .into_inner()
-            .execution
-            .unwrap()
-            .outcome,
-        "succeeded"
-    );
-    assert_eq!(
-        relay
-            .get_execution(workload_lookup(
-                &fixture_body,
-                "fixture-client",
-                FIXTURE_SECOND
-            ))
-            .await
-            .unwrap_err()
-            .code(),
-        Code::NotFound
-    );
-    assert_eq!(
-        requests.load(std::sync::atomic::Ordering::SeqCst),
-        provider_requests
-    );
+            connector_id: connector.into(),
+            operation: "read".into(),
+            arguments: serde_json::json!({}),
+            binding: None,
+            delegation_id: None,
+        };
+        let fixture_body = serde_json::to_vec(&fixture_payload).unwrap();
+        let mut fixture_request = platform_client::request(wire::ExecuteRequest {
+            subject: Some(sdk::PlatformSubject {
+                client_service: "fixture-client".into(),
+                identity: Some(sdk::platform_subject::Identity::WorkloadId(
+                    FIXTURE_FIRST.into(),
+                )),
+            }),
+            body: fixture_body.clone(),
+        });
+        fixture_request
+            .extensions_mut()
+            .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
+        let fixture_output = relay.execute(fixture_request).await.unwrap().into_inner();
+        if connector == "fixture-mcp" {
+            let output: serde_json::Value = serde_json::from_slice(&fixture_output.result).unwrap();
+            assert_eq!(output["content"][0]["text"], "{}");
+            assert_eq!(
+                std::fs::read_to_string(&mcp_calls).unwrap().lines().count(),
+                1
+            );
+        } else {
+            assert_eq!(
+                serde_json::from_slice::<String>(&fixture_output.result).unwrap(),
+                "second adapter"
+            );
+        }
+        assert_eq!(
+            relay
+                .get_execution(workload_lookup(
+                    &fixture_body,
+                    "fixture-client",
+                    FIXTURE_FIRST
+                ))
+                .await
+                .unwrap()
+                .into_inner()
+                .execution
+                .unwrap()
+                .outcome,
+            "succeeded"
+        );
+        assert_eq!(
+            relay
+                .get_execution(workload_lookup(
+                    &fixture_body,
+                    "fixture-client",
+                    FIXTURE_SECOND
+                ))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::NotFound
+        );
+        assert_eq!(
+            requests.load(std::sync::atomic::Ordering::SeqCst),
+            before + usize::from(connector == "fixture-http")
+        );
+    }
     let mut payload = ExecutionPayload {
         operation_id: Uuid::new_v4().to_string(),
         client_service: "tengri-web".into(),
@@ -2538,7 +2563,9 @@ async fn kubernetes_fixture(
             );
             requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let forbidden = request.starts_with("GET /api/v1/namespaces/fixture/pods/denied/log?");
-            let body = if forbidden {
+            let body = if request.starts_with("GET /fixture/status HTTP/1.1") {
+                serde_json::to_vec("second adapter").unwrap()
+            } else if forbidden {
                 b"PRIVATE_PROVIDER_ERROR".to_vec()
             } else if request.starts_with("GET /api/v1/namespaces/fixture/pods/fixture-pod/log?") {
                 b"fixture log line\n".to_vec()
