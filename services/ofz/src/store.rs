@@ -26,6 +26,10 @@ mod audit;
 const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../migrations/0002_platform.sql")),
     (2, include_str!("../migrations/0003_connections.sql")),
+    (
+        3,
+        include_str!("../migrations/0004_session_credentials.sql"),
+    ),
 ];
 
 fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {
