@@ -1,7 +1,8 @@
 import { isProtectedEntryTarget, protectedEntryExpiresAtMs } from '../strategy/runtime-decision'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
+import { makeStrategyProtocolHashResult } from '../contracts'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
@@ -10,7 +11,7 @@ import { jevProtocolIdentityMatches, type ExecutionDecisionDocument } from '../s
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { SystemRegistration } from './policy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
-import type { JevProtocol } from '../jev/protocol'
+import { JevProtocolSchema, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import { isContinuousMarket, marketHoursAreCanonical } from '../market-hours'
@@ -125,7 +126,7 @@ const registeredControllerOwns = (
   registration: SystemRegistration,
   accountId: string,
   generationHash: string,
-  protocol: JevProtocol,
+  protocol: JevProtocolMaterial,
 ) =>
   Result.gen(function* () {
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -136,13 +137,29 @@ const registeredControllerOwns = (
       environment: BrokerEnvironment.Sandbox,
       accountId,
     })
+    const historicalBehavior = sha256(
+      protocol.schemaVersion === 'bayn.jev.protocol.v35'
+        ? 'bayn.candidate-chart-entry.behavior.v1'
+        : 'bayn.chart-first-entry.behavior.v1',
+    )
+    const historicalParameters = yield* canonicalHashV1Result(protocol)
+    const historicalIdentity = yield* makeStrategyProtocolHashResult({
+      name: 'jev',
+      behaviorHash: historicalBehavior,
+      parameterHash: historicalParameters,
+      parameterSchemaVersion: protocol.schemaVersion,
+    })
     return (
       candidate !== undefined &&
       pass.planHash === registration.obligations.configuration.controllerPlanHash &&
       pass.controllerKey === identity.identityHash &&
       candidate.accountBindingHash === accountHash &&
       candidate.authorityGenerationHash === generationHash &&
-      jevProtocolIdentityMatches(protocol, candidate.protocolHash)
+      (Schema.is(JevProtocolSchema)(protocol)
+        ? jevProtocolIdentityMatches(protocol, candidate.protocolHash)
+        : historicalParameters === candidate.parametersHash &&
+          historicalIdentity === candidate.protocolHash &&
+          historicalBehavior === candidate.strategyHash)
     )
   })
 

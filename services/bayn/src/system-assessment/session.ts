@@ -13,7 +13,7 @@ import {
 } from './economics'
 import { CashFlowEvidenceSchema, cashFlowTotals, cashFlowsSupported, cashFlowsMatchSession } from './cash-flows'
 import { registeredAssessmentTerms, type SystemRegistration } from './policy'
-import { JevAcceptanceVersion } from '../jev/acceptance'
+import { JevAcceptanceVersion, usesLegacyAcceptance } from '../jev/acceptance'
 import { costAttributionRule, indexOperatingCosts } from './cost-attribution'
 import { validateFrozenCostAllocations } from './cost-allocation'
 
@@ -95,7 +95,7 @@ export const assessSession = (
     : JevAcceptanceVersion.RetainedV3,
 ) =>
   Result.gen(function* () {
-    const legacy = version !== JevAcceptanceVersion.Current
+    const legacy = usesLegacyAcceptance(version)
     const terms = registeredAssessmentTerms(registration, definition.riskPolicy)
     const missing: string[] = []
     const violations: string[] = []

@@ -66,6 +66,7 @@ export const makeMomentumFundedExitPlan = (
     const ask = yield* priceNumberToMicros(quote.askPrice, 'momentum ask', 'UP')
     const account = observation.portfolio.brokerState.account
     const economics = yield* jevEntryEconomics({
+      feeAt: observation.observedAt,
       protocol,
       symbol,
       bidMicros: bid,
@@ -91,14 +92,23 @@ export const makeMomentumFundedExitPlan = (
     const target = quantizeInstrumentPriceMicros(
       symbol,
       yield* jevBreakEvenExitLimitPrice({
+        feeAt: observation.observedAt,
         ...liquidation,
         acquisitionCostMicros: requiredNet,
         upperLimitPriceMicros: entry * 2n,
       }),
       'UP',
     )
-    const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
-    const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
+    const stopValue = yield* jevExitLimitValue({
+      feeAt: observation.observedAt,
+      ...liquidation,
+      limitPriceMicros: stopLimit,
+    })
+    const targetValue = yield* jevExitLimitValue({
+      feeAt: observation.observedAt,
+      ...liquidation,
+      limitPriceMicros: target,
+    })
     if (
       stopValue.conservativeNetMicros <= 0n ||
       stopValue.conservativeNetMicros >= BigInt(economics.acquisitionCostMicros) ||

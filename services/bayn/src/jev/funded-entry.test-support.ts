@@ -1,3 +1,4 @@
+import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
@@ -25,6 +26,7 @@ export const makeFundedEvaluationRequest = (current: ReturnType<typeof currentRe
     schemaVersion: 'bayn.entry-inference-input.v4' as const,
     protocol: {
       ...current.request.protocol,
+      executionModel: retainedIntradayExecutionModel,
       schemaVersion: 'bayn.jev.protocol.v25' as const,
       inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,

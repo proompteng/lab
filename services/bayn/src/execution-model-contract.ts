@@ -25,7 +25,7 @@ const ExecutionModelCommon = {
     slippageBps: BasisPoints,
   }),
   fees: Schema.Struct({
-    scheduleVersion: Schema.Literal('alpaca-brokerage-2026-07-01'),
+    scheduleVersion: Schema.Literals(['alpaca-brokerage-2026-07-01', 'alpaca-brokerage-effective-dated-2026-10-12']),
     commissionBps: BasisPoints,
     secSellBps: BasisPoints,
     tafSellPerShareMicros: UnsignedMicros,

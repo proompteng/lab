@@ -1,3 +1,4 @@
+import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
@@ -51,6 +52,7 @@ const fixture = (
   const current = entryEvaluationRequestFixture()
   const baseProtocol = {
     ...current.request.protocol,
+    executionModel: retainedIntradayExecutionModel,
     inputDefinition:
       schemaVersion === 'bayn.jev.protocol.v34'
         ? ('bayn.jev-entry-state.v23' as const)
