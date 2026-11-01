@@ -1108,6 +1108,10 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource was not found', 404)
     case grpc.status.ALREADY_EXISTS:
+      if (methodName === 'resumeCodexThread') {
+        // Reopening history can be retried without submitting another turn.
+        return new TengriUnavailableError('The conversation changed while loading. Reconnecting…', 503)
+      }
       if (methodName === 'writeFile') {
         return new TengriUnavailableError(
           'File changed since it was opened. Review the changes before saving.',

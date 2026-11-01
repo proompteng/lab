@@ -26,7 +26,7 @@ import {
   latencyReplayExecutionModelHash,
 } from './latency-replay'
 import { frozenControlOrigin, frozenDeployedControlIdentity } from './frozen-control-identity'
-import { systemQualificationPolicy } from './policy'
+import { registeredAllocationMicros } from './policy'
 
 const Universe = Schema.Struct({
   universeId: StrictNonEmptyStringSchema,
@@ -168,7 +168,7 @@ export const prepareFrozenControlReplay = (raw: unknown, captureText: string, ca
       input.backtest.build.imageDigest !== `sha256:${definition.imageDigest}` ||
       input.backtest.build.strategyBehaviorHash !== definition.strategyHash ||
       input.backtest.build.strategyParameterHash !== definition.parametersHash ||
-      input.backtest.openingCashMicros !== systemQualificationPolicy.allocationMicros ||
+      input.backtest.openingCashMicros !== registeredAllocationMicros(registration) ||
       input.latencyStress.p95FullBatchMs !== stress.p95FullBatchMs ||
       input.backtest.replicate !== (yield* frozenReplayReplica(input, captureHash)) ||
       (yield* latencyReplayExecutionModelHash({

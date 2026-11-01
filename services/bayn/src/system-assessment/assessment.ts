@@ -4,7 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { evaluateJevAcceptance, JevAcceptanceVersion, JevNumericalVerdict, JevResearchPolicy } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
-import { SystemRegistrationSchema, validateSystemRegistration } from './policy'
+import { SystemRegistrationSchema, validateSystemRegistration, registeredAssessmentTerms } from './policy'
 import { RealismEvidenceSchema, RealismStatus, measureRealism } from './realism'
 import { ReliabilityInputSchema, ReliabilityStatus, measureReliability } from './reliability'
 import { SessionEvidenceSchema, assessSession } from './session'
@@ -59,7 +59,7 @@ export const SystemAssessmentInputSchema = Schema.Struct({
       policy: Schema.Enum(JevResearchPolicy),
       sessions: Schema.Array(SessionEvidenceSchema).check(Schema.isMinLength(1)),
     }),
-  ).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
+  ).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
   reliability: ReliabilityInputSchema,
   obligationCoverageHash: Sha256Schema,
   realism: RealismEvidenceSchema,
@@ -92,7 +92,11 @@ export const evaluateSystemAssessment = (
         (cause) => new SystemAssessmentError({ message: 'System assessment evidence is malformed', cause }),
       ),
     )
-    const { registration, registrationHash } = yield* validateSystemRegistration(data.registration, version)
+    const { registration, registrationHash, candidatePolicy } = yield* validateSystemRegistration(
+      data.registration,
+      version,
+    )
+    const legacy = version !== JevAcceptanceVersion.Current
     yield* validateOperatingCostWindow(
       data.policies.flatMap((policy) => policy.sessions.map((session) => session.operatingCosts)),
     )
@@ -109,8 +113,13 @@ export const evaluateSystemAssessment = (
     requireSource(registration.obligations.runtimeConfigurationHash)
     if (registration.obligations.configuration.controllerPlanHash === null)
       missing.push('MISSING_CONTROLLER_PLAN_BINDING')
-    requireSource(registration.latencyStressProtocolHash)
-    requireSource(registration.latencyReplayExecutionModelHash)
+    if (
+      legacy ||
+      data.policies.some((policy) => policy.sessions.some((session) => session.p95LatencyStress !== null))
+    ) {
+      requireSource(registration.latencyStressProtocolHash)
+      requireSource(registration.latencyReplayExecutionModelHash)
+    }
     for (const plan of registration.costAllocationPlans) requireSource(plan.basisSourceHash)
     for (const definition of registration.policies)
       for (const hash of [
@@ -165,7 +174,7 @@ export const evaluateSystemAssessment = (
           return yield* Result.fail(
             new SystemAssessmentError({ message: 'Omitted, substituted or reordered registered session' }),
           )
-        const result = yield* assessSession(session, registration, definition, data.asOf, verifiedSources)
+        const result = yield* assessSession(session, registration, definition, data.asOf, verifiedSources, version)
         missing.push(...result.missing.map((reason) => `${policy.policy}:${session.sessionDate}:${reason}`))
         violations.push(...result.violations.map((reason) => `${policy.policy}:${session.sessionDate}:${reason}`))
         sessions.push(result)
@@ -233,7 +242,7 @@ export const evaluateSystemAssessment = (
         violations.push(`OBLIGATION_OUTSIDE_WINDOW:${obligation.obligationId}`)
     }
     for (const completion of data.reliability.completions) requireSource(completion.evidenceHash)
-    const reliability = yield* measureReliability(data.reliability)
+    const reliability = yield* measureReliability(data.reliability, legacy)
     const expectedSchedule = yield* registeredSchedule(registration)
     const providedScheduledWork = data.reliability.schedule.filter(
       (o) => o.class === ObligationClass.Decision || o.class === ObligationClass.Reconciliation,
@@ -268,6 +277,7 @@ export const evaluateSystemAssessment = (
           planHash: registrationHash,
           lockedAt: registration.registeredAt,
           attemptIndex: registration.attemptIndex,
+          ...(legacy ? {} : { analysis: registeredAssessmentTerms(registration, candidatePolicy.riskPolicy) }),
           sessions: registration.calendar.sessions,
         },
         policies: evaluated.map((p) => ({
