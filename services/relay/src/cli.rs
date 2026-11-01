@@ -73,6 +73,9 @@ async fn read_bounded(stream: impl AsyncRead + Unpin) -> Result<Vec<u8>, Status>
 
 #[async_trait::async_trait]
 impl Connector for Cli {
+    fn provider(&self) -> Option<crate::credentials::Provider<'_>> {
+        None
+    }
     fn id(&self) -> &str {
         &self.id
     }
@@ -89,7 +92,11 @@ impl Connector for Cli {
             .0
             .normalize(arguments)
     }
-    async fn execute(&self, request: &Normalized) -> Result<Output, Failure> {
+    async fn execute(
+        &self,
+        request: &Normalized,
+        _bearer: Option<&str>,
+    ) -> Result<Output, Failure> {
         let prepared: Prepared =
             serde_json::from_slice(&request.prepared_request).map_err(|_| Failure {
                 status: Status::internal("invalid normalized CLI request"),

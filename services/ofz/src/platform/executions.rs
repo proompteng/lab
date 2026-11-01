@@ -61,7 +61,7 @@ pub async fn record(
             "execution outcome differs from its authorization",
         ));
     }
-    let previous=tx.query_opt("SELECT authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id,workspace_id FROM ofz.platform_executions WHERE operation_id=$1 FOR UPDATE", &[&operation]).await.map_err(sql_error)?;
+    let previous=tx.query_opt("SELECT authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id,workspace_id,provider_connection_id,provider_credential_revision FROM ofz.platform_executions WHERE operation_id=$1 FOR UPDATE", &[&operation]).await.map_err(sql_error)?;
     if let Some(row) = &previous {
         let workspace = row.get::<_, Uuid>(5).to_string();
         if !receipt.platform_workspace_id.is_empty() && receipt.platform_workspace_id != workspace {
@@ -127,6 +127,14 @@ pub async fn record(
     if changed != 1 {
         return Err(Status::already_exists("execution ID already used"));
     }
+    if request.outcome == "failed"
+        && request.upstream_status == 401
+        && let Some(row) = &previous
+        && let (Some(provider), Some(revision)) =
+            (row.get::<_, Option<Uuid>>(6), row.get::<_, Option<i64>>(7))
+    {
+        tx.execute("UPDATE ofz.provider_connections SET state='reconnect',revision=revision+1,credential=NULL,expires_at_ms=NULL,updated_at_ms=ofz.now_ms() WHERE id=$1 AND revision=$2 AND state='ready'", &[&provider, &revision]).await.map_err(sql_error)?;
+    }
     tx.commit().await.map_err(sql_error)?;
     Ok(proto::RecordPlatformExecutionResponse {
         audit_receipt_id: receipt.id,
@@ -134,12 +142,12 @@ pub async fn record(
 }
 
 #[derive(PartialEq, Eq)]
-enum Owner {
+pub(crate) enum Owner {
     Human(String),
     Workload(String),
 }
 
-async fn owner(
+pub(crate) async fn owner(
     connection: &tokio_postgres::Client,
     receipt: &proto::AuditReceipt,
 ) -> Result<Owner, Status> {

@@ -99,7 +99,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .add_service(
             PlatformAuthorizationServiceServer::new(ofz::platform::service::Service::new(
-                database, native, issuer,
+                database,
+                native,
+                issuer,
+                ofz::platform::providers::Providers::from_environment()?,
             ))
             .max_decoding_message_size(128 * 1024)
             .max_encoding_message_size(1_048_576),

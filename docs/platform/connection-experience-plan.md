@@ -1,8 +1,9 @@
 # Platform connections and workspace administration
 
-Status: implementation in progress. Gateway isolation, workspace policy, the admin portal, approved tool discovery
-and one-action Kubernetes Connect are implemented locally. Deployment, additional drivers/provider connections and
-the remaining client/run acceptance work are pending.
+Status: gateway isolation, workspace policy, the independent admin portal, access requests, one-action Kubernetes
+Connect, and HTTP/CLI/upstream MCP drivers are deployed. Shared provider OAuth2 and its product/admin return flows
+are implemented and locally qualified; their release and remaining native chat acceptance are pending. Provider
+registration defaults to empty: qualification uses a controlled TLS provider without onboarding an external account.
 
 Research date: 2026-11-01, America/Los_Angeles. Source findings were checked against `origin/main` at
 `64a848f4b91e73070f836f5a36b4ae2bf04f79e1`. Source and runtime evidence take precedence over this proposal.
@@ -38,7 +39,7 @@ The recommendations below combine those patterns with the current source and the
 The useful pattern is a small member experience backed by explicit administrative decisions. Copying a modal's
 appearance without changing those decisions would preserve the current confusion.
 
-## Current implementation and the gaps
+## Baseline implementation at the research revision
 
 - [SettingsApp](../../apps/landing/src/components/tengri/settings-app.tsx) renders both Connections and AccessPanel.
   The latter exposes Workspace, Platform, Audit, and Service access in product settings.

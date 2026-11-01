@@ -24,8 +24,11 @@ pub fn decode_hash(value: &str) -> Result<Vec<u8>, Status> {
 }
 
 pub fn registry_hash() -> Result<Vec<u8>, Status> {
-    let bytes = serde_json::to_vec(registry::configured()?)
-        .map_err(|_| Status::internal("encode service registry"))?;
+    let bytes = serde_json::to_vec(&(
+        registry::configured()?,
+        super::providers::configuration_hash()?,
+    ))
+    .map_err(|_| Status::internal("encode service registry"))?;
     Ok(Sha256::digest(bytes).to_vec())
 }
 

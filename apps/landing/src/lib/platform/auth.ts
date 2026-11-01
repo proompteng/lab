@@ -95,7 +95,7 @@ export async function getPlatformIdentity(headers: Headers): Promise<PlatformIde
   }
 }
 
-function cookie(headers: Headers, name: string) {
+export function cookie(headers: Headers, name: string) {
   const values = (headers.get('cookie') || '')
     .split(';')
     .map((part) => part.trim())
@@ -105,7 +105,7 @@ function cookie(headers: Headers, name: string) {
   return parsed.success ? parsed.data : null
 }
 
-function setCookie(name: string, value: string, maxAge: number) {
+export function setCookie(name: string, value: string, maxAge: number) {
   return `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.max(0, Math.floor(maxAge))}`
 }
 function headers() {
