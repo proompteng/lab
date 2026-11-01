@@ -1,7 +1,9 @@
+import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 
 import {
   ackAgentRunTerminalEventViaAgentsService,
+  cancelAgentRunViaAgentsService,
   fetchAgentRunFromAgentsService,
   fetchAgentRunLogsFromAgentsService,
   fetchAgentRunResourcesFromAgentsService,
@@ -63,6 +65,7 @@ export type AgentRunsMcpService = {
   create: (input: AgentsAgentRunSubmitInput) => Effect.Effect<unknown, Error>
   list: (input: AgentsAgentRunListInput) => Effect.Effect<unknown, Error>
   get: (input: AgentsAgentRunGetInput) => Effect.Effect<unknown, Error>
+  cancel: (input: AgentsAgentRunGetInput) => Effect.Effect<unknown, Error>
   listResources: (input: AgentsAgentRunResourceListInput) => Effect.Effect<unknown, Error>
   getLogs: (input: AgentsAgentRunLogsInput) => Effect.Effect<unknown, Error>
   listTerminalEvents: (input: AgentsAgentRunTerminalEventsListInput) => Effect.Effect<unknown, Error>
@@ -143,7 +146,7 @@ const toolsListResult = {
     {
       name: 'create_agent_run',
       description:
-        'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId. For VCS runs, set payload.parameters.repository plus secretBindingRef or payload.policy.secretBindingRef.',
+        'Create a run with a stable deliveryId. VCS needs payload.parameters.repository and secretBindingRef.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -224,6 +227,19 @@ const toolsListResult = {
       },
     },
     {
+      name: 'cancel_agent_run',
+      description: 'Cancel an AgentRun by projection id. Preserve its record; poll get_agent_run for completion.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Required AgentRun projection id' },
+          namespace: { type: 'string', description: 'Optional namespace, defaults to agents' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    },
+    {
       name: 'list_agent_runs',
       description: 'List AgentRun projection records by agent name or status.',
       inputSchema: {
@@ -238,7 +254,7 @@ const toolsListResult = {
     },
     {
       name: 'get_agent_run',
-      description: 'Get one AgentRun projection record and its live Kubernetes resource when available.',
+      description: 'Read an AgentRun projection and its Kubernetes resource.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -266,7 +282,7 @@ const toolsListResult = {
     },
     {
       name: 'get_agent_run_logs',
-      description: 'Fetch a non-streaming AgentRun log snapshot. Use tailLines for last-N-line reads.',
+      description: 'Read an AgentRun log snapshot; tailLines limits the tail.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -663,11 +679,13 @@ const buildConfigResource = (request: Request) => {
   }
 }
 
-const successToolResponse = (id: JsonRpcId, baseUrl: URL, toolName: string, result: unknown) =>
-  asJsonRpcResponse(
-    id,
-    toTextToolResult(JSON.stringify({ ok: true, result, mcp: { server: baseUrl.origin, tool: toolName } }, null, 2)),
-  )
+const successToolResponse = (id: JsonRpcId, baseUrl: URL, toolName: string, result: unknown) => {
+  const structuredContent = { ok: true, result, mcp: { server: baseUrl.origin, tool: toolName } }
+  return asJsonRpcResponse(id, {
+    ...toTextToolResult(JSON.stringify(structuredContent, null, 2)),
+    structuredContent,
+  })
+}
 
 const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string, args: Record<string, unknown>) =>
   Effect.gen(function* () {
@@ -733,6 +751,14 @@ const handleToolCallEffect = (request: Request, id: JsonRpcId, toolName: string,
       const parsed = parseGetAgentRunInput(args)
       if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
       const result = yield* Effect.either(agents.get(parsed.value))
+      if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
+      return successToolResponse(id, baseUrl, toolName, result.right)
+    }
+
+    if (toolName === 'cancel_agent_run') {
+      const parsed = parseGetAgentRunInput(args)
+      if (!parsed.ok) return invalidParams(id, `Invalid params: ${parsed.message}`)
+      const result = yield* Effect.either(agents.cancel(parsed.value))
       if (result._tag === 'Left') return toolError(id, result.left.message, { tool: toolName })
       return successToolResponse(id, baseUrl, toolName, result.right)
     }
@@ -909,6 +935,8 @@ export const AgentRunsMcpLive = Layer.succeed(AgentRunsMcp, {
     agentsResultEffect('list_agent_runs', () => fetchAgentRunsFromAgentsService(input, resolveAgentsMcpEnv())),
   get: (input) =>
     agentsResultEffect('get_agent_run', () => fetchAgentRunFromAgentsService(input, resolveAgentsMcpEnv())),
+  cancel: (input) =>
+    agentsResultEffect('cancel_agent_run', () => cancelAgentRunViaAgentsService(input, resolveAgentsMcpEnv())),
   listResources: (input) =>
     agentsResultEffect('list_agent_run_resources', () =>
       fetchAgentRunResourcesFromAgentsService(input, resolveAgentsMcpEnv()),
@@ -931,3 +959,19 @@ const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoryNotesMcpLive, Ag
 
 export const handleMcpRequest = (request: Request): Promise<Response> =>
   handlerRuntime.runPromise(handleMcpRequestEffect(request))
+
+export const getAgentRunMcpToolDefinitions = () =>
+  toolsListResult.tools.filter(({ name }) => name.includes('agent_run'))
+
+export const invokeAgentRunMcpTool = async (
+  name: string,
+  args: Record<string, unknown>,
+  requestUrl: string,
+): Promise<CallToolResult> => {
+  if (!getAgentRunMcpToolDefinitions().some((tool) => tool.name === name)) {
+    throw new Error(`Unknown AgentRun tool: ${name}`)
+  }
+  const response = await handlerRuntime.runPromise(handleToolCallEffect(new Request(requestUrl), 1, name, args))
+  if (response.error) throw new Error(response.error.message)
+  return CallToolResultSchema.parse(response.result)
+}

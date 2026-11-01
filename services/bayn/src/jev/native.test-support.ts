@@ -222,6 +222,7 @@ export const nativeJevFixture = (
             exitPolicy: (() => {
               const economics = Result.getOrThrow(
                 jevEntryEconomics({
+                  feeAt: '2026-09-04T14:15:00.000Z',
                   cryptoFeeTier: null,
 
                   protocol,

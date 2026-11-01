@@ -1,3 +1,6 @@
+import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
+import * as currentChartStages from '../jev/staged-chart-questions'
+import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
 import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
 import observedResistance from '../../migrations/0165_observed_resistance'
@@ -9,6 +12,7 @@ import {
   RetainedJevProtocolV32Schema,
   RetainedJevProtocolV33Schema,
   RetainedJevProtocolV34Schema,
+  RetainedJevProtocolV35Schema,
 } from '../jev/protocol'
 import * as retainedChartStages from '../jev/retained-filtered-staged-chart-questions'
 import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
@@ -137,6 +141,7 @@ const conditionalInput = {
   schemaVersion: 'bayn.entry-inference-input.v3' as const,
   protocol: {
     ...request.request.protocol,
+    executionModel: retainedIntradayExecutionModel,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
     inputDefinition: 'bayn.jev-entry-state.v22' as const,
     lookbackMinutes: 30 as const,
@@ -300,6 +305,7 @@ integration('committed sequential provider handoff', () => {
     [165, observedResistance, 'bayn.jev.protocol.v32'],
     [166, candidateEntryEvidence, 'bayn.jev.protocol.v33'],
     [167, chartStructureBeforeFunding, 'bayn.jev.protocol.v34'],
+    [171, datedExecutionFees, 'bayn.jev.protocol.v35'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -323,30 +329,36 @@ integration('committed sequential provider handoff', () => {
             retiredProtocol === 'bayn.jev.protocol.v31' ||
             retiredProtocol === 'bayn.jev.protocol.v32' ||
             retiredProtocol === 'bayn.jev.protocol.v33' ||
-            retiredProtocol === 'bayn.jev.protocol.v34'
+            retiredProtocol === 'bayn.jev.protocol.v34' ||
+            retiredProtocol === 'bayn.jev.protocol.v35'
               ? {
                   ...request.request.protocol,
+                  executionModel: retainedIntradayExecutionModel,
                   schemaVersion: retiredProtocol,
                   inputDefinition:
-                    retiredProtocol === 'bayn.jev.protocol.v34'
+                    retiredProtocol === 'bayn.jev.protocol.v34' || retiredProtocol === 'bayn.jev.protocol.v35'
                       ? ('bayn.jev-entry-state.v23' as const)
                       : ('bayn.jev-entry-state.v22' as const),
                   entryQuestionPolicyHash:
-                    retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
-                      ? '864658b2565a176ecad7e6e2460a9f9be9340bf9f304d5af41db81ce49551158'
-                      : retiredProtocol === 'bayn.jev.protocol.v32'
-                        ? 'c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'
-                        : retainedMarketQuestionPolicyHash,
+                    retiredProtocol === 'bayn.jev.protocol.v35'
+                      ? request.request.protocol.entryQuestionPolicyHash
+                      : retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
+                        ? '864658b2565a176ecad7e6e2460a9f9be9340bf9f304d5af41db81ce49551158'
+                        : retiredProtocol === 'bayn.jev.protocol.v32'
+                          ? 'c6c8032291a3840de13db71ca02aaf8149b8d862e425cc24fdc5327b47cd3c03'
+                          : retainedMarketQuestionPolicyHash,
                   candidateEvidencePolicy:
                     retiredProtocol === 'bayn.jev.protocol.v31' ||
                     retiredProtocol === 'bayn.jev.protocol.v32' ||
                     retiredProtocol === 'bayn.jev.protocol.v33' ||
-                    retiredProtocol === 'bayn.jev.protocol.v34'
+                    retiredProtocol === 'bayn.jev.protocol.v34' ||
+                    retiredProtocol === 'bayn.jev.protocol.v35'
                       ? IntradayCandidateEvidencePolicy.MarketQuotesV2
                       : IntradayCandidateEvidencePolicy.MarketQuotes,
                 }
               : {
                   ...request.request.protocol,
+                  executionModel: retainedIntradayExecutionModel,
                   schemaVersion: retiredProtocol,
                   inputDefinition: 'bayn.jev-entry-state.v22' as const,
                   entryQuestionPolicyHash: retainedMarketQuestionPolicyHash,
@@ -367,20 +379,23 @@ integration('committed sequential provider handoff', () => {
               RetainedJevProtocolV32Schema,
               RetainedJevProtocolV33Schema,
               RetainedJevProtocolV34Schema,
+              RetainedJevProtocolV35Schema,
             ]),
           )(protocolMaterial)
           const input = {
             ...request.request,
             numericalState: { ...request.request.numericalState, schemaVersion: protocol.inputDefinition },
             schemaVersion:
-              retiredProtocol === 'bayn.jev.protocol.v34'
-                ? ('bayn.entry-inference-input.v7' as const)
-                : retiredProtocol === 'bayn.jev.protocol.v30' ||
-                    retiredProtocol === 'bayn.jev.protocol.v31' ||
-                    retiredProtocol === 'bayn.jev.protocol.v32' ||
-                    retiredProtocol === 'bayn.jev.protocol.v33'
-                  ? ('bayn.entry-inference-input.v6' as const)
-                  : ('bayn.entry-inference-input.v5' as const),
+              retiredProtocol === 'bayn.jev.protocol.v35'
+                ? ('bayn.entry-inference-input.v8' as const)
+                : retiredProtocol === 'bayn.jev.protocol.v34'
+                  ? ('bayn.entry-inference-input.v7' as const)
+                  : retiredProtocol === 'bayn.jev.protocol.v30' ||
+                      retiredProtocol === 'bayn.jev.protocol.v31' ||
+                      retiredProtocol === 'bayn.jev.protocol.v32' ||
+                      retiredProtocol === 'bayn.jev.protocol.v33'
+                    ? ('bayn.entry-inference-input.v6' as const)
+                    : ('bayn.entry-inference-input.v5' as const),
             protocol,
           }
           const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
@@ -390,9 +405,11 @@ integration('committed sequential provider handoff', () => {
           const checkpoint = stagedCheckpointFixture(
             original,
             original.observedAt,
-            retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
-              ? retainedCandidateChartStages
-              : retainedChartStages,
+            retiredProtocol === 'bayn.jev.protocol.v35'
+              ? currentChartStages
+              : retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
+                ? retainedCandidateChartStages
+                : retainedChartStages,
           )
           const first = checkpoint.claims[0]
           const terminal = checkpoint.terminals[0]
@@ -446,7 +463,11 @@ integration('committed sequential provider handoff', () => {
           const failure = yield* Schema.decodeUnknownEffect(
             Schema.Struct({ code: Schema.Literal('23514'), message: Schema.String }),
           )(rejectedHandoff.failure.reason.cause)
-          expect(failure.message).toContain('retired entry protocol')
+          expect(failure.message).toContain(
+            retiredProtocol === 'bayn.jev.protocol.v35'
+              ? 'entry handoff differs from its original versioned source'
+              : 'retired entry protocol',
+          )
           yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
           VALUES (${original.requestId},'CHART',${late.claimHash},${late.terminalHash},${sql.json(late)})`
           expect(
@@ -739,6 +760,7 @@ integration('committed sequential provider handoff', () => {
           schemaVersion: 'bayn.entry-inference-input.v5',
           protocol: {
             ...request.request.protocol,
+            executionModel: retainedIntradayExecutionModel,
             schemaVersion: 'bayn.jev.protocol.v26',
             inputDefinition: 'bayn.jev-entry-state.v22' as const,
             lookbackMinutes: 30,
@@ -1969,6 +1991,7 @@ integration('committed sequential provider handoff', () => {
             schemaVersion: retiredVersion,
             protocol: {
               ...request.request.protocol,
+              executionModel: retainedIntradayExecutionModel,
               schemaVersion: 'bayn.jev.protocol.v24',
               inputDefinition: 'bayn.jev-entry-state.v22' as const,
               entryQuestionPolicyHash: 'd35ee4093641285aa36385c4ab35de978de7485ff754bebb523648adf80c8939',
@@ -2027,6 +2050,7 @@ integration('committed sequential provider handoff', () => {
     ['focused-entry-evidence', focusedEntryEvidence],
     ['observed-resistance', observedResistance],
     ['conditional-base-anchor', conditionalBaseAnchors],
+    ['dated-execution-fee', datedExecutionFees],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -2045,6 +2069,32 @@ integration('committed sequential provider handoff', () => {
       }),
     ),
   )
+
+  test('dated fee cutover refuses a held position without changing authority', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+          updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${request.cycleId}`
+        yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+        VALUES (${'1'.repeat(64)},'bayn.paper-position-snapshot.v1',${replayAccountId},${'2'.repeat(64)},${'3'.repeat(64)},1,clock_timestamp())`
+        const before =
+          yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a ORDER BY generation_hash`
+        const result = yield* sql.withTransaction(datedExecutionFees).pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result))
+          expect(result.failure).toMatchObject({
+            reason: {
+              cause: { code: '55000', message: expect.stringContaining('dated-execution-fee cutover requires') },
+            },
+          })
+        expect(
+          yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a ORDER BY generation_hash`,
+        ).toEqual(before)
+        expect(yield* sql`SELECT position_count FROM position_snapshots`).toEqual([{ position_count: 1 }])
+      }),
+    ))
 
   test.each([
     { effective: 'PAPER', kill: 'CLEAR', reason: null, changes: true },

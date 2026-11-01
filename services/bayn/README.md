@@ -126,9 +126,9 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 167 admits only v35 execution requests and dispatch while retaining original financial readers and history.
+Migration 167 introduced v35 requests and dispatch; migration 171 replaces that execution path with v36 while retaining original financial readers and history.
 
-The current source uses `jev` protocol v35, verified numerical input v23, batch v8 and entry inference input v8. It retains the
+The current source uses `jev` protocol v36, verified numerical input v23, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -139,7 +139,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v35 and its exact question-policy hash.
+current execution and database guards accept v36 and its exact question-policy hash.
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
 preflight still prevents provider calls when neither proposal template can fund an entry. Once a source is feasible,
@@ -448,13 +448,15 @@ error-reporting failures cannot replace the pass result. The manual GlitchTip sm
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
 Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
-untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) evaluates the exact
-nonempty calendar registered before its first open. There is no fixed session count or waiting period. Targets remain
-at least $5,000 net over that registered window on the existing $100,000 PAPER allocation, maximum session loss $1,000,
-and maximum marked drawdown $2,500. Paired-control, uncertainty, execution-stress, activity, and complete-evidence
-requirements remain in force. Activity targets never require an otherwise unjustified order. The historical
-[v1](../../docs/bayn/jev-migration-acceptance.json) and [v2](../../docs/bayn/jev-migration-acceptance-v2.json) contracts
-retain their original terms and records; their twenty-session rule does not govern new assessments.
+untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
+fully costed profit and positive absolute and paired lower bounds over the exact registered calendar. It has no
+fixed session count, activity or turnover quota, dollar profit hurdle, control-profit multiple, or mandatory stress
+scenario. Allocation and loss limits come from the registered source-approved risk policy. Bootstrap terms and
+selected matched controls are fixed before the first open. Operational reliability remains 99.9% independently for
+eligible classes, with zero safety violations and complete realistic evidence. An assessment grants no capital authority.
+See [current and retained acceptance rules](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
+Historical contracts and assessment receipts retain their original terms and hashes; prospective attempt numbering
+continues across the policy change.
 
 The immediate priorities are reliable recovery and complete cost accounting, then the existing
 [`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
@@ -986,8 +988,8 @@ records retained wire bytes, match and body row counts, and elapsed read time wi
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
-or capital authority. Economic qualification uses the frozen protocol in
-[`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
+or capital authority. Economic qualification uses the [current registered evidence policy](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
+The frozen v2 contract remains available for historical verification.
 
 - `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are static capability ceilings. Effective execution additionally
   requires an exact durable grant bound to the source, image, strategy, account, and risk policy.
@@ -1289,8 +1291,9 @@ The v4 trading receipt verifies trading transfers and broker fees. Its fields do
 `OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Independently known cost-coverage, missing-ledger and
 unsettled-fee gaps remain explicit when starting capital is unavailable; unavailable financial totals remain null.
 Verified gross trading P&L and fees remain visible when the required financial boundary exists. The v6 report's
-attached `systemAssessment` supplies actual net economic profit, conservative qualification profit, and their
-separate profitability and edge verdicts for its registered window. It does not rewrite the v4 receipt.
+attached `systemAssessment` supplies actual net economic profit, the policy-bound qualification basis, and
+separate profitability and edge verdicts for its registered window. Current assessments use actual fully costed profit;
+retained assessments keep their original conservative basis. It does not rewrite the v4 receipt.
 Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
 Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
 receipts keep their original bytes and hashes; this correction applies to newly computed reports.
@@ -1445,6 +1448,9 @@ subtracts `qualificationPremiumMicros`, the excess of the greater invoice-or-tar
 amount, from actual profit. This applies the conservative inference rule once. The qualification figure is null if
 any operating-cost category, trading P&L, or required inference usage is unresolved. Zero-trade sessions still retain
 their operating expenses. A positive actual profit can therefore have negative qualification profit.
+These operating-cost report fields retain their existing conservative meaning. The current system assessment uses
+actual fully costed profit for its qualification series and marked-risk path; the tariff premium remains a diagnostic.
+Retained assessments continue to reproduce their original conservative deductions.
 
 `netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
 Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source
@@ -2306,3 +2312,16 @@ reconciliation before activating a new same-account v18 PAPER mandate against it
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
+
+Current equity fee modeling uses the registered effective-dated schedule and an explicit New York execution date.
+The documented TAF pause applies from October 1 through December 31, 2026. The dated schedule currently covers
+July 2026 through December 2028, including the published January 2027 resumption; unsupported equity dates fail with an explicit missing-schedule error. Crypto fees
+remain independent of this equity schedule. Actual broker expense evidence is separate from modeled planning costs.
+Retained fixed schedules reproduce original financial evidence without applying the new override retroactively.
+Protocol v36 commits this model change. Migration 171 admits new requests and provider dispatch only under v36,
+preserves existing generations and limits, and permits already-paid v35 outcomes to be retained.
+The sources are [Alpaca's October 12 fee schedule](https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf)
+and [SEC release 34-106409](https://www.sec.gov/files/rules/sro/finra/2026/34-106409.pdf).
+
+The [published resumption and 2027–2028 rates](https://www.sec.gov/files/rules/sro/finra/2026/34-106409-ex5.pdf)
+restore $0.000195 per share with a $9.79 cap. The dated model withholds the changed-rate period beginning in 2029.

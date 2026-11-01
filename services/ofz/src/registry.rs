@@ -7,14 +7,38 @@ use tonic::Status;
 #[serde(deny_unknown_fields)]
 pub struct ServiceRegistration {
     pub id: String,
+    #[serde(default)]
+    pub display_name: String,
     pub identities: Vec<String>,
     pub roles: Vec<String>,
     #[serde(default)]
-    pub origins: Vec<String>,
+    pub session_gateway: Option<SessionGateway>,
     #[serde(default)]
     pub proof_audience: Option<String>,
     #[serde(default)]
     pub binding: Option<BindingPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionGateway {
+    pub oidc_client_id: String,
+    pub origin: String,
+}
+
+impl ServiceRegistration {
+    pub fn name(&self) -> &str {
+        if self.display_name.is_empty() {
+            &self.id
+        } else {
+            &self.display_name
+        }
+    }
+    pub fn allows_origin(&self, origin: &str) -> bool {
+        self.session_gateway
+            .as_ref()
+            .is_some_and(|gateway| gateway.origin == origin)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -30,6 +54,26 @@ pub struct BindingPolicy {
 pub struct Registry {
     pub version: u32,
     pub services: Vec<ServiceRegistration>,
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceRegistration>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRegistration {
+    pub id: String,
+    pub name: String,
+    pub resources: Vec<WorkspaceResource>,
+    pub initial_clients: Vec<String>,
+    pub import_platform_members: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceResource {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
 }
 
 pub fn identifier(value: &str) -> bool {
@@ -57,8 +101,11 @@ impl Registry {
         }
         let mut ids = BTreeSet::new();
         let mut identities = BTreeSet::new();
+        let mut gateway_origins = BTreeSet::new();
+        let mut gateway_audiences = BTreeSet::new();
         for service in &registry.services {
             if !identifier(&service.id)
+                || (!service.display_name.is_empty() && !display_name(&service.display_name))
                 || !ids.insert(&service.id)
                 || service.identities.is_empty()
                 || service.identities.len() > 16
@@ -77,15 +124,27 @@ impl Registry {
                     ));
                 }
             }
-            let mut origins = BTreeSet::new();
-            for origin in &service.origins {
+            if let Some(gateway) = &service.session_gateway {
+                if gateway.oidc_client_id.is_empty()
+                    || gateway.oidc_client_id.len() > 256
+                    || gateway
+                        .oidc_client_id
+                        .chars()
+                        .any(|c| c.is_control() || c.is_whitespace())
+                    || !gateway_audiences.insert(&gateway.oidc_client_id)
+                {
+                    return Err(Status::invalid_argument(
+                        "OIDC audience required for a session gateway",
+                    ));
+                }
+                let origin = &gateway.origin;
                 let url = reqwest::Url::parse(origin)
                     .map_err(|_| Status::invalid_argument("invalid registered client origin"))?;
                 if url.scheme() != "https"
                     || !url.username().is_empty()
                     || url.password().is_some()
                     || url.origin().ascii_serialization() != *origin
-                    || !origins.insert(origin)
+                    || !gateway_origins.insert(origin)
                 {
                     return Err(Status::invalid_argument("invalid registered client origin"));
                 }
@@ -99,7 +158,7 @@ impl Registry {
                     || url.query().is_some()
                     || url.fragment().is_some()
                     || url.path() == "/"
-                    || !origins.contains(&url.origin().ascii_serialization())
+                    || !service.allows_origin(&url.origin().ascii_serialization())
                 {
                     return Err(Status::invalid_argument(
                         "proof audience must belong to a registered client origin",
@@ -128,6 +187,52 @@ impl Registry {
                 }
             }
         }
+        if registry.workspaces.len() > 64 {
+            return Err(Status::invalid_argument(
+                "workspace registry exceeds its limit",
+            ));
+        }
+        let mut workspaces = BTreeSet::new();
+        let mut resources = BTreeSet::new();
+        for workspace in &registry.workspaces {
+            if !crate::policy::canonical_uuid(&workspace.id)
+                || !workspaces.insert(&workspace.id)
+                || !display_name(&workspace.name)
+                || workspace.resources.len() > 256
+                || workspace.initial_clients.len() > 128
+            {
+                return Err(Status::invalid_argument("invalid registered workspace"));
+            }
+            let mut clients = BTreeSet::new();
+            for client in &workspace.initial_clients {
+                if !clients.insert(client)
+                    || !registry.by_id(client).is_some_and(|service| {
+                        service.roles.iter().any(|role| role == "relay.client")
+                    })
+                {
+                    return Err(Status::invalid_argument(
+                        "registered workspace client required",
+                    ));
+                }
+            }
+            for resource in &workspace.resources {
+                if !identifier(&resource.kind)
+                    || !resource.kind.contains('.')
+                    || resource.id.is_empty()
+                    || resource.id.len() > 256
+                    || !resource
+                        .id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/_|-=+".contains(&b))
+                    || !display_name(&resource.name)
+                    || !resources.insert((&resource.kind, &resource.id))
+                {
+                    return Err(Status::invalid_argument(
+                        "resource must belong to exactly one workspace",
+                    ));
+                }
+            }
+        }
         Ok(registry)
     }
 
@@ -149,11 +254,49 @@ impl Registry {
         self.services.iter().find(|service| service.id == id)
     }
 
+    pub fn workspace(&self, id: &str) -> Result<&WorkspaceRegistration, Status> {
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.id == id)
+            .ok_or_else(|| Status::not_found("workspace unavailable"))
+    }
+
+    pub fn resource_workspace(
+        &self,
+        kind: &str,
+        id: &str,
+    ) -> Result<&WorkspaceRegistration, Status> {
+        self.workspaces
+            .iter()
+            .find(|workspace| {
+                workspace
+                    .resources
+                    .iter()
+                    .any(|resource| resource.kind == kind && resource.id == id)
+            })
+            .ok_or_else(|| Status::permission_denied("resource is not registered to a workspace"))
+    }
+
+    pub fn session_gateway(&self, peer: &str) -> Result<(&str, &SessionGateway), Status> {
+        let service = self
+            .service(peer)
+            .ok_or_else(|| Status::permission_denied("registered session gateway required"))?;
+        let gateway = service
+            .session_gateway
+            .as_ref()
+            .ok_or_else(|| Status::permission_denied("registered session gateway required"))?;
+        Ok((&service.id, gateway))
+    }
+
     pub fn identities(&self) -> impl Iterator<Item = &str> {
         self.services
             .iter()
             .flat_map(|service| service.identities.iter().map(String::as_str))
     }
+}
+
+fn display_name(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
 }
 
 pub fn configured() -> Result<&'static Registry, Status> {
@@ -200,6 +343,28 @@ mod tests {
                 .service("spiffe://proompteng.ai/ns/example/sa/other")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn independent_browser_gateways_enroll_without_application_branches() {
+        let input = json!({"version":1,"services":[
+            {"id":"product", "identities":["spiffe://proompteng.ai/ns/product/sa/web"],
+             "roles":["platform.client"], "session_gateway":{"oidc_client_id":"product", "origin":"https://product.example"}},
+            {"id":"admin", "identities":["spiffe://proompteng.ai/ns/admin/sa/web"],
+             "roles":["platform.administration"], "session_gateway":{"oidc_client_id":"admin", "origin":"https://admin.example"}}
+        ]});
+        assert!(Registry::parse(&serde_json::to_vec(&input).unwrap()).is_ok());
+        for invalid in [
+            json!({"oidc_client_id":"", "origin":"https://admin.example"}),
+            json!({"oidc_client_id":"admin", "origin":""}),
+            json!({"oidc_client_id":"admin", "origin":"http://admin.example"}),
+            json!({"oidc_client_id":"admin", "origin":"https://product.example"}),
+            json!({"oidc_client_id":"product", "origin":"https://admin.example"}),
+        ] {
+            let mut rejected = input.clone();
+            rejected["services"][1]["session_gateway"] = invalid;
+            assert!(Registry::parse(&serde_json::to_vec(&rejected).unwrap()).is_err());
+        }
     }
 
     #[test]
