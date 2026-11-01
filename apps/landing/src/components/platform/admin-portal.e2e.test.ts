@@ -98,6 +98,7 @@ beforeAll(async () => {
         return Response.json({ workspaces: [metadata, { id: other, name: 'Other workspace' }] })
       }
       if (url.pathname === '/api/auth/logout') return Response.json({ loggedOut: true })
+      if (url.pathname === '/api/platform/provider-connections') return Response.json({ connections: [] })
       if (url.pathname === '/api/auth/login') {
         loginStarts++
         return Response.json({ url: url.origin + '/signed-in' })

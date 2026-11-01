@@ -134,6 +134,9 @@ impl Kubernetes {
 }
 #[async_trait::async_trait]
 impl Connector for Kubernetes {
+    fn provider(&self) -> Option<crate::credentials::Provider<'_>> {
+        None
+    }
     fn id(&self) -> &str {
         &self.id
     }
@@ -279,7 +282,11 @@ impl Connector for Kubernetes {
             .map_err(|_| Status::internal("encode prepared Kubernetes request"))?,
         })
     }
-    async fn execute(&self, request: &Normalized) -> Result<Output, Failure> {
+    async fn execute(
+        &self,
+        request: &Normalized,
+        _bearer: Option<&str>,
+    ) -> Result<Output, Failure> {
         let prepared: PreparedRequest =
             serde_json::from_slice(&request.prepared_request).map_err(|_| Failure {
                 status: Status::internal("invalid prepared Kubernetes request"),
