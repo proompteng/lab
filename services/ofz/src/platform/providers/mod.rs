@@ -191,14 +191,11 @@ enum Access {
     Disconnect,
 }
 
-async fn authority(
+async fn owner_session(
     database: &Database,
-    native: &Native,
     peer: &str,
     human: &proto::PlatformHumanSession,
-    profile: &Profile,
     operation: &str,
-    access: Access,
 ) -> Result<
     (
         proto::RequestContext,
@@ -222,6 +219,26 @@ async fn authority(
             "provider connection changes are fenced",
         ));
     }
+    Ok((context, state, client))
+}
+
+async fn authority(
+    database: &Database,
+    native: &Native,
+    peer: &str,
+    human: &proto::PlatformHumanSession,
+    profile: &Profile,
+    operation: &str,
+    access: Access,
+) -> Result<
+    (
+        proto::RequestContext,
+        State,
+        &'static registry::ServiceRegistration,
+    ),
+    Status,
+> {
+    let (context, state, client) = owner_session(database, peer, human, operation).await?;
     if profile.ownership == Ownership::Workspace
         && client
             .roles
@@ -583,16 +600,9 @@ impl Providers {
                 "provider attempt belongs to another gateway or profile",
             ));
         }
-        let (context, _, caller) = authority(
-            database,
-            native,
-            peer,
-            human,
-            profile,
-            &operation.to_string(),
-            Access::Connect,
-        )
-        .await?;
+        let (context, _, caller) =
+            owner_session(database, peer, human, &operation.to_string()).await?;
+        onboarding::verify(database).await?;
         let (owner, client) = owner(profile, &human.human_id, &caller.id);
         let record = connection.query_opt("SELECT revision,account,state FROM ofz.provider_connections WHERE id=$1 AND profile_id=$2 AND owner_id=$3 AND client_service=$4", &[&id, &profile.id, &owner, &client]).await.map_err(sql_error)?.ok_or_else(|| Status::not_found("provider connection unavailable"))?;
         let phase: String = row.get(4);
@@ -617,38 +627,29 @@ impl Providers {
                 "provider connection changed during authorization",
             ));
         }
-        if !request.error.is_empty() {
-            let problem = if request.error == "access_denied" {
-                proto::ProviderConnectionProblem::Cancelled
-            } else {
-                proto::ProviderConnectionProblem::AuthorizationFailed
-            };
-            let tx = connection.transaction().await.map_err(sql_error)?;
-            tx.execute("UPDATE ofz.provider_attempts SET phase='cancelled',code_hash=$2,problem=$3 WHERE operation_id=$1", &[&operation, &code_hash, &(problem as i32)]).await.map_err(sql_error)?;
-            store::record_audit(
-                &tx,
-                &provider_audit(
-                    &context,
-                    peer,
-                    profile,
-                    &operation.to_string(),
-                    "ofz.providers.cancel",
-                    "provider authorization cancelled",
-                ),
-                "ofz.providers.cancel",
-            )
-            .await?;
-            tx.commit().await.map_err(sql_error)?;
-            return Ok(proto::CompleteProviderConnectionResponse {
-                connection_id: id.to_string(),
-                return_path: attempt.return_path,
-                connected: false,
-                problem: problem as i32,
-            });
-        }
-        connection.execute("UPDATE ofz.provider_attempts SET phase='exchanging',code_hash=$2 WHERE operation_id=$1", &[&operation, &code_hash]).await.map_err(sql_error)?;
         use proto::ProviderConnectionProblem as Problem;
+        let access = authority(
+            database,
+            native,
+            peer,
+            human,
+            profile,
+            &operation.to_string(),
+            Access::Connect,
+        )
+        .await;
+        if let Err(error) = &access
+            && error.code() != tonic::Code::PermissionDenied
+        {
+            return Err(error.clone());
+        }
         let exchange: Result<(Tokens, Account), (Problem, Status)> = async {
+            access.map_err(|error| (Problem::AccessRemoved, error))?;
+            if !request.error.is_empty() {
+                let problem = if request.error == "access_denied" { Problem::Cancelled } else { Problem::AuthorizationFailed };
+                return Err((problem, Status::cancelled("provider authorization cancelled")));
+            }
+            connection.execute("UPDATE ofz.provider_attempts SET phase='exchanging',code_hash=$2 WHERE operation_id=$1", &[&operation, &code_hash]).await.map_err(|error| (Problem::AuthorizationFailed, sql_error(error)))?;
             let now = database
                 .state()
                 .await
@@ -698,19 +699,27 @@ impl Providers {
             Ok(result) => result,
             Err((problem, error)) => {
                 let tx = connection.transaction().await.map_err(sql_error)?;
-                tx.execute("UPDATE ofz.provider_attempts SET phase='failed',problem=$2 WHERE operation_id=$1", &[&operation, &(problem as i32)]).await.map_err(sql_error)?;
+                tx.execute("UPDATE ofz.provider_attempts SET phase=$2,problem=$3,code_hash=$4 WHERE operation_id=$1", &[&operation, &if problem == Problem::Cancelled { "cancelled" } else { "failed" }, &(problem as i32), &code_hash]).await.map_err(sql_error)?;
+                let cancelled = problem == Problem::Cancelled;
+                let (action, reason) = if cancelled {
+                    ("ofz.providers.cancel", "provider authorization cancelled")
+                } else {
+                    ("ofz.providers.failed", "provider authorization failed")
+                };
                 let mut receipt = provider_audit(
                     &context,
                     peer,
                     profile,
                     &operation.to_string(),
-                    "ofz.providers.failed",
-                    "provider authorization failed",
+                    action,
+                    reason,
                 );
-                receipt.allowed = false;
-                store::record_audit(&tx, &receipt, "ofz.providers.failed").await?;
+                receipt.allowed = cancelled;
+                store::record_audit(&tx, &receipt, action).await?;
                 tx.commit().await.map_err(sql_error)?;
-                tracing::warn!(grpc_code = ?error.code(), problem = problem.as_str_name(), audit_receipt = %receipt.id, "provider authorization failed");
+                if !cancelled {
+                    tracing::warn!(grpc_code = ?error.code(), problem = problem.as_str_name(), audit_receipt = %receipt.id, "provider authorization failed");
+                }
                 return Ok(proto::CompleteProviderConnectionResponse {
                     connection_id: id.to_string(),
                     return_path: attempt.return_path,

@@ -395,6 +395,64 @@ pub(crate) async fn qualify(
     );
     assert_eq!(state.lock().unwrap().exchanges, 1);
     begin.operation_id = Uuid::new_v4().to_string();
+    let revoked_begin = providers
+        .begin(database, native, policy::BFF_ID, begin.clone())
+        .await
+        .unwrap();
+    let mut revoked_callback = complete.clone();
+    revoked_callback.state = register_code(&state, &revoked_begin, "revoked-before-callback");
+    revoked_callback.code = "revoked-before-callback".into();
+    let permission = crate::native::Relationship::new(
+        "kubernetes_namespace",
+        &resource.id,
+        "status_reader",
+        "human",
+        &human.human_id,
+    );
+    native
+        .write_fixture_relationships(&[crate::native::Update::delete(permission.clone())])
+        .await
+        .unwrap();
+    assert!(
+        !native
+            .check(
+                &authorization::resource_checks(
+                    &resource,
+                    "kubernetes.status.read",
+                    "human",
+                    &human.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    let removed = providers
+        .complete(database, native, policy::BFF_ID, revoked_callback.clone())
+        .await
+        .unwrap();
+    assert!(!removed.connected);
+    assert_eq!(
+        removed.problem,
+        proto::ProviderConnectionProblem::AccessRemoved as i32
+    );
+    assert_eq!(removed.return_path, begin.return_path);
+    assert_eq!(removed.connection_id, first.connection_id);
+    assert_eq!(state.lock().unwrap().exchanges, 1);
+    native
+        .write_fixture_relationships(&[crate::native::Update::touch(permission)])
+        .await
+        .unwrap();
+    assert_eq!(
+        providers
+            .complete(database, native, policy::BFF_ID, revoked_callback)
+            .await
+            .unwrap(),
+        removed
+    );
+    assert_eq!(state.lock().unwrap().exchanges, 1);
+    begin.operation_id = Uuid::new_v4().to_string();
     let reconnect = providers
         .begin(database, native, policy::BFF_ID, begin.clone())
         .await
