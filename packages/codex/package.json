@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "example": "bun run examples/run-example.ts",
     "test": "vitest run",
-    "generate:app-server-types": "codex app-server generate-ts --experimental --out src/app-server",
+    "generate:app-server-types": "bun run scripts/generate-app-server-types.ts",
     "check:app-server-types": "bash -lc 'tmp=$(mktemp -d); trap \"rm -rf \\\"$tmp\\\"\" EXIT; codex app-server generate-ts --experimental --out \"$tmp\" >/dev/null; diff -qr src/app-server \"$tmp\"'",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."

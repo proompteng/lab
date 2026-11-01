@@ -17,6 +17,8 @@ export const entryHandoffDiagnostic = (
     requestId: handoff.requestId,
     handoffHash: handoff.handoffHash,
     disposition: disposition.status,
+    // Project the existing closed category, never provider messages, HTTP details or metering.
+    ...(disposition.status === 'VISUAL_FAILED' ? { visualFailureCategory: disposition.failure.category } : {}),
     sourceFeasibility: {
       reason: sourceFeasibility.reason,
       supportBarCount: sourceFeasibility.supportBarCount,

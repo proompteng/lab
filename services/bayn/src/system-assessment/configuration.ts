@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 import type { LoadedRuntimeConfig } from '../config/model'
 import { canonicalHashV1Result } from '../hash'
-import { JevProtocolSchema, type JevProtocol } from '../jev/protocol'
+import { HistoricalJevProtocolSchema, type JevProtocol } from '../jev/protocol'
 import { jevSignalIntervalMs } from '../jev/observation-query'
 import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
 
@@ -14,13 +14,13 @@ export const QualificationRuntimeSchema = Schema.Struct({
   reconciliationIntervalMs: PositiveIntegerSchema,
   reconciliationStaleThresholdMs: PositiveIntegerSchema,
   unknownMutationThresholdMs: PositiveIntegerSchema,
-  protocol: JevProtocolSchema,
+  protocol: HistoricalJevProtocolSchema,
 })
 
 export const qualificationRuntime = (
   config: LoadedRuntimeConfig,
   protocol: JevProtocol,
-): typeof QualificationRuntimeSchema.Type => ({
+): Omit<typeof QualificationRuntimeSchema.Type, 'protocol'> & { readonly protocol: JevProtocol } => ({
   schemaVersion: 'bayn.qualification-runtime.v1',
   controllerPlanHash: config.expectedExecutionControllerPlanHash ?? null,
   cyclePollIntervalMs: config.cyclePollIntervalMs,

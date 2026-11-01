@@ -18,6 +18,7 @@ pub struct Relation {
 pub struct ResourceDefinition {
     pub kind: String,
     pub native_type: String,
+    pub workspace_scoped: bool,
     pub relations: Vec<Relation>,
 }
 
@@ -29,6 +30,8 @@ pub struct ActionDefinition {
     pub permission: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_relation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_grant_relation: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -76,7 +79,7 @@ impl PolicyCatalog {
                     || subjects.len() != relation.subjects.len()
                     || subjects
                         .iter()
-                        .any(|kind| !matches!(*kind, "human" | "workload"))
+                        .any(|kind| !matches!(*kind, "human" | "workload" | "workspace"))
                 {
                     return Err(Status::invalid_argument("invalid policy relation"));
                 }
@@ -103,6 +106,17 @@ impl PolicyCatalog {
             {
                 return Err(Status::invalid_argument(
                     "action grant relation is not declared",
+                ));
+            }
+            if let Some(relation) = &action.workspace_grant_relation
+                && !catalog
+                    .resource(&action.resource_kind)?
+                    .relations
+                    .iter()
+                    .any(|entry| &entry.name == relation && entry.subjects == ["workspace"])
+            {
+                return Err(Status::invalid_argument(
+                    "workspace grant relation is not declared",
                 ));
             }
         }
@@ -166,7 +180,7 @@ mod tests {
     #[test]
     fn new_domain_policies_do_not_require_an_action_enum_change() {
         let catalog = PolicyCatalog::parse(&serde_json::to_vec(&json!({
-            "version":1,"resources":[{"kind":"example.document","nativeType":"example_document","relations":[{"name":"reader","subjects":["human","workload"]}]}],
+            "version":1,"resources":[{"kind":"example.document","nativeType":"example_document","workspaceScoped":true,"relations":[{"name":"reader","subjects":["human","workload"]}]}],
             "actions":[{"id":"example.document.read","resourceKind":"example.document","permission":"read"}]
         })).unwrap()).unwrap();
         let action = catalog.action("example.document.read").unwrap();

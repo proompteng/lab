@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/connections'
-import { policyWriteSchema } from '@/lib/platform/policies'
+import { accessRequestMutationSchema, type AccessRequestMutation } from '@/lib/platform/access-requests'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
@@ -472,6 +472,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     })
   })
 
+  await page.route('**/api/platform/provider-connections**', (route) => route.fulfill({ json: { connections: [] } }))
   await page.route('**/api/tengri/connections**', (route) =>
     route.fulfill({ json: { connections: [], recoveryGeneration: '1' } }),
   )
@@ -1030,6 +1031,21 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     waitForHeldPreviewSession: () => heldPreviewSessionStarted,
   }
 }
+
+test('signs out of the desktop through shared platform authentication', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  await settings.getByText('Sign-in & passkeys', { exact: true }).click()
+  const response = page.waitForResponse('**/api/auth/logout')
+  await settings.getByRole('button', { name: 'Sign Out', exact: true }).click()
+  const logout = await response
+  expect(logout.request().method()).toBe('POST')
+  expect(logout.request().headers()['x-platform-operation-id']).toMatch(/^[0-9a-f-]{36}$/)
+  await expect(page.getByRole('button', { name: 'Continue with GitHub', exact: true })).toBeVisible()
+})
 
 test('aborts cold browser startup on close so guest lifecycle actions can proceed', async ({ page }) => {
   const mock = await mockTengri(page)
@@ -6332,62 +6348,7 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await expect(settings.getByRole('alert')).toHaveCount(0)
 })
 
-test('switches access tabs immediately and supports keyboard selection while loading', async ({ page }, testInfo) => {
-  await mockTengri(page)
-  const platformStarted = Promise.withResolvers<void>()
-  const releasePlatform = Promise.withResolvers<void>()
-  await page.route('**/api/tengri/access?**', async (route) => {
-    const view = new URL(route.request().url()).searchParams.get('view')
-    if (view === 'platform') {
-      platformStarted.resolve()
-      await releasePlatform.promise
-    }
-    await route.fulfill({
-      json:
-        view === 'audit'
-          ? { receipts: [] }
-          : {
-              version: '1',
-              entries: [
-                { subjectId: `${view}-identity`, displayName: `${view}-identity`, githubId: '123', role: 'viewer' },
-              ],
-            },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window' })
-  await openSettingsPane(settings, 'Privacy & Security')
-  const access = settings.getByRole('region', { name: 'Access administration' })
-  await expect(access.getByText('workspace-identity', { exact: true })).toBeVisible()
-  await access.getByText('Platform', { exact: true }).click()
-  await platformStarted.promise
-  await expect(access.getByRole('status', { name: 'Loading Platform access' })).toBeVisible()
-  await expect(access.getByText('workspace-identity', { exact: true })).toHaveCount(0)
-  releasePlatform.resolve()
-  const platform = access.getByRole('tab', { name: 'Platform', exact: true })
-  await expect(platform).toHaveAttribute('aria-selected', 'true')
-  await expect
-    .poll(async () => {
-      const backgrounds = await access
-        .getByRole('tab')
-        .evaluateAll((tabs) => tabs.map((tab) => getComputedStyle(tab).backgroundColor))
-      return backgrounds[0] !== backgrounds[1]
-    })
-    .toBe(true)
-  await expect(access.getByRole('tabpanel', { name: 'Platform', exact: true })).toContainText('platform-identity')
-  await page.screenshot({ path: testInfo.outputPath('access-tabs.png'), animations: 'disabled' })
-  await platform.press('ArrowRight')
-  const audit = access.getByRole('tab', { name: 'Audit', exact: true })
-  await expect(audit).toBeFocused()
-  await expect(audit).toHaveAttribute('aria-selected', 'true')
-  await expect(access.getByRole('tabpanel', { name: 'Audit', exact: true })).toContainText('No activity to show.')
-  await audit.press('Home')
-  await expect(access.getByRole('tab', { name: 'Workspace', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect(access.getByRole('tabpanel', { name: 'Workspace', exact: true })).toContainText('workspace-identity')
-})
-
-test('cancels an obsolete access refresh when another tab is selected', async ({ page }) => {
+test('cancels an obsolete workspace access refresh when another settings pane is selected', async ({ page }) => {
   await mockTengri(page)
   const refreshStarted = Promise.withResolvers<void>()
   const releaseRefresh = Promise.withResolvers<void>()
@@ -6417,12 +6378,12 @@ test('cancels an obsolete access refresh when another tab is selected', async ({
   const cancelled = page.waitForEvent('requestfailed', {
     predicate: (request) => new URL(request.url()).searchParams.get('view') === 'workspace',
   })
-  await access.getByRole('tab', { name: 'Platform', exact: true }).click()
+  await openSettingsPane(settings, 'General')
   await cancelled
   releaseRefresh.resolve()
-  const platform = access.getByRole('tabpanel', { name: 'Platform', exact: true })
-  await expect(platform).toContainText('platform-identity')
-  await expect(access.getByText('workspace-identity', { exact: true })).toHaveCount(0)
+  await expect(settings.getByRole('region', { name: 'General', exact: true })).toBeVisible()
+  await expect(access).toBeHidden()
+  await expect(settings.getByText('workspace-identity', { exact: true })).toBeHidden()
 })
 
 for (const outcome of ['success', 'uncertain'] as const) {
@@ -10963,6 +10924,108 @@ for (const refreshDisconnect of [false, true]) {
   })
 }
 
+test('requests integration access without admin controls and recovers the exact intent on a phone', async ({
+  page,
+}) => {
+  await mockTengri(page)
+  const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const scope = {
+    workspaceId,
+    workspaceName: 'Lab',
+    resource: { kind: 'kubernetes.namespace', id: 'galactic/namespace-uid' },
+    resourceName: 'Production',
+    actions: ['kubernetes.status.read'],
+  }
+  const writes: AccessRequestMutation[] = []
+  let requestId = ''
+  let approved = false
+  let loseReply = true
+  await page.route('**/api/platform/connectors', (route) =>
+    route.fulfill({
+      json: {
+        operations: approved
+          ? [
+              {
+                connectorId: 'galactic',
+                name: 'pod_status',
+                action: 'kubernetes.status.read',
+                description: 'Read pod status',
+                readOnly: true,
+                targets: [{ name: 'Production', resource: scope.resource }],
+              },
+            ]
+          : [],
+      },
+    }),
+  )
+  await page.route('**/api/tengri/connections**', (route) =>
+    route.fulfill({
+      json: {
+        connections: [],
+        recoveryGeneration: '1',
+        availableScopes: approved ? [scope] : [],
+        requestableScopes: [scope],
+        accessRequests: requestId
+          ? [
+              {
+                id: requestId,
+                requesterHumanId: 'a'.repeat(64),
+                clientService: 'tengri-web',
+                scope,
+                reason: 'Investigate production health',
+                state: approved ? 'PLATFORM_ACCESS_REQUEST_STATE_APPROVED' : 'PLATFORM_ACCESS_REQUEST_STATE_PENDING',
+                createdAtUnixMs: '1793510000000',
+                updatedAtUnixMs: '1793510000000',
+              },
+            ]
+          : [],
+      },
+    }),
+  )
+  await page.route('**/api/platform/access-requests', (route) => {
+    const body = accessRequestMutationSchema.parse(route.request().postDataJSON())
+    writes.push(body)
+    if (body.kind !== 'create') throw new Error('Expected a member request')
+    requestId = body.operationId
+    if (loseReply) {
+      loseReply = false
+      return route.fulfill({ status: 503, json: { error: 'The request response was lost.' } })
+    }
+    return route.fulfill({
+      json: { requestId, decision: { allowed: true, auditReceiptId: '22222222-2222-4222-8222-222222222222' } },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  let settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Connections')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settings.getByRole('button', { name: 'Request access', exact: true }).click()
+  const reason = settings.getByLabel('Why do you need access?', { exact: true })
+  await reason.fill('Investigate production health')
+  expect(
+    await reason.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+  ).toBeGreaterThanOrEqual(16)
+  await settings.screenshot({ path: test.info().outputPath('access-request-phone.png'), animations: 'disabled' })
+  await settings.getByRole('button', { name: 'Send request', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('The request response was lost.')
+  await page.reload()
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Connections')
+  await settings.getByRole('button', { name: 'Retry saved request', exact: true }).click()
+  await expect(settings.getByText('Pending approval', { exact: true })).toBeVisible()
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toEqual(writes[0])
+  await expect(settings.getByText('Service policies', { exact: true })).toHaveCount(0)
+  await expect(settings.getByRole('button', { name: 'Verify passkey', exact: true })).toHaveCount(0)
+  approved = true
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(settings.getByRole('button', { name: 'Connect', exact: true })).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Request access', exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
 test('keeps an oversized resource selection editable without saving a pending request', async ({ page }) => {
   await mockTengri(page)
   const saves: SaveConnection[] = []
@@ -11069,9 +11132,9 @@ for (const { verificationStatus, failedStart } of [
   { verificationStatus: 200, failedStart: false },
   { verificationStatus: 401, failedStart: false },
   { verificationStatus: 428, failedStart: false },
-  { verificationStatus: 428, failedStart: true },
+  { verificationStatus: 401, failedStart: true },
 ]) {
-  test(`connects selected tools and resumes only required verification: ${verificationStatus}, failed start ${failedStart}`, async ({
+  test(`connects approved tools in one action and only resumes an expired sign-in: ${verificationStatus}, failed start ${failedStart}`, async ({
     page,
   }) => {
     await mockTengri(page)
@@ -11140,17 +11203,22 @@ for (const { verificationStatus, failedStart } of [
     await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
     const settings = page.getByRole('region', { name: 'Settings window', exact: true })
     await openSettingsPane(settings, 'Connections')
+    await expect(settings.getByText('production', { exact: false }).first()).toBeVisible()
     await settings.getByRole('button', { name: 'Connect', exact: true }).click()
-    await settings.getByRole('checkbox', { name: 'production', exact: true }).check()
-    await settings.getByRole('button', { name: 'Back to connections', exact: true }).click()
-    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
-    await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
-    if (verificationStatus === 200) await settings.screenshot({ path: test.info().outputPath('connection-setup.png') })
-    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (verificationStatus === 428) {
+      await expect(settings.getByRole('alert')).toHaveText('Verify before connecting.')
+      expect(signInStarts).toBe(0)
+      expect(verifications).toBe(0)
+      expect(saves).toHaveLength(1)
+      await settings.getByRole('button', { name: 'Finish setup', exact: true }).click()
+      await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
+      return
+    }
     if (failedStart) {
       await expect(settings.getByRole('alert')).toHaveText(
-        'Verification could not start. Your choices are saved. Try again when you’re ready.',
+        'Sign-in could not start. Your choices are saved. Try again when you’re ready.',
       )
+      await settings.getByRole('button', { name: 'Finish setup', exact: true }).click()
       await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
       await settings.getByRole('button', { name: 'Try again', exact: true }).click()
     }
@@ -11178,290 +11246,87 @@ for (const { verificationStatus, failedStart } of [
   })
 }
 
-test('edits saved service permissions and preserves the exact pending command', async ({ page }) => {
+test('uses only common approved operations and keeps each connection in one workspace', async ({ page }) => {
   await mockTengri(page)
-  const writes: Record<string, unknown>[] = []
-  let version = 20
-  let lostResponse = true
-  let requireVerification = false
-  let saved = ['can_inspect']
-  const workload = 'spiffe://proompteng.ai/ns/opencode/sa/opencode'
-  await page.route('**/api/tengri/access**', (route) =>
-    route.fulfill({
-      json: {
-        version: '20',
-        entries: [{ subjectId: 'fixture-person', githubId: '123', displayName: 'Alex', role: 'member' }],
-      },
-    }),
-  )
+  const saves: SaveConnection[] = []
+  const target = (name: string) => ({ name, resource: { kind: 'kubernetes.namespace', id: 'galactic/' + name } })
+  const alpha = target('alpha')
+  const beta = target('beta')
   await page.route('**/api/platform/connectors', (route) =>
     route.fulfill({
       json: {
         operations: [
           {
-            connectorId: 'fixture',
-            name: 'inspect',
-            action: 'fixture.inspect',
-            description: 'Inspect a fixture resource',
+            connectorId: 'galactic',
+            name: 'status',
+            action: 'kubernetes.status.read',
+            description: 'Read pod status',
             readOnly: true,
-            targets: [{ name: 'Tenant A', resource: { kind: 'fixture.service', id: 'fixture/tenant-a' } }],
+            targets: [alpha, beta],
+          },
+          {
+            connectorId: 'galactic',
+            name: 'logs',
+            action: 'kubernetes.logs.read',
+            description: 'Read bounded pod logs',
+            readOnly: true,
+            targets: [alpha],
           },
         ],
       },
     }),
   )
-  await page.route('**/api/platform/policies**', async (route) => {
+  await page.route('**/api/tengri/connections**', (route) => {
     if (route.request().method() === 'POST') {
-      const write = policyWriteSchema.parse(route.request().postDataJSON())
-      writes.push(write)
-      if (requireVerification) {
-        await route.fulfill({ status: 428, json: { error: 'Fresh verification required' } })
-        return
-      }
-      if (lostResponse) {
-        lostResponse = false
-        await route.fulfill({ status: 503, json: { error: 'The policy result could not be confirmed.' } })
-        return
-      }
-      for (const change of write.relationships)
-        saved = change.enabled
-          ? [...new Set([...saved, change.relation])]
-          : saved.filter((name) => name !== change.relation)
-      version += 1
-      await route.fulfill({
-        json: { decision: { allowed: true, auditReceiptId: '55555555-5555-4555-8555-555555555555' } },
+      const request = connectionRequestSchema.parse(route.request().postDataJSON())
+      if (request.kind === 'save') saves.push(request)
+      return route.fulfill({
+        status: 403,
+        json: { error: 'Recorded the selected access.', code: 'connection_access_denied' },
       })
-      return
     }
-    const query = new URL(route.request().url()).searchParams
-    if (query.size) {
-      expect(query.get('subjectId')).toBe(workload)
-      expect(query.get('id')).toBe('fixture/tenant-a')
-      await route.fulfill({ json: { policyVersion: String(version), relations: saved } })
-      return
-    }
-    await route.fulfill({
+    return route.fulfill({
       json: {
-        policyVersion: String(version),
-        policyCatalogJson: JSON.stringify({
-          version: 1,
-          resources: [
-            {
-              kind: 'fixture.service',
-              relations: [
-                { name: 'can_inspect', subjects: ['human', 'workload'] },
-                { name: 'can_list', subjects: ['human', 'workload'] },
-              ],
-            },
-          ],
-        }),
-        relayClients: [{ id: 'opencode', identities: [workload] }],
-      },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
-  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
-  await expect(settings.getByRole('button', { name: /Verify (passkey|identity)/ })).toHaveCount(0)
-  await expect(policies.getByRole('heading', { name: 'Service access', exact: true })).toBeVisible()
-  await expect(policies.getByRole('combobox')).toHaveCount(0)
-  await policies.getByRole('button', { name: 'Manage OpenCode', exact: true }).click()
-  await expect(policies.getByRole('heading', { name: 'OpenCode', exact: true })).toBeFocused()
-  await expect(policies.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
-  const resource = policies.getByLabel('Resource', { exact: true })
-  await resource.press('ArrowDown')
-  await expect(page.getByRole('listbox')).toBeVisible()
-  const menuStyle = await page.getByRole('listbox').evaluate((element) => {
-    const style = getComputedStyle(element.closest('[data-slot="select-content"]') ?? element)
-    const context = document.createElement('canvas').getContext('2d')
-    if (!context) throw new Error('A canvas is required to normalize computed colors')
-    const rgb = (color: string) => {
-      context.fillStyle = color
-      context.fillRect(0, 0, 1, 1)
-      return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
-    }
-    return { background: rgb(style.backgroundColor), color: rgb(style.color), font: style.fontFamily }
-  })
-  expect(menuStyle.background).toEqual([24, 24, 27])
-  expect(menuStyle.color).toEqual([244, 244, 245])
-  expect(menuStyle.font).toMatch(/geist/i)
-  await page.getByRole('option', { name: 'Tenant A · fixture', exact: true }).click()
-  await expect(policies.getByRole('checkbox', { name: 'Can inspect', exact: true })).toBeChecked()
-  await expect(policies.getByRole('checkbox', { name: 'Can list', exact: true })).not.toBeChecked()
-  await policies.getByRole('checkbox', { name: 'Can list', exact: true }).check()
-  await policies.getByLabel('Reason for change', { exact: true }).fill('Allow the standalone client to list Tenant A')
-  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
-  await expect(policies.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled()
-  await settings.getByRole('tab', { name: 'Audit', exact: true }).click()
-  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
-  await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
-  await policies.getByRole('button', { name: 'Retry exact change', exact: true }).click()
-  await expect(policies.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible()
-  expect(writes).toHaveLength(2)
-  expect(writes[1]).toEqual(writes[0])
-  expect(writes[0]).toMatchObject({
-    expectedPolicyVersion: '20',
-    relationships: [
-      {
-        resource: { kind: 'fixture.service', id: 'fixture/tenant-a' },
-        relation: 'can_list',
-        subjectKind: 'workload',
-        subjectId: workload,
-        enabled: true,
-      },
-    ],
-  })
-  await expect(policies.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
-  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).uncheck()
-  await policies.getByLabel('Reason for change', { exact: true }).fill('Remove inspection while retaining list access')
-  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect.poll(() => writes.length).toBe(3)
-  expect(writes[2]).toMatchObject({
-    expectedPolicyVersion: '21',
-    relationships: [{ relation: 'can_inspect', enabled: false }],
-  })
-  await expect(policies.getByRole('checkbox', { name: 'Can list', exact: true })).toBeChecked()
-  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service access"]').analyze()
-  expect(accessibility.violations).toEqual([])
-  await settings.getByRole('button', { name: 'Maximize Settings', exact: true }).click()
-  await settings.screenshot({ path: test.info().outputPath('services-desktop.png') })
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect
-    .poll(() => policies.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
-    .toBeLessThanOrEqual(1)
-  await settings.screenshot({ path: test.info().outputPath('services-mobile.png') })
-  requireVerification = true
-  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).check()
-  await policies.getByLabel('Reason for change', { exact: true }).fill('Verify only when saving a privileged change')
-  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect(policies.getByRole('alert')).toHaveText('Verify your identity to save this change.')
-  await expect(policies.locator('form').getByRole('button', { name: 'Verify identity', exact: true })).toBeVisible()
-  expect(writes).toHaveLength(4)
-})
-
-test('access tabs present people, limits and recent activity before focused editors', async ({ page }) => {
-  await mockTengri(page)
-  const posts: Record<string, unknown>[] = []
-  await page.route('**/api/tengri/access**', async (route) => {
-    if (route.request().method() === 'POST') {
-      posts.push(route.request().postDataJSON())
-      await route.fulfill({
-        json: {
-          receipt: {
-            operationId: route.request().postDataJSON().operationId,
-            version: '21',
-            auditReceiptId: 'fixture-audit',
+        connections: [],
+        recoveryGeneration: '1',
+        availableScopes: [
+          {
+            workspaceId: '11111111-1111-4111-8111-111111111111',
+            workspaceName: 'First workspace',
+            resource: alpha.resource,
+            resourceName: alpha.name,
+            actions: ['kubernetes.status.read', 'kubernetes.logs.read'],
           },
-        },
-      })
-      return
-    }
-    const view = new URL(route.request().url()).searchParams.get('view')
-    await route.fulfill({
-      json:
-        view === 'audit'
-          ? {
-              receipts: [
-                {
-                  id: 'receipt-id',
-                  sequence: '200',
-                  createdAtUnixMs: '1793484000000',
-                  action: 'ACTION_POLICY_COMMAND',
-                  allowed: true,
-                  platformAction: 'ofz.relationships.write',
-                  reason: 'Allow namespace reads',
-                  operationId: 'operation-id',
-                },
-              ],
-            }
-          : {
-              version: '20',
-              workspaceState: 'active',
-              entries: [
-                {
-                  subjectId: 'alex',
-                  githubId: '123',
-                  displayName: 'Alex Chen',
-                  role: view === 'platform' ? 'member' : 'viewer',
-                },
-                {
-                  subjectId: 'alex',
-                  githubId: '123',
-                  displayName: 'Alex Chen',
-                  role: view === 'platform' ? 'administrator' : 'developer',
-                },
-              ],
-              quotas: [
-                {
-                  humanId: 'alex',
-                  totalWorkspaces: 2,
-                  activeWorkspaces: 1,
-                  retainedBytes: '68719476736',
-                  usedWorkspaces: 1,
-                  usedActive: 1,
-                  usedBytes: '34359738368',
-                },
-              ],
-            },
+          {
+            workspaceId: '22222222-2222-4222-8222-222222222222',
+            workspaceName: 'Second workspace',
+            resource: beta.resource,
+            resourceName: beta.name,
+            actions: ['kubernetes.status.read'],
+          },
+        ],
+      },
     })
   })
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  const access = settings.getByRole('region', { name: 'Access administration', exact: true })
-  await expect(access.getByRole('link', { name: 'Alex Chen', exact: true })).toHaveCount(1)
-  await expect(access.getByLabel('GitHub username', { exact: true })).toHaveCount(0)
-  await expect(access.getByText('Advanced access & recovery', { exact: true })).toBeVisible()
-  await expect(access.getByRole('button', { name: 'Create diagnostic grant', exact: true })).toBeHidden()
-  await access.getByRole('button', { name: 'Add collaborator', exact: true }).click()
-  await expect(access.getByRole('heading', { name: 'Collaborator access', exact: true })).toBeFocused()
-  await expect(access.getByLabel('GitHub username', { exact: true })).toBeVisible()
-  await access.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(access.getByRole('button', { name: 'Add collaborator', exact: true })).toBeFocused()
-  await settings.screenshot({ path: test.info().outputPath('workspace-desktop.png') })
-  await access.getByRole('tab', { name: 'Platform', exact: true }).click()
-  await expect(access.getByRole('link', { name: 'Alex Chen', exact: true })).toHaveCount(1)
-  await expect(access.getByRole('region', { name: 'Workspace limits', exact: true })).toContainText('Storage (GiB)')
-  await settings.screenshot({ path: test.info().outputPath('platform-desktop.png') })
-  await access.getByRole('button', { name: 'Adjust limits for GitHub #123', exact: true }).click()
-  await expect(access.getByLabel('GitHub username', { exact: true })).toHaveCount(0)
-  await access.getByLabel('Total workspaces', { exact: true }).fill('3')
-  await access.getByLabel('Reason', { exact: true }).fill('Adjust the existing member workspace allowance')
-  await access.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect.poll(() => posts.length).toBe(1)
-  expect(posts[0]).toMatchObject({
-    action: 'quota',
-    recipient: { kind: 'github-id', githubId: '123' },
-    total: 3,
-    active: 1,
-    retainedGiB: 64,
-  })
-  await access.getByRole('tab', { name: 'Audit', exact: true }).click()
-  await expect(access.getByText('Ofz relationships write', { exact: true })).toBeVisible()
-  await expect(access.getByText('receipt-id', { exact: true })).toBeHidden()
-  await access.getByText('Ofz relationships write', { exact: true }).click()
-  await expect(access.getByText('receipt-id', { exact: true })).toBeVisible()
-  await settings.screenshot({ path: test.info().outputPath('audit-desktop.png') })
-  for (const view of ['Workspace', 'Platform', 'Audit'] as const) {
-    await page.setViewportSize({ width: 390, height: 844 })
-    await access.getByRole('tab', { name: view, exact: true }).click()
-    await expect(access.getByRole('heading', { level: 2 })).toBeVisible()
-    await expect
-      .poll(() => access.evaluate((element) => element.scrollWidth - element.clientWidth))
-      .toBeLessThanOrEqual(1)
-    expect(
-      (await new AxeBuilder({ page }).include('[aria-label="Access administration"]').analyze()).violations,
-    ).toEqual([])
-    await settings.screenshot({ path: test.info().outputPath(view.toLowerCase() + '-mobile.png') })
-  }
-  await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeHidden()
-  await settings.getByText('Sign-in & passkeys', { exact: true }).click()
-  await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeVisible()
+  await openSettingsPane(settings, 'Connections')
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await settings.getByRole('checkbox', { name: 'alpha', exact: true }).check()
+  await expect(settings.getByText('First workspace', { exact: true })).toBeVisible()
+  await expect(settings.getByText('Read bounded pod logs', { exact: true })).toBeVisible()
+  await settings.getByRole('checkbox', { name: 'beta', exact: true }).check()
+  await expect(settings.getByText('Read bounded pod logs', { exact: true })).toHaveCount(0)
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('Choose resources from one workspace.')
+  expect(saves).toHaveLength(0)
+  await settings.getByRole('checkbox', { name: 'alpha', exact: true }).uncheck()
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('Recorded the selected access.')
+  expect(saves).toHaveLength(1)
+  expect(saves[0]?.operations).toEqual(['status'])
+  expect(saves[0]?.targets).toEqual([beta.resource])
 })
 
 test('managing a Viewer preserves their exact saved scope and identifies diagnostic agents', async ({ page }) => {
@@ -11542,112 +11407,6 @@ test('managing a Viewer preserves their exact saved scope and identifies diagnos
   await expect(
     access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
   ).not.toBeChecked()
-})
-
-test('service resource permissions can be managed for a person on a later roster page', async ({ page }) => {
-  await mockTengri(page)
-  await page.route('**/api/tengri/access**', (route) => {
-    const later = new URL(route.request().url()).searchParams.get('cursor') === 'next-people'
-    return route.fulfill({
-      json: later
-        ? {
-            version: '20',
-            entries: [{ subjectId: 'later-person', githubId: '456', displayName: 'Later Member', role: 'member' }],
-          }
-        : {
-            version: '20',
-            entries: [{ subjectId: 'first-person', githubId: '123', displayName: 'First Member', role: 'member' }],
-            cursor: 'next-people',
-          },
-    })
-  })
-  await page.route('**/api/platform/connectors', (route) =>
-    route.fulfill({
-      json: {
-        operations: [
-          {
-            connectorId: 'fixture',
-            name: 'read',
-            description: 'Read a resource',
-            action: 'fixture.read',
-            readOnly: true,
-            targets: [{ name: 'Tenant A', resource: { kind: 'fixture.service', id: 'fixture/tenant-a' } }],
-          },
-        ],
-      },
-    }),
-  )
-  await page.route('**/api/platform/policies**', (route) => {
-    const query = new URL(route.request().url()).searchParams
-    if (query.size) {
-      expect(query.get('subjectId')).toBe('later-person')
-      expect(query.get('subjectKind')).toBe('human')
-      return route.fulfill({ json: { policyVersion: '20', relations: ['reader'] } })
-    }
-    return route.fulfill({
-      json: {
-        policyVersion: '20',
-        policyCatalogJson: JSON.stringify({
-          version: 1,
-          resources: [{ kind: 'fixture.service', relations: [{ name: 'reader', subjects: ['human'] }] }],
-        }),
-        relayClients: [],
-      },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
-  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
-  await policies.getByText('People’s resource permissions', { exact: true }).click()
-  await expect(policies.getByRole('button', { name: 'Later Member', exact: true })).toHaveCount(0)
-  await policies.getByRole('button', { name: 'More people', exact: true }).click()
-  await policies.getByRole('button', { name: 'Later Member', exact: true }).click()
-  await selectOption(page, policies.getByLabel('Resource', { exact: true }), 'Tenant A · fixture')
-  await expect(policies.getByRole('checkbox', { name: 'Reader', exact: true })).toBeChecked()
-})
-
-test('editing a platform role does not validate unrelated fractional GiB quota fields', async ({ page }) => {
-  await mockTengri(page)
-  const writes: Record<string, unknown>[] = []
-  await page.route('**/api/tengri/access**', (route) => {
-    if (route.request().method() === 'POST') {
-      writes.push(route.request().postDataJSON())
-      return route.fulfill({
-        json: {
-          receipt: {
-            operationId: route.request().postDataJSON().operationId,
-            version: '21',
-            auditReceiptId: 'fixture-audit',
-          },
-        },
-      })
-    }
-    return route.fulfill({
-      json: {
-        version: '20',
-        entries: [{ subjectId: 'member-person', githubId: '123', displayName: 'Alex Chen', role: 'member' }],
-        quotas: [{ humanId: 'member-person', totalWorkspaces: 2, activeWorkspaces: 1, retainedBytes: '536870912' }],
-      },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Platform', exact: true }).click()
-  await settings.getByRole('button', { name: 'Manage Alex Chen member', exact: true }).click()
-  await settings.getByLabel('Reason', { exact: true }).fill('Confirm this role without changing storage limits')
-  await settings.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect.poll(() => writes.length).toBe(1)
-  expect(writes[0]).toMatchObject({
-    action: 'membership',
-    recipient: { kind: 'github-id', githubId: '123' },
-    role: 'member',
-    enabled: true,
-  })
 })
 
 test('returns from phone layout without shrinking saved desktop windows', async ({ page }) => {
@@ -11936,5 +11695,185 @@ for (const mode of ['idle', 'current', 'other', 'closed'] as const) {
     await page.clock.fastForward(61_000)
     if (activeRun) await expect.poll(() => reconciliations).toBe(baseline + 1)
     else expect(reconciliations).toBe(baseline)
+  })
+}
+
+test('keeps workspace sharing in Tengri and directs administration to its own portal', async ({ page }) => {
+  await mockTengri(page)
+  const reads: string[] = []
+  await page.route('**/api/tengri/access**', async (route) => {
+    reads.push(route.request().url())
+    await route.fulfill({ json: { version: '20', workspaceState: 'active', entries: [] } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const sharing = settings.getByRole('region', { name: 'Access administration', exact: true })
+  await expect(sharing.getByRole('heading', { name: 'Workspace access', exact: true })).toBeVisible()
+  await expect(sharing.getByRole('button', { name: 'Add collaborator', exact: true })).toBeVisible()
+  await expect(sharing.getByRole('tab')).toHaveCount(0)
+  await expect(sharing.getByRole('link', { name: 'Workspace administration', exact: true })).toHaveAttribute(
+    'href',
+    'https://admin.proompteng.ai/',
+  )
+  expect(reads.length).toBeGreaterThan(0)
+  for (const read of reads) {
+    expect(new URL(read).searchParams.get('view')).toBe('workspace')
+    expect(new URL(read).searchParams.get('workspace')).toBeTruthy()
+  }
+})
+
+for (const { outcome, repair } of [
+  { outcome: 'connected', repair: false },
+  { outcome: 'cancelled', repair: false },
+  { outcome: 'account-mismatch', repair: false },
+  { outcome: 'connected', repair: true },
+] as const) {
+  test(`restores provider authorization on a phone without repeating setup or prompting for passkeys: ${outcome}, repair ${repair}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await mockTengri(page, { preserveDraftStorageOnReload: true })
+    const saves: SaveConnection[] = []
+    let begins = 0
+    let signIns = 0
+    let accountReady = false
+    let connections: Record<string, unknown>[] = repair
+      ? [
+          {
+            id: '88888888-8888-4888-8888-888888888888',
+            clientService: 'tengri-web',
+            clientReference: readyAgent.uid + '/inventory',
+            actions: ['inventory.items.read', 'inventory.details.read'],
+            resources: [{ kind: 'inventory.account', id: 'inventory/team' }],
+            binding: { service: 'tengri', id: readyAgent.uid },
+            enabled: true,
+            version: '1',
+            credentialActive: false,
+          },
+        ]
+      : []
+    await page.route('**/api/auth/*', (route) => {
+      signIns++
+      return route.fulfill({ status: 500, json: { error: 'No sign-in expected' } })
+    })
+    await page.route('**/api/platform/connectors', (route) =>
+      route.fulfill({
+        json: {
+          operations: (repair ? ['items', 'details'] : ['items']).map((name) => ({
+            connectorId: 'inventory',
+            name,
+            action: `inventory.${name}.read`,
+            description: name === 'items' ? 'Read team inventory' : 'Read detailed inventory',
+            readOnly: true,
+            targets: [{ name: 'Team inventory', resource: { kind: 'inventory.account', id: 'inventory/team' } }],
+          })),
+        },
+      }),
+    )
+    await page.route('**/api/platform/provider-connections', (route) => {
+      if (route.request().method() === 'POST') {
+        begins++
+        return route.fulfill({
+          json: {
+            authorizationUrl: 'https://oauth.fixture.test/authorize',
+            connectionId: '77777777-7777-4777-8777-777777777777',
+          },
+        })
+      }
+      return route.fulfill({
+        json: {
+          connections: [
+            {
+              profileId: 'inventory',
+              name: 'Inventory',
+              connectorId: 'inventory',
+              connectionId: repair ? '77777777-7777-4777-8777-777777777777' : '',
+              state: accountReady ? 'PROVIDER_CONNECTION_STATE_READY' : 'PROVIDER_CONNECTION_STATE_RECONNECT',
+              accountName: accountReady ? 'Team' : '',
+              providerScopes: ['items.read'],
+            },
+          ],
+        },
+      })
+    })
+    await page.route('https://oauth.fixture.test/authorize', (route) => {
+      // The protocol fixture separately verifies code exchange; this exercises the actual browser return and saved UI intent.
+      accountReady = true
+      return route.fulfill({
+        status: 302,
+        headers: { location: desktopOrigin + '/?platform_connection=' + outcome + '&provider_profile=inventory' },
+        body: '',
+      })
+    })
+    await page.route('**/api/tengri/connections**', async (route) => {
+      if (route.request().method() === 'POST') {
+        const request = connectionRequestSchema.parse(route.request().postDataJSON())
+        if (request.kind === 'save') {
+          saves.push(request)
+          connections = [
+            {
+              id: request.connectionId,
+              clientService: 'tengri-web',
+              clientReference: readyAgent.uid + '/inventory',
+              actions: request.operations.map((name) => `inventory.${name}.read`),
+              resources: request.targets,
+              binding: { service: 'tengri', id: readyAgent.uid },
+              enabled: true,
+              version: String(BigInt(request.expectedVersion) + BigInt(1)),
+              credentialActive: true,
+              credentialGeneration: '5',
+              recoveryGeneration: '1',
+              delegationId: '33333333-3333-4333-8333-333333333333',
+              proofKeyThumbprint: 'a'.repeat(43),
+              credentialBinding: { service: 'tengri', id: readyAgent.uid, generation: readyAgent.runtimeEpoch },
+              expiresAtUnixMs: String(Date.now() + 900_000),
+            },
+          ]
+        }
+      }
+      return route.fulfill({ json: { connections, recoveryGeneration: '1' } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+    await openSettingsPane(settings, 'Connections')
+    if (repair) {
+      await settings.getByRole('button', { name: 'Manage', exact: true }).click()
+      await settings.getByRole('button', { name: 'Customize access', exact: true }).click()
+      await settings.getByRole('checkbox', { name: 'Read detailed inventory', exact: true }).uncheck()
+      await settings
+        .getByRole('button', { name: /^(Connect account|Reconnect account|Save changes)$/ })
+        .first()
+        .click()
+    } else {
+      await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    }
+    if (outcome === 'connected') {
+      await expect(settings.getByRole('button', { name: 'Manage', exact: true })).toBeVisible()
+      await expect(settings.getByText('Connected', { exact: true })).toBeVisible()
+      expect(saves).toHaveLength(1)
+      expect(saves[0]?.operations).toEqual(['items'])
+      if (repair) {
+        expect(saves[0]?.connectionId).toBe('88888888-8888-4888-8888-888888888888')
+        expect(saves[0]?.expectedVersion).toBe('1')
+      }
+    } else {
+      await expect(
+        settings.getByText(
+          outcome === 'cancelled'
+            ? 'Connection cancelled. Your choices are saved.'
+            : 'Use the account you originally connected. The selected account was not connected.',
+          { exact: true },
+        ),
+      ).toBeVisible()
+      await expect(settings.getByRole('checkbox', { name: 'Team inventory', exact: true })).toBeChecked()
+      expect(saves).toHaveLength(0)
+    }
+    expect(begins).toBe(1)
+    expect(signIns).toBe(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await settings.screenshot({ path: test.info().outputPath('provider-return-phone-' + outcome + '.png') })
   })
 }

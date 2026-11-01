@@ -77,13 +77,7 @@ agentsShell:
       HOME: /workspace/.agents-shell/home
       AGENTS_SHELL_GIT_USER_NAME: Greg Konush
       AGENTS_SHELL_GIT_USER_EMAIL: 12027037+gregkonush@users.noreply.github.com
-      AGENTS_SHELL_AGENT_NAMESPACE: agents
-      AGENTS_SHELL_AGENT_NAME: codex-agent
-      AGENTS_SHELL_AGENT_REPOSITORY: proompteng/lab
-      AGENTS_SHELL_AGENT_BASE_BRANCH: main
-      AGENTS_SHELL_AGENT_VCS_REF: github
-      AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT: agents-sa
-      AGENTS_SHELL_AGENT_SECRETS: github-token,codex-auth
+      AGENTS_SHELL_REPO_BASE_BRANCH: main
     secrets:
       - name: GITHUB_TOKEN
         secretName: github-token

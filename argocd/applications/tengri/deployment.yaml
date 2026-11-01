@@ -14,8 +14,8 @@ spec:
       app.kubernetes.io/name: tengri
   strategy:
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+      maxSurge: 0
+      maxUnavailable: 1
     type: RollingUpdate
   template:
     metadata:

@@ -6,6 +6,26 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readManifest = (path: string): Record<string, any> => YAML.parse(readFileSync(new URL(path, repoRoot), 'utf8'))
 
+test('SPIRE registers each platform gateway proxy separately from its application container', () => {
+  const identities = readManifest('argocd/applications/spire-server/values.yaml')['spire-server'].controllerManager
+    .identities.clusterSPIFFEIDs
+  for (const gateway of ['proompteng', 'platform-admin', 'tengri']) {
+    const application = identities[gateway]
+    const proxy = identities[`${gateway}-proxy`]
+    expect(proxy).toMatchObject({
+      enabled: true,
+      spiffeIDTemplate: application.spiffeIDTemplate,
+      namespaceSelector: application.namespaceSelector,
+      podSelector: application.podSelector,
+      ttl: '2m',
+      fallback: false,
+    })
+    const account = application.workloadSelectorTemplates.find((selector: string) => selector.startsWith('k8s:sa:'))
+    expect(proxy.workloadSelectorTemplates).toEqual([account, 'k8s:container-name:istio-proxy'])
+    expect(application.workloadSelectorTemplates).not.toContain('k8s:container-name:istio-proxy')
+  }
+})
+
 test('Proompteng rate limits use connection peers without trusting supplied proxy headers', () => {
   const resources = YAML.parseAllDocuments(
     readFileSync(new URL('argocd/applications/proompteng/ingressroute.yaml', repoRoot), 'utf8'),

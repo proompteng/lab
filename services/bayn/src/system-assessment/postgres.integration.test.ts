@@ -1,3 +1,4 @@
+import { historicalRegistrationFixture } from './historical-registration.test-support'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
 import { readSystemExecutionOrders } from './execution-capture'
@@ -28,7 +29,7 @@ import {
   registerSystemQualification,
 } from './postgres'
 import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
-import { QualificationVerdict, evaluateSystemAssessment } from './assessment'
+import { EdgeStatus, QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
   readRegisteredFinancialIdentity,
   readSystemCashObservations,
@@ -187,7 +188,8 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     const retained = withRegistrationCommitments({
-      ...registration(20, JevAcceptanceVersion.RetainedV2),
+      ...historicalRegistrationFixture(new Date(Date.parse(databaseObservedAt ?? '') - 1000).toISOString()),
+      priorAttemptHash: testHash(history),
       policyHash: '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b',
       acceptanceProtocolHash: '33be41cdb552c926fdf003dd9320d570db4cd0012ae15227bc8338fd5f571375',
     })
@@ -1024,6 +1026,21 @@ postgres('PostgreSQL prospective system qualification', () => {
       hashes.push(assessment.assessmentHash)
       expect(assessment.verdict).toBe(QualificationVerdict.Inconclusive)
       expect(await runtime.runPromise(readPersistedSystemAssessment(assessment.assessmentHash))).toEqual(assessment)
+      const { assessmentHash: originalHash, ...material } = assessment
+      const promoted = { ...material, edge: { ...material.edge, status: EdgeStatus.Established } }
+      const promotion = await runtime.runPromiseExit(
+        asApplication(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* sql`INSERT INTO system_assessment_receipts
+          (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+          SELECT ${testHash(promoted)}, registration_hash, source_cut_hash, as_of, verdict, input_text,
+            ${Result.getOrThrow(canonicalJsonV1Result(promoted))}
+          FROM system_assessment_receipts WHERE assessment_hash = ${originalHash}`
+          }),
+        ),
+      )
+      expect(Exit.isFailure(promotion)).toBe(true)
       const retainedStress = await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
