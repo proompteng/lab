@@ -320,6 +320,21 @@ criteria, not vendor guarantees or observed repair results. Evidence of a clean 
 host-driver initialization that reproducibly degrades only when the driver starts would reverse the review's
 hardware-path-first direction. No physical move, flash, retrain, cooling change or new privilege was applied.
 
+## Post-upgrade Gen3 retry
+
+The operator explicitly requested another Gen3 negotiation attempt after the host upgrade. At
+`2026-11-01T23:00:07Z`, the existing Altra-only path was verified as Gen2 x16 with a Gen3 target, root control
+`0xc40`, the expected two ConnectX-5 functions, and a NIC temperature of 98 C. One root-port retrain was issued
+without changing clock, target-speed, firmware or Ceph settings. The link left training after about 26 ms at
+Gen2 x16. It still reported 5 GT/s x16 after 30 seconds, with Gen3 target retained and root control `0xc40`.
+Ethernet was up at 100 Gb/s. Root corrected counters advanced by 364 receiver errors and two BadTLP indications
+over the roughly 30-second window; no new NIC corrected events were recorded in that interval. This short sample
+does not establish a sustained error-rate improvement. No Gen2 recovery retrain was needed.
+
+The immediate storage readback retained all six OSDs up/in, 601 active/clean PGs including ongoing scrubs, and three
+monitors in quorum. The existing BlueStore slow-op, overdue deep-scrub and recent-crash warnings remained. This retry
+did not establish Gen3 operation or resolve the incident. Turin and `osd_max_scrubs=3` were unchanged.
+
 ## Remaining work and authority
 
 The operator chose to preserve the hardware/runtime state, then explicitly authorized the single-port

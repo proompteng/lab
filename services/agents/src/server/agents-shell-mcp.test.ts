@@ -330,6 +330,7 @@ describe('agents-shell MCP tools', () => {
         'git_write',
         'kubectl',
         'kubectl_admin',
+        'infrastructure',
         'create_agent_run',
         'cancel_agent_run',
         'get_agent_run',
@@ -387,6 +388,12 @@ describe('agents-shell MCP tools', () => {
       securitySchemes: linkedOauthScheme,
     })
 
+    for (const name of ['infrastructure']) {
+      const tool = tools.tools.find((candidate) => candidate.name === name)
+      expect(tool?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: true })
+      expect(tool?._meta).toMatchObject({ securitySchemes: linkedOauthScheme })
+    }
+
     const agentStart = tools.tools.find((tool) => tool.name === 'create_agent_run')
     expect(agentStart?.annotations?.destructiveHint).toBe(false)
     expect(agentStart?.annotations?.openWorldHint).toBe(true)
@@ -400,7 +407,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(22_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(24_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
