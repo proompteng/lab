@@ -8,12 +8,16 @@ publish = false
 anyhow = "1.0.100"
 async-trait = "0.1.89"
 futures = "0.3.31"
+jsonschema = { version = "0.60.2", default-features = false }
+libc = "0.2.177"
 platform-client = { path = "../../packages/platform-client" }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
 rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
-tokio = { version = "1.53.1", features = ["fs", "io-util", "io-std", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "io-std", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tonic = "0.14.6"
 uuid = { version = "1.18.1", features = ["v4"] }
+[dev-dependencies]
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }

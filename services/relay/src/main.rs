@@ -40,6 +40,27 @@ async fn main() -> anyhow::Result<()> {
                 token_file.clone(),
                 namespaces.clone(),
             )?)),
+            Connector::Http {
+                id,
+                endpoint,
+                ca_file,
+                bearer_token_file,
+                operations,
+            } => {
+                adapters.push(Box::new(relay::http::Http::new(
+                    id.clone(),
+                    endpoint,
+                    ca_file.as_deref(),
+                    bearer_token_file.clone(),
+                    operations.clone(),
+                )?));
+            }
+            Connector::Cli { id, operations } => {
+                adapters.push(Box::new(relay::cli::Cli::new(
+                    id.clone(),
+                    operations.clone(),
+                )?));
+            }
         }
     }
     let service = Service::new(enrollment.relay_clients, adapters, channel)?;

@@ -8,6 +8,12 @@ the configured cluster API using Relay's projected service-account credential. P
 inline environment values. Logs are plain text. The client cannot supply a URL, credential, HTTP method, exec command,
 watch, or arbitrary Kubernetes path. Effectful operations require a separate execution contract and are rejected.
 
+Registered HTTP and CLI adapters use the same authorization, discovery and receipt path. Each operation binds one
+fixed resource, a catalog action and a reviewed JSON input schema. Its target is derived from the registration;
+arguments cannot select another account, destination or command. These adapters support approved read operations.
+An HTTP POST may represent a read, such as a search; the operator must verify the provider operation before enrollment.
+Registering a transport does not grant resource access or introduce a policy definition into Ofz.
+
 Tool discovery uses the same Ofz identity and resource permissions as execution. `ListOperations` requires the
 current human session or the caller's attested workload identity. Relay asks Ofz for approved workspace/resource/action
 scopes before building each adapter's tool schemas. An unapproved namespace appears in neither targets nor schema
@@ -74,6 +80,55 @@ DPoP binds the credential, key, destination, method and exact body, and each pro
 `SPIFFE_ENDPOINT_SOCKET` supplies the workload API. Cluster endpoint, CA file, projected token file and immutable
 namespace identities are operator configuration. Tokens are read for every invocation so projection rotation works.
 
+An HTTP registration fixes an HTTPS origin and each operation's path and `GET` or `POST` method. GET arguments become
+encoded scalar query values; POST arguments become JSON. Redirects, environment proxies and automatic request retries
+are disabled. The deadline is ten seconds and responses are limited to 256 KiB, including streamed bodies. Optional
+`ca_file` and `bearer_token_file` are absolute mounted paths; omitting the CA uses the platform trust store. Provider
+authentication failures remain distinct from Ofz denials. Shared provider OAuth account management is not implemented
+by this file credential option.
+
+For example, after enrolling `inventory.account` and `inventory.items.read` in Ofz:
+
+```json
+{
+  "version": 1,
+  "connectors": [{
+    "type": "http",
+    "id": "inventory",
+    "endpoint": "https://inventory.example.com/",
+    "bearer_token_file": "/var/run/inventory/token",
+    "operations": [{
+      "operation": {
+        "name": "items",
+        "description": "Search the approved inventory account",
+        "action": "inventory.items.read",
+        "target": { "name": "Team inventory", "kind": "inventory.account", "id": "inventory/team" },
+        "input_schema": {
+          "type": "object",
+          "properties": { "query": { "type": "string", "maxLength": 128 } },
+          "required": ["query"],
+          "additionalProperties": false
+        }
+      },
+      "method": "GET",
+      "path": "/items"
+    }]
+  }]
+}
+```
+
+A CLI connector uses `type: "cli"`, an `id` and `operations`. Each entry contains the same `operation` definition,
+an absolute `program`, fixed `arguments`, and an absolute working `directory`. Optional `environment` values and
+`secret_files` map environment names to fixed values or absolute projected-file paths. The process inherits no
+ambient environment. Arguments arrive as validated JSON on stdin; they are never interpolated into a shell command
+or argv. Stdout must be JSON. Stdout and stderr each have a 256 KiB limit; stderr and raw process errors are not
+returned. Cancellation, output overflow and the ten-second deadline terminate the process group. Programs are trusted,
+operator-installed code, not a sandbox for uploaded commands; include their binaries and dependencies in the reviewed
+image. Credentials are reread for every invocation.
+
+Input schemas must describe an object with `additionalProperties: false`. External network and filesystem schema
+retrievers are disabled. Discovery omits each unapproved operation and its resource name and schema.
+
 ```sh
 cargo fmt --manifest-path services/relay/Cargo.toml --check
 cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
@@ -85,7 +140,9 @@ bash services/relay/test-client.sh
 ```
 
 The integration fixture uses real PostgreSQL and SpiceDB plus an isolated TLS Kubernetes API. It adds a third client
-and policy through fixture definitions, and executes a second adapter that has no HTTP request. The shared connector
+and policy through fixture definitions, and executes actual HTTP and CLI adapters with the same authority and receipt
+checks. Driver tests cover TLS, argument injection, credential rotation, upstream errors, output budgets, cancellation
+and child-process termination. The shared connector
 type contains opaque adapter-owned prepared bytes. HTTP paths and query parameters belong to the Kubernetes adapter.
 The fixture never uses production credentials or grants. The MCP fixture runs the actual Rust client with an isolated
 Workload API and verifies the expected peer, rejection of a trusted certificate bearing another SPIFFE identity, and
