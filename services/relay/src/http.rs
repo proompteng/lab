@@ -1,5 +1,6 @@
 use crate::{
     connector::{Connector, Failure, Normalized, Output},
+    credentials::Authentication,
     registered::{Operation, Prepared, RegisteredOperation},
 };
 use futures::StreamExt;
@@ -26,14 +27,15 @@ pub struct HttpOperation {
 pub struct Http {
     id: String,
     client: reqwest::Client,
-    bearer_token_file: Option<String>,
+    authentication: Authentication,
+    endpoint: String,
     operations: BTreeMap<String, (RegisteredOperation, Method, reqwest::Url)>,
 }
 
 pub(crate) fn validate(
     endpoint: &str,
     ca: Option<&str>,
-    token: Option<&str>,
+    authentication: &Authentication,
     operations: &[HttpOperation],
 ) -> anyhow::Result<()> {
     let endpoint = reqwest::Url::parse(endpoint)?;
@@ -46,11 +48,11 @@ pub(crate) fn validate(
             && endpoint.query().is_none()
             && endpoint.fragment().is_none()
             && ca.is_none_or(|path| Path::new(path).is_absolute())
-            && token.is_none_or(|path| Path::new(path).is_absolute())
             && !operations.is_empty()
             && operations.len() <= 64,
         "invalid HTTP profile"
     );
+    authentication.validate()?;
     let mut names = std::collections::BTreeSet::new();
     for entry in operations {
         let operation = RegisteredOperation::new(entry.operation.clone())?;
@@ -98,10 +100,10 @@ impl Http {
         id: String,
         endpoint: &str,
         ca: Option<&str>,
-        bearer_token_file: Option<String>,
+        authentication: Authentication,
         operations: Vec<HttpOperation>,
     ) -> anyhow::Result<Self> {
-        validate(endpoint, ca, bearer_token_file.as_deref(), &operations)?;
+        validate(endpoint, ca, &authentication, &operations)?;
         let endpoint = reqwest::Url::parse(endpoint)?;
         let client = client(ca)?;
         let mut registered = BTreeMap::new();
@@ -115,7 +117,8 @@ impl Http {
         Ok(Self {
             id,
             client,
-            bearer_token_file,
+            authentication,
+            endpoint: endpoint.to_string(),
             operations: registered,
         })
     }
@@ -132,6 +135,9 @@ fn failure(status: Status, upstream_status: u32) -> Failure {
 impl Connector for Http {
     fn id(&self) -> &str {
         &self.id
+    }
+    fn provider(&self) -> Option<crate::credentials::Provider<'_>> {
+        self.authentication.provider(&self.endpoint)
     }
     fn operations(&self, access: Option<&[PlatformConnectionScope]>) -> Vec<ConnectorOperation> {
         self.operations
@@ -160,7 +166,7 @@ impl Connector for Http {
         }
         Ok(normalized)
     }
-    async fn execute(&self, request: &Normalized) -> Result<Output, Failure> {
+    async fn execute(&self, request: &Normalized, bearer: Option<&str>) -> Result<Output, Failure> {
         let prepared: Prepared = serde_json::from_slice(&request.prepared_request)
             .map_err(|_| failure(Status::internal("invalid normalized HTTP request"), 0))?;
         let (_, method, url) = self
@@ -188,13 +194,12 @@ impl Connector for Http {
             }
             Method::Post => self.client.post(url.clone()).json(&prepared.arguments),
         };
-        if let Some(path) = &self.bearer_token_file {
-            let token = crate::credentials::read_file(path)
-                .await
-                .map_err(|status| failure(status, 0))?;
-            if token.chars().any(char::is_control) {
-                return Err(failure(Status::unavailable("invalid HTTP credential"), 0));
-            }
+        if let Some(token) = self
+            .authentication
+            .bearer(bearer)
+            .await
+            .map_err(Failure::from)?
+        {
             request = request.bearer_auth(token);
         }
         let response = request

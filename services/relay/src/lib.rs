@@ -1,7 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod connector;
-mod credentials;
+pub mod credentials;
 pub mod enrollment;
 pub mod http;
 pub mod kubernetes;

@@ -118,7 +118,7 @@ async fn upstream_mcp_stdio_uses_only_registered_metadata_and_preserves_the_exac
             .normalize("read", br#"{"query":"literal; $(no shell)"}"#)
             .unwrap();
         let result = adapter
-            .execute(&request)
+            .execute(&request, None)
             .await
             .unwrap_or_else(|f| panic!("{}", f.status));
         let body: serde_json::Value = serde_json::from_slice(&result.bytes).unwrap();
@@ -151,7 +151,10 @@ async fn upstream_mcp_rejects_tool_changes_before_dispatch_and_never_repeats_a_l
         let adapter = mcp(&directory, mode);
         let result = failure(
             adapter
-                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .execute(
+                    &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                    None,
+                )
                 .await,
         );
         assert!(!result.status.message().contains("PRIVATE_PROVIDER_TOKEN"));
@@ -171,7 +174,10 @@ async fn upstream_mcp_cancellation_terminates_the_server_and_its_children() {
     let adapter = mcp(&directory, "hang");
     let task = tokio::spawn(async move {
         adapter
-            .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+            .execute(
+                &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                None,
+            )
             .await
     });
     tokio::time::timeout(Duration::from_secs(3), async {
@@ -242,7 +248,9 @@ fn mcp_http(fixture: &HttpFixture, token: Option<String>) -> relay::mcp::Mcp {
                     .unwrap()
                     .into(),
             ),
-            bearer_token_file: token,
+            authentication: token
+                .map(|path| relay::credentials::Authentication::BearerFile { path })
+                .unwrap_or(relay::credentials::Authentication::None),
         },
         vec![relay::mcp::McpOperation {
             operation: operation(),
@@ -268,6 +276,7 @@ async fn upstream_mcp_http_handles_json_and_sse_and_rotates_projected_credential
                             br#"{"query":"literal&url=https://attacker.invalid/"}"#,
                         )
                         .unwrap(),
+                    None,
                 )
                 .await
                 .unwrap_or_else(|f| panic!("{mode}: {}", f.status));
@@ -309,7 +318,10 @@ async fn upstream_mcp_http_bounds_json_and_sse_and_never_replays_expired_or_lost
         let adapter = mcp_http(&fixture, None);
         let error = failure(
             adapter
-                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .execute(
+                    &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                    None,
+                )
                 .await,
         );
         if mode == "changed" {
@@ -333,7 +345,10 @@ async fn upstream_mcp_provider_authentication_and_permission_failures_remain_dis
         let adapter = mcp_http(&fixture, None);
         let error = failure(
             adapter
-                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .execute(
+                    &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                    None,
+                )
                 .await,
         );
         assert_eq!(error.status.code(), code, "{mode}: {}", error.status);
@@ -409,7 +424,7 @@ async fn cli_treats_arguments_as_json_and_clears_ambient_credentials() {
         )
         .unwrap();
     let result = adapter
-        .execute(&request)
+        .execute(&request, None)
         .await
         .unwrap_or_else(|f| panic!("{}", f.status));
     let value: serde_json::Value = serde_json::from_slice(&result.bytes).unwrap();
@@ -443,7 +458,10 @@ async fn cli_preserves_process_failures_and_rejects_unbounded_or_invalid_output(
         let directory = Directory::new();
         let adapter = cli(&directory, script);
         let request = adapter.normalize("read", br#"{"query":"ok"}"#).unwrap();
-        assert_eq!(failure(adapter.execute(&request).await).status.code(), code);
+        assert_eq!(
+            failure(adapter.execute(&request, None).await).status.code(),
+            code
+        );
     }
 }
 
@@ -455,7 +473,7 @@ async fn cli_cancellation_terminates_descendants() {
         "import os,sys,time\npid=os.fork()\nif pid==0:\n time.sleep(1)\n open('escaped','w').write('escaped')\n time.sleep(5)\nelse:\n open('started','w').write(str(pid))\n time.sleep(30)\n",
     ));
     let request = adapter.normalize("read", br#"{"query":"ok"}"#).unwrap();
-    let task = tokio::spawn(async move { adapter.execute(&request).await });
+    let task = tokio::spawn(async move { adapter.execute(&request, None).await });
     tokio::time::timeout(Duration::from_secs(3), async {
         while !directory.0.join("started").exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -494,7 +512,10 @@ async fn cli_rotates_projected_credentials_without_changing_operation_identity()
     for value in ["first", "second"] {
         std::fs::write(&token, value).unwrap();
         let result = adapter
-            .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+            .execute(
+                &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                None,
+            )
             .await
             .unwrap_or_else(|f| panic!("{}", f.status));
         assert_eq!(
@@ -617,7 +638,9 @@ impl HttpFixture {
             "fixture".into(),
             &self.endpoint,
             Some(self.directory.0.join("cert.pem").to_str().unwrap()),
-            token,
+            token
+                .map(|path| relay::credentials::Authentication::BearerFile { path })
+                .unwrap_or(relay::credentials::Authentication::None),
             vec![HttpOperation {
                 operation: operation(),
                 method: relay::http::Method::Get,
@@ -640,6 +663,7 @@ async fn http_encodes_query_values_rotates_credentials_and_never_follows_redirec
                 &adapter
                     .normalize("read", br#"{"query":"a&url=https://attacker.invalid/"}"#)
                     .unwrap(),
+                None,
             )
             .await
             .unwrap_or_else(|f| panic!("{}", f.status));
@@ -658,7 +682,10 @@ async fn http_encodes_query_values_rotates_credentials_and_never_follows_redirec
     assert_eq!(
         failure(
             adapter
-                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .execute(
+                    &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                    None
+                )
                 .await
         )
         .upstream_status,
@@ -679,7 +706,10 @@ async fn http_preserves_upstream_failures_and_enforces_output_budget() {
         let adapter = fixture.adapter(None);
         let error = failure(
             adapter
-                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .execute(
+                    &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                    None,
+                )
                 .await,
         );
         assert_eq!(error.status.code(), code);
@@ -695,7 +725,7 @@ async fn http_sends_validated_json_to_the_fixed_post_operation_and_bounds_stream
         "fixture".into(),
         &fixture.endpoint,
         Some(fixture.directory.0.join("cert.pem").to_str().unwrap()),
-        None,
+        relay::credentials::Authentication::None,
         vec![HttpOperation {
             operation: operation(),
             method: relay::http::Method::Post,
@@ -708,6 +738,7 @@ async fn http_sends_validated_json_to_the_fixed_post_operation_and_bounds_stream
             &adapter
                 .normalize("read", br#"{"query":"url=https://attacker.invalid/"}"#)
                 .unwrap(),
+            None,
         )
         .await
         .unwrap_or_else(|f| panic!("{}", f.status));
@@ -719,7 +750,10 @@ async fn http_sends_validated_json_to_the_fixed_post_operation_and_bounds_stream
     assert_eq!(
         failure(
             adapter
-                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .execute(
+                    &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+                    None
+                )
                 .await
         )
         .status
@@ -734,8 +768,63 @@ async fn cli_deadline_terminates_a_silent_process() {
     let adapter = cli(&directory, "import time\ntime.sleep(30)\n");
     let started = std::time::Instant::now();
     let result = adapter
-        .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+        .execute(
+            &adapter.normalize("read", br#"{"query":"ok"}"#).unwrap(),
+            None,
+        )
         .await;
     assert_eq!(failure(result).status.code(), Code::DeadlineExceeded);
     assert!(started.elapsed() < Duration::from_secs(15));
+}
+
+#[tokio::test]
+async fn oauth_connector_startup_requires_its_exact_ofz_profile_and_destination() {
+    use platform_client::authz::{GetPlatformConfigurationResponse, RegisteredProviderProfile};
+    let profile = RegisteredProviderProfile {
+        id: "inventory".into(),
+        connector_id: "fixture".into(),
+        destination: "https://provider.example/".into(),
+    };
+    for (profiles, allowed) in [
+        (Vec::new(), false),
+        (
+            vec![RegisteredProviderProfile {
+                connector_id: "other".into(),
+                ..profile.clone()
+            }],
+            false,
+        ),
+        (
+            vec![RegisteredProviderProfile {
+                destination: "https://other.example/".into(),
+                ..profile.clone()
+            }],
+            false,
+        ),
+        (vec![profile], true),
+    ] {
+        let connector = Http::new(
+            "fixture".into(),
+            "https://provider.example/",
+            None,
+            relay::credentials::Authentication::Oauth2 {
+                profile: "inventory".into(),
+            },
+            vec![HttpOperation {
+                operation: operation(),
+                method: relay::http::Method::Get,
+                path: "/records".into(),
+            }],
+        )
+        .unwrap();
+        let result = relay::service::Service::new(
+            GetPlatformConfigurationResponse {
+                provider_profiles: profiles,
+                ..Default::default()
+            },
+            vec![Box::new(connector)],
+            tonic::transport::Endpoint::from_static("http://localhost:1").connect_lazy(),
+        );
+        assert_eq!(result.is_ok(), allowed);
+    }
 }

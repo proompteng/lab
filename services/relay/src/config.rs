@@ -22,7 +22,7 @@ pub enum Connector {
         id: String,
         endpoint: String,
         ca_file: Option<String>,
-        bearer_token_file: Option<String>,
+        authentication: crate::credentials::Authentication,
         operations: Vec<crate::http::HttpOperation>,
     },
     Cli {
@@ -116,17 +116,14 @@ impl Config {
                 Connector::Http {
                     endpoint,
                     ca_file,
-                    bearer_token_file,
+                    authentication,
                     operations,
                     ..
                 } => {
-                    crate::http::validate(
-                        endpoint,
-                        ca_file.as_deref(),
-                        bearer_token_file.as_deref(),
-                        operations,
-                    )
-                    .map_err(|_| Status::invalid_argument("invalid HTTP connector registration"))?;
+                    crate::http::validate(endpoint, ca_file.as_deref(), authentication, operations)
+                        .map_err(|_| {
+                            Status::invalid_argument("invalid HTTP connector registration")
+                        })?;
                 }
                 Connector::Cli { operations, .. } => {
                     crate::cli::validate(operations).map_err(|_| {
