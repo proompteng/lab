@@ -731,6 +731,21 @@ async fn workspace_administration(
     .await
     .unwrap();
     assert!(!activity.receipts.is_empty());
+    for receipt in &activity.receipts {
+        let stored = connection
+            .query_one(
+                "SELECT sequence,created_at_ms FROM ofz.audit WHERE id=$1",
+                &[&Uuid::parse_str(&receipt.id).unwrap()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt.created_at_unix_ms,
+            stored.get::<_, i64>(1) as u64,
+            "workspace activity must include the database audit timestamp"
+        );
+        assert_eq!(receipt.sequence, stored.get::<_, i64>(0) as u64);
+    }
     assert!(
         activity
             .receipts

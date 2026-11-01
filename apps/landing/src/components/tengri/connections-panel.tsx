@@ -542,6 +542,7 @@ export function ConnectionsPanel({
               <ProviderAccount
                 profile={selectedProvider}
                 principalId={principalId}
+                showConnect={false}
                 disabled={disabled || busy}
                 onChanged={load}
               />
