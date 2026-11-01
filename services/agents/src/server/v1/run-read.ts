@@ -1,6 +1,7 @@
 import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse } from '../http'
+import { withRunnerTelemetry } from '../runner-telemetry'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { asRecord, asString, normalizeNamespace, readNested } from '../primitives'
 
@@ -57,7 +58,7 @@ type RunReadStorageOperation =
   | 'update-agent-run'
   | 'update-orchestration-run'
 
-type RunReadKubeOperation = 'create-client' | 'get-resource' | 'delete-resource'
+type RunReadKubeOperation = 'create-client' | 'get-resource' | 'delete-resource' | 'read-telemetry'
 
 type RunReadResourceKind = 'AgentRun' | 'OrchestrationRun'
 
@@ -341,8 +342,13 @@ export const getAgentRunWithServicesEffect = (
           const resource = record.externalRunId
             ? yield* kubernetes.getResource(kube, 'AgentRun', record.externalRunId, resourceNamespace)
             : null
-          const agentRun = yield* refreshAgentRecordFromResourceEffect(stores, activeStore, record, resource)
-          return { agentRun, resource }
+          const observed = resource
+            ? yield* kubeEffect('read-telemetry', 'configmaps', resourceNamespace, () =>
+                withRunnerTelemetry(kube, resource, resourceNamespace),
+              )
+            : null
+          const agentRun = yield* refreshAgentRecordFromResourceEffect(stores, activeStore, record, observed)
+          return { agentRun, resource: observed }
         }),
       stores.close,
     )

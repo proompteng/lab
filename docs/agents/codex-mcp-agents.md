@@ -134,11 +134,48 @@ or idempotency reservation.
 ## Log behavior
 
 `get_agent_run_logs` is a snapshot read, not a stream. `tailLines: 5` fetches
-the last five retained log lines. If the AgentRun pod has already been removed,
-the response is still successful but has `pods: []` and `logs: ""`.
+the last five retained log lines. For a Codex Job with retained artifacts, the same call reads an authenticated S3
+log tail after Pod cleanup. `source` is `pod` or `artifact`; `truncated` identifies
+a partial archive tail. Artifact reads are bounded to 512 KiB and 5,000 lines.
+An absent live Pod and absent archive return `404`, rather than an empty success.
+Pod and container filters remain enforced against the retained snapshot.
 
 Use `agentctl run logs <name> --follow` for streaming logs until an HTTP/SSE MCP
 bridge exists.
+
+## Essential runner telemetry
+
+Codex workers emit JSONL events to stdout and the runner log. The existing Alloy
+collector forwards stdout through Loki. Events include tool activity, bounded
+output, cumulative usage, rate-limit snapshots, and a heartbeat every ten seconds.
+The notification observer remains attached across native goal continuation turns.
+
+For Job runtimes, `get_agent_run` exposes `resource.status.runner.telemetry` while
+the worker is active. The API reads a dedicated ConfigMap owned by the exact
+AgentRun UID; it never writes progress into the Kubernetes AgentRun status.
+The snapshot is retained in `agentRun.payload.resource.status.runner.telemetry`
+after resource cleanup. Terminal runner status carries the final snapshot.
+
+The snapshot includes heartbeat and last-activity timestamps, active tools and
+start times, thread and turn IDs, configured model and reasoning effort, cumulative
+input/cache/output counters, and the latest account quota window. Usage totals are
+authoritative snapshots, not increments to sum. Quota describes the shared account
+limit identified by `limitId`; it is not usage attributed to one run. `finished`
+means the telemetry producer stopped; the AgentRun outcome remains separate.
+
+Live publication uses the Job's existing Kubernetes ServiceAccount credential and
+ConfigMap permissions. Providers that use a separate, audience-scoped identity
+projection keep local/stdout and terminal telemetry without adding a Kubernetes
+API credential. Publication failures are logged and counted without failing the
+task. Heartbeat liveness and model/tool activity have separate timestamps.
+
+With the existing `agents-artifacts` Secret and a keyed `runner-result` artifact,
+the runner archives the completed JSONL log at `<result-key>.events.jsonl` on both
+success and caught failure paths. The API reads only the configured storage bucket
+with the run-authorized artifact Secret. Abrupt process or node loss can prevent
+that final upload; the existing Loki stream remains independent. Missing archives
+and storage failures are returned explicitly. Final text and test/PR references
+remain in the existing result artifact; telemetry does not invent a delivery verdict.
 
 ## ChatGPT Oracle delegation
 

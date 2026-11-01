@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   CodexRunnerArtifactError,
@@ -14,6 +14,7 @@ import {
   CodexRunnerClientError,
   CodexRunnerInputError,
   CodexRunnerTurnError,
+  CodexRunnerWorkspaceError,
   DEFAULT_CODEX_BINARY_PATH,
   resolveCodexBinaryPath,
   runCodexAppServerAdapter,
@@ -70,6 +71,64 @@ describe('codex app-server runner adapter', () => {
     }
   })
 
+  it('retains a completed structured log and telemetry when workspace preparation fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'runner-failed-log-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    const logPath = join(dir, 'runner.log')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(
+      runPath,
+      JSON.stringify({ implementation: { text: 'task' }, parameters: { repository: 'proompteng/lab', base: 'main' } }),
+    )
+    const uploadArtifacts = vi.fn(async (artifacts) => {
+      expect(await readFile(logPath, 'utf8')).toContain('"state":"finished"')
+      return artifacts.map((artifact: { name: string; key?: string }) => ({
+        ...artifact,
+        url: `s3://agents-artifacts/${artifact.key}`,
+      }))
+    })
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex',
+          payloads: { eventFilePath: runPath },
+          artifacts: { statusPath, logPath },
+          providerSpec: {
+            outputArtifacts: [
+              { name: 'runner-result', path: join(dir, 'result.json'), key: 'runs/result.json' },
+              { name: 'runner-log', path: logPath },
+            ],
+          },
+        },
+        { prompt: 'task', cwd: join(dir, 'workspace') },
+        {
+          runCommand: async () => {
+            throw new Error('checkout unavailable')
+          },
+          uploadArtifacts,
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerWorkspaceError)
+    expect(uploadArtifacts).toHaveBeenCalledOnce()
+    const status = JSON.parse(await readFile(statusPath, 'utf8'))
+    expect(status).toMatchObject({
+      status: 'failed',
+      telemetry: { state: 'finished' },
+      artifacts: {
+        outputArtifacts: [
+          { name: 'runner-result' },
+          {
+            name: 'runner-log',
+            key: 'runs/result.json.events.jsonl',
+            url: 's3://agents-artifacts/runs/result.json.events.jsonl',
+          },
+        ],
+      },
+    })
+    expect(await readFile(logPath, 'utf8')).toContain('checkout unavailable')
+  })
+
   it('uses an absolute Codex binary path by default for Bun child-process spawning', () => {
     expect(resolveCodexBinaryPath({}, {})).toBe(DEFAULT_CODEX_BINARY_PATH)
     expect(resolveCodexBinaryPath({}, { AGENTS_CODEX_BINARY: '/custom/agents-codex' })).toBe('/custom/agents-codex')
@@ -103,6 +162,10 @@ describe('codex app-server runner adapter', () => {
     const fakeClient: CodexAppServerRunnerClient = {
       runTurnStream: async (prompt, options) => {
         prompts.push(prompt)
+        createdClients.at(-1)?.onNotification?.({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'thread-1', turnId: 'turn-1', delta: 'done' },
+        })
         turnOptions.push(options ?? {})
         return {
           stream: makeStream(),

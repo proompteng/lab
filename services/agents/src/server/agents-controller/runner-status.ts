@@ -1,3 +1,4 @@
+import { parseRunnerTelemetry, type RunnerTelemetry } from '../../runner-telemetry'
 import { asRecord, asString, readNested } from '../primitives'
 import type { KubernetesClient } from '../kube-types'
 import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../../runner-result'
@@ -25,6 +26,7 @@ export type RunnerTerminalStatus = {
   }
   error?: string
   result?: AgentRunnerResultPreview
+  telemetry?: RunnerTelemetry
 }
 
 export type RunnerTerminalOutcome = {
@@ -70,6 +72,8 @@ export const parseRunnerTerminalStatus = (value: unknown): RunnerTerminalStatus 
   if (!record) return null
   const status = asString(record.status)
   if (!status || !RUNNER_STATUS_VALUES.has(status as RunnerTerminalPhase)) return null
+  const telemetry = record.telemetry === undefined ? null : parseRunnerTelemetry(record.telemetry)
+  if (record.telemetry !== undefined && !telemetry) return null
   const artifacts = normalizeArtifacts(record.artifacts)
   const rawResult = asRecord(record.result)
   const resultText = asString(rawResult?.text)
@@ -84,6 +88,7 @@ export const parseRunnerTerminalStatus = (value: unknown): RunnerTerminalStatus 
       : undefined
   return {
     status: status as RunnerTerminalPhase,
+    ...(telemetry ? { telemetry } : {}),
     ...(asString(record.provider) ? { provider: asString(record.provider) as string } : {}),
     ...(asString(record.adapter) ? { adapter: asString(record.adapter) as string } : {}),
     ...(asString(record.binary) ? { binary: asString(record.binary) as string } : {}),
@@ -199,6 +204,7 @@ export const runnerStatusToTerminalOutcome = (status: RunnerTerminalStatus): Run
 
 export const runnerStatusForAgentRunStatus = (status: RunnerTerminalStatus): Record<string, unknown> => ({
   status: status.status,
+  ...(status.telemetry ? { telemetry: status.telemetry } : {}),
   ...(status.provider ? { provider: status.provider } : {}),
   ...(status.adapter ? { adapter: status.adapter } : {}),
   ...(status.binary ? { binary: status.binary } : {}),
