@@ -90,6 +90,8 @@ cephClusterSpec:
       # Keep both bounds explicit when restoring the measured baseline from a runtime trial.
       osd_scrub_chunk_min: "5"
       osd_scrub_chunk_max: "5"
+      # Read common 4 MiB objects in one stride instead of eight separately scheduled reads.
+      osd_deep_scrub_stride: "4194304"
       # Recurring backfill must not indefinitely postpone integrity checks.
       osd_scrub_during_recovery: "true"
       # Equal endpoints allow scrubs all day and overwrite the former 08:00-12:00

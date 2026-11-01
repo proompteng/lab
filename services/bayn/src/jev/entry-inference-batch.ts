@@ -1,6 +1,6 @@
 import { JevEvaluationStore, type JevDispatch } from './evaluation'
 import { JevOutcome, makeJevEvaluationReceipt, type JevEvaluationRequest } from './evidence'
-import { Clock, Effect, Exit, Redacted, Result, Schema } from 'effect'
+import { Cause, Clock, Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
@@ -293,38 +293,55 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
               : { terminal: entry.terminal, successor: { kind: 'HANDOFF', handoff: entry.handoff } },
         ),
       )
-      const bases = yield* parallel(
-        charts.filter((entry) => entry.kind === 'BASE_START'),
-        (entry) =>
-          Effect.gen(function* () {
-            const terminal = yield* visual(entry.work, entry.claim, entry.request)
-            return { work: entry.work, terminal, handoff: yield* handoff(entry.work, entry.terminal, terminal.outcome) }
-          }),
-      )
-      yield* commit(
-        bases.map((entry) => ({
-          terminal: entry.terminal,
-          successor: { kind: 'HANDOFF' as const, handoff: entry.handoff },
-        })),
-      )
-      const handoffs = new Map([
-        ...charts.flatMap((entry) =>
-          entry.kind === 'HANDOFF' ? [[entry.work.claim.requestId, entry.handoff] as const] : [],
-        ),
-        ...bases.map((entry) => [entry.work.claim.requestId, entry.handoff] as const),
-      ])
-      return yield* parallel(work, (entry) =>
+      const complete = (entry: Work, committed: EntryHandoff) =>
         Effect.gen(function* () {
-          const committed = handoffs.get(entry.claim.requestId)
-          if (committed === undefined)
-            return yield* new EntryInferenceError({
-              category: 'INPUT',
-              message: 'Committed handoffs do not cover the admitted batch',
-            })
           const completion = yield* evaluateHandedOffEntry(entry.claim, committed)
           entry.completion = completion
           return completion
-        }),
+        })
+      // A ready handoff from the first commit need not wait for an unrelated
+      // candidate's base provider and second commit. These disjoint groups keep
+      // total provider concurrency bounded by the admitted candidate count.
+      // Settle both groups before failure cleanup so every paid response survives.
+      yield* parallel(
+        [
+          parallel(
+            charts.filter((entry) => entry.kind === 'HANDOFF'),
+            (entry) => complete(entry.work, entry.handoff),
+          ),
+          Effect.gen(function* () {
+            const bases = yield* parallel(
+              charts.filter((entry) => entry.kind === 'BASE_START'),
+              (entry) =>
+                Effect.gen(function* () {
+                  const terminal = yield* visual(entry.work, entry.claim, entry.request)
+                  return {
+                    work: entry.work,
+                    terminal,
+                    handoff: yield* handoff(entry.work, entry.terminal, terminal.outcome),
+                  }
+                }),
+            )
+            yield* commit(
+              bases.map((entry) => ({
+                terminal: entry.terminal,
+                successor: { kind: 'HANDOFF' as const, handoff: entry.handoff },
+              })),
+            )
+            return yield* parallel(bases, (entry) => complete(entry.work, entry.handoff))
+          }),
+        ],
+        (group) => group,
+      )
+      return yield* Effect.forEach(work, (entry) =>
+        entry.completion === null
+          ? Effect.fail(
+              new EntryInferenceError({
+                category: 'INPUT',
+                message: 'Committed handoffs do not cover the admitted batch',
+              }),
+            )
+          : Effect.succeed(entry.completion),
       )
     }).pipe(
       Effect.onExit((exit) => {
@@ -333,33 +350,44 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
           entry.terminals.filter((terminal) => !entry.durableTerminals.has(terminal.terminalHash)),
         )
         return Effect.gen(function* () {
-          if (uncommitted.length > 0)
-            yield* journal.recordTransitions(
-              uncommitted.map((terminal) => ({ terminal, successor: { kind: 'NONE' as const } })),
-            )
-          const records = yield* Effect.forEach(
-            work.filter((entry) => entry.completion !== null),
-            (entry) =>
-              Effect.gen(function* () {
-                const completion = entry.completion
-                if (completion === null)
-                  return yield* new EntryInferenceError({
-                    category: 'INPUT',
-                    message: 'Retained completion disappeared',
-                  })
-                const receipt = yield* Effect.fromResult(
-                  makeJevEvaluationReceipt(entry.request, {
-                    schemaVersion: 'bayn.jev-evaluation-receipt.v3',
-                    requestId: entry.request.requestId,
-                    startedAt: entry.claim.claimedAt,
-                    completedAt: completion.completedAt,
-                    outcome: { status: JevOutcome.Completed, completion },
-                  }),
+          // Independent evidence sinks must both be attempted, even when the
+          // terminal journal is unavailable. Retain every failure in the cause.
+          const terminalExit = yield* Effect.exit(
+            uncommitted.length > 0
+              ? journal.recordTransitions(
+                  uncommitted.map((terminal) => ({ terminal, successor: { kind: 'NONE' as const } })),
                 )
-                return { request: entry.request, receipt }
-              }),
+              : Effect.void,
           )
-          if (records.length > 0) yield* (yield* JevEvaluationStore).recordAll(records)
+          const receiptsExit = yield* Effect.gen(function* () {
+            const records = yield* Effect.forEach(
+              work.filter((entry) => entry.completion !== null),
+              (entry) =>
+                Effect.gen(function* () {
+                  const completion = entry.completion
+                  if (completion === null)
+                    return yield* new EntryInferenceError({
+                      category: 'INPUT',
+                      message: 'Retained completion disappeared',
+                    })
+                  const receipt = yield* Effect.fromResult(
+                    makeJevEvaluationReceipt(entry.request, {
+                      schemaVersion: 'bayn.jev-evaluation-receipt.v3',
+                      requestId: entry.request.requestId,
+                      startedAt: entry.claim.claimedAt,
+                      completedAt: completion.completedAt,
+                      outcome: { status: JevOutcome.Completed, completion },
+                    }),
+                  )
+                  return { request: entry.request, receipt }
+                }),
+            )
+            if (records.length > 0) yield* (yield* JevEvaluationStore).recordAll(records)
+          }).pipe(Effect.exit)
+          if (Exit.isFailure(terminalExit) && Exit.isFailure(receiptsExit))
+            return yield* Effect.failCause(Cause.combine(terminalExit.cause, receiptsExit.cause))
+          if (Exit.isFailure(terminalExit)) return yield* Effect.failCause(terminalExit.cause)
+          if (Exit.isFailure(receiptsExit)) return yield* Effect.failCause(receiptsExit.cause)
         })
       }),
     )
