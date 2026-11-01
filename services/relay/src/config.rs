@@ -18,6 +18,22 @@ pub enum Connector {
         token_file: String,
         namespaces: Vec<Namespace>,
     },
+    Http {
+        id: String,
+        endpoint: String,
+        ca_file: Option<String>,
+        bearer_token_file: Option<String>,
+        operations: Vec<crate::http::HttpOperation>,
+    },
+    Cli {
+        id: String,
+        operations: Vec<crate::cli::CliOperation>,
+    },
+    Mcp {
+        id: String,
+        transport: crate::mcp::Transport,
+        operations: Vec<crate::mcp::McpOperation>,
+    },
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,7 +41,7 @@ pub struct Config {
     pub version: u32,
     pub connectors: Vec<Connector>,
 }
-fn identifier(value: &str) -> bool {
+pub(crate) fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
@@ -48,20 +64,28 @@ impl Config {
         }
         let mut connectors = BTreeSet::new();
         for connector in &config.connectors {
+            let id = match connector {
+                Connector::Kubernetes { id, .. }
+                | Connector::Http { id, .. }
+                | Connector::Cli { id, .. } => id,
+                Connector::Mcp { id, .. } => id,
+            };
+            if !identifier(id) || id.contains('.') || !connectors.insert(id) {
+                return Err(Status::invalid_argument(
+                    "invalid or duplicate connector ID",
+                ));
+            }
             match connector {
                 Connector::Kubernetes {
-                    id,
                     endpoint,
                     ca_file,
                     token_file,
                     namespaces,
+                    ..
                 } => {
                     let url = reqwest::Url::parse(endpoint)
                         .map_err(|_| Status::invalid_argument("invalid cluster endpoint"))?;
-                    if !identifier(id)
-                        || id.contains('.')
-                        || !connectors.insert(id)
-                        || url.scheme() != "https"
+                    if url.scheme() != "https"
                         || url.host_str().is_none()
                         || !url.username().is_empty()
                         || url.password().is_some()
@@ -88,6 +112,35 @@ impl Config {
                             return Err(Status::invalid_argument("invalid namespace registration"));
                         }
                     }
+                }
+                Connector::Http {
+                    endpoint,
+                    ca_file,
+                    bearer_token_file,
+                    operations,
+                    ..
+                } => {
+                    crate::http::validate(
+                        endpoint,
+                        ca_file.as_deref(),
+                        bearer_token_file.as_deref(),
+                        operations,
+                    )
+                    .map_err(|_| Status::invalid_argument("invalid HTTP connector registration"))?;
+                }
+                Connector::Cli { operations, .. } => {
+                    crate::cli::validate(operations).map_err(|_| {
+                        Status::invalid_argument("invalid CLI connector registration")
+                    })?;
+                }
+                Connector::Mcp {
+                    transport,
+                    operations,
+                    ..
+                } => {
+                    crate::mcp::validate(transport, operations).map_err(|_| {
+                        Status::invalid_argument("invalid upstream MCP registration")
+                    })?;
                 }
             }
         }
