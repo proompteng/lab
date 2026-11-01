@@ -1,5 +1,17 @@
 # Exception tracking
 
+## Dated fees and statistical claims
+
+Protocol v36 binds the effective-dated TAF model. The image build and runtime expectations use its canonical
+parameter and protocol hashes. The v35 sealed capital request and all financial history remain unchanged, but the
+v36 runtimes do not reference that incompatible request. Broker access stays read-only and capital authority stays
+`none`; this source runs OBSERVE. A new matching capital activation requires its existing separate authorization.
+Image selection and publication still use the normal Kargo path.
+
+Migration 170 makes new assessments research-only because bootstrap confidence coverage is unestablished. Migration
+171 admits only v36 provider dispatch while retaining already-paid v35 outcomes. No new activity or calendar quotas
+are introduced. The operational target remains 99.9%, with zero safety violations.
+
 ## Chart structure before funding
 
 Protocol v35 offers source chart anchors independently of capital and fee tiers. Code still skips inference when no
