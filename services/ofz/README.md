@@ -4,8 +4,8 @@ Ofz owns platform authorization, service registration, policy onboarding and dur
 SpiceDB. [The platform package](platform/README.md) explains service/policy onboarding and relationship management;
 [the architecture and cutover guide](../../docs/platform/ofz-relay.md) covers Relay and its clients.
 
-`PlatformAuthorizationService` is the extensible platform contract. `TengriAuthorizationService` owns Tengri's existing
-identity, workspace lifecycle, session and content-access operations. The former `AuthorizationService` and its
+`PlatformAuthorizationService` owns browser sessions and the extensible platform authorization contract.
+`TengriAuthorizationService` owns Tengri's workspace lifecycle and content-access operations. The former `AuthorizationService` and its
 Tengri connector API are removed. Kubernetes connector execution goes through the separate Relay service.
 Ofz and its existing Tengri consumers retain their coordinated image release cohort.
 
@@ -50,8 +50,13 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all seven migrations through `0007_ephemeral_oauth.sql`; they cannot
-initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
+checksum. The controller and supervisor require all eight migrations through `0008_platform_sign_in.sql`; they cannot
+initialize their own schema. Ofz owns gateway-scoped, single-use PKCE attempts in an unlogged table; the web gateways
+have no database access. The migration drops the replaced Tengri attempt table and revokes the obsolete BFF SQL grants.
+Only these ephemeral attempt transactions use local commit acknowledgement. Session, policy and audit transactions
+retain their existing durability requirements. The browser fixture verifies attempt creation and concurrent single-use
+consumption while the synchronous standby is unavailable. Promote Ofz and complete its migration hook before promoting
+its consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 
@@ -60,6 +65,8 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+Audit batch traces record queue wait and batch size, then separate connection acquisition, transaction begin, and
+durable commit. These timings do not change batching, synchronous durability, permissions, or audit-before-success.
 The server and initial audited transports allow thirty seconds for durable admission. Clients issue 25-second request
 contexts, leaving five seconds of headroom below the server's unchanged thirty-second validation ceiling.
 Ofz still rechecks current authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
@@ -144,6 +151,10 @@ The BFF supplies a fresh 256-bit credential when establishing a session and reus
 RPC retries. Ofz binds its operation ID to the credential hash and full request fingerprint. A committed retry returns
 the same still-active credential without consuming another OIDC nonce, creating a session, extending idle time, or
 writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
+Ordinary browser sign-in may reuse the issuer's verified passkey SSO. Ofz still requires a token issued within two
+minutes, the gateway's audience and authorized party, and level-two assurance authenticated within eight hours.
+The absolute session deadline never exceeds that authentication time plus eight hours; SSO cannot slide it forward.
+Sensitive changes retain their separate fresh-MFA requirement.
 A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
 
 `AuthorizeCommand` checks human command permission before the BFF resolves an external subject. It produces an audit
@@ -170,13 +181,16 @@ after version-specific readback and COMPLIANCE retention verification. An uncert
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
 Idle polls continue verifying the archive every second, but refresh its durable heartbeat only when it reaches ten
-seconds old. New batches still acknowledge immediately. A verification failure immediately clears archive health;
+seconds old. New batches still acknowledge immediately. A transient HTTP transport failure repeats the complete
+verification once before declaring failure; uncertain uploads reuse the existing immutable key and must pass the same
+version-specific readback. A persistent transport failure or an integrity failure immediately clears archive health;
 repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
 unchanged.
 
-The worker retries HTTP transport failures after one second while archive health remains invalid. Recovery requires
-fresh bucket, retention and payload verification before another acknowledgement. Database, integrity and policy
-failures still terminate the worker. `--once` reports a transport failure immediately instead of retrying.
+After that bounded retry, the worker retries HTTP transport failures after one second while archive health remains
+invalid. Recovery requires fresh bucket, retention and payload verification before another acknowledgement. Database, integrity and policy
+failures still terminate the worker. `--once` performs the same bounded verification retry and reports any remaining
+failure without entering the worker's retry loop.
 
 If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
 the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit
@@ -217,7 +231,11 @@ fixture ports local. These checks exercise control behavior, not the yet-unmigra
 The Landing BFF now uses a schema-generated Ofz client with exact SPIFFE peer verification. Its dedicated Keycloak
 realm requires GitHub brokerage and verified passkeys. Ofz verifies issuer, audience, nonce, immutable numeric GitHub
 identity, authentication time and assurance level before issuing a hash-only opaque SQL session. Reauthentication
-revokes the previous browser credential in the same transaction. Failed establishment records an immutable denial
+rotates the previous browser credential in the same transaction, preserving the authority ID only for the same
+verified broker identity while the original session remains active. Credential history preserves establishment retry
+bindings; the replaced cookie cannot inspect or revoke the renewed session. Explicit logout still revokes the entire
+session authority, including existing runs. Expired, revoked or recovery-fenced authority is never revived by rotation.
+Failed establishment records an immutable denial
 without storing the ID token. Platform membership remains necessary after successful identity-provider authentication.
 
 A workspace Viewer has metadata access by default. Content requires an explicit Owner-approved observation scope
@@ -313,3 +331,42 @@ bounded `grpc_code` tag and a status-specific title. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
 contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
 database connection or changing authorization state. Confirm the returned IDs in both collectors.
+
+### Provider accounts
+
+Ofz owns provider OAuth2 accounts for registered HTTP and upstream MCP connectors. Product clients connect personal
+accounts; workspace administrators connect shared accounts in the independent portal. Ordinary connect, refresh and
+reconnect reuse the current session. Resource grants remain separate workspace policy decisions.
+
+`platform/provider-profiles.json` is the reviewed registration input and defaults to `[]`. Set
+`OFZ_PROVIDER_PROFILES_FILE` to a mounted replacement in both Ofz and its onboarding job. Each profile registers
+`id`, `name`, `workspace_id`, unique `connector_id`, `ownership` (`personal` or `workspace`), the native policy
+`resource` and `actions`, exact `resource_url`, `issuer`, `authorization_endpoint`, `token_endpoint`,
+`account_endpoint`, `account_id_field`, `account_name_field`, optional `revocation_endpoint`, `client_id`, optional
+absolute `client_secret_file` and `ca_file`, and `scopes`. All URLs are fixed HTTPS endpoints; the resource URL must
+exactly match Relay's canonical HTTP origin or MCP endpoint. The account endpoint returns the registered stable ID
+and display-name fields. No dynamic endpoint or client-supplied credential is accepted. Provider registrations are
+part of the qualified policy package hash; changing them requires onboarding the reviewed package before serving.
+
+Nonempty registrations also require `OFZ_PROVIDER_CREDENTIAL_KEY_FILE`, an operator-mounted stable 32-byte encryption
+key. Keep this key and its recovery copy outside source control. The runtime requires the key and provider client
+secrets; onboarding requires the registration file and any configured CA. Configure each provider's allowed callback
+at `https://proompteng.ai/api/platform/provider-connections/callback/<profile-id>` for personal accounts or
+`https://admin.proompteng.ai/api/platform/provider-connections/callback/<profile-id>` for workspace accounts. Scope
+changes require new provider consent. No external provider account or key is provisioned by the empty default.
+
+Authorization uses S256 PKCE, a five-minute attempt, browser binding and the original human/client/workspace. Tokens
+are encrypted with account/profile binding and never returned to a browser, Tengri guest or OpenCode. Reconnect
+preserves the connection ID and original provider identity; selecting another account is rejected. Refresh is
+serialized per account; uncertain exchanges are never repeated automatically. Local disconnect takes effect before
+upstream revocation, and its receipt says whether the provider confirmed revocation. Provider token failures require
+repair; policy denials remain policy denials.
+
+Only the attested Relay executor can resolve a token, after the exact authorized execution has durably started.
+Ofz binds that execution to the account revision. Disconnect or credential replacement blocks later dispatch and
+withholds results from the old revision. Shared accounts remain subject to the invoking workload's native resource
+permissions; connecting an account never grants access.
+
+`bash services/ofz/test-control.sh platform` qualifies the lifecycle against real PostgreSQL, SpiceDB and a controlled
+TLS OAuth provider, including HTTP and MCP execution for Tengri delegation and standalone OpenCode. It exercises
+refresh races, account mismatch, lost exchanges, revoked authority and replayed receipts without external accounts.

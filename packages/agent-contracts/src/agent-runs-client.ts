@@ -4,6 +4,7 @@ import {
   fetchAgentsJsonEffect,
   patchAgentsJsonEffect,
   postAgentsJsonEffect,
+  requestAgentsJsonEffect,
   runAgentsJsonPromise,
   servicePath,
   type AgentsResourceListInput,
@@ -121,6 +122,15 @@ export const fetchAgentRunFromAgentsService = async (
   env: EnvSource = process.env,
 ): Promise<AgentsServiceJsonResult<AgentsAgentRunGetResult>> =>
   runAgentsJsonPromise(fetchAgentRunFromAgentsServiceEffect(input, env))
+
+export const cancelAgentRunViaAgentsServiceEffect = (input: AgentsAgentRunGetInput, env: EnvSource = process.env) => {
+  const targetUrl = buildAgentsServiceUrl(`/v1/agent-runs/${encodePathSegment(input.id)}`, env)
+  if (input.namespace?.trim()) targetUrl.searchParams.set('namespace', input.namespace.trim())
+  return requestAgentsJsonEffect<Record<string, unknown>>({ path: servicePath(targetUrl), method: 'DELETE', env })
+}
+
+export const cancelAgentRunViaAgentsService = (input: AgentsAgentRunGetInput, env: EnvSource = process.env) =>
+  runAgentsJsonPromise(cancelAgentRunViaAgentsServiceEffect(input, env))
 
 export const fetchAgentRunResourcesFromAgentsServiceEffect = (
   input: AgentsAgentRunResourceListInput = {},

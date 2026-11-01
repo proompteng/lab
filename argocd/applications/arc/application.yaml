@@ -56,7 +56,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:e01dfb9f88e16eea95d30128791f7ebc97cf82382d194d83ccdd3b10fdaaadd2
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:403aad4cf7a06a8767cb72957f97b1203cd1f808cff324f8549ebba12bdb8181
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -123,7 +123,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-scratch
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:e01dfb9f88e16eea95d30128791f7ebc97cf82382d194d83ccdd3b10fdaaadd2
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:403aad4cf7a06a8767cb72957f97b1203cd1f808cff324f8549ebba12bdb8181
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -241,7 +241,7 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:e01dfb9f88e16eea95d30128791f7ebc97cf82382d194d83ccdd3b10fdaaadd2
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:403aad4cf7a06a8767cb72957f97b1203cd1f808cff324f8549ebba12bdb8181
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -366,7 +366,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:e01dfb9f88e16eea95d30128791f7ebc97cf82382d194d83ccdd3b10fdaaadd2
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:403aad4cf7a06a8767cb72957f97b1203cd1f808cff324f8549ebba12bdb8181
                   securityContext:
                     privileged: true
                   command: [ "/home/runner/run.sh" ]
@@ -433,7 +433,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:e01dfb9f88e16eea95d30128791f7ebc97cf82382d194d83ccdd3b10fdaaadd2
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:403aad4cf7a06a8767cb72957f97b1203cd1f808cff324f8549ebba12bdb8181
                   securityContext:
                     privileged: false
                   command: [ "/home/runner/run.sh" ]

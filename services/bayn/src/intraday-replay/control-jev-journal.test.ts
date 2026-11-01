@@ -1,5 +1,12 @@
+import {
+  persistVisualClaimFixture,
+  persistVisualTransitionFixture,
+  persistHandoffFixture,
+  persistEvaluationFixture,
+} from '../jev/evaluation.test-support'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import { stageResponseIdentity } from '../jev/staged-checkpoint'
 import type { ReplayInferenceCall } from './inference-timing'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -9,10 +16,15 @@ import { canonicalHashV1Result } from '../hash'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
+import { prepareJevRequest } from '../jev/contract'
+import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { DecisionsClient, prepareDecisionsRequest } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { chartInferenceFixture, entryCompletionFixture } from '../jev/entry-inference.test-support'
-import { SymbolSchema } from '../schemas'
+import {
+  nativeChartInference,
+  entryCompletionFixture,
+  stagedCheckpointFixture,
+} from '../jev/entry-inference.test-support'
 import { decideJevEntry } from '../jev/decision'
 import { makeJevObservation } from '../jev/observation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -54,7 +66,7 @@ const plan = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const candidate = plan.candidates[0]
@@ -77,7 +89,7 @@ const seed = (journal: Effect.Success<typeof setup>['journal']) =>
 const receipt = (evaluationRequest = request) =>
   Result.getOrThrow(
     makeJevEvaluationReceipt(evaluationRequest, {
-      schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+      schemaVersion: 'bayn.jev-evaluation-receipt.v3',
       requestId: evaluationRequest.requestId,
       startedAt: observation.observedAt,
       completedAt: observation.observedAt,
@@ -87,10 +99,21 @@ const receipt = (evaluationRequest = request) =>
       },
     }),
   )
+const retainCheckpoint = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
+  Effect.gen(function* () {
+    const checkpoint = stagedCheckpointFixture(value, observation.observedAt)
+    for (const claim of checkpoint.claims) {
+      yield* persistVisualClaimFixture(journal.handoffs, claim)
+      const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+      if (terminal !== undefined)
+        yield* persistVisualTransitionFixture(journal.handoffs, { terminal: terminal, successor: { kind: 'NONE' } })
+    }
+  })
 const record = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
   Effect.gen(function* () {
-    yield* journal.handoffs.recordHandoff(entryCompletionFixture(value, observation.observedAt).handoff)
-    return yield* journal.evaluations.record(value, receipt(value))
+    yield* retainCheckpoint(journal, value)
+    yield* persistHandoffFixture(journal.handoffs, entryCompletionFixture(value, observation.observedAt).handoff)
+    return yield* persistEvaluationFixture(journal.evaluations, value, receipt(value))
   })
 
 test('native entry commits source and request before inference, reproduces its result, and consumes its window once', () =>
@@ -102,11 +125,38 @@ test('native entry commits source and request before inference, reproduces its r
         evaluate: (input) =>
           Effect.gen(function* () {
             calls++
-            expect(yield* fs.exists(`${directory}/request-${request.requestId}.json`).pipe(Effect.orDie)).toBeTrue()
+            const prepared = Result.getOrThrow(prepareJevRequest(input))
+            const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+              prepared.request.state,
+            )
+            const dispatched = plan.candidates.find((candidate) => candidate.symbol === symbol)
+            if (dispatched?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing dispatched candidate')
+            const actual = dispatched.request
+            const persistedRequest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+              yield* fs.readFileString(`${directory}/request-${actual.requestId}.json`),
+            )
+            expect(persistedRequest).toEqual(actual)
             expect(yield* fs.exists(`${directory}/batch-${plan.batchId}.json`).pipe(Effect.orDie)).toBeTrue()
-            expect(yield* fs.exists(`${directory}/handoff-${request.requestId}.json`).pipe(Effect.orDie)).toBeTrue()
+            const persistedHandoff = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+              yield* fs.readFileString(`${directory}/handoff-${actual.requestId}.json`),
+            )
+            const handoff = Result.getOrThrow(
+              decodeEntryHandoff(
+                {
+                  requestId: actual.requestId,
+                  input: actual.request,
+                  observedAt: actual.observedAt,
+                  expiresAt: actual.expiresAt,
+                },
+                persistedHandoff,
+              ),
+            )
+            if (handoff.disposition.status !== 'READY') throw new Error('Dispatched handoff is not ready')
+            expect(Result.getOrThrow(prepareJevRequest(handoff.disposition.jevRequest)).requestHash).toBe(
+              prepared.requestHash,
+            )
             return nativeJevInference(input, new Date(yield* Clock.currentTimeMillis).toISOString(), true)
-          }),
+          }).pipe(Effect.orDie),
       }
       const evaluation = evaluateJevObservation({
         cycleId: observation.cycleId,
@@ -124,15 +174,7 @@ test('native entry commits source and request before inference, reproduces its r
           evaluate: (raw) =>
             Effect.gen(function* () {
               const prepared = Result.getOrThrow(prepareDecisionsRequest(raw))
-              const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: SymbolSchema }))(
-                prepared.request.input[0].content[2].data,
-              ).pipe(Effect.orDie)
-              const candidate = plan.candidates.find((value) => value.symbol === symbol)
-              if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing chart source')
-              const inferred = chartInferenceFixture(
-                candidate.request.request,
-                new Date(yield* Clock.currentTimeMillis).toISOString(),
-              )
+              const inferred = nativeChartInference(raw, new Date(yield* Clock.currentTimeMillis).toISOString())
               expect(inferred.requestHash).toBe(prepared.requestHash)
               return inferred
             }),
@@ -162,7 +204,8 @@ test('a durable pending claim forbids another call, expires once, and preserves 
     Effect.gen(function* () {
       const { journal } = yield* setup
       yield* seed(journal)
-      yield* journal.handoffs.recordHandoff(entryCompletionFixture(request, observation.observedAt).handoff)
+      yield* retainCheckpoint(journal)
+      yield* persistHandoffFixture(journal.handoffs, entryCompletionFixture(request, observation.observedAt).handoff)
       expect((yield* journal.batches.begin(plan, observation)).dispatches).toEqual([])
       expect((yield* journal.batches.finish(plan.batchId)).result).toBeNull()
       yield* TestClock.setTime(Date.parse(plan.expiresAt))
@@ -178,6 +221,37 @@ test('a durable pending claim forbids another call, expires once, and preserves 
     }),
   ))
 
+test.each([
+  ['malformed', {}],
+  ['different valid source', originalFixture.observation.payload],
+  ['changed observation time', { ...observation, observedAt: '2000-01-01T00:00:00.000Z' }],
+] as const)('batch reads revalidate stored observation bytes: %s', (_name, changed) =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      const path = `${directory}/observation-${plan.observationHash}.json`
+      yield* fs.writeFileString(path, JSON.stringify(changed))
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+      expect(Result.isFailure(yield* Effect.result(journal.batches.begin(plan, observation)))).toBeTrue()
+      yield* fs.writeFileString(path, JSON.stringify(observation))
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+    }),
+  ),
+)
+
+test('batch reads reject a missing stored observation even after an earlier successful read', () =>
+  run(
+    Effect.gen(function* () {
+      const { fs, directory, journal } = yield* setup
+      yield* seed(journal)
+      expect((yield* journal.batches.read(plan.batchId))?.plan).toEqual(plan)
+      yield* fs.remove(`${directory}/observation-${plan.observationHash}.json`)
+      expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()
+    }),
+  ))
+
 test('terminal receipt and resolution are atomic, idempotent and reject conflicting evidence', () =>
   run(
     Effect.gen(function* () {
@@ -189,7 +263,9 @@ test('terminal receipt and resolution are atomic, idempotent and reject conflict
         JevResolutionStatus.Recorded,
       )
       const conflicting = { ...receipt(), receiptHash: 'a'.repeat(64) }
-      expect(Result.isFailure(yield* Effect.result(journal.evaluations.record(request, conflicting)))).toBeTrue()
+      expect(
+        Result.isFailure(yield* Effect.result(persistEvaluationFixture(journal.evaluations, request, conflicting))),
+      ).toBeTrue()
       yield* TestClock.setTime(Date.parse(request.expiresAt))
       expect(yield* journal.evaluations.abandon(request, request.expiresAt)).toEqual(first)
     }),
@@ -217,13 +293,16 @@ test('raw chart and Jev provider calls bind their parent through the committed s
   run(
     Effect.gen(function* () {
       const { journal } = yield* setup
-      yield* seed(journal)
       const completion = entryCompletionFixture(request, observation.observedAt)
       const disposition = completion.handoff.disposition
       if (disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
         throw Error('Fixture requires both provider stages')
       const visual = Result.getOrThrow(
-        makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))),
+        makeInitialChartStageRequest({
+          chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+          protocol: request.request.protocol,
+          funding: request.request.funding,
+        }),
       )
       const common = {
         schemaVersion: 'bayn.replay-inference-call.v2' as const,
@@ -248,15 +327,54 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       }
       expect(chartCall.requestHash).not.toBe(request.requestHash)
       expect(jevCall.requestHash).not.toBe(request.requestHash)
+      const checkpoint = stagedCheckpointFixture(request, observation.observedAt)
+      const chartClaim = checkpoint.claims.find((row) => row.stage === 'CHART')
+      const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+      const baseClaim = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+      const baseTerminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
+      if (
+        chartClaim === undefined ||
+        chartTerminal?.outcome.status !== 'RECEIVED' ||
+        baseClaim === undefined ||
+        baseTerminal?.outcome.status !== 'RECEIVED'
+      )
+        throw Error('Fixture requires staged evidence')
+      expect(Result.isFailure(yield* journal.retainCall(chartCall).pipe(Effect.result))).toBe(true)
+      yield* seed(journal)
+      yield* persistVisualClaimFixture(journal.handoffs, chartClaim)
       yield* journal.retainCall(chartCall)
+      yield* persistVisualTransitionFixture(journal.handoffs, { terminal: chartTerminal, successor: { kind: 'NONE' } })
+      const base = Result.getOrThrow(
+        makeSelectedBaseStartStageRequest(
+          {
+            chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+            protocol: request.request.protocol,
+            funding: request.request.funding,
+          },
+          stageResponseIdentity(chartTerminal.outcome.inference),
+        ),
+      )
+      if (base.status !== 'PREPARED') throw Error('Fixture requires base start')
+      const baseCall: ReplayInferenceCall = {
+        ...common,
+        schemaVersion: 'bayn.replay-inference-call.v3',
+        stage: 'BASE_START',
+        request: base.request,
+        requestHash: base.requestHash,
+        outcome: baseTerminal.outcome,
+      }
+      expect(Result.isFailure(yield* journal.retainCall(baseCall).pipe(Effect.result))).toBe(true)
+      yield* persistVisualClaimFixture(journal.handoffs, baseClaim)
+      yield* journal.retainCall(baseCall)
+      yield* persistVisualTransitionFixture(journal.handoffs, { terminal: baseTerminal, successor: { kind: 'NONE' } })
       expect(Result.isFailure(yield* journal.retainCall(jevCall).pipe(Effect.result))).toBe(true)
       expect(
         Result.isFailure(
           yield* journal.retainCall({ ...chartCall, requestHash: request.requestHash }).pipe(Effect.result),
         ),
       ).toBe(true)
-      yield* journal.handoffs.recordHandoff(completion.handoff)
+      yield* persistHandoffFixture(journal.handoffs, completion.handoff)
       yield* journal.retainCall(jevCall)
-      expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'JEV'])
+      expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'BASE_START', 'JEV'])
     }),
   ))

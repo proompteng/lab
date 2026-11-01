@@ -407,6 +407,22 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
   )
 
 describe('runtime configuration loading', () => {
+  test('loads the isolated recorder database with its own CA and the production TLS policy', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set(
+      'BAYN_NATIVE_ARRIVAL_POSTGRES_URL',
+      'postgresql://archive:archive-secret@archive:5432/bayn_native_arrival',
+    )
+    const loaded = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+    expect(loaded.nativeArrivalPostgres).toEqual({
+      url: Redacted.make('postgresql://archive:archive-secret@archive:5432/bayn_native_arrival'),
+      tls: true,
+      caPath: '/var/run/secrets/bayn/native-arrival-postgres/ca.crt',
+    })
+    expect(loaded.postgres.url).toEqual(Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'))
+    expect(JSON.stringify(loaded.nativeArrivalPostgres)).not.toContain('archive-secret')
+  })
+
   test('loads the live service without historical snapshot settings', async () => {
     const loaded = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
     expect(loaded.clickhouse).toEqual({
@@ -467,7 +483,7 @@ describe('runtime configuration loading', () => {
       environment.set(`BAYN_SIGNAL_${suffix}`, 'not-a-live-runtime-input')
     const stale = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
 
-    expect(stale.parameterHash).toBe('a78704828c7a35005ea20f4c1d20d4b318f26df292d5f39f1ab22c2ddd7f23f7')
+    expect(stale.parameterHash).toBe(parameterHash)
     expect(stale.parameterHash).toBe(baseline.parameterHash)
     expect(stale.strategyProtocolHash).toBe(baseline.strategyProtocolHash)
     const firstController = Result.getOrThrow(executionControllerConfig(baseline))

@@ -50,6 +50,10 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+Native Nix image jobs retry transient cache downloads up to three times and fail if substitution still fails.
+Cache failures do not trigger compiler or toolchain builds from source. Each image has one 45-minute build deadline;
+compile failures and timeouts are not retried as a second full build. Build timings and logs retain the failing phase.
+
 `product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
 Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
 They do not create unused product image archives or PR registry caches.
@@ -111,6 +115,9 @@ are the promotion record. The ApplicationSet points each Kargo-managed Applicati
 overwrite that branch or its managed deployment metadata. If an Application is recreated, re-promote its current
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
+
+Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
+image from `main`. This avoids execution-controller reactivation when production code is unchanged.
 
 Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
 main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings

@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
-import type { TengriIdentity } from './auth'
+import { RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { SessionSchema } from './generated/proompteng/authz/v1/platform_pb'
+import type { PlatformIdentity } from '../platform/auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
@@ -29,7 +30,8 @@ let removalCheck: (() => void) | undefined
 const removalOperations = new Set<string>()
 let loseCommandResponse = false
 let supersedeRuntimeCommand = false
-const identity: TengriIdentity = {
+let conflictedConversationResumes = 0
+const identity: PlatformIdentity = {
   subject: 'github:42',
   user: { id: '42', name: 'Fixture', email: '', image: null },
   session: create(SessionSchema, {
@@ -91,7 +93,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 9
+let receiverGuestApiProtocolVersion = 10
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -220,7 +222,7 @@ beforeAll(async () => {
     ),
   )
   process.env.OFZ_GRPC_ENDPOINT = `localhost:${ofzPort}`
-  process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+  process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     getRequestAudience(
@@ -427,6 +429,12 @@ beforeAll(async () => {
         attached: false,
       })
     },
+    listCodexThreads(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { rawJson: '{"data":[{}],"nextCursor":null}' })
+    },
     listCodexModels(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -483,23 +491,25 @@ beforeAll(async () => {
         stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
       })
     },
-    getActiveCodexRun(
+    getActiveCodexRuns(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      callback(
-        null,
-        call.request.id === 'agent-empty'
-          ? {}
-          : {
-              runId: '11111111-1111-4111-8111-111111111111',
-              agentId: call.request.id,
-              threadId: 'thread-selected',
-              stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
-            },
-      )
+      callback(null, {
+        runs:
+          call.request.id === 'agent-empty'
+            ? []
+            : [
+                {
+                  runId: '11111111-1111-4111-8111-111111111111',
+                  agentId: call.request.id,
+                  threadId: 'thread-selected',
+                  stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+                },
+              ],
+      })
     },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -696,6 +706,10 @@ beforeAll(async () => {
         call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
+      if (threadId === 'conflicted-conversation' && conflictedConversationResumes++ === 0) {
+        call.emit('error', serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'))
+        return
+      }
       call.write({
         part: 'CODEX_HISTORY_PART_THREAD',
         rawJson: JSON.stringify({
@@ -780,15 +794,17 @@ describe('Tengri gRPC BFF transport', () => {
     ).toMatchObject({ status: 409, code: 'control_not_dispatched' })
   })
   test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
-    const { getActiveCodexRun } = await import('./grpc')
-    expect(await getActiveCodexRun(identity, 'agent-test')).toEqual({
-      runId: '11111111-1111-4111-8111-111111111111',
-      agentId: 'agent-test',
-      threadId: 'thread-selected',
-      state: { phase: 'running', turnId: 'turn-selected' },
-    })
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await getActiveCodexRuns(identity, 'agent-test')).toEqual([
+      {
+        runId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-test',
+        threadId: 'thread-selected',
+        state: { phase: 'running', turnId: 'turn-selected' },
+      },
+    ])
     expect(receivedRequest).toEqual({ id: 'agent-test' })
-    expect(await getActiveCodexRun(identity, 'agent-empty')).toBeNull()
+    expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
@@ -809,12 +825,12 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
-  test('accepts guest API 9 before sending canonical file writes', async () => {
+  test('accepts guest API 10 before sending canonical file writes', async () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     const previous = receiverGuestApiProtocolVersion
     try {
-      receiverGuestApiProtocolVersion = 9
+      receiverGuestApiProtocolVersion = 10
       await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
       expect(fileWriteCalls).toBe(before + 1)
     } finally {
@@ -826,7 +842,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 5, 6, 7, 8, 10]) {
+      for (const version of [0, 4, 5, 6, 7, 8, 9, 11]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -834,7 +850,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 9
+      receiverGuestApiProtocolVersion = 10
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)
@@ -1027,6 +1043,14 @@ describe('Tengri gRPC BFF transport', () => {
       client.close()
       oldController.forceShutdown()
     }
+  })
+
+  test('classifies malformed chat indexes as validation failures', async () => {
+    const { listCodexThreads } = await import('./grpc')
+    expect(await rejection(listCodexThreads(identity, 'agent-test', false))).toMatchObject({
+      status: 502,
+      code: 'chat_index_invalid',
+    })
   })
 
   test('treats missing model RPCs and invalid catalogs as failures without negotiating guest capabilities', async () => {
@@ -1877,6 +1901,18 @@ describe('Tengri gRPC BFF transport', () => {
       status: 503,
       code: undefined,
     })
+  })
+
+  test('keeps a conversation resume conflict retryable without exposing guest details', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread(identity, 'agent-test', 'conflicted-conversation'))).toMatchObject({
+      message: 'The conversation changed while loading. Reconnecting…',
+      status: 503,
+      code: undefined,
+    })
+    expect(await restoredThread('conflicted-conversation')).toMatchObject({ id: 'conflicted-conversation' })
+    expect(conflictedConversationResumes).toBe(2)
   })
 
   test('sanitizes upstream failures and treats verifier failures as service errors', async () => {

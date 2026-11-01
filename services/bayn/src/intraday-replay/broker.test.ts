@@ -23,7 +23,7 @@ import { streamingFixture } from '../testing/streaming-market-fixture'
 import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
-import { fillObservation, positionSnapshot } from '../broker/observations'
+import { fillObservation, orderObservation, positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
 import { makeReplayInferenceTiming } from './inference-timing'
@@ -123,6 +123,84 @@ test('an equity-only replay account leaves crypto eligibility unknown', async ()
   expect(account.value.cryptoStatus).toBeNull()
   expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
 })
+
+test('simulated mutation receipts retain the original dispatch and completion clocks', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const receipt = yield* submit(broker, intent())
+      expect(receipt.evidence.routing).toEqual({
+        startedAt: observedAt,
+        requestDispatchedAt: observedAt,
+        completedAt: new Date(startMs + 100).toISOString(),
+      })
+      const canceled = yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(canceled.evidence.routing).toEqual({
+        startedAt: new Date(startMs + 100).toISOString(),
+        requestDispatchedAt: new Date(startMs + 100).toISOString(),
+        completedAt: new Date(startMs + 100).toISOString(),
+      })
+    }),
+  )
+})
+
+test('routing observation does not resynchronize the market or add submission clock reads', async () => {
+  await run(
+    Effect.gen(function* () {
+      let reads = 0
+      const broker = yield* setup({
+        submissionTime: Effect.sync(() => {
+          reads += 1
+          return observedAt
+        }),
+      })
+      const receipt = yield* submit(broker, intent())
+      expect(reads).toBe(1)
+      yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(reads).toBe(1)
+    }),
+  )
+})
+
+test.each([false, true])(
+  'broker snapshot retry advances the owned replay timeline or reports failure: %s',
+  async (advanceFails) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const advances: number[] = []
+        const broker = yield* setup({
+          advanceToArrival: (at) =>
+            Effect.sync(() => advances.push(at)).pipe(
+              Effect.andThen(
+                advanceFails && at > startMs + 100
+                  ? Effect.fail(new ReplayBrokerFailure({ message: 'Synthetic timeline persistence failure' }))
+                  : TestClock.setTime(at),
+              ),
+            ),
+        })
+        yield* broker.mutation.submit(intent())
+        const projection = broker.read.projection
+        if (projection === undefined) throw new Error('Missing broker projection')
+        const result = yield* Effect.result(projection.snapshot)
+        if (advanceFails) {
+          expect(result).toMatchObject({
+            _tag: 'Failure',
+            failure: { operation: 'preflight', message: 'Replay broker snapshot failed' },
+          })
+        } else {
+          const snapshot = Result.getOrThrow(result)
+          expect(snapshot.history.orders.rows).toHaveLength(1)
+          expect(snapshot.history.fills).toHaveLength(1)
+          expect(snapshot.positions.value).toHaveLength(1)
+        }
+        expect(advances).toEqual([startMs + 100, startMs + 600])
+        expect(yield* Clock.currentTimeMillis).toBe(startMs + (advanceFails ? 100 : 600))
+        expect((yield* broker.checkpoint).state.fills).toHaveLength(1)
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+      { signal: AbortSignal.timeout(2000) },
+    )
+  },
+)
 
 test('same-millisecond round trips preserve fill accounting order across checkpoint restore', async () => {
   await run(
@@ -382,6 +460,57 @@ test('canceling a resting DAY order prevents execution on subsequent quotes', as
   )
   expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
   expect(state.ledger.fills).toEqual([])
+})
+
+test.serial('expiration reads format one session date per working DAY order and none for terminal orders', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'format')
+  if (descriptor?.get === undefined) throw new Error('Missing Intl format getter')
+  const getFormat = (formatter: Intl.DateTimeFormat) => descriptor.get?.call(formatter) as Intl.DateTimeFormat['format']
+  let formats = 0
+  Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', {
+    ...descriptor,
+    get(this: Intl.DateTimeFormat) {
+      const format = getFormat(this)
+      return (value?: number | Date) => {
+        formats += 1
+        return format(value)
+      }
+    },
+  })
+  try {
+    await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          assumptions: { ...config.assumptions, slippageBps: 1 },
+          calendar: [
+            ...Array.from({ length: 19 }, (_, index) => ({
+              date: `2026-08-${String(index + 1).padStart(2, '0')}` as ReplayBrokerConfig['calendar'][number]['date'],
+              open: '09:30',
+              close: '16:00',
+              session_open: '0930',
+              session_close: '1600',
+            })),
+            ...config.calendar,
+          ],
+        })
+        const submitted = yield* submit(
+          broker,
+          intent({ limitPriceMicros: '100000000', notionalLimitMicros: '500000000' }),
+        )
+        formats = 0
+        const resting = yield* broker.snapshot
+        expect(resting.orders[0]?.order.status).toBe(OrderStatus.New)
+        expect(formats).toBe(1)
+        yield* broker.mutation.cancel(submitted.order.brokerOrderId)
+        formats = 0
+        const canceled = yield* broker.snapshot
+        expect(canceled.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+        expect(formats).toBe(0)
+      }),
+    )
+  } finally {
+    Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', descriptor)
+  }
 })
 
 test('an extended-hours DAY order expires at the broker session end, including without another quote', async () => {
@@ -2168,6 +2297,33 @@ const laterMarket = (delay: number, bid: number, size = 100) => {
   )
 }
 
+test('regular-close expiration includes partially filled DAY entries and held DAY protection', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ quoteAt: () => Effect.succeed(observedQuote({ ...quote, askSize: 2 })) })
+      yield* submit(broker, intent({ protection: bracketTerms }))
+      const closeAt = Date.parse('2026-09-04T20:00:00.000Z')
+      yield* TestClock.setTime(closeAt - 1)
+      const before = yield* broker.snapshot
+      expect(before.orders.map(({ order }) => order.status)).toEqual([
+        OrderStatus.PartiallyFilled,
+        OrderStatus.Held,
+        OrderStatus.Held,
+      ])
+      yield* TestClock.setTime(closeAt)
+      const atClose = yield* broker.snapshot
+      expect(atClose.orders.map(({ order }) => order.status)).toEqual([
+        OrderStatus.Expired,
+        OrderStatus.Expired,
+        OrderStatus.Expired,
+      ])
+      expect(atClose.orders.every(({ order }) => order.updatedAt === '2026-09-04T20:00:00.000Z')).toBe(true)
+      expect(atClose.ledger).toEqual(before.ledger)
+      expect((yield* broker.snapshot).orders).toEqual(atClose.orders)
+    }),
+  )
+})
+
 test('native bracket children remain held after a partial entry and cancel with the entry', async () => {
   await run(
     Effect.gen(function* () {
@@ -2198,17 +2354,31 @@ test('native bracket reduces the stop after a partial target and restores exact 
                 : observedQuote(quote),
         )
       let broker = yield* setup({ quoteAt })
-      yield* submit(broker, intent({ protection: bracketTerms }))
+      const opened = yield* submit(broker, intent({ protection: bracketTerms }))
+      const stop = opened.order.legs?.find((leg) => leg.orderType === BrokerOrderType.StopLimit)
+      if (stop === undefined) throw new Error('Missing bracket stop')
+      const before = yield* broker.read.orderById(stop.brokerOrderId)
+      const previousEvent = Result.getOrThrow(orderObservation(before.value, before.evidence))
       yield* broker.observeMarket(startMs + 1000, laterMarket(1000, 103, 2))
       yield* TestClock.setTime(startMs + 1000)
       const partial = yield* broker.checkpoint
       expect(
         partial.state.orders.find(({ order }) => order.orderType === BrokerOrderType.StopLimit)?.order.quantityAtoms,
       ).toBe('3000000000')
+      const reduced = yield* broker.read.orderById(stop.brokerOrderId)
+      const reducedEvent = Result.getOrThrow(orderObservation(reduced.value, reduced.evidence))
+      expect(reducedEvent.sourceEventId).not.toBe(previousEvent.sourceEventId)
+      expect(reduced.value.updatedAt).toBe(new Date(startMs + 1000).toISOString())
+      yield* TestClock.setTime(startMs + 1100)
+      const repeated = yield* broker.read.orderById(stop.brokerOrderId)
+      const replayEvent = Result.getOrThrow(orderObservation(repeated.value, repeated.evidence))
+      expect(replayEvent.sourceEventId).toBe(reducedEvent.sourceEventId)
+      expect(replayEvent.contentHash).toBe(reducedEvent.contentHash)
+      const retained = yield* broker.checkpoint
       broker = yield* makeReplayBroker({
         ...config,
         quoteAt,
-        restoreCheckpoint: { value: partial, expectedHash: partial.checkpointHash },
+        restoreCheckpoint: { value: retained, expectedHash: retained.checkpointHash },
       })
       yield* broker.observeMarket(startMs + 2000, laterMarket(2000, 98))
       yield* TestClock.setTime(startMs + 2000)

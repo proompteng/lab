@@ -4,6 +4,9 @@ metadata:
   name: jangar-db
 spec:
   instances: 2
+  postgresql:
+    parameters:
+      wal_buffers: 16MB
   imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
   primaryUpdateStrategy: unsupervised
   storage:

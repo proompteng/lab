@@ -71,13 +71,40 @@ not prove connector execution. Production rollout and this acceptance remain out
 
 ## Operator interfaces
 
-- `GET /api/platform/policies` returns the current policy version and action/resource catalog.
+- On `admin.proompteng.ai`, `GET /api/platform/workspaces` lists administered workspaces. The selected workspace's
+  resource inventory, members, clients and activity use `/api/platform/workspaces/<workspace-id>` and `/activity`.
+  Ofz checks native workspace administration on every request; global platform administration is no bypass.
+- On the admin host, `GET /api/platform/policies` returns the policy version/catalog, or reads assignments with an
+  explicit `workspaceId`, resource and recipient.
 - `POST /api/platform/policies` writes declared relationships through Ofz with current administrator authority and MFA.
 - `GET /api/platform/connectors` returns the shared Relay operations and enrolled target identities.
-- `POST /api/tengri/connectors` installs a selected connector/operation/target delegation into the current guest and
-  activates it only after acknowledgement. It accepts a stable operation ID, agent ID, connector ID, operation names,
-  target names and expiry; the server derives actions, resources and the current execution binding.
-- `DELETE /api/tengri/connectors` revokes the Ofz delegation before removing the guest tool configuration.
+- Settings → Connections manages saved consent separately from expiring credentials. `GET /api/tengri/connections`
+  lists the signed-in issuer's connections for an accessible workspace. No credential appears in that response.
+- `POST /api/tengri/connections` saves an explicit scope or reconciles existing enabled consent. The server derives
+  actions, immutable target identities and current runtime binding from the registered catalog and controller. It
+  activates a new credential only after the guest acknowledges its exact installation. Renewal cannot enable revoked
+  consent or substitute a recreated namespace with the same name.
+  Connecting uses existing approved permissions. A missing permission requires a separate workspace administrator
+  decision in the portal; product consent and credential renewal cannot write relationships.
+  The consent operation binds the human, client, workspace and exact scope. A renewed session or runtime does not
+  change that identity, but replay rechecks its current authority before returning the original receipt.
+  Saving consent uses the current verified session. Administrative permission changes in the portal require fresh
+  passkey verification. Renewal and revocation require a current MFA session; they
+  do not require another passkey ceremony every five minutes. Renewal rechecks the saved scope and current native
+  permissions, and cannot widen consent.
+  Connections shows a service list with current status. Connect or Manage opens one editor for resources and a
+  readable permission summary; individual tool choices sit under Customize access. Returning to the list preserves
+  selections, and success returns to the list with focus on Manage. This follows
+  [progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/) and
+  [preserving answers within a journey](https://design-system.service.gov.uk/patterns/question-pages/).
+  The Tengri client reconciles on resume and before starting or continuing a turn. Periodic renewal runs only while
+  a turn is active. Credentials remain bounded by both the session expiry and its idle deadline.
+- `DELETE /api/tengri/connections` revokes saved consent and all child credentials before guest cleanup. Cleanup can
+  remain pending while the guest is unavailable; revocation is already authoritative. Guest generation checks reject
+  delayed installs and prevent an old cleanup from removing a newer connection.
+- The admin portal's Integrations tab assigns or revokes workspace-scoped relationships for members, people and
+  enrolled clients. It uses named resources and operations. SPIFFE identities, resource IDs and policy versions remain
+  transport details. The product gateway has no `platform.administration` role.
 - `/api/platform/relay/agent` forwards the guest's proof-bound exact request body to Relay. Its strict envelope requires
   `kind: "execute"` or `kind: "lookup"` and a canonical base64 body. Lookup signs a distinct body containing the original
   execution bytes. The proxy cannot select an identity or client on the guest's behalf.

@@ -515,7 +515,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   requireTerms(failures, productionPaths.config, files.config, [
     '_config_version: 46',
-    ['model:', '  default: qwen36-flamingo', '  provider: flamingo', '  context_length: 262144'].join('\n'),
+    ['model:', '  default: qwen38-flamingo', '  provider: flamingo', '  context_length: 262144'].join('\n'),
     'terminal:\n  backend: local\n  cwd: /opt/data/workspace/tuslagch/lab',
     'shell_init_files:\n    - /etc/profile.d/hermes-tools.sh',
     'discord:\n    enabled: true',
@@ -556,8 +556,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.config}: native Exa web tools must be the only web integration`)
   }
   requireTerms(failures, productionPaths.config, files.config, [
-    'providers:\n  flamingo:\n    model: qwen36-flamingo\n    base_url: http://flamingo.flamingo.svc.cluster.local/v1\n    api_mode: chat_completions\n    context_length: 262144',
-    'temperature: 0.6\n      top_p: 0.95\n      top_k: 20\n      min_p: 0.0\n      presence_penalty: 0.0\n      repetition_penalty: 1.0',
+    'providers:\n  flamingo:\n    model: qwen38-flamingo\n    base_url: http://flamingo.flamingo.svc.cluster.local/v1\n    api_mode: chat_completions\n    context_length: 262144',
+    'temperature: 1.0\n      top_p: 0.95\n      top_k: 20\n      min_p: 0.0\n      presence_penalty: 0.0\n      repetition_penalty: 1.0',
     'compression:\n    provider: flamingo\n    timeout: 180\n    max_concurrency: 1',
     'title_generation:\n    provider: flamingo\n    timeout: 30\n    max_concurrency: 1',
     'memory_query_rewrite:\n    provider: flamingo\n    max_concurrency: 1',
