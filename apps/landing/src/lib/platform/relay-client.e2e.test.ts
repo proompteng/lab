@@ -371,7 +371,15 @@ test.skipIf(!binary)(
         expect(discoveries - before).toBe(1)
         expect(reply.error).toBeUndefined()
         expect(reply.result.tools.length).toBeLessThanOrEqual(50)
-        return reply.result as { tools: { name: string }[]; nextCursor?: string }
+        return reply.result as {
+          tools: {
+            name: string
+            description: string
+            inputSchema: unknown
+            annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean }
+          }[]
+          nextCursor?: string
+        }
       }
       const invalid = async (params: unknown) => {
         const reply = await request('tools/list', params)
