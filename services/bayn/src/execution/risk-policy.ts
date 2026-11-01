@@ -1,4 +1,5 @@
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
+import { canonicalHashV1Result } from '../hash'
 
 import { BrokerEnvironment } from '../broker/identity'
 import { BrokerMode, PolicySchema, executionRiskPolicySchemaVersion } from '../risk'
@@ -50,3 +51,10 @@ export const makeExecutionRiskPolicy = (
     maxOpenOrders: allowedSymbols.length,
     ...executionRiskLimits(brokerEnvironment),
   })
+
+export const approvedExecutionRiskPolicyHashes = (accountId: string, allowedSymbols: readonly string[]) =>
+  Result.all(
+    [BrokerEnvironment.Live, BrokerEnvironment.Sandbox].map((environment) =>
+      Result.flatMap(makeExecutionRiskPolicy(accountId, allowedSymbols, environment), canonicalHashV1Result),
+    ),
+  )

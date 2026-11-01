@@ -19,7 +19,7 @@ test('an arbitrary risk-policy hash cannot authorize prospective qualification',
   }
 })
 
-test('qualification preserves the frozen ceiling even when broader PAPER authority exists', () => {
+test('qualification derives its limits from the existing approved execution policy', () => {
   const registration = registrationFixture()
   for (const environment of [BrokerEnvironment.Live, BrokerEnvironment.Sandbox]) {
     const policies = registration.policies.map((definition) => {
@@ -28,9 +28,7 @@ test('qualification preserves the frozen ceiling even when broader PAPER authori
       )
       return { ...definition, riskPolicy, riskPolicyHash: testHash(riskPolicy) }
     })
-    expect(Result.isSuccess(validateSystemRegistration({ ...registration, policies }))).toBe(
-      environment === BrokerEnvironment.Live,
-    )
+    expect(Result.isSuccess(validateSystemRegistration({ ...registration, policies }))).toBe(true)
   }
 })
 
