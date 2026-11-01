@@ -11563,6 +11563,58 @@ test('editing a platform role does not validate unrelated fractional GiB quota f
   })
 })
 
+test('returns from phone layout without shrinking saved desktop windows', async ({ page }) => {
+  await mockTengri(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  const chat = page.locator('section[aria-label="Tengri window"]')
+  await expect(chat.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeVisible()
+  const before = await chat.boundingBox()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(async () => (await chat.boundingBox())?.width).toBe(390)
+  await chat.getByRole('button', { name: 'Minimize Tengri', exact: true }).click()
+  await expect(chat).toBeHidden()
+  await expect(chat.locator('..')).toHaveCSS('transform', 'none')
+  await page.getByRole('button', { name: 'Open Tengri', exact: true }).click()
+  await expect(chat).toBeVisible()
+  await chat.getByRole('button', { name: 'Maximize Tengri', exact: true }).click()
+  await chat.getByRole('button', { name: 'Restore Tengri', exact: true }).click()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect.poll(() => chat.boundingBox()).toEqual(before)
+  await page.reload()
+  await expect.poll(() => chat.boundingBox()).toEqual(before)
+})
+
+test('touch layout fills landscape and preserves its draft through rotation', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  })
+  try {
+    const page = await context.newPage()
+    await mockTengri(page)
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
+    const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+    await composer.fill('Preserve this draft through rotation')
+    await page.setViewportSize({ width: 844, height: 390 })
+    await expect.poll(async () => (await chat.boundingBox())?.width).toBe(844)
+    await expect(chat).toHaveCSS('border-radius', '0px')
+    await expect(composer).toBeInViewport()
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+    await page.screenshot({ path: test.info().outputPath('phone-landscape.png') })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect.poll(async () => (await chat.boundingBox())?.width).toBe(390)
+    await expect(composer).toHaveValue('Preserve this draft through rotation')
+    expect(await page.evaluate(() => scrollY)).toBe(0)
+  } finally {
+    await context.close()
+  }
+})
+
 for (const width of [320, 390, 430]) {
   test(`phone chat keeps its draft and controls stable through keyboard resize at ${width}px`, async ({
     browser,
@@ -11592,6 +11644,22 @@ for (const width of [320, 390, 430]) {
       const before = await chat.boundingBox()
       expect(before?.x).toBeCloseTo(0, 0)
       expect(before?.width).toBeCloseTo(width, 0)
+      await page.evaluate(async () => {
+        const visual = window.visualViewport
+        if (!visual) throw new Error('Visual viewport is required')
+        Object.defineProperty(visual, 'height', { configurable: true, value: 0 })
+        Object.defineProperty(visual, 'width', { configurable: true, value: 0 })
+        visual.dispatchEvent(new Event('resize'))
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      })
+      await expect
+        .poll(() => page.locator('[data-tengri-desktop]').evaluate((element) => element.getBoundingClientRect().height))
+        .toBe(844)
+      await page.evaluate(() => {
+        if (!window.visualViewport) return
+        Reflect.deleteProperty(window.visualViewport, 'height')
+        Reflect.deleteProperty(window.visualViewport, 'width')
+      })
       await page.evaluate(() => {
         const visual = window.visualViewport
         if (!visual) return
