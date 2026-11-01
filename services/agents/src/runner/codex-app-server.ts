@@ -14,16 +14,15 @@ import {
 import { Cause, Context, Data, Effect, Exit, Layer, ManagedRuntime, Option } from 'effect'
 
 import { ensureFileDirectory } from '../../scripts/codex/lib/fs'
+import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../runner-result'
 
 import { uploadOutputArtifacts } from './artifact-upload'
 import {
   asNumber,
-  AGENT_RUNNER_RESULT_PREVIEW_CHARS,
   asString,
   buildTemplateContext,
   type AgentProviderOutputArtifact,
   type AgentRunnerGoal,
-  type AgentRunnerResultPreview,
   type AgentRunnerSpec,
   type CodexAppServerAdapterConfig,
   isRecord,
@@ -69,6 +68,7 @@ export type CodexAppServerRunnerClient = {
     options?: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal },
   ) => Promise<{ lastTurn: Turn | null }>
   interruptTurn?: (turnId: string, threadId: string) => Promise<void>
+  getTurnItems?: (threadId: string, turnId: string) => Promise<Turn['items']>
   stop?: () => void
 }
 
@@ -107,7 +107,7 @@ export class CodexRunnerClientError extends Data.TaggedError('CodexRunnerClientE
 }> {}
 
 export class CodexRunnerTurnError extends Data.TaggedError('CodexRunnerTurnError')<{
-  readonly operation: 'start-turn' | 'stream-turn'
+  readonly operation: 'start-turn' | 'stream-turn' | 'read-turn-items'
   readonly threadId?: string
   readonly turnId?: string
   readonly cause: unknown
@@ -1097,9 +1097,30 @@ export const runCodexAppServerAdapterEffect = ({
     state.responseTruncated = completion.responseTruncated
     const idleResult = yield* waitForThreadIdleEffect(state.client, response.threadId, options.abortSignal)
     if (idleResult?.lastTurn) {
-      state.finalTurn = idleResult.lastTurn
-      state.turnId = idleResult.lastTurn.id
-      const messages = idleResult.lastTurn.items.flatMap((item) =>
+      let finalTurn = idleResult.lastTurn
+      state.turnId = finalTurn.id
+      if (finalTurn.status === 'completed' && finalTurn.itemsView !== 'full') {
+        const readItems = state.client.getTurnItems?.bind(state.client)
+        const threadId = response.threadId
+        const turnId = finalTurn.id
+        if (!readItems) {
+          return yield* Effect.fail(
+            new CodexRunnerTurnError({
+              operation: 'read-turn-items',
+              threadId,
+              turnId,
+              cause: 'Completed turn items are not loaded',
+            }),
+          )
+        }
+        const items = yield* Effect.tryPromise({
+          try: () => readItems(threadId, turnId),
+          catch: (cause) => new CodexRunnerTurnError({ operation: 'read-turn-items', threadId, turnId, cause }),
+        })
+        finalTurn = { ...finalTurn, items, itemsView: 'full' }
+      }
+      state.finalTurn = finalTurn
+      const messages = finalTurn.items.flatMap((item) =>
         item.type === 'agentMessage' && item.phase !== 'commentary' ? [item.text] : [],
       )
       if (messages.length > 0 || idleResult.lastTurn.id !== response.turnId) {
