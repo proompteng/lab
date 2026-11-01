@@ -174,6 +174,54 @@ impl Native {
         Ok(())
     }
 
+    pub(crate) async fn policy_relations(
+        &self,
+        kind: &str,
+        id: &str,
+        subject_kind: &str,
+        subject_id: &str,
+    ) -> Result<Vec<String>, Status> {
+        let bytes = self.post_bytes("/v1/relationships/read", json!({
+            "consistency": {"fullyConsistent": true},
+            "relationshipFilter": {"resourceType": kind, "optionalResourceId": id,
+                "optionalSubjectFilter": {"subjectType": subject_kind, "optionalSubjectId": subject_id}},
+            "optionalLimit": 129
+        })).await?;
+        let mut relations = Vec::new();
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let envelope: Value = serde_json::from_slice(line)
+                .map_err(|_| Status::unavailable("invalid native relationship stream"))?;
+            let value = &envelope["result"]["relationship"];
+            if value["subject"]
+                .get("optionalRelation")
+                .is_some_and(|relation| relation != "")
+                || value
+                    .get("optionalCaveat")
+                    .is_some_and(|caveat| !caveat.is_null())
+            {
+                return Err(Status::failed_precondition(
+                    "conditional relationship cannot be edited here",
+                ));
+            }
+            let relationship: Relationship = serde_json::from_value(value.clone())
+                .map_err(|_| Status::unavailable("invalid native relationship"))?;
+            if relationship.resource != Object::new(kind, id)
+                || relationship.subject.object != Object::new(subject_kind, subject_id)
+                || relationship.optional_expires_at.is_some()
+                || relations.len() >= 128
+            {
+                return Err(Status::failed_precondition(
+                    "policy relationship is outside the editable scope",
+                ));
+            }
+            relations.push(relationship.relation);
+        }
+        Ok(relations)
+    }
+
     pub(crate) async fn platform_matches(&self, expected: &[Relationship]) -> Result<bool, Status> {
         let bytes = self
             .post_bytes(

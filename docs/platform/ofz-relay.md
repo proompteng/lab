@@ -74,10 +74,37 @@ not prove connector execution. Production rollout and this acceptance remain out
 - `GET /api/platform/policies` returns the current policy version and action/resource catalog.
 - `POST /api/platform/policies` writes declared relationships through Ofz with current administrator authority and MFA.
 - `GET /api/platform/connectors` returns the shared Relay operations and enrolled target identities.
-- `POST /api/tengri/connectors` installs a selected connector/operation/target delegation into the current guest and
-  activates it only after acknowledgement. It accepts a stable operation ID, agent ID, connector ID, operation names,
-  target names and expiry; the server derives actions, resources and the current execution binding.
-- `DELETE /api/tengri/connectors` revokes the Ofz delegation before removing the guest tool configuration.
+- Settings → Connections manages saved consent separately from expiring credentials. `GET /api/tengri/connections`
+  lists the signed-in issuer's connections for an accessible workspace. No credential appears in that response.
+- `POST /api/tengri/connections` saves an explicit scope or reconciles existing enabled consent. The server derives
+  actions, immutable target identities and current runtime binding from the registered catalog and controller. It
+  activates a new credential only after the guest acknowledges its exact installation. Renewal cannot enable revoked
+  consent or substitute a recreated namespace with the same name.
+  An administrator's explicit Connect action can assign the selected catalog-declared resource permissions and save
+  consent atomically through Ofz. Other users need existing permissions. Neither service registration nor renewal
+  grants access. Settings keeps the selected scope and operation through a required verification, then resumes the
+  same request. Automatic continuation is bounded to the five-minute sign-in window and the same account/workspace.
+  The consent operation binds the human, client, workspace and exact scope. A renewed session or runtime does not
+  change that identity, but replay rechecks its current authority before returning the original receipt.
+  Saving consent for permissions the human already holds uses the current verified session. Assigning new resource
+  permissions requires fresh passkey verification. Renewal and revocation require a current MFA session; they
+  do not require another passkey ceremony every five minutes. Renewal rechecks the saved scope and current native
+  permissions, and cannot widen consent.
+  Connections shows a service list with current status. Connect or Manage opens one editor for resources and a
+  readable permission summary; individual tool choices sit under Customize access. Returning to the list preserves
+  selections, and success returns to the list with focus on Manage. This follows
+  [progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/) and
+  [preserving answers within a journey](https://design-system.service.gov.uk/patterns/question-pages/).
+  The Tengri client reconciles on resume and before starting or continuing a turn. Periodic renewal runs only while
+  a turn is active. Credentials remain bounded by both the session expiry and its idle deadline.
+- `DELETE /api/tengri/connections` revokes saved consent and all child credentials before guest cleanup. Cleanup can
+  remain pending while the guest is unavailable; revocation is already authoritative. Guest generation checks reject
+  delayed installs and prevent an old cleanup from removing a newer connection.
+- Settings → Privacy & Security → Service access assigns or revokes catalog-declared relationships for human or registered workload
+  identities through Ofz. Choose a registered service and a named resource, then select the permissions to allow or
+  remove in one audited change. The editor derives resource and permission choices from the policy and connector
+  catalogs; resource IDs and SPIFFE identities stay in the request. Each change requires current administrator
+  authority, passkey verification and an audit reason.
 - `/api/platform/relay/agent` forwards the guest's proof-bound exact request body to Relay. Its strict envelope requires
   `kind: "execute"` or `kind: "lookup"` and a canonical base64 body. Lookup signs a distinct body containing the original
   execution bytes. The proxy cannot select an identity or client on the guest's behalf.

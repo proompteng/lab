@@ -4,6 +4,7 @@ import { DateTime, Result } from 'effect'
 import {
   canonicalHashV1Result,
   canonicalJsonV1Result,
+  canonicalJsonWithHashV1Result,
   renderCanonicalJsonFailure,
   stableU128,
   stableU64,
@@ -26,6 +27,7 @@ describe('canonical hashing', () => {
 
     expect(canonicalJsonV1Result(value)).toEqual(Result.succeed(canonical))
     expect(canonicalHashV1Result(value)).toEqual(Result.succeed(hash))
+    expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body: canonical, hash }))
     expect(Result.getOrThrow(canonicalHashV1Result({ b: 2, a: 1 }))).toBe(
       Result.getOrThrow(canonicalHashV1Result({ a: 1, b: 2 })),
     )

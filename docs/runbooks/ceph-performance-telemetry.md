@@ -83,9 +83,14 @@ not clamped to one or rendered as zero. Network directions are separate because 
 or negative link speeds produce no utilization ratio. Weighted disk I/O time estimates average outstanding work;
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
-`CephOsdReadLatencyHigh` pages through the existing critical email route when an OSD's five-minute mean
-client read latency stays above 500 ms for five minutes. `CephOsdQueueWaitHigh` warns when estimated mean
-queue wait stays above 100 ms for ten minutes. Both retain bounded node/OSD identity. Missing or idle reads
+`CephHostReadLatencyHigh` fires when the highest OSD five-minute mean client read latency on a host stays above
+500 ms for five minutes. One incident per node survives OSD rotation, and the annotation lists the currently slow
+OSDs and their means. Per-OSD recording metrics retain diagnostic detail. The incident holds recovery for ten
+minutes; a relapse during that hold continues the same incident. Its dedicated email route sends the first message
+after ten seconds, batches group updates every fifteen minutes, and repeats unchanged incidents every four hours.
+`CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` retain their general critical route.
+`CephOsdQueueWaitHigh` warns when estimated mean queue wait stays above 100 ms for ten minutes and retains
+node/OSD identity. Missing or idle reads
 produce no latency estimate; use the existing exporter and OSD performance missing-data alerts for telemetry loss.
 Compare reads and processing time with scrub work, mapped RBD activity, and host queues. A low commit-latency
 gauge does not rule out delayed reads. These alerts do not authorize workload throttling or changing scrub policy.

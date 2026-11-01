@@ -172,7 +172,7 @@
   },
   {
     "surface": "controller",
-    "operation": "GetActiveCodexRun",
+    "operation": "GetActiveCodexRuns",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -539,7 +539,7 @@
   },
   {
     "surface": "bff",
-    "operation": "active-codex-run",
+    "operation": "active-codex-runs",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -1181,7 +1181,31 @@
   },
   {
     "surface": "ofz_platform",
+    "operation": "ReadPolicyRelationships",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Registered platform administrator service, active human administrator session, fully consistent resource relationships and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "WritePolicyRelationships",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListPlatformConnections",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "PutPlatformConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RevokePlatformConnection",
     "action": "ACTION_POLICY_COMMAND",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
   },
@@ -1229,13 +1253,15 @@
   },
   {
     "surface": "bff_http",
-    "operation": "POST /api/tengri/connectors",
-    "action": "ACTION_GRANTS_MANAGE"
+    "operation": "POST /api/tengri/connections",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner-scoped saved connection intent; fresh Ofz authorization and guest acknowledgement before activation"
   },
   {
     "surface": "bff_http",
-    "operation": "DELETE /api/tengri/connectors",
-    "action": "ACTION_GRANTS_MANAGE"
+    "operation": "DELETE /api/tengri/connections",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner-scoped saved connection intent; fresh Ofz authorization and guest acknowledgement before activation"
   },
   {
     "surface": "platform_http",
@@ -1254,5 +1280,11 @@
     "operation": "POST /api/platform/relay/agent",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/connections",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Owner-scoped saved connection metadata without credentials"
   }
 ]

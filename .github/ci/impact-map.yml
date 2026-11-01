@@ -171,6 +171,7 @@ targets:
       - argocd/**/*.river
       - schemas/custom/**
       - scripts/kubeconform.sh
+      - scripts/test-bayn-secret-file-mode.sh
       - kubernetes/**/*.yaml
       - kubernetes/**/*.yml
 

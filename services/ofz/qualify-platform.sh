@@ -30,9 +30,19 @@ installed=post('/v1/schema/read',{})['schemaText']
 digest=hashlib.sha256(installed.encode()).hexdigest()+'\n'
 catalog=json.loads(Path('platform/policies.json').read_text())
 resources={r['kind']:r['nativeType'] for r in catalog['resources']}
-for action in catalog['actions']:
+for index,action in enumerate(catalog['actions']):
     result=post('/v1/permissions/check',{'consistency':{'fullyConsistent':True},'resource':{'objectType':resources[action['resourceKind']],'objectId':'qualification'},'permission':action['permission'],'subject':{'object':{'objectType':'human','objectId':'qualification'}}})
     assert result['permissionship']=='PERMISSIONSHIP_NO_PERMISSION',action['id']
+    if relation:=action.get('grantRelation'):
+        target={'objectType':resources[action['resourceKind']],'objectId':f'qualification-{index}'}
+        subject={'object':{'objectType':'human','objectId':'qualification'}}
+        post('/v1/relationships/write',{'updates':[{'operation':'OPERATION_TOUCH','relationship':{'resource':target,'relation':relation,'subject':subject}}]})
+        allowed=post('/v1/permissions/check',{'consistency':{'fullyConsistent':True},'resource':target,'permission':action['permission'],'subject':subject})
+        assert allowed['permissionship']=='PERMISSIONSHIP_HAS_PERMISSION',action['id']
+        for other in catalog['actions']:
+            if other['resourceKind']==action['resourceKind'] and other['permission']!=action['permission']:
+                denied=post('/v1/permissions/check',{'consistency':{'fullyConsistent':True},'resource':target,'permission':other['permission'],'subject':subject})
+                assert denied['permissionship']=='PERMISSIONSHIP_NO_PERMISSION',(action['id'],other['id'])
 output=Path('platform/schema.sha256')
 if sys.argv[2]=='--write':output.write_text(digest)
 else:assert output.read_text()==digest,'qualified schema hash differs; run qualify-platform.sh --write and review the schema'
