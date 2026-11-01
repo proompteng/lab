@@ -4,8 +4,13 @@ import { fromJson } from '@bufbuild/protobuf'
 import { Button, Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@proompteng/design/ui'
 import { useCallback, useEffect, useState } from 'react'
 import { readPlatformResponse } from '@/lib/platform/client'
-import { connectProvider, consumeProviderReturn, disconnectProvider } from '@/lib/platform/provider-client'
-import { providerResultMessage } from '@/lib/platform/provider-connections'
+import {
+  connectProvider,
+  consumeProviderReturn,
+  disconnectProvider,
+  pendingProviderMutation,
+} from '@/lib/platform/provider-client'
+import { providerResultMessage, type ProviderMutation } from '@/lib/platform/provider-connections'
 import {
   ListProviderConnectionsResponseSchema,
   ProviderConnectionState,
@@ -26,6 +31,15 @@ export function ProviderAccount({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [pending, setPending] = useState<ProviderMutation>()
+  const restorePending = useCallback(() => {
+    try {
+      setPending(pendingProviderMutation(principalId, profile.profileId))
+    } catch {
+      setError('The saved account change could not be read. Refresh before continuing.')
+    }
+  }, [principalId, profile.profileId])
+  useEffect(restorePending, [restorePending])
   const change = async (disconnect: boolean) => {
     setBusy(true)
     setError('')
@@ -45,6 +59,7 @@ export function ProviderAccount({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The account change could not be confirmed.')
     } finally {
+      restorePending()
       setBusy(false)
     }
   }
@@ -75,13 +90,25 @@ export function ProviderAccount({
         ) : null}
       </ItemContent>
       <ItemActions className="flex-wrap">
-        {profile.state !== ProviderConnectionState.DISCONNECTED && profile.connectionId ? (
-          <Button type="button" size="sm" variant="ghost" disabled={disabled || busy} onClick={() => void change(true)}>
-            Disconnect account
+        {(profile.state !== ProviderConnectionState.DISCONNECTED && profile.connectionId) ||
+        pending?.kind === 'disconnect' ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={disabled || busy || pending?.kind === 'begin'}
+            onClick={() => void change(true)}
+          >
+            {pending?.kind === 'disconnect' ? 'Retry disconnect' : 'Disconnect account'}
           </Button>
         ) : null}
-        {profile.state !== ProviderConnectionState.READY ? (
-          <Button type="button" size="sm" disabled={disabled || busy} onClick={() => void change(false)}>
+        {profile.state !== ProviderConnectionState.READY || pending?.kind === 'begin' ? (
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled || busy || pending?.kind === 'disconnect'}
+            onClick={() => void change(false)}
+          >
             {busy ? 'Connecting…' : profile.connectionId ? 'Reconnect account' : 'Connect account'}
           </Button>
         ) : null}
