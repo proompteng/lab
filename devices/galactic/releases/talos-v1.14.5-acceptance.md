@@ -35,8 +35,8 @@ filename. Its hash was checked again after filesystem sync, and the EFI filesyst
 No new backup, parallel OS copy, recovery Pod or privilege grant was created. Platform and NIC firmware were unchanged.
 
 Altra's NVMe enumeration reversed on reboot. System serial `2441E98EAAFB` is now `/dev/nvme0n1`; Ceph database
-serial `2402E88D0863` is `/dev/nvme1n1`. The Omni install selector uses the system serial. Require its resolved
-status and effective Talos install path to match that serial after the final template handoff. Never reuse the
+serial `2402E88D0863` is `/dev/nvme1n1`. The Omni install selector uses the system serial. Its resolved status and
+effective Talos install path both matched `/dev/nvme0n1` after the final template handoff. Never reuse the
 pre-reboot device number for an installer or filesystem operation.
 
 ## Omni handoff race
@@ -59,6 +59,11 @@ node reboot. All derived `MachineConfigGenOptions` install targets were independ
 The evicted OSDs were restored on Turin, and its slot homes required another fenced binding repair.
 This repairs the current rollout; it does not fix the upstream handoff race or justify repeating that procedure.
 
+The final dry run removed only the cluster lock after desired, derived, applied and live versions all matched
+1.14.5. The lock-only sync completed. A subsequent audit confirmed all three machines up to date, no config errors
+or pending reboot markers, and the cluster unlocked at Talos 1.14.5 / Kubernetes 1.37.0. All three nodes remained
+Ready and schedulable with unchanged post-upgrade boot IDs and the correct persistent EFI selections above.
+
 ## Storage and database observations
 
 Turin returned with two active Ceph LVs missing their device nodes. Targeted `vgmknodes`, restored existing Ceph
@@ -70,6 +75,11 @@ so they remained available while databases flushed and unmounted.
 A 120-second ephemeral `high_recovery_ops` trial did not materially improve recovery. All six OSDs returned to
 `high_client_ops`, verified against their original effective settings. `osd_max_scrubs=3`, recovery concurrency,
 backfill concurrency, pool replicas, storage classes and durability settings were unchanged.
+After the extra handoff drain, all 601 PGs recovered to clean, all six OSDs were up/in and all three monitors were
+in quorum. CephFS had an active MDS and a standby-replay MDS. The final audit still reported BlueStore slow
+operations, overdue deep scrubs and a recent daemon crash; those warnings were not muted or declared fixed.
+The final effective settings matched the baseline on all six OSDs, with the client-priority profile inherited
+from the monitor configuration and no remaining runtime override from the trial.
 
 All fifteen PostgreSQL primary SQL probes passed after Altra returned. Each reported `wal_buffers=16MB`,
 `fsync=on`, `full_page_writes=on` and `synchronous_commit=on`, matching the baseline. On each storage host, a Buzz
@@ -87,7 +97,15 @@ MicroVM, Lease, home PVC, owner grant, guest image and active-run pin while the 
 slot Pod. The original workspace reached `Sleeping` / `GuestNotStarted` with its retained home. The performance-test
 Pod was left terminal rather than restarted as part of production recovery.
 
-The first owner handoff corrected Altra's effective install path to `/dev/nvme0n1`. Remaining gates are recovery
-from the extra Turin drain, a lock-only release after all derived targets agree, and authenticated workspace resume
-with retained-file and conversation verification. Passkey sign-in requires
-the user. These gates remain incomplete until runtime evidence proves them; host readiness alone is insufficient.
+The current Restate worker revision was Ready at 2/2. Two replacement Pods for a retained older revision could not
+start because its hashed release ConfigMap had been pruned by an application promotion. That revision still owned
+one paused durable invocation. Its exact ConfigMap was regenerated from Kargo commit
+`d536143ae1167134e720af573baf194f37748b2a`, with the generated name verified as `tengri-release-2795m5mdt2`.
+The restored immutable ConfigMap belongs to that existing ReplicaSet so normal garbage collection removes it
+when the revision retires. No invocation was reset, resumed or reassigned. This restores the missing dependency;
+both retained worker Pods became Running and Ready. It does not fix retention of dependencies across future
+application promotions.
+
+Authenticated workspace resume with retained-file and conversation verification remains incomplete. Passkey
+sign-in requires the user. The original home PVC and MicroVM identities are preserved, but host readiness and a
+prepared sleeping guest do not prove successful user access or retained conversation contents.
