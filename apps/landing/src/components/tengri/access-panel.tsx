@@ -130,6 +130,31 @@ const formSchema = z
       })
   })
 type Form = z.infer<typeof formSchema>
+const defaultAccessForm: Form = {
+  action: 'membership',
+  login: '',
+  githubId: '',
+  role: 'member',
+  enabled: true,
+  reason: '',
+  total: 2,
+  active: 1,
+  retainedGiB: 64,
+  permissions: ['metadata'],
+  agentId: '',
+  grantId: '',
+  proofKeyThumbprint: '',
+  expiresAt: '',
+  fileRoots: '/workspace/project',
+  threadIds: '',
+  terminalIds: '',
+  browserScreenshot: false,
+  viewerContent: false,
+  maxBytes: 65536,
+  maxItems: 100,
+  incidentId: '',
+  approvalId: '',
+}
 
 export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: string; active?: boolean }) {
   const [view, setView] = useState<View>(workspaceUid ? 'workspace' : 'platform')
@@ -160,35 +185,14 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const form = useForm<Form>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      ...defaultAccessForm,
       action: workspaceUid ? 'collaborator' : 'membership',
-      login: '',
-      githubId: '',
       role: workspaceUid ? 'viewer' : 'member',
-      enabled: true,
-      reason: '',
-      total: 2,
-      active: 1,
-      retainedGiB: 64,
-      permissions: ['metadata'],
-      agentId: '',
-      grantId: '',
-      proofKeyThumbprint: '',
-      expiresAt: '',
-      fileRoots: '/workspace/project',
-      threadIds: '',
-      terminalIds: '',
-      browserScreenshot: false,
-      viewerContent: false,
-      maxBytes: 65536,
-      maxItems: 100,
-      incidentId: '',
-      approvalId: '',
     },
   })
   const action = form.watch('action')
   const role = form.watch('role')
   const enabled = form.watch('enabled')
-  const login = form.watch('login')
   const boundedViewer = role === 'viewer' && enabled && form.watch('viewerContent')
   const load = useCallback(
     async (cursor = '') => {
@@ -216,16 +220,15 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     [view, workspaceUid],
   )
   const setValue = form.setValue
-  useEffect(() => {
-    setValue('viewerContent', false)
-  }, [action, role, enabled, login, workspaceUid, setValue])
+
   useEffect(() => {
     setValue('action', view === 'workspace' ? 'collaborator' : 'membership')
     setValue('role', view === 'workspace' ? 'viewer' : 'member')
     setCredential('')
     setEditing(false)
     setValue('githubId', '')
-  }, [view, setValue])
+    setValue('viewerContent', false)
+  }, [view, workspaceUid, setValue])
   useEffect(() => {
     setData(undefined)
     if (!active) return
@@ -239,35 +242,37 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     setEditing(true)
     setError(undefined)
     setPersonName(entry ? entry.displayName || `GitHub #${entry.githubId}` : '')
-    form.clearErrors()
-    form.setValue('action', next)
-    form.setValue('login', '')
-    form.setValue('githubId', entry?.githubId || '')
-    form.setValue(
-      'role',
-      entry?.role === 'administrator' ||
+    const scope = entry?.scope
+    const quota = next === 'quota' ? roster?.quotas.find((value) => value.humanId === entry?.subjectId) : undefined
+    form.reset({
+      ...defaultAccessForm,
+      action: next,
+      githubId: entry?.githubId || '',
+      role:
+        entry?.role === 'administrator' ||
         entry?.role === 'auditor' ||
         entry?.role === 'operator' ||
         entry?.role === 'developer' ||
         entry?.role === 'viewer'
-        ? entry.role
-        : next === 'collaborator'
-          ? 'viewer'
-          : 'member',
-    )
-    form.setValue('enabled', true)
-    form.setValue('reason', '')
-    form.setValue('viewerContent', false)
-    if (['grant', 'emergency'].includes(next))
-      form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
-    if (next === 'quota') {
-      const quota = roster?.quotas.find((value) => value.humanId === entry?.subjectId)
-      form.setValue('total', quota?.totalWorkspaces ?? 2)
-      form.setValue('active', quota?.activeWorkspaces ?? 1)
-      form.setValue('retainedGiB', quota ? Number(quota.retainedBytes) / 1_073_741_824 : 64)
-    }
-    if (next === 'revoke') form.setValue('grantId', entry?.grantId || '')
+          ? entry.role
+          : next === 'collaborator'
+            ? 'viewer'
+            : 'member',
+      viewerContent: next === 'collaborator' && entry?.role === 'viewer' && Boolean(scope),
+      fileRoots: scope ? scope.fileRoots.join('\n') : defaultAccessForm.fileRoots,
+      threadIds: scope ? scope.threadIds.join('\n') : '',
+      terminalIds: scope ? scope.terminalIds.join('\n') : '',
+      browserScreenshot: scope?.browserScreenshot ?? false,
+      maxBytes: scope?.maxBytes ?? defaultAccessForm.maxBytes,
+      maxItems: scope?.maxItems ?? defaultAccessForm.maxItems,
+      total: quota?.totalWorkspaces ?? defaultAccessForm.total,
+      active: quota?.activeWorkspaces ?? defaultAccessForm.active,
+      retainedGiB: quota ? Number(quota.retainedBytes) / 1_073_741_824 : defaultAccessForm.retainedGiB,
+      grantId: next === 'revoke' ? entry?.grantId || '' : '',
+      expiresAt: ['grant', 'emergency'].includes(next) ? new Date(Date.now() + 15 * 60_000).toISOString() : '',
+    })
   }
+
   const execute = async (input: AccessCommand) => {
     setBusy(true)
     setError(undefined)
@@ -391,7 +396,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       </label>
       <Input
         id={`${formId}-${name}`}
-        {...form.register(name)}
+        {...form.register(name, {
+          onChange: name === 'login' ? () => form.setValue('viewerContent', false) : undefined,
+        })}
         aria-invalid={Boolean(form.formState.errors[name])}
         autoComplete="off"
       />
@@ -412,7 +419,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           <Checkbox
             id={`${formId}-${name}`}
             checked={field.value}
-            onCheckedChange={field.onChange}
+            onCheckedChange={(checked) => {
+              field.onChange(checked)
+              if (name === 'enabled') form.setValue('viewerContent', false)
+            }}
             onBlur={field.onBlur}
             disabled={busy || Boolean(pending)}
           />
@@ -575,6 +585,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                           <div className="mt-2 space-y-2">
                             {entries.map((entry) => (
                               <div key={entry.role + entry.grantId}>
+                                {!entry.githubId ? (
+                                  <p className="break-all font-mono">Agent {entry.subjectId}</p>
+                                ) : null}
                                 {entry.grantId ? <p className="break-all">Grant {entry.grantId}</p> : null}
                                 {entry.scope ? (
                                   <>
@@ -595,8 +608,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                                       ))}
                                     </dl>
                                     <p>
-                                      Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · up to{' '}
-                                      {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
+                                      {entry.role === 'viewer' || entry.actions.includes(Action.BROWSER_OBSERVE) ? (
+                                        <>Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · </>
+                                      ) : null}
+                                      up to {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
                                     </p>
                                   </>
                                 ) : null}
@@ -621,7 +636,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                             size="sm"
                             variant="outline"
                             disabled={busy || Boolean(pending)}
-                            aria-label={`Manage ${name} ${entry.role}`}
+                            aria-label={`Manage ${name} ${entry.role}${entry.githubId ? '' : ` ${entry.subjectId}`}`}
                             onClick={() =>
                               begin(
                                 entry.grantId ? 'revoke' : view === 'workspace' ? 'collaborator' : 'membership',
@@ -787,6 +802,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                             onValueChange={(value) => {
                               const next = z.enum(actions).parse(value)
                               field.onChange(next)
+                              form.setValue('viewerContent', false)
                               form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
                               if (['grant', 'emergency'].includes(next))
                                 form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
@@ -823,7 +839,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                             {...field}
                             aria-label="Role"
                             disabled={busy || Boolean(pending)}
-                            onValueChange={field.onChange}
+                            onValueChange={(value) => {
+                              field.onChange(value)
+                              form.setValue('viewerContent', false)
+                            }}
                             options={(action === 'membership'
                               ? ['member', 'administrator', 'auditor', 'operator']
                               : ['developer', 'viewer']

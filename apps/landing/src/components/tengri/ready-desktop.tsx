@@ -254,6 +254,7 @@ export function ReadyDesktop({
   user: TengriUser
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const desktopRef = useRef<HTMLElement | null>(null)
   const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
     initialWindowState(viewport, ['finder', 'tengri']),
   )
@@ -469,15 +470,40 @@ export function ReadyDesktop({
 
   useEffect(() => {
     let frame = 0
+    let previousWidth = -1
+    let previousHeight = -1
     const clampWindows = () => {
       window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => dispatch({ type: 'viewport', viewport: viewport() }))
+      frame = window.requestAnimationFrame(() => {
+        const visual = window.visualViewport
+        desktopRef.current?.style.setProperty(
+          '--tengri-dock-space',
+          `${Math.max(0, 88 - (visual?.scale === 1 ? Math.max(0, window.innerHeight - visual.height) : 0))}px`,
+        )
+        if ((window.innerWidth < 768 || window.matchMedia('(pointer:coarse)').matches) && visual?.scale === 1) {
+          desktopRef.current?.style.setProperty('--tengri-viewport-height', `${visual.height}px`)
+          desktopRef.current?.style.setProperty('--tengri-viewport-offset', `${visual.offsetTop}px`)
+        } else {
+          desktopRef.current?.style.removeProperty('--tengri-viewport-height')
+          desktopRef.current?.style.removeProperty('--tengri-viewport-offset')
+        }
+        const next = viewport()
+        if (next.width !== previousWidth || next.height !== previousHeight) {
+          previousWidth = next.width
+          previousHeight = next.height
+          dispatch({ type: 'viewport', viewport: next })
+        }
+      })
     }
     clampWindows()
     window.addEventListener('resize', clampWindows)
+    window.visualViewport?.addEventListener('resize', clampWindows)
+    window.visualViewport?.addEventListener('scroll', clampWindows)
     return () => {
       window.cancelAnimationFrame(frame)
       window.removeEventListener('resize', clampWindows)
+      window.visualViewport?.removeEventListener('resize', clampWindows)
+      window.visualViewport?.removeEventListener('scroll', clampWindows)
     }
   }, [viewport])
 
@@ -777,7 +803,11 @@ export function ReadyDesktop({
 
   if (!layoutReady) {
     return (
-      <main className="font-geist relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
+      <main
+        ref={desktopRef}
+        data-tengri-desktop
+        className="font-geist relative h-[var(--tengri-viewport-height,100dvh)] min-h-0 w-screen overflow-hidden bg-[#142849] text-white"
+      >
         <DesktopWallpaper />
         <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
           <p className="flex items-center gap-2 text-sm text-white/62" role="status">
@@ -792,9 +822,11 @@ export function ReadyDesktop({
   return (
     <>
       <main
+        ref={desktopRef}
+        data-tengri-desktop
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="tengri-theme font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
+        className="tengri-theme font-geist relative isolate h-[var(--tengri-viewport-height,100dvh)] min-h-0 w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
@@ -902,6 +934,7 @@ export function ReadyDesktop({
           ))}
         </div>
         <div
+          data-tengri-dock-container
           className={`pointer-events-none group/dock absolute inset-x-0 bottom-0 z-[1500] flex justify-center ${
             activeWindow?.mode === 'maximized' ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
           }`}
