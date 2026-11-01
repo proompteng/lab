@@ -44,14 +44,15 @@ the native decision binding remain unfinished.
 
 ## Economic acceptance
 
-[Acceptance v2](jev-migration-acceptance-v2.json) retains all absolute targets from
-[v1](jev-migration-acceptance.json). It adds a paired lower confidence bound above $50 of incremental net profit per
-session over each of the three controls. This is an additional research objective of more than $1,000 over twenty
-sessions, with uncertainty considered. It is not an estimate of attainable profit.
+The active policy is `bayn.jev-acceptance-policy.v3` in
+[`acceptance.ts`](../../services/bayn/src/jev/acceptance.ts). It evaluates any nonempty calendar registered before
+its first open. The candidate and every matched control must cover that exact calendar. There is no fixed waiting
+period or session count. Existing profit, activity, risk, execution-stress, cost, and uncertainty targets remain.
 
-The current branch contains the numerical checker and a provider client. It does not yet replace the active momentum
-strategy or establish economic qualification. The repeated position lifecycle, complete decision-batch evidence,
-production credential binding, deployment and prospective outcome evidence remain separate requirements.
+[Acceptance v1](jev-migration-acceptance.json) and [v2](jev-migration-acceptance-v2.json) are retained historical
+research contracts. Their twenty-session requirement does not govern new assessments. Original records, failed
+attempts, and content hashes remain intact; the prospective attempt index continues across the policy change.
+A numerical result grants no trading authority and does not establish future returns.
 
 ## Run the numerical checker
 
@@ -62,22 +63,22 @@ bun tools/jev-acceptance.ts --protocol
 bun tools/jev-acceptance.ts --input /absolute/path/to/session-summaries.json
 ```
 
-The first command returns the canonical JSON hash of the frozen protocol. This differs from the SHA256 of its
-formatted file bytes. The second reads `bayn.jev-acceptance-input.v1` and emits one JSON report to stdout. Errors go to
+The first command returns the canonical JSON hash of the active TypeScript policy. This binds the evaluation
+procedure and thresholds. The second reads `bayn.jev-acceptance-input.v1` and emits one JSON report to stdout. Errors go to
 stderr. It exits successfully only for `NUMERICAL_TARGETS_PASSED`. That verdict covers numerical checks only and grants
 no trading authority. A missing target returns `TARGETS_MISSED`; incomplete observations return `INCONCLUSIVE`.
 Malformed input fails before a report is issued.
 
 The input contract is defined by `JevAcceptanceInputSchema` in `services/bayn/src/jev/acceptance.ts`. It requires a
-preregistration made after this acceptance protocol was frozen and before the first registered open, twenty ordered
-session dates with opening and closing times, and exactly four policy series:
+preregistration made before the first registered open, a nonempty ordered calendar with opening and closing
+times, and exactly four policy series:
 
 - `JEV`, the candidate.
 - `DEPLOYED_BAYN`, the deployed strategy and its original lifecycle.
 - `REPEATED_MOMENTUM`, the deterministic control with the candidate's execution and position management.
 - `JEV_ABLATION`, the candidate with Jev outputs removed under rules fixed on development data.
 
-Every series must contain the same twenty dates in the registered order, including zero-trade and blocked sessions.
+Every series must contain the same registered dates in the registered order, including zero-trade and blocked sessions.
 Each complete session records actual completed episodes, filled buy-plus-sell notional, net P&L, opening and closing
 equity, marked equity extrema, intraday drawdown, maximum mark gap and a separate p95 batch-latency stress result.
 Session equity must continue from the $100,000 allocation and each previous close. Missing base, latency-stress or
@@ -109,7 +110,9 @@ source arrival times, liquidity, accounting correctness or deployment identity.
 
 ## Statistical comparison
 
-The checker draws 10,000 shared resamples of two-session circular blocks. Each resample contains twenty observations.
+The checker draws 10,000 shared resamples of two-session circular blocks. Each resample contains exactly the
+registered number of observations. For an odd window, only the final sampled block is truncated. Each block start
+is the exact integer floor of the unsigned PRNG state times the registered count, divided by 2^32.
 The candidate and all controls use the same sampled session indices, retaining paired comparisons. The protocol fixes
 the PRNG, seed and empirical percentile rule. Absolute positive profit retains the original one-sided 95% lower-bound
 check. The additional comparison uses an error allowance of `0.05 / (attempt * (attempt + 1))`, divided across the
@@ -118,8 +121,8 @@ three controls, and requires each resulting paired lower bound to exceed $50 per
 Attempt numbers belong to an immutable migration-wide registry. Preserve every failed or inconclusive attempt and
 never reset that number to obtain a larger allowance. This checker rejects attempts whose tail probability is below
 the resolution of its frozen 10,000 draws. Changing that procedure requires a new protocol and untouched window.
-Block resampling assumes that the selected block length captures enough dependence. Twenty sessions and a passing
-bootstrap result do not guarantee future returns; retain the full daily series and assess this assumption during
+Block resampling assumes that the selected block length captures enough dependence. A passing
+bootstrap result does not guarantee future returns; retain the full daily series and assess this assumption during
 independent research review.
 
 The regression suite includes a synthetic counterexample. A candidate earns $300 every session while its control

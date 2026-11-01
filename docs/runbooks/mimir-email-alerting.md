@@ -72,17 +72,25 @@ MX records, delegating nameservers, enabling link tracking, or forwarding DMARC 
 
 Email requires `notify: email` and one of these severity labels:
 
-| Severity | Repeat interval while firing |
-| -------- | ---------------------------- |
-| `critical` | One hour |
-| `warning` | Four hours |
+| Severity                             | Group updates   | Repeat interval while unchanged |
+| ------------------------------------ | --------------- | ------------------------------- |
+| `critical`, except host read latency | Five minutes    | One hour                        |
+| `CephHostReadLatencyHigh`            | Fifteen minutes | Four hours                      |
+| `warning`                            | Fifteen minutes | Four hours                      |
 
-Both routes send resolved notifications through the existing `critical-email` receiver. Alerts without the email
+The first notification still waits ten seconds. A group membership change uses the group-update interval, not the
+repeat interval. Both routes send resolved notifications through the existing `critical-email` receiver. Alerts without the email
 opt-in remain visible in Mimir/Grafana without sending email.
 
 Ceph opts `CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` into this route with
 `notify: email`. The route repeats firing notifications every hour and sends a resolved notification.
 Ceph health warnings, scrub debt, and warning-level latency alerts remain visible without sending email.
+
+`CephHostReadLatencyHigh` uses a dedicated route before the general critical route. It groups by alert name,
+service, and node, so each affected host owns one incident. It preserves ten-second first delivery and resolved
+notifications, with fifteen-minute group updates and four-hour unchanged repeats. The rule holds recovery for ten
+minutes and lists affected OSDs in annotations. Other critical Ceph conditions retain five-minute updates and
+one-hour repeats. Scrub concurrency remains three.
 
 ## Email links and alert UI
 
@@ -138,7 +146,8 @@ ExternalSecret change and verify its rendered data. Then bump the pod's
 `observability.proompteng.ai/alertmanager-fallback-config-revision` annotation in a separate reviewed change.
 An annotation bump in the same sync as a Secret update can start Mimir with the previous configuration.
 
-Warnings with `notify="email"` use the existing `critical-email` receiver with a four-hour repeat interval. This
+Warnings with `notify="email"` use the existing `critical-email` receiver with a four-hour repeat interval and
+fifteen-minute group updates. Critical group updates use five minutes. This
 includes the publisher deadline, Bayn input and execution warnings and Restate metadata lag. The receiver name does
 not make a warning critical. Warnings without that opt-in remain quiet, and critical alerts still require it. Validate
 both the Secret's route and the running tenant configuration after the revision bump; the rule's `notify` label alone
@@ -234,3 +243,14 @@ After delivery is confirmed, silence or let the synthetic alert resolve by not r
 - [External Secrets templating](https://external-secrets.io/latest/guides/templating/)
 - [Brevo SMTP integration](https://help.brevo.com/hc/en-us/articles/7924908994450-Send-transactional-emails-using-Brevo-SMTP)
 - [Brevo Free plan limits](https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan)
+
+## Metric admission failures
+
+The central collector retains each Mimir ingester's head series, active series, live local allowance and discarded
+samples. `MimirSeriesCapacityHigh` warns above 80% of the actual allowance for ten minutes.
+`MimirSeriesLimitExceeded` pages on continuing new series rejections; `MimirIngestionObservationUnavailable` pages
+when fewer than three ingesters have recent head telemetry. A local successful scrape does not prove admission.
+
+The shared `anonymous` tenant has a 300,000-series runtime allowance. Inspect metric families and deployment churn
+before changing it. CI phase, BuildKit and workflow histograms are retired; completion-window gauges and retained
+records supply timing evidence. See the [October 26 RCA](../incidents/2026-10-26-alert-delivery-and-bayn-projection.md).

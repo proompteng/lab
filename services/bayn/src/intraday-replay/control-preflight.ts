@@ -1,6 +1,6 @@
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
-import { makeJevEntryQuery } from '../jev/observation-query'
+import { makeMomentumEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -80,7 +80,7 @@ export const scanControlInputs = (input: {
         continue
       }
       yield* market.advanceTo(atMs)
-      const query = makeJevEntryQuery({
+      const query = makeMomentumEntryQuery({
         protocol,
         sessionDate,
         calendar: input.calendar,

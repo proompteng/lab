@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationReport, ReconciliationWriteResult } from '../db/reconciliation'
@@ -9,8 +9,19 @@ import {
   type ReconciliationError,
   type ReconciliationWriteDecision,
   type StableBrokerSnapshot,
+  snapshotFailure,
 } from './broker-reconciler-model'
 import { prepareNormalizedSnapshot } from './broker-normalization'
+import { accountTradingDate } from '../time'
+
+const requireSnapshotTradingDate = (snapshot: BrokerSnapshot, checkedAt: string) => {
+  const tradingDate = accountTradingDate(checkedAt)
+  return [snapshot.account.observedAt, snapshot.positionsObservedAt, snapshot.valuation.asOf].every(
+    (at) => accountTradingDate(at) === tradingDate,
+  )
+    ? Result.succeed(undefined)
+    : Result.fail(snapshotFailure('TradingDayChanged', 'Broker snapshot no longer covers the current trading day'))
+}
 
 const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: NormalizedBrokerSnapshot) =>
   Effect.gen(function* () {
@@ -129,16 +140,19 @@ const writeReconciliation = (
       normalized.account.accountId,
       Effect.gen(function* () {
         const { valuation, positionSnapshotId, accountEventId } = yield* ingestBrokerEvents(store, normalized)
-        return makeReconciliationDecision(
+        const decision = makeReconciliationDecision(
           normalized,
           ordersObservedAt,
           valuation,
           yield* now,
           positionSnapshotId,
           accountEventId,
-        ).snapshot
+        )
+        yield* Effect.fromResult(requireSnapshotTradingDate(decision.snapshot, decision.snapshot.reconciledAt))
+        return decision.snapshot
       }),
     )
+    yield* Effect.fromResult(requireSnapshotTradingDate(snapshot, yield* now))
     const decision: ReconciliationWriteDecision = {
       snapshot,
       unknownOrderCount: snapshot.orders.filter((order) => order.intentId === undefined).length,

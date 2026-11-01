@@ -189,10 +189,13 @@ export const advanceExecutionOnce = <R>(
               receiptHash,
               nextDelayMs,
               ...(advance.nextWakeAt === undefined ? {} : { nextWakeAt: advance.nextWakeAt }),
-              observation:
-                advance.observation.result === 'SUCCESS' && advance.nextWakeAt !== undefined
-                  ? { ...advance.observation, nextWakeAt: advance.nextWakeAt }
-                  : advance.observation,
+              observation: {
+                ...advance.observation,
+                executionIssuedAt: command.issuedAt,
+                ...(advance.observation.result === 'SUCCESS' && advance.nextWakeAt !== undefined
+                  ? { nextWakeAt: advance.nextWakeAt }
+                  : {}),
+              },
             }),
           ),
         )

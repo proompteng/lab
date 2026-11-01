@@ -3,15 +3,15 @@ import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevFailure } from './contract'
-import { EntryInferenceInputSchema, prepareEntryInferenceInput } from './entry-inference-input'
 import {
-  EntryInferenceCompletionSchema,
-  decodeEntryInferenceCompletion,
-  usableEntryInferenceCompletion,
-} from './entry-inference-evidence'
+  EntryInferenceInputSchema,
+  prepareEntryInferenceInput,
+  type EntryInferenceInput,
+} from './entry-inference-input'
+import { EntryInferenceCompletionSchema, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 
 const RequestMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v3'),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   snapshotId: Sha256Schema,
@@ -29,12 +29,15 @@ export enum JevOutcome {
   Failed = 'FAILED',
 }
 const ReceiptMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-evaluation-receipt.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-evaluation-receipt.v3'),
   requestId: Sha256Schema,
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
   outcome: Schema.Union([
-    Schema.Struct({ status: Schema.Literal(JevOutcome.Completed), completion: EntryInferenceCompletionSchema }),
+    Schema.Struct({
+      status: Schema.Literal(JevOutcome.Completed),
+      completion: Schema.suspend(() => EntryInferenceCompletionSchema),
+    }),
     Schema.Struct({ status: Schema.Literal(JevOutcome.Failed), failure: Schema.Enum(JevFailure) }),
   ]),
 })
@@ -122,14 +125,26 @@ export const decodeJevEvaluationReceipt = (request: JevEvaluationRequest, input:
     Result.mapError(() => new JevEvidenceError({ message: 'Stored entry receipt is malformed or does not reproduce' })),
   )
 
-export const usableJevInference = (request: JevEvaluationRequest, receipt: JevEvaluationReceipt, now: number) =>
-  now < Date.parse(receipt.completedAt)
-    ? invalid('Entry receipt is not yet available')
-    : receipt.outcome.status === JevOutcome.Completed
-      ? usableEntryInferenceCompletion(entrySource(request), receipt.outcome.completion, now).pipe(
-          Result.mapError(
-            () =>
-              new JevEvidenceError({ message: 'Entry inference failed or is outside its original validity window' }),
-          ),
-        )
-      : invalid('Entry inference did not complete and cannot authorize an order')
+export const entryInferenceAvailableAt = (
+  request: JevEvaluationRequest,
+  receipt: JevEvaluationReceipt,
+  now: number,
+  expectedInputVersion: EntryInferenceInput['schemaVersion'],
+) => {
+  if (request.request.schemaVersion !== expectedInputVersion)
+    return invalid('Entry inference belongs to a different selection policy')
+  if (!Number.isSafeInteger(now) || now < Date.parse(receipt.completedAt) || now >= Date.parse(request.expiresAt))
+    return invalid('Entry receipt is unavailable or outside its original validity window')
+  if (receipt.outcome.status !== JevOutcome.Completed)
+    return invalid('Entry inference did not complete and cannot authorize an order')
+  const completion = receipt.outcome.completion
+  if (
+    completion.handoff.disposition.status === 'VISUAL_FAILED' ||
+    completion.handoff.disposition.status === 'PREPARATION_FAILED' ||
+    completion.jev.status === 'FAILED' ||
+    completion.jev.status === 'NOT_DISPATCHED' ||
+    (completion.jev.status === 'OMITTED_BY_POLICY' && expectedInputVersion !== 'bayn.entry-ablation-input.v1')
+  )
+    return invalid('Entry inference failed and cannot authorize an order')
+  return Result.succeed(completion)
+}
