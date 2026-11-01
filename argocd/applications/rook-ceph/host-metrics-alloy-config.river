@@ -9,10 +9,16 @@ logging {
 prometheus.exporter.unix "storage" {
 	procfs_path    = "/host/proc"
 	sysfs_path     = "/host/sys"
-	set_collectors = ["cpu", "diskstats", "meminfo", "netclass", "netdev", "pressure"]
+	set_collectors = ["cpu", "diskstats", "ethtool", "meminfo", "netclass", "netdev", "pressure"]
 
 	disk {
 		device_include = "^(sd[a-z]+|nvme[0-9]+n[0-9]+|rbd[0-9]+)$"
+	}
+
+	// GET-only hardware reads refresh mlx5 PHY counters cached by netdev.
+	ethtool {
+		device_include  = "^(enp1s0f1np1|ens1f1np1)$"
+		metrics_include = "^(rx_(discards_phy|out_of_buffer|crc_errors_phy|symbol_err_phy|pcs_symbol_err_phy|wqe_err|buff_alloc_err|recover|congst_umr)|tx_(discards_phy|cqe_err|recover)|[rt]x_(packets|bytes|pause_ctrl)_phy)$"
 	}
 
 	netdev {
@@ -51,7 +57,7 @@ prometheus.relabel "storage" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__"]
-		regex         = "up|node_scrape_collector_(success|duration_seconds)|node_cpu_seconds_total|node_memory_(MemAvailable|MemTotal)_bytes|node_pressure_.*|node_disk_.*|node_network_((receive|transmit)_(bytes|drop|errs|packets)_total|speed_bytes|mtu_bytes|up|carrier|carrier_changes_total)"
+		regex         = "up|node_scrape_collector_(success|duration_seconds)|node_cpu_seconds_total|node_memory_(MemAvailable|MemTotal)_bytes|node_pressure_.*|node_disk_.*|node_ethtool_.*|node_network_((receive|transmit)_(bytes|drop|errs|packets)_total|speed_bytes|mtu_bytes|up|carrier|carrier_changes_total)"
 	}
 }
 

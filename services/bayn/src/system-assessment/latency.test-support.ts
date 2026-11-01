@@ -1,3 +1,4 @@
+import { JevProtocolSchema } from '../jev/protocol'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { Effect, Result, Schema } from 'effect'
 
@@ -298,7 +299,12 @@ export const nativeLatencyBacktestFixture = (
   const selected = f.registration.policies.find((p) => p.policy === policy)
   if (selected === undefined) throw new Error('Missing registered replay policy')
   const policyIdentity = Result.getOrThrow(
-    nativeReplayPolicyIdentity(policy, f.registration.obligations.configuration.protocol),
+    nativeReplayPolicyIdentity(
+      policy,
+      Result.getOrThrow(
+        Schema.decodeUnknownResult(JevProtocolSchema)(f.registration.obligations.configuration.protocol),
+      ),
+    ),
   )
   const build = {
     ...configuredBuild,
@@ -324,7 +330,9 @@ export const nativeLatencyBacktestFixture = (
   }
   const material = Result.getOrThrow(
     latencyReplayPolicyMaterial(
-      f.registration.obligations.configuration.protocol,
+      Result.getOrThrow(
+        Schema.decodeUnknownResult(JevProtocolSchema)(f.registration.obligations.configuration.protocol),
+      ),
       selected.riskPolicy.accountId,
       policy,
       selected.riskPolicy,

@@ -45,6 +45,36 @@ errors. `NodeStorageMetricsMissing` compares ingestion against Kubernetes' node 
 also detects a successful HTTP scrape whose underlying collector failed. `CephOsdPerformanceMetricsMissing` compares
 performance counters against the manager's inventory of up OSDs.
 
+## Storage NIC hardware counters
+
+The host collector refreshes ethtool hardware statistics every 30 seconds for Altra's `enp1s0f1np1`
+and Turin's `ens1f1np1`. It retains aggregate physical packets/bytes, discards, receive-buffer starvation,
+PAUSE frames, CRC/symbol errors, and queue error/recovery counters. Per-queue series are excluded.
+The existing non-root collector needs no additional capabilities or permissions. On other nodes the
+interface filter matches nothing; require actual series for both storage NICs as well as collector success.
+
+mlx5's generic `node_network_receive_drop_total` can include stale cached physical-discard counts.
+A hardware-statistics read refreshes that cache, so the initial refresh can produce a large generic-counter
+jump. Establish a new baseline before using rates. Use the fresh hardware series to time physical loss;
+do not interpret an initial generic-counter jump as a new loss burst. The exporter normalizes `rx` to
+`received` and `tx` to `transmitted`; PHY counters retain their driver names without a `_total` suffix.
+
+```promql
+node_ethtool_info{job="node-storage"}
+node_scrape_collector_success{job="node-storage",collector="ethtool"}
+time() - timestamp(node_ethtool_received_discards_phy{job="node-storage"})
+rate(node_ethtool_received_discards_phy{job="node-storage"}[5m])
+rate(node_ethtool_received_out_of_buffer{job="node-storage"}[5m])
+rate(node_ethtool_transmitted_pause_ctrl_phy{job="node-storage"}[5m])
+```
+
+Verify fresh timestamps and advancing PHY packet/byte counters for both interfaces in Mimir. Compare
+bounded native GET-only ethtool snapshots against the exported counters, accounting for scrape timestamps.
+Physical discards, out-of-buffer events and PAUSE frames measure different events; do not add them into
+one packet-loss total. Check collector and remote-write errors after the content-hashed ConfigMap rollout.
+If collection fails or needs broader permissions, revert the collector configuration through GitOps.
+This telemetry change does not repair PCIe training or establish a client-latency improvement.
+
 ## Diagnose the bottleneck
 
 The objectstore gateways use Beast with `tcp_nodelay=1` through `gateway.rgwCommandFlags.rgw_frontends` in

@@ -127,8 +127,8 @@ const cumulativeFees = (
       sessions.set(date, inputs)
     }
     let total = 0n
-    for (const inputs of sessions.values()) {
-      const fees = calculateSessionFees(inputs, model, multiplier, cryptoMaximumTakerFeeBps)
+    for (const [date, inputs] of sessions) {
+      const fees = calculateSessionFees(inputs, model, multiplier, cryptoMaximumTakerFeeBps, date)
       if (Result.isFailure(fees)) return yield* accountingFailure<bigint>(fees.failure)
       total += fees.success.totalMicros
     }

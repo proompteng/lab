@@ -12,6 +12,7 @@ import { JevContractError } from './contract'
 import type { JevProtocolMaterial } from './protocol'
 
 interface LiquidationInput {
+  readonly feeAt: string
   readonly protocol: JevProtocolMaterial
   readonly symbol: string
   readonly costMultiplierMicros?: bigint
@@ -28,6 +29,7 @@ export const jevExitLimitValue = (input: LiquidationInput & { readonly limitPric
       input.protocol.executionModel,
       input.costMultiplierMicros ?? 1_000_000n,
       cryptoMaximumTakerFeeBps,
+      input.feeAt,
     )
     const schedule = input.protocol.executionModel.fees
     const crypto = instrumentMarket(input.symbol) === MarketKind.Crypto

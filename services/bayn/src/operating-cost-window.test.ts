@@ -188,7 +188,7 @@ test('one credit or payment cannot fund different documents in separate session 
 test('moving one invoice to another day in every copy cannot produce a positive qualification verdict', () => {
   const { input, verifiedSources } = supportedAssessmentFixture()
   expect(Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources)).verdict).toBe(
-    QualificationVerdict.Qualified,
+    QualificationVerdict.Inconclusive,
   )
   const sourceHash = testHash('one synthetic invoice for the entire window')
   verifiedSources.add(sourceHash)

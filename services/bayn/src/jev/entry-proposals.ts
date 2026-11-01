@@ -88,6 +88,7 @@ const sourcePrice = (value: number) =>
   })
 
 type ProposalFundingInput = {
+  readonly chart: NativeChartEvidence
   readonly symbol: string
   readonly economics: JevEntryEconomics
   readonly protocol: JevProtocolMaterial
@@ -106,7 +107,12 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
     )
     if (stopLimit <= 0n || stopLimit > stop || stop >= bidMicros || target <= BigInt(economics.maximumEntryPriceMicros))
       return { status: 'REJECTED', reason: ProposalRejection.InvalidPrices } as const
-    const liquidation = { protocol, symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
+    const liquidation = {
+      protocol,
+      feeAt: input.chart.windowEndAt,
+      symbol,
+      quantityAtoms: BigInt(economics.receivedQuantityAtoms),
+    }
     const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
     const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
     const acquisition = BigInt(economics.acquisitionCostMicros)
@@ -141,6 +147,7 @@ export const mayHaveRetainedFundableSourceProposal = (input: {
     const target = quantizeInstrumentPriceMicros(chart.symbol, highest - 1n, 'DOWN')
     for (const price of prices) {
       const funding = yield* fundProposalPrices({
+        chart,
         symbol: chart.symbol,
         economics,
         protocol,
@@ -164,6 +171,7 @@ export const mayHaveRetainedFundableSourceProposal = (input: {
         low = price.low < low ? price.low : low
         if (high <= low || bidMicros <= high) continue
         const funding = yield* fundProposalPrices({
+          chart,
           symbol: chart.symbol,
           economics,
           protocol,
@@ -244,6 +252,7 @@ export const makeEntrySourceCandidates = (input: {
         low = price.low.success < low ? price.low.success : low
         if (high <= low || bidMicros <= high) continue
         const funding = yield* fundProposalPrices({
+          chart,
           symbol: chart.symbol,
           economics,
           protocol,
@@ -340,6 +349,7 @@ export const makeEntryProposals = (input: {
     const add = (source: typeof ProposalMaterial.fields.source.Type, stop: bigint, target: bigint) =>
       Result.gen(function* () {
         const funding = yield* fundProposalPrices({
+          chart,
           symbol: chart.symbol,
           economics,
           protocol,
