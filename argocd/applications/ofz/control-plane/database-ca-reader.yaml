@@ -41,7 +41,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-6"
 spec:
   conditions:
-    - namespaces: [tengri, proompteng]
+    - namespaces: [tengri]
   provider:
     kubernetes:
       remoteNamespace: ofz

@@ -2,9 +2,8 @@ import 'server-only'
 
 import * as grpc from '@grpc/grpc-js'
 import { type DescMessage, type DescMethodUnary, type MessageInitShape, type MessageShape } from '@bufbuild/protobuf'
-import { attestedCaller } from '../platform/rpc'
+import { attestedCaller } from './rpc'
 
-const BFF_ID = 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng'
 const OFZ_ID = 'spiffe://proompteng.ai/ns/ofz/sa/ofz-api'
 const call = attestedCaller(() => ({ target: process.env.OFZ_GRPC_ENDPOINT?.trim() || '', peer: OFZ_ID }))
 
@@ -38,7 +37,7 @@ export function isOfzConfigured() {
   return Boolean(
     process.env.OFZ_GRPC_ENDPOINT?.trim() &&
     process.env.SPIFFE_ENDPOINT_SOCKET?.trim() &&
-    process.env.SPIFFE_ID?.trim() === BFF_ID,
+    process.env.SPIFFE_ID?.trim(),
   )
 }
 

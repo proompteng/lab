@@ -14,7 +14,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 
-import { signOutTengri } from '@/lib/tengri/auth-client'
+import { signOut as signOutPlatform } from '@/lib/platform/auth-client'
 import { reportBrowserFailure } from '@/lib/observability/client'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
@@ -751,7 +751,7 @@ export function ReadyDesktop({
         if (!(await guard(false))) throw new Error('Save or close every edited Code tab before signing out.')
       }
       await runTengriAction<null>({ action: 'revoke-editor-sessions' })
-      await signOutTengri()
+      await signOutPlatform()
       committed = true
       setCommittedTransition('sign-out')
       await onChanged()

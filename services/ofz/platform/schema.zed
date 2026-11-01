@@ -1,11 +1,25 @@
+definition platform_workspace {
+    relation platform: platform
+    relation member: human
+    relation administrator: human
+    relation client: workload
+
+    permission human_member = (member + administrator) & platform->admit
+    permission use = human_member + client
+    permission manage = administrator & platform->admit
+}
+
 definition kubernetes_namespace {
     relation status_reader: human | workload
     relation log_reader: human | workload
     relation event_reader: human | workload
+    relation status_workspace: platform_workspace
+    relation log_workspace: platform_workspace
+    relation event_workspace: platform_workspace
 
-    permission read_status = status_reader
-    permission read_logs = log_reader
-    permission read_events = event_reader
+    permission read_status = status_reader + status_workspace->human_member
+    permission read_logs = log_reader + log_workspace->human_member
+    permission read_events = event_reader + event_workspace->human_member
 }
 
 definition platform_delegation {

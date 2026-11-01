@@ -2,11 +2,22 @@ syntax = "proto3";
 
 package proompteng.authz.v1;
 
+import "proompteng/authz/v1/authz.proto";
+
 option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 
 service PlatformAuthorizationService {
+  rpc BeginSignIn(BeginSignInRequest) returns (BeginSignInResponse);
+  rpc ConsumeSignIn(ConsumeSignInRequest) returns (ConsumeSignInResponse);
+  rpc EstablishSession(EstablishSessionRequest) returns (EstablishSessionResponse);
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
   rpc GetPlatformConfiguration(GetPlatformConfigurationRequest) returns (GetPlatformConfigurationResponse);
+  rpc ListPlatformWorkspaces(ListPlatformWorkspacesRequest) returns (ListPlatformWorkspacesResponse);
+  rpc GetPlatformWorkspace(GetPlatformWorkspaceRequest) returns (GetPlatformWorkspaceResponse);
+  rpc ReadWorkspaceActivity(ReadWorkspaceActivityRequest) returns (ReadWorkspaceActivityResponse);
   rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
+  rpc DiscoverPlatformAccess(DiscoverPlatformAccessRequest) returns (DiscoverPlatformAccessResponse);
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
   rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
   rpc ReadPolicyRelationships(ReadPolicyRelationshipsRequest) returns (ReadPolicyRelationshipsResponse);
@@ -19,6 +30,75 @@ service PlatformAuthorizationService {
   rpc RevokePlatformDelegation(RevokePlatformDelegationRequest) returns (RevokePlatformDelegationResponse);
 }
 
+message BeginSignInRequest {
+  string state = 1;
+  string binding = 2;
+  string verifier = 3;
+  string nonce = 4;
+  string operation_id = 5;
+  string return_path = 6;
+}
+message BeginSignInResponse {}
+message ConsumeSignInRequest {
+  string state = 1;
+  string binding = 2;
+}
+message ConsumeSignInResponse {
+  string verifier = 1;
+  string nonce = 2;
+  string operation_id = 3;
+  string return_path = 4;
+}
+
+message EstablishSessionRequest {
+  // Verified against the configured issuer, audience, signature and broker ID.
+  string identity_token = 1;
+  string nonce = 2;
+  string operation_id = 3;
+  // Browser cookie being replaced, if present. Revoked atomically with issuance.
+  string previous_credential = 4;
+  // Gateway-generated 256-bit base64url credential, reused only for an exact retry.
+  // Ofz persists its hash and the request fingerprint, never this plaintext.
+  string credential = 5;
+}
+
+message Session {
+  string id = 1;
+  string human_id = 2;
+  uint64 expires_at_unix_ms = 3;
+  uint64 idle_deadline_unix_ms = 4;
+  uint64 mfa_at_unix_ms = 5;
+  uint64 recovery_generation = 6;
+  // Opaque random credential, returned only at establishment; hash stored centrally.
+  string credential = 7;
+  string github_id = 8;
+  string display_name = 9;
+  string email = 10;
+  string image_url = 11;
+}
+
+message EstablishSessionResponse {
+  Session session = 1;
+}
+message InspectSessionResponse {
+  Session session = 1;
+}
+message RevokeSessionResponse {
+  CommandReceipt receipt = 1;
+}
+
+message RevokeSessionRequest {
+  // Possession revokes only this session, including a retry after revocation.
+  string credential = 1;
+  string operation_id = 2;
+  string origin = 3;
+}
+
+message InspectSessionRequest {
+  // Opaque credential from the gateway's HttpOnly cookie, not the public session ID.
+  string session_id = 1;
+}
+
 message GetPlatformConfigurationRequest {}
 message GetPlatformConfigurationResponse {
   uint64 policy_version = 1;
@@ -28,6 +108,58 @@ message GetPlatformConfigurationResponse {
 message RegisteredRelayClient {
   string id = 1;
   repeated string identities = 2;
+  string display_name = 3;
+}
+
+message RegisteredPlatformWorkspace {
+  string id = 1;
+  string name = 2;
+  repeated RegisteredWorkspaceResource resources = 3;
+}
+message RegisteredWorkspaceResource {
+  string name = 1;
+  PlatformResource resource = 2;
+}
+message ListPlatformWorkspacesRequest {
+  PlatformHumanSession administrator = 1;
+}
+message ListPlatformWorkspacesResponse {
+  repeated RegisteredPlatformWorkspace workspaces = 1;
+}
+message GetPlatformWorkspaceRequest {
+  PlatformHumanSession administrator = 1;
+  string workspace_id = 2;
+}
+enum PlatformWorkspaceRole {
+  PLATFORM_WORKSPACE_ROLE_UNSPECIFIED = 0;
+  PLATFORM_WORKSPACE_ROLE_MEMBER = 1;
+  PLATFORM_WORKSPACE_ROLE_ADMINISTRATOR = 2;
+}
+message PlatformWorkspaceMember {
+  string human_id = 1;
+  string github_id = 2;
+  string display_name = 3;
+  PlatformWorkspaceRole role = 4;
+  bool admitted = 5;
+}
+message PlatformWorkspaceClient {
+  RegisteredRelayClient client = 1;
+  bool enabled = 2;
+}
+message GetPlatformWorkspaceResponse {
+  RegisteredPlatformWorkspace workspace = 1;
+  repeated PlatformWorkspaceMember members = 2;
+  repeated PlatformWorkspaceClient clients = 3;
+  uint64 policy_version = 4;
+}
+message ReadWorkspaceActivityRequest {
+  PlatformHumanSession administrator = 1;
+  string workspace_id = 2;
+  string cursor = 3;
+}
+message ReadWorkspaceActivityResponse {
+  repeated AuditReceipt receipts = 1;
+  string cursor = 2;
 }
 
 message RecordPlatformExecutionRequest {
@@ -88,6 +220,20 @@ message PlatformSubject {
   string client_service = 4;
 }
 
+message DiscoverPlatformAccessRequest {
+  PlatformSubject subject = 1;
+}
+message DiscoverPlatformAccessResponse {
+  repeated PlatformConnectionScope scopes = 1;
+}
+message PlatformConnectionScope {
+  string workspace_id = 1;
+  string workspace_name = 2;
+  PlatformResource resource = 3;
+  string resource_name = 4;
+  repeated string actions = 5;
+}
+
 message PlatformBinding {
   string service = 1;
   string id = 2;
@@ -125,6 +271,7 @@ message ReadPolicyRelationshipsRequest {
   PlatformResource resource = 2;
   string subject_kind = 3;
   string subject_id = 4;
+  string workspace_id = 5;
 }
 message ReadPolicyRelationshipsResponse {
   uint64 policy_version = 1;
@@ -137,6 +284,7 @@ message WritePolicyRelationshipsRequest {
   uint64 expected_policy_version = 3;
   repeated PolicyRelationship relationships = 4;
   string reason = 5;
+  string workspace_id = 6;
 }
 
 message CreatePlatformDelegationRequest {
@@ -176,6 +324,7 @@ message PlatformConnection {
   bool credential_active = 13;
   uint64 credential_generation = 14;
   uint64 recovery_generation = 15;
+  string workspace_id = 16;
 }
 message ListPlatformConnectionsRequest {
   PlatformHumanSession issuer = 1;
@@ -185,6 +334,7 @@ message ListPlatformConnectionsRequest {
 message ListPlatformConnectionsResponse {
   repeated PlatformConnection connections = 1;
   uint64 recovery_generation = 2;
+  repeated PlatformConnectionScope available_scopes = 3;
 }
 message PutPlatformConnectionRequest {
   string operation_id = 1;

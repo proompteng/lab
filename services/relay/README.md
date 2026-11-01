@@ -8,6 +8,11 @@ the configured cluster API using Relay's projected service-account credential. P
 inline environment values. Logs are plain text. The client cannot supply a URL, credential, HTTP method, exec command,
 watch, or arbitrary Kubernetes path. Effectful operations require a separate execution contract and are rejected.
 
+Tool discovery uses the same Ofz identity and resource permissions as execution. `ListOperations` requires the
+current human session or the caller's attested workload identity. Relay asks Ofz for approved workspace/resource/action
+scopes before building each adapter's tool schemas. An unapproved namespace appears in neither targets nor schema
+values. An empty catalog is a valid result; it does not imply a cluster or provider failure.
+
 [`relay.proto`](../../proto/proompteng/relay/v1/relay.proto) defines the public API.
 [`platform.proto`](../../proto/proompteng/authz/v1/platform.proto) defines Ofz authorization, policy management,
 delegation and execution receipts. See [the platform guide](../../docs/platform/ofz-relay.md) for onboarding and cutover.
