@@ -12,3 +12,4 @@ mod integration;
 
 pub mod discovery;
 pub mod proof;
+pub mod requests;

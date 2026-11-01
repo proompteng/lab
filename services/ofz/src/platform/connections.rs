@@ -194,6 +194,21 @@ pub(crate) async fn list(
     };
     let available_scopes =
         super::discovery::scopes(native, client, "human", &issuer.human_id).await?;
+    let requestable_scopes = super::requests::requestable(native, client, &issuer.human_id).await?;
+    let access_requests = {
+        let connection = database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("access request database unavailable"))?;
+        super::requests::for_member(
+            &connection,
+            &issuer.human_id,
+            &client.id,
+            &requestable_scopes,
+        )
+        .await?
+    };
     for connection in &mut connections {
         connection.credential_active &= connection.resources.iter().all(|resource| {
             available_scopes.iter().any(|scope| {
@@ -222,5 +237,7 @@ pub(crate) async fn list(
         connections,
         recovery_generation: current.recovery_generation,
         available_scopes,
+        requestable_scopes,
+        access_requests,
     })
 }

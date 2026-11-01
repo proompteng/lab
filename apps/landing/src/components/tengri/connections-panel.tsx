@@ -36,6 +36,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
 import { startSignIn } from '@/lib/platform/auth-client'
+import { MemberAccessRequests } from '@/components/platform/member-access-requests'
 import {
   completePendingConnection,
   connectionConnector,
@@ -140,10 +141,17 @@ export function ConnectionsPanel({
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    void load(controller.signal).catch((cause: unknown) => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Connections are unavailable.')
-    })
-    return () => controller.abort()
+    const refresh = () =>
+      void load(controller.signal).catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : 'Connections are unavailable.')
+      })
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      controller.abort()
+      window.removeEventListener('focus', refresh)
+    }
   }, [active, agent.runtimeEpoch, load])
   useEffect(() => {
     if (!active) return
@@ -737,7 +745,13 @@ export function ConnectionsPanel({
               )
             })}
           </ItemGroup>
-          {serviceIds.length === 0 ? (
+          <MemberAccessRequests
+            snapshot={snapshot}
+            humanId={principalId}
+            disabled={disabled || busy}
+            onChanged={() => void refresh()}
+          />
+          {serviceIds.length === 0 && snapshot.requestableScopes.length === 0 ? (
             <div className="space-y-2 py-6 text-center text-zinc-400">
               <Plug aria-hidden="true" className="mx-auto size-6" />
               <p>No services are available yet.</p>
