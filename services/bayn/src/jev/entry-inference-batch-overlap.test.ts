@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Clock, Effect, Fiber, Layer, Result } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { canonicalHashV1Result } from '../hash'
 import { operationalError } from '../errors'
@@ -62,12 +62,15 @@ const providers = (
     readonly baseClaimDenied?: boolean
     readonly baseTerminalFails?: boolean
     readonly journalCommitDelay?: number
+    readonly cleanupTerminalFails?: boolean
+    readonly receiptFailure?: boolean
   } = {},
 ) => {
   let activeProviders = 0
   let peakProviders = 0
   const durableJevRequests = new Set<string>()
   const records: JevEvaluationRecord[] = []
+  let receiptAttempts = 0
   const events: string[] = []
   const checkpointEvents: string[] = []
   const handoffs: EntryHandoff[] = []
@@ -200,6 +203,12 @@ const providers = (
                 const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
                 if (terminal !== null) {
                   checkpointEvents.push('terminal')
+                  if (successor.kind === 'NONE' && options.cleanupTerminalFails)
+                    return yield* operationalError({
+                      component: 'journal',
+                      operation: 'test cleanup',
+                      message: 'Terminal cleanup unavailable',
+                    })
                   if (
                     successor.kind !== 'NONE' &&
                     (options.chartTerminalFails || (terminal.stage === 'BASE_START' && options.baseTerminalFails))
@@ -274,13 +283,30 @@ const providers = (
       read: () => Effect.die('Unexpected read'),
       abandon: () => Effect.die('Unexpected abandon'),
       recordAll: (entries) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          receiptAttempts++
+          if (options.receiptFailure)
+            return yield* operationalError({
+              component: 'journal',
+              operation: 'test receipt cleanup',
+              message: 'Receipt cleanup unavailable',
+            })
           records.push(...entries)
           return new Map()
         }),
     }),
   )
-  return { events, checkpointEvents, handoffs, commits, jevBudgets, records, peakProviders: () => peakProviders, layer }
+  return {
+    events,
+    checkpointEvents,
+    handoffs,
+    commits,
+    jevBudgets,
+    records,
+    peakProviders: () => peakProviders,
+    receiptAttempts: () => receiptAttempts,
+    layer,
+  }
 }
 
 const mixedDispatches = () => {
@@ -432,3 +458,30 @@ test('base provider failure does not discard the independent completed Jev evide
     }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
   )
 })
+
+for (const receiptFailure of [false, true]) {
+  test(`terminal cleanup failure still attempts independent paid receipts (receipt failure=${receiptFailure})`, async () => {
+    const setup = providers({
+      baseDelay: 1000,
+      baseTerminalFails: true,
+      cleanupTerminalFails: true,
+      receiptFailure,
+      jevDelay: 2000,
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(at)
+        const fiber = yield* evaluateClaimedEntryInferences(mixedDispatches()).pipe(Effect.exit, Effect.forkChild)
+        yield* TestClock.adjust(2000)
+        const result = yield* Fiber.join(fiber)
+        expect(Exit.isFailure(result)).toBe(true)
+        expect(setup.receiptAttempts()).toBe(1)
+        expect(setup.records).toHaveLength(receiptFailure ? 0 : 1)
+        if (Exit.isFailure(result)) {
+          expect(Cause.pretty(result.cause)).toContain('Terminal cleanup unavailable')
+          if (receiptFailure) expect(Cause.pretty(result.cause)).toContain('Receipt cleanup unavailable')
+        }
+      }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+    )
+  })
+}

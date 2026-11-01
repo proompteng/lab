@@ -1,6 +1,6 @@
 import { JevEvaluationStore, type JevDispatch } from './evaluation'
 import { JevOutcome, makeJevEvaluationReceipt, type JevEvaluationRequest } from './evidence'
-import { Clock, Effect, Exit, Redacted, Result, Schema } from 'effect'
+import { Cause, Clock, Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
@@ -350,33 +350,44 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
           entry.terminals.filter((terminal) => !entry.durableTerminals.has(terminal.terminalHash)),
         )
         return Effect.gen(function* () {
-          if (uncommitted.length > 0)
-            yield* journal.recordTransitions(
-              uncommitted.map((terminal) => ({ terminal, successor: { kind: 'NONE' as const } })),
-            )
-          const records = yield* Effect.forEach(
-            work.filter((entry) => entry.completion !== null),
-            (entry) =>
-              Effect.gen(function* () {
-                const completion = entry.completion
-                if (completion === null)
-                  return yield* new EntryInferenceError({
-                    category: 'INPUT',
-                    message: 'Retained completion disappeared',
-                  })
-                const receipt = yield* Effect.fromResult(
-                  makeJevEvaluationReceipt(entry.request, {
-                    schemaVersion: 'bayn.jev-evaluation-receipt.v3',
-                    requestId: entry.request.requestId,
-                    startedAt: entry.claim.claimedAt,
-                    completedAt: completion.completedAt,
-                    outcome: { status: JevOutcome.Completed, completion },
-                  }),
+          // Independent evidence sinks must both be attempted, even when the
+          // terminal journal is unavailable. Retain every failure in the cause.
+          const terminalExit = yield* Effect.exit(
+            uncommitted.length > 0
+              ? journal.recordTransitions(
+                  uncommitted.map((terminal) => ({ terminal, successor: { kind: 'NONE' as const } })),
                 )
-                return { request: entry.request, receipt }
-              }),
+              : Effect.void,
           )
-          if (records.length > 0) yield* (yield* JevEvaluationStore).recordAll(records)
+          const receiptsExit = yield* Effect.gen(function* () {
+            const records = yield* Effect.forEach(
+              work.filter((entry) => entry.completion !== null),
+              (entry) =>
+                Effect.gen(function* () {
+                  const completion = entry.completion
+                  if (completion === null)
+                    return yield* new EntryInferenceError({
+                      category: 'INPUT',
+                      message: 'Retained completion disappeared',
+                    })
+                  const receipt = yield* Effect.fromResult(
+                    makeJevEvaluationReceipt(entry.request, {
+                      schemaVersion: 'bayn.jev-evaluation-receipt.v3',
+                      requestId: entry.request.requestId,
+                      startedAt: entry.claim.claimedAt,
+                      completedAt: completion.completedAt,
+                      outcome: { status: JevOutcome.Completed, completion },
+                    }),
+                  )
+                  return { request: entry.request, receipt }
+                }),
+            )
+            if (records.length > 0) yield* (yield* JevEvaluationStore).recordAll(records)
+          }).pipe(Effect.exit)
+          if (Exit.isFailure(terminalExit) && Exit.isFailure(receiptsExit))
+            return yield* Effect.failCause(Cause.combine(terminalExit.cause, receiptsExit.cause))
+          if (Exit.isFailure(terminalExit)) return yield* Effect.failCause(terminalExit.cause)
+          if (Exit.isFailure(receiptsExit)) return yield* Effect.failCause(receiptsExit.cause)
         })
       }),
     )
