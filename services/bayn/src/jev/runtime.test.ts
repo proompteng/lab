@@ -11,6 +11,11 @@ import { CandidateObservationStore } from '../observe-composition/candidate-obse
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { JevBatchExpired, JevBatchStore } from './batch-evaluation'
+import type { JevBatchEvidence } from './batch-evaluation'
+import { JevCandidatePlanStatus, JevCandidateResultStatus, makeJevBatchResult } from './batch'
+import { JevFailure } from './contract'
+import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
+import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevClient } from './client'
 import { JevEvaluationStore } from './evaluation'
 import { JevExitReason } from './exit'
@@ -265,6 +270,104 @@ describe('entry-bound native position exits', () => {
 })
 
 describe('entry observation admission', () => {
+  test.each([
+    ['failed', 'INFERENCE_INCOMPLETE'],
+    ['expired', 'OUTSIDE_VALIDITY_WINDOW'],
+    ['corrupt', 'INVALID_EVIDENCE'],
+    ['pending', 'NOT_COMMITTED'],
+  ] as const)('committed batch %s reports its safe cause without authorizing entry', async (mode, reason) => {
+    const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
+    let pending: JevBatchEvidence | null = null
+    const result = await Effect.runPromise(
+      TestClock.setTime(Date.parse(fixture.observation.payload.observedAt)).pipe(
+        Effect.andThen(
+          evaluateJevObservation({
+            cycleId: fixture.observation.payload.cycleId,
+            authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+            protocol: fixture.protocol,
+            portfolio: fixture.portfolio,
+            snapshot: fixture.snapshot,
+          }),
+        ),
+        Effect.result,
+        Effect.provideService(CandidateObservationStore, {
+          record: () => Effect.die('Batch store owns admission'),
+          latestJevWindowEnd: () => Effect.succeed(Option.none()),
+        }),
+        Effect.provideService(JevBatchStore, {
+          pending: () => Effect.succeed([]),
+          read: () => Effect.die('No recovery read'),
+          complete: () => Effect.die('No new provider work'),
+          finish: () => (pending === null ? Effect.die('No pending batch') : Effect.succeed(pending)),
+          begin: (plan) =>
+            Effect.gen(function* () {
+              pending = { plan, result: null }
+              if (mode === 'pending') return { ...pending, dispatches: [] }
+              const candidates = plan.candidates.map((candidate) => {
+                if (candidate.status === JevCandidatePlanStatus.Excluded)
+                  return { symbol: candidate.symbol, status: JevCandidateResultStatus.Excluded } as const
+                const request = candidate.request
+                const receipt = Result.getOrThrow(
+                  makeJevEvaluationReceipt(request, {
+                    schemaVersion: 'bayn.jev-evaluation-receipt.v3',
+                    requestId: request.requestId,
+                    startedAt: plan.observedAt,
+                    completedAt: plan.observedAt,
+                    outcome: { status: JevOutcome.Failed, failure: JevFailure.Timeout },
+                  }),
+                )
+                return {
+                  symbol: candidate.symbol,
+                  status: JevCandidateResultStatus.Resolved,
+                  requestId: request.requestId,
+                  receipt,
+                  resolution: Result.getOrThrow(
+                    makeJevResolution(request, receipt, {
+                      schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+                      requestId: request.requestId,
+                      status: JevResolutionStatus.Recorded,
+                      receiptHash: receipt.receiptHash,
+                    }),
+                  ),
+                } as const
+              })
+              expect(candidates.some(({ status }) => status === JevCandidateResultStatus.Resolved)).toBe(true)
+              const saved = Result.getOrThrow(
+                makeJevBatchResult(plan, {
+                  schemaVersion: 'bayn.jev-batch-result.v1',
+                  batchId: plan.batchId,
+                  completedAt: plan.observedAt,
+                  candidates,
+                }),
+              )
+              if (mode === 'expired') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs)
+              return {
+                plan,
+                result: mode === 'corrupt' ? { ...saved, resultHash: 'a'.repeat(64) } : saved,
+                dispatches: [],
+              }
+            }),
+        }),
+        Effect.provideService(JevEvaluationStore, {
+          read: () => Effect.die('No provider read'),
+          recordAll: () => Effect.die('No paid inference'),
+          abandon: () => Effect.die('No abandonment'),
+        }),
+        Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call') }),
+        Effect.provide(entryInferenceFixtureLayer),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Logger.layer([])),
+        Effect.provide(NodeServices.layer),
+      ),
+    )
+    expect(result).toMatchObject({
+      failure: {
+        _tag: 'JevAwaitingEvidence',
+        readiness: 'INFERENCE_UNAVAILABLE',
+        message: `Jev batch unavailable: ${reason}`,
+      },
+    })
+  })
   test.each([
     [JevPurpose.Entry, 'current', defaultJevProtocolDocument],
     [JevPurpose.Entry, 'single-candidate', { ...defaultJevProtocolDocument, candidateSymbols: ['AAPL'] }],

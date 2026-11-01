@@ -69,18 +69,22 @@ const common = {
     .max(500)
     .regex(/^[^\p{Cc}]+$/u, 'Use a single line reason without control characters'),
 }
+export const accessRecipientSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('github-login'), login: githubLoginSchema }),
+  z.strictObject({ kind: z.literal('github-id'), githubId: z.string().regex(/^[1-9][0-9]{0,19}$/) }),
+])
 const collaborator = {
   ...common,
   action: z.literal('collaborator'),
   workspaceUid: workspaceUidSchema,
-  login: githubLoginSchema,
+  recipient: accessRecipientSchema,
 }
 const commandSchema = z.discriminatedUnion('action', [
   z
     .object({
       ...common,
       action: z.literal('membership'),
-      login: githubLoginSchema,
+      recipient: accessRecipientSchema,
       role: z.enum(['member', 'administrator', 'auditor', 'operator']),
       enabled: z.boolean(),
     })
@@ -100,13 +104,18 @@ const commandSchema = z.discriminatedUnion('action', [
     ]),
   ]),
   z
-    .object({ ...common, action: z.literal('transfer'), workspaceUid: workspaceUidSchema, login: githubLoginSchema })
+    .object({
+      ...common,
+      action: z.literal('transfer'),
+      workspaceUid: workspaceUidSchema,
+      recipient: accessRecipientSchema,
+    })
     .strict(),
   z
     .object({
       ...common,
       action: z.literal('quota'),
-      login: githubLoginSchema,
+      recipient: accessRecipientSchema,
       total: z.number().int().min(0).max(6),
       active: z.number().int().min(0).max(6),
       retainedGiB: z.number().int().min(0).max(192),
@@ -134,7 +143,7 @@ const commandSchema = z.discriminatedUnion('action', [
       ...common,
       action: z.literal('emergency'),
       workspaceUid: workspaceUidSchema,
-      login: githubLoginSchema,
+      recipient: accessRecipientSchema,
       incidentId: z
         .string()
         .min(3)

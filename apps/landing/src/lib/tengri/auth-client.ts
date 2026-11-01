@@ -6,6 +6,12 @@ const errorSchema = z.object({ error: z.string().optional() })
 const redirectSchema = z.object({ url: z.url() })
 let logoutOperation: string | undefined
 
+export class PasskeyRequiredError extends Error {
+  constructor(message = 'Verify your identity to save this change.') {
+    super(message)
+  }
+}
+
 async function authRequest(path: string, operationId?: string) {
   const response = await fetch(path, {
     method: 'POST',

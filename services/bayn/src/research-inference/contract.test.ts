@@ -8,6 +8,7 @@ import {
   maximumResearchStreamBytes,
   parseResearchOutput,
   ResearchOutcome,
+  type RetainedResearchRun,
   researchRequest,
   researchServingIdentity,
   sealResearchReceipt,
@@ -44,6 +45,29 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('verifies Qwen3.6 receipts while rejecting retired registrations', () => {
+    const current = editorFixture()
+    const old = {
+      ...current,
+      policy: {
+        ...current.policy,
+        model: 'qwen36-flamingo',
+        checkpoint: '739af1e7aac320af1682ed1e0cce369af4c5265d',
+        tokenizerRevision: '739af1e7aac320af1682ed1e0cce369af4c5265d',
+        chatTemplateRevision: '739af1e7aac320af1682ed1e0cce369af4c5265d',
+      },
+    } satisfies RetainedResearchRun
+    const retained = Result.getOrThrow(decodeRetainedResearchRun(old))
+    const receipt = retainedReceiptFixture(retained)
+    expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
+    expect(retained).toEqual(old)
+    expect(Result.getOrThrow(verifyResearchReceipt(retained, receipt))).toEqual(receipt)
+    expect(Result.getOrThrow(researchExpensePlan(retained, receipt)).transfers[0]?.amount).toBe(1001000002n)
+    expect(Result.isFailure(verifyResearchReceipt(current, receipt))).toBe(true)
+    expect(
+      Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
+    ).toBe(true)
+  })
   test('recovers priced retained editor receipts without admitting new inference for that policy', () => {
     const old = retainedEditorFixture()
     const before = JSON.stringify(old)

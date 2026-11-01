@@ -1,3 +1,5 @@
+import economicQualification from '../../migrations/0169_economic_qualification'
+import registeredAssessmentWindow from '../../migrations/0168_registered_assessment_window'
 import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
 import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
 import observedResistance from '../../migrations/0165_observed_resistance'
@@ -172,6 +174,8 @@ export const migrationLoader = PgMigrator.fromRecord({
   '164_focused_entry_evidence': focusedEntryEvidence,
   '165_observed_resistance': observedResistance,
   '166_candidate_entry_evidence': candidateEntryEvidence,
+  '168_registered_assessment_window': registeredAssessmentWindow,
+  '169_economic_qualification': economicQualification,
   '167_chart_structure_before_funding': chartStructureBeforeFunding,
   '163_jev_observation_window_index': jevObservationWindowIndex,
   '160_crypto_quote_evidence': cryptoQuoteEvidence,

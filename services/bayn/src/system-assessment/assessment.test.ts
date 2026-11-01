@@ -2,11 +2,18 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { evaluateSystemAssessment, EdgeStatus, ProfitabilityStatus, QualificationVerdict } from './assessment'
-import { JevNumericalVerdict } from '../jev/acceptance'
-import { assessmentFixture, supportedAssessmentFixture, testHash } from './fixtures.test-support'
+import { JevNumericalVerdict, JevAcceptanceVersion } from '../jev/acceptance'
+import {
+  assessmentFixture,
+  supportedAssessmentFixture,
+  registrationFixture,
+  withRegistrationCommitments,
+  testHash,
+} from './fixtures.test-support'
 import { assessSession, exactUsd } from './session'
-import { validateSystemRegistration } from './policy'
+import { validateSystemRegistration, verifyStoredSystemRegistration } from './policy'
 import { OperatingCostCoverage } from '../operating-costs'
+import { ObligationClass, ReliabilityStatus } from './reliability'
 
 describe('complete system qualification', () => {
   test.each(['4900', '-4900'])(
@@ -152,6 +159,41 @@ describe('complete system qualification', () => {
     const missing = Result.getOrThrow(evaluateSystemAssessment(input, incomplete))
     expect(missing.verdict).not.toBe(QualificationVerdict.Qualified)
   })
+  test('complete base evidence qualifies without stress replay or invented recovery work', () => {
+    const { input, verifiedSources } = supportedAssessmentFixture(4)
+    const recoveryIds = new Set(
+      input.reliability.schedule
+        .filter((item) => item.class === ObligationClass.Recovery)
+        .map((item) => item.obligationId),
+    )
+    const changed = {
+      ...input,
+      policies: input.policies.map((policy) => ({
+        ...policy,
+        sessions: policy.sessions.map((session) => ({ ...session, p95LatencyStress: null })),
+      })),
+      reliability: {
+        ...input.reliability,
+        schedule: input.reliability.schedule.filter((item) => !recoveryIds.has(item.obligationId)),
+        completions: input.reliability.completions.filter((item) => !recoveryIds.has(item.obligationId)),
+      },
+    }
+    const result = Result.getOrThrow(evaluateSystemAssessment(changed, verifiedSources))
+    expect(result.verdict).toBe(QualificationVerdict.Qualified)
+    expect(result.reliability.status).toBe(ReliabilityStatus.MeetsTarget)
+    expect(result.reliability.classes.find((item) => item.class === ObligationClass.Recovery)?.status).toBe(
+      ReliabilityStatus.NotApplicable,
+    )
+    expect(
+      result.numerical && 'metrics' in result.numerical && result.numerical.metrics.p95LatencyStressNetPnlUsd,
+    ).toBeNull()
+    const unaudited = new Set(verifiedSources)
+    unaudited.delete(input.obligationCoverageHash)
+    expect(Result.getOrThrow(evaluateSystemAssessment(changed, unaudited)).verdict).not.toBe(
+      QualificationVerdict.Qualified,
+    )
+  })
+
   test('fully attributed sample profit does not establish qualification when execution evidence is absent', () => {
     const { input, verifiedSources } = assessmentFixture()
     const result = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
@@ -259,16 +301,9 @@ describe('complete system qualification', () => {
       }
   })
 
-  test('the frozen estimator rejects inadequate numerical tail resolution', () => {
-    const { input, verifiedSources } = assessmentFixture()
-    const result = Result.getOrThrow(
-      evaluateSystemAssessment(
-        { ...input, registration: { ...input.registration, attemptIndex: 100 } },
-        verifiedSources,
-      ),
-    )
-    expect(result.verdict).toBe(QualificationVerdict.Rejected)
-    expect(result.violations.some((s) => s.includes('tail resolution'))).toBe(true)
+  test('an inadequate bootstrap budget is rejected before prospective admission', () => {
+    const { input } = assessmentFixture()
+    expect(Result.isFailure(validateSystemRegistration({ ...input.registration, attemptIndex: 13 }))).toBe(true)
   })
 
   test('mark and cash reconciliation disagreement cannot produce a passing result', () => {
@@ -299,4 +334,62 @@ describe('complete system qualification', () => {
     for (const amount of [0n, 1n, -1n, 1234567n, 100000000000n]) expect(Result.isSuccess(exactUsd(amount))).toBe(true)
     expect(Result.isFailure(exactUsd(999999999999999999n))).toBe(true)
   })
+})
+
+test.each([1, 3, 7, 21])(
+  'assesses a complete %i-session window and rejects missing trailing evidence',
+  (sessionCount) => {
+    const { input, verifiedSources } = supportedAssessmentFixture(sessionCount)
+    const report = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+    expect(report.policies.every((policy) => policy.sessions.length === sessionCount)).toBe(true)
+    expect(report.profitability.status).toBe(ProfitabilityStatus.Profitable)
+    expect(
+      Result.isFailure(
+        evaluateSystemAssessment(
+          {
+            ...input,
+            policies: input.policies.map((policy, index) =>
+              index === 0 ? { ...policy, sessions: policy.sessions.slice(0, -1) } : policy,
+            ),
+          },
+          verifiedSources,
+        ),
+      ),
+    ).toBe(true)
+  },
+)
+
+test('retained policy verification reproduces the original evaluator receipt and never admits it as a new policy', () => {
+  const registration = withRegistrationCommitments({
+    ...registrationFixture(undefined, 20, JevAcceptanceVersion.RetainedV2),
+    policyHash: '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b',
+    acceptanceProtocolHash: '33be41cdb552c926fdf003dd9320d570db4cd0012ae15227bc8338fd5f571375',
+  })
+  expect(Result.isFailure(validateSystemRegistration(registration))).toBe(true)
+  const retained = Result.getOrThrow(verifyStoredSystemRegistration(registration))
+  expect(retained.version).toBe(JevAcceptanceVersion.RetainedV2)
+  const { input, verifiedSources } = assessmentFixture(registration)
+  const result = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources, retained.version))
+  // Golden receipt generated from the evaluator at 04bfb608d348b86f5a72f2e246ab238bf8dd2312.
+  expect(result.assessmentHash).toBe('fb1a3e418a32986bc16b60fb56a81da05765a69c389420c348b1a90a14e467d2')
+  expect(result.inputHash).toBe('cefaa1156583835084239478969ccdd7c872b7a91c1c540566021eecd68357a6')
+  expect(Result.isFailure(verifyStoredSystemRegistration({ ...registration, policyHash: '0'.repeat(64) }))).toBe(true)
+  expect(
+    Result.isFailure(
+      verifyStoredSystemRegistration({
+        ...registration,
+        calendar: { ...registration.calendar, sessions: registration.calendar.sessions.slice(0, 3) },
+      }),
+    ),
+  ).toBe(true)
+})
+
+test('registered-window v3 history keeps its original receipt identity', () => {
+  const { input, verifiedSources } = assessmentFixture(
+    registrationFixture(undefined, 20, JevAcceptanceVersion.RetainedV3),
+  )
+  const result = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources, JevAcceptanceVersion.RetainedV3))
+  expect(result.assessmentHash).toBe('45791184ec318686a8e9293ebcd9a676a5155816e442acadd3242c1752d8e007')
+  expect(result.inputHash).toBe('e0f0280bc287fb1ac58b0e3066abe6d823b72194a15a74bbd02eaa7ee06ca80a')
+  expect(Result.isFailure(validateSystemRegistration(input.registration))).toBe(true)
 })

@@ -20,7 +20,7 @@ import { validateOperatingCostWindow } from '../operating-cost-window'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { validateFrozenCostAllocations } from './cost-allocation'
-import { systemQualificationPolicy, type SystemRegistration, validateSystemRegistration } from './policy'
+import { registeredAllocationMicros, type SystemRegistration, verifyStoredSystemRegistration } from './policy'
 
 export const ReplaySessionCostsSchema = Schema.Struct({
   policy: Schema.Enum(JevResearchPolicy),
@@ -28,7 +28,7 @@ export const ReplaySessionCostsSchema = Schema.Struct({
   asOf: UtcInstantSchema,
   inferenceCalls: Schema.Array(ReplayInferenceCallSchema),
   inferenceTariff: InferenceRateCardSchema,
-  sessions: Schema.Array(OperatingCostEvidenceSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
+  sessions: Schema.Array(OperatingCostEvidenceSchema).check(Schema.isMinLength(1)),
 })
 
 interface ReplayEconomicConfig {
@@ -87,7 +87,7 @@ export const reproduceSessionEconomics = (
 ) =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new SystemAssessmentError({ message }))
-    const { registrationHash } = yield* validateSystemRegistration(registration)
+    const { registrationHash } = yield* verifyStoredSystemRegistration(registration)
     const costs = yield* Schema.decodeUnknownResult(ReplaySessionCostsSchema, strictParseOptions)(rawCosts)
     yield* validateOperatingCostWindow(costs.sessions)
     for (const session of costs.sessions)
@@ -100,7 +100,7 @@ export const reproduceSessionEconomics = (
       definition === undefined ||
       definition.costAllocationRuleHash !== costs.allocationRuleHash ||
       !verifiedSources.has(costs.allocationRuleHash) ||
-      config.openingCashMicros !== systemQualificationPolicy.allocationMicros
+      config.openingCashMicros !== registeredAllocationMicros(registration)
     )
       return yield* fail('Replay economics differs from the registered allocation or cost rule')
     const first = registration.calendar.sessions[0]

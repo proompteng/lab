@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevAcceptanceVersion, JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceRateSchema } from '../inference-costs'
 import { registrationFixture } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -74,19 +74,25 @@ test('adjacent tariffs cover inference policies while deterministic controls nee
   expect(Result.isSuccess(result)).toBe(true)
 })
 
-test('each policy preserves the frozen Jev tariff floor before the prospective window opens', () => {
-  const registration = registrationFixture()
-  for (const policy of Object.values(JevResearchPolicy))
-    for (const rate of ['0', '1', '41999', '42000', '42001', '100000000']) {
-      const result = validateSystemRegistration({
-        ...registration,
-        policies: registration.policies.map((definition) =>
-          definition.policy === policy ? { ...definition, inferenceRateCard: rateCard(rate) } : definition,
-        ),
-      })
-      expect(Result.isSuccess(result)).toBe(BigInt(rate) >= 42000n)
-    }
-})
+test.each([JevAcceptanceVersion.Current, JevAcceptanceVersion.RetainedV3])(
+  'registered contract rates under %s',
+  (version) => {
+    const registration = registrationFixture(undefined, 20, version)
+    for (const policy of Object.values(JevResearchPolicy))
+      for (const rate of ['0', '1', '41999', '42000', '42001', '100000000']) {
+        const result = validateSystemRegistration(
+          {
+            ...registration,
+            policies: registration.policies.map((definition) =>
+              definition.policy === policy ? { ...definition, inferenceRateCard: rateCard(rate) } : definition,
+            ),
+          },
+          version,
+        )
+        expect(Result.isSuccess(result)).toBe(version === JevAcceptanceVersion.Current || BigInt(rate) >= 42000n)
+      }
+  },
+)
 
 test('a cheaper rate confined to history cannot lower any registered session cost', () => {
   const registration = registrationFixture()
@@ -113,7 +119,7 @@ test('a cheaper rate confined to history cannot lower any registered session cos
   ).toBe(true)
 })
 
-test('an intra-window discount is rejected even when it begins at the final close', () => {
+test('a verified contract discount may begin at the final close', () => {
   const registration = registrationFixture()
   const lastClose = registration.calendar.sessions.at(-1)?.closeAt
   if (lastClose === undefined) throw new Error('Missing fixture session')
@@ -129,7 +135,7 @@ test('an intra-window discount is rejected even when it begins at the final clos
     ),
   }
   expect(
-    Result.isFailure(
+    Result.isSuccess(
       validateSystemRegistration({
         ...registration,
         policies: registration.policies.map((definition) => ({ ...definition, inferenceRateCard })),

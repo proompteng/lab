@@ -1,6 +1,6 @@
 # Flamingo
 
-Flamingo serves Bayn's GEPA instruction editor alongside coding agents and shares Turin's Blackwell GPU with Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
+Flamingo serves Bayn's GEPA instruction editor alongside coding agents and shares Turin's Blackwell GPU with Plex. The launch profile reserves 90% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
 
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
@@ -12,8 +12,8 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 - RuntimeClass: `nvidia`
 - Server: `vllm/vllm-openai:v0.29.0-cu129`
 - Image digest: `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2`
-- Model: `unsloth/Qwen3.6-35B-A3B-NVFP4`
-- Served model name: `qwen36-flamingo`
+- Model: `Qwen/Qwen3.8-27B-FP8`
+- Served model name: `qwen38-flamingo`
 - Internal URL: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Tailnet URL: `http://flamingo.ide-newton.ts.net/v1`
 
@@ -23,12 +23,12 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 ## Current Launch Profile
 
 ```text
---model unsloth/Qwen3.6-35B-A3B-NVFP4
---served-model-name qwen36-flamingo
+--model Qwen/Qwen3.8-27B-FP8
+--served-model-name qwen38-flamingo
 --trust-remote-code
 --dtype bfloat16
 --max-model-len 262144
---gpu-memory-utilization 0.60
+--gpu-memory-utilization 0.90
 --kv-cache-dtype fp8
 --max-num-seqs 8
 --max-num-batched-tokens 8192
@@ -39,7 +39,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --optimization-level 2
 ```
 
-The production target remains full 262K server context. Bayn's GEPA editor uses this shared model; it has no separate GPU allocation. The 60% budget leaves memory for Plex and transient allocations. Validate startup, long-context inference, research latency, and actual GPU memory before tuning this shared profile. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
+The production target remains full 262K server context. Bayn's GEPA editor uses this shared model; it has no separate GPU allocation. The operator authorized the full card for this migration. The 90% budget leaves headroom for CUDA and Plex. Eight active sequences do not guarantee eight simultaneous full-context requests. Validate startup, long-context inference, research latency, and actual GPU memory before tuning this profile. The historical Qwen3.6 benchmarks below do not establish Qwen3.8 throughput. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
 
 NUMA auto-binding is intentionally disabled. The vLLM 0.23.0 rollout proved
 that Turin's GPU-to-NUMA topology was not detected automatically and exited with
@@ -47,7 +47,7 @@ that Turin's GPU-to-NUMA topology was not detected automatically and exited with
 automatically`. Test NUMA only with explicit `--numa-bind-nodes` values after a
 separate topology readback.
 
-The model weights are NVFP4, but the KV cache uses FP8. Live rollout proved that
+The model weights and KV cache use FP8. An earlier rollout proved that
 `--kv-cache-dtype nvfp4` fails on this Blackwell Max-Q card with
 `requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
 combination changes and is proven in a separate smoke.
@@ -62,16 +62,20 @@ before promoting it.
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
 assistant content. The active tool parser is `qwen3_coder`, which is the vLLM
-Qwen3.5/Qwen3.6 recipe recommendation for automatic tool calling.
-Reference: <https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3.5.html>
+Qwen3.8 recipe recommendation for automatic tool calling.
+Reference: <https://recipes.vllm.ai/Qwen/Qwen3.8-27B>
 
 ## Host CPU and Memory Sizing
 
-The Deployment requests `4` CPU cores and `32Gi` of regular host RAM, with
-limits of `8` cores and `40Gi`. These values do not reserve GPU VRAM;
+The Deployment requests `4` CPU cores and `40Gi` of regular host RAM, with
+limits of `8` cores and `48Gi`. These values do not reserve GPU VRAM;
 `nvidia.com/gpu: 1` and `--gpu-memory-utilization` govern the GPU allocation and
 vLLM's VRAM target. The production `--max-model-len 262144` profile is an
-invariant and was not reduced during host-resource tuning.
+invariant. The host-memory budget adds 8 GiB to the previous profile for the
+larger FP8 checkpoint and must pass cold-load validation.
+
+The measurements below describe the retired Qwen3.6 NVFP4 model and its
+previous `32Gi` request and `40Gi` limit. They do not size Qwen3.8.
 
 The July 12, 2026 tuning run used isolated per-run prefix-cache salts and the
 full benchmark profile: concurrency through 16, 4K/32K/128K scheduler cells,
@@ -144,7 +148,7 @@ Expected:
 - `flamingo` and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
 - `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
   separate embeddings path.
-- The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
+- The model-cache PVC has enough free space for the 30.9 GB Qwen3.8 FP8 checkpoint.
 
 Render before sync:
 
@@ -182,7 +186,7 @@ kubectl -n flamingo run flamingo-smoke \
     curl -fsS http://flamingo.flamingo.svc.cluster.local/v1/models &&
     curl -fsS http://flamingo.flamingo.svc.cluster.local/v1/chat/completions \
       -H "Content-Type: application/json" \
-      -d "{\"model\":\"qwen36-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"chat_template_kwargs\":{\"enable_thinking\":false},\"max_tokens\":16,\"temperature\":0}"
+      -d "{\"model\":\"qwen38-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"chat_template_kwargs\":{\"enable_thinking\":false},\"max_tokens\":16,\"temperature\":0}"
   '
 ```
 
@@ -192,7 +196,7 @@ Tailnet:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/models
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen36-flamingo","messages":[{"role":"user","content":"Say flamingo-ok."}],"chat_template_kwargs":{"enable_thinking":false},"max_tokens":16,"temperature":0}' \
+  -d '{"model":"qwen38-flamingo","messages":[{"role":"user","content":"Say flamingo-ok."}],"chat_template_kwargs":{"enable_thinking":false},"max_tokens":16,"temperature":0}' \
   | jq -e '.choices[0].message.content | contains("flamingo-ok")'
 ```
 
@@ -202,7 +206,7 @@ Tool-call smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen36-flamingo",
+    "model": "qwen38-flamingo",
     "messages": [{"role": "user", "content": "Use the lookup_status tool for id FLAMINGO-262K and no other tool."}],
     "tools": [{
       "type": "function",
@@ -246,7 +250,7 @@ Pi and AnyPi must use Qwen chat-template thinking controls for this endpoint:
   },
   "models": [
     {
-      "id": "qwen36-flamingo",
+      "id": "qwen38-flamingo",
       "reasoning": true,
       "contextWindow": 229376,
       "maxTokens": 32768
@@ -284,12 +288,28 @@ free on the physical Blackwell. Run `smoke` first, move Saigak off Blackwell,
 then use `full` as the promotion gate for one candidate at a time.
 
 The Deployment is the current rollout input. Keep GPU memory utilization at
-`0.60`, eight active sequences, 8192 batched tokens and the full 262144 context.
-Retiring the dedicated Bayn model does not authorize increasing this allocation;
-Plex and transient GPU allocations still share the physical device. Any increase
-requires a separate measured capacity change with startup, inference and Plex
-evidence. The unused ConfigMap containing historical standalone candidates is
-removed; the results below remain historical benchmark evidence.
+`0.90`, eight active sequences, 8192 batched tokens and the full 262144 context.
+The Qwen3.8 migration includes the operator-authorized GPU budget increase.
+Validate cold startup, long-context inference and actual GPU headroom before
+accepting the rollout. The results below remain historical Qwen3.6 evidence.
+
+## Qwen3.8 hard migration
+
+The active checkpoint is `Qwen/Qwen3.8-27B-FP8`, pinned to
+`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`. The only served alias is
+`qwen38-flamingo`. Update every caller together. Bayn rejects new registrations
+for the retired checkpoint while retaining immutable research-receipt verification.
+
+Delivery uses the reviewed `main` commit for Flamingo and the existing Kargo
+Stages for image-backed callers. Confirm generated branch revisions before sync.
+The `Recreate` strategy interrupts inference while the new checkpoint loads.
+Recovery uses a reviewed Git revert and the same delivery path, with one active
+model and alias at a time. Do not add a fallback or mutate the Deployment directly.
+
+Run the smoke profile, then the full profile with uncached 180K, 220K and 229K
+input probes. Verify reasoning separation, automatic tool calls, structured
+editor output, exact serving identity and caller configuration. Compare latency
+with the old run without treating a performance threshold as proof of model quality.
 
 ### Recorded Live Optimization Run
 
@@ -391,7 +411,7 @@ Acceptance smokes:
 
 | Check | Result |
 | --- | --- |
-| `/v1/models` | `qwen36-flamingo`, `max_model_len=262144` |
+| `/v1/models` | retired Qwen3.6 alias, `max_model_len=262144` |
 | Exact no-thinking chat | `qwen36-ready`, `80ms` |
 | Medium thinking chat | `qwen36-thinking-ready`, `3973ms`, `745` completion tokens |
 | Structured tool call | `lookup_status({"id":"FLAMINGO-262K"})`, `280ms` |
@@ -449,24 +469,24 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 
 ## Completion Criteria
 
-- `/v1/models` returns `qwen36-flamingo` with `max_model_len=262144`.
+- `/v1/models` returns `qwen38-flamingo` with `max_model_len=262144`.
 - Basic chat and structured tool calls work from cluster and tailnet.
-- OpenWebUI defaults to `qwen36-flamingo`.
-- Host Pi defaults to `qwen36-flamingo`.
-- AnyPi provider defaults to `qwen36-flamingo`, 229376 input context, 32768 max
+- OpenWebUI defaults to `qwen38-flamingo`.
+- Host Pi defaults to `qwen38-flamingo`.
+- AnyPi provider defaults to `qwen38-flamingo`, 229376 input context, 32768 max
   output, and medium Qwen thinking against the 262K server context.
 - One substantial AnyPi AgentRun produces a real code/test diff and validates.
 - The benchmark table is updated with the final promoted flags.
 
 ## References
 
-- [Unsloth Qwen3.6-35B-A3B-NVFP4](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
+- [Qwen3.8-27B-FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8)
 - [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/)
 - [vLLM optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
 
 ## Serving identity and availability
 
-Model and tokenizer revisions are pinned to `739af1e7aac320af1682ed1e0cce369af4c5265d`.
+Model and tokenizer revisions are pinned to `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`.
 The ASGI middleware emits `x-model-serving-identity` from loaded vLLM configuration and checks the loaded commit,
 tokenizer revision and chat-template source. Response bodies pass through without buffering. This metadata allows
 research clients to verify the shared model before accepting generated instructions.

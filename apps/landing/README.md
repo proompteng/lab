@@ -50,7 +50,18 @@ replicas. A database crash or failover discards unfinished attempts and requires
 a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
 query deadline, verified database TLS, and existing attempt expiry and capacity limits.
 
-`/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+`/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+Workspace and Platform open with one row per person and focused add/manage actions. Workspace limits show usage
+beside the configured allowance. Diagnostic grants, ownership transfer and emergency recovery are under Advanced.
+Sign-in and passkey management is a separate disclosure below the access tabs. Audit starts with recent activity and
+keeps receipt IDs inside details.
+The Service access tab starts with registered clients. Choose a service and named resource to load its current
+SpiceDB relationships, then save only changed permissions in one audited command. Platform members can be selected
+under People’s resource permissions; the normal flow does not require SPIFFE IDs or Ofz identity hashes.
+The internal access command API uses a typed `recipient`: `github-login` for a new lookup, or `github-id` for an
+existing immutable roster identity. The former top-level `login` field is removed. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
+portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
+Identity verification appears beside the affected save action only when Ofz requires a fresh passkey check.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
@@ -117,9 +128,11 @@ Chat and Finder recreate a permanently closed event stream with an exponential r
 A replacement chat stream starts at the latest received event cursor. Native browser reconnection remains active for
 transient connection errors; closing the view cancels pending retries and ignores callbacks from retired streams.
 The model catalog and saved-conversation startup retry temporary HTTP and network failures, with a delay capped at thirty seconds.
+An existing-conversation resume conflict follows that read-recovery path instead of showing a permanent resource-exists error.
 Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
 an explicit retry; recovery never submits or retries a turn. Closing chat or choosing another conversation cancels
 the pending startup retry. Manual conversation recovery cancels the automatic request before taking over.
+Run-status recovery also clears its own reconnect notice after turn changes; unrelated errors remain visible.
 Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
 Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
@@ -250,6 +263,7 @@ Design references: Apple [windows](https://developer.apple.com/design/human-inte
 `bun run test:e2e` covers toolbar alignment, narrow layouts, all resize corners, drag continuity, Dock magnification,
 minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
 with the pinned Playwright browser on both macOS and Linux.
+Phone layout and focus follow the [mobile interface contract](../../docs/tengri/mobile-interface.md).
 
 The mocked desktop tests run independently with four workers in CI and two locally. CI builds the production desktop
 once and serves it for both the mocked browser suite and real acceptance fixtures, avoiding a second development

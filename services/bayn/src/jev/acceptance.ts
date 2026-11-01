@@ -1,9 +1,62 @@
 import { BigDecimal, Data, Result, Schema } from 'effect'
+import retainedProtocol from '../../../../docs/bayn/jev-migration-acceptance-v2.json'
+import { retainedRegisteredWindowPolicy } from './retained-acceptance-policy'
+import {
+  NumericalAssessmentTermsSchema,
+  validateBootstrapPlan,
+  type NumericalAssessmentTerms,
+  type BootstrapPlan,
+} from './bootstrap-plan'
 
-import protocol from '../../../../docs/bayn/jev-migration-acceptance-v2.json'
 import { decimalToMicrosResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1Result } from '../hash'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+
+const protocol = {
+  schemaVersion: 'bayn.jev-acceptance-policy.v4',
+  programStartedAt: '2026-09-21T08:31:54Z',
+  evaluation: {
+    window: 'PROSPECTIVE_NONEMPTY_REGISTERED_CALENDAR',
+    uncertainty: 'REGISTERED_PAIRED_CIRCULAR_BLOCK_BOOTSTRAP',
+    familywiseAlpha: 0.05,
+    attemptCorrection: 'ALPHA_OVER_ATTEMPT_TIMES_NEXT_ATTEMPT_AND_REGISTERED_CLAIM_COUNT',
+    resolution: 'REGISTER_ADEQUATE_BOUNDED_WORK_BUDGET_BEFORE_FIRST_OPEN',
+    claims: ['MEAN_NET_PROFIT', 'EACH_REGISTERED_PAIRED_NET_EDGE'],
+  },
+  requiredOutcomes: {
+    positiveFullyCostedNetProfit: true,
+    positiveProfitLowerBound: true,
+    positivePairedNetEdgeLowerBounds: true,
+    registeredRiskLimits: true,
+  },
+  diagnostics: [
+    'ACTIVITY',
+    'TURNOVER',
+    'CONTROL_PROFIT_RATIO',
+    'DROP_BEST_SESSION',
+    'ADDITIONAL_10_BPS',
+    'P95_LATENCY',
+    'TARIFF_PREMIUM',
+  ],
+}
+
+export enum JevAcceptanceVersion {
+  Current = 'ECONOMIC_EVIDENCE_V4',
+  RetainedV3 = 'REGISTERED_WINDOW_V3',
+  RetainedV2 = 'RETAINED_V2',
+}
+
+const protocolFor = (version: JevAcceptanceVersion) =>
+  version === JevAcceptanceVersion.RetainedV3
+    ? retainedRegisteredWindowPolicy
+    : {
+        ...retainedProtocol,
+        programStartedAt: retainedProtocol.frozenAt,
+        requiredOutcomes: {
+          ...retainedProtocol.requiredOutcomes,
+          netPnlUsdAtLeast: retainedProtocol.requiredOutcomes.netPnlOver20SessionsUsdAtLeast,
+        },
+      }
 
 export enum JevResearchPolicy {
   Candidate = 'JEV',
@@ -52,17 +105,18 @@ export const JevAcceptanceInputSchema = Schema.Struct({
     planHash: Sha256Schema,
     lockedAt: UtcInstantSchema,
     attemptIndex: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 })),
+    analysis: Schema.optionalKey(NumericalAssessmentTermsSchema),
     sessions: Schema.Array(
       Schema.Struct({ sessionDate: IsoDateSchema, openAt: UtcInstantSchema, closeAt: UtcInstantSchema }),
-    ).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
+    ).check(Schema.isMinLength(1)),
   }),
   policies: Schema.Array(
     Schema.Struct({
       policy: Schema.Enum(JevResearchPolicy),
       definitionHash: Sha256Schema,
-      sessions: Schema.Array(Session).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
+      sessions: Schema.Array(Session).check(Schema.isMinLength(1)),
     }),
-  ).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
+  ).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
 })
 
 export type JevAcceptanceInput = typeof JevAcceptanceInputSchema.Type
@@ -76,10 +130,17 @@ export class JevAcceptanceError extends Data.TaggedError('JevAcceptanceError')<{
   readonly cause?: unknown
 }> {}
 
-export const jevAcceptanceProtocolHash = () => canonicalHashV1Result(protocol)
+export const jevAcceptanceProtocolHash = (version = JevAcceptanceVersion.Current) =>
+  canonicalHashV1Result(
+    version === JevAcceptanceVersion.Current
+      ? protocol
+      : version === JevAcceptanceVersion.RetainedV3
+        ? retainedRegisteredWindowPolicy
+        : retainedProtocol,
+  )
 
-export const jevAcceptanceExecutionRiskLimits = () => {
-  const limits = protocol.riskAcceptance
+export const jevAcceptanceExecutionRiskLimits = (version = JevAcceptanceVersion.Current) => {
+  const limits = protocolFor(version).riskAcceptance
   return {
     maxOrderNotionalMicros: BigInt(limits.existingMaximumOrderAndSymbolNotionalUsd) * 1_000_000n,
     maxSymbolExposureMicros: BigInt(limits.existingMaximumOrderAndSymbolNotionalUsd) * 1_000_000n,
@@ -89,8 +150,9 @@ export const jevAcceptanceExecutionRiskLimits = () => {
   }
 }
 
-export const jevAcceptanceInferenceRateFloor = () =>
-  Result.all({
+export const jevAcceptanceInferenceRateFloor = (version = JevAcceptanceVersion.Current) => {
+  const protocol = protocolFor(version)
+  return Result.all({
     inputMicrosPerMillionTokens: decimalToMicrosResult(
       protocol.executionEvidence.modelCost.usdPerMillionInputTokens,
       false,
@@ -102,12 +164,17 @@ export const jevAcceptanceInferenceRateFloor = () =>
       'frozen Jev output tariff',
     ),
   }).pipe(Result.mapError((cause) => new JevAcceptanceError({ message: 'Invalid frozen inference tariff', cause })))
+}
 
 const sum = (values: ReadonlyArray<bigint>): bigint => values.reduce((total, value) => total + value, 0n)
 const maximum = (values: ReadonlyArray<bigint>): bigint =>
   values.reduce((largest, value) => (value > largest ? value : largest))
 
-const moneyScale = (series: ReadonlyArray<CompleteSeries>) => {
+const moneyScale = (
+  series: ReadonlyArray<CompleteSeries>,
+  protocol: ReturnType<typeof protocolFor>,
+  terms: NumericalAssessmentTerms,
+) => {
   const values = series.flatMap(({ sessions }) =>
     sessions.flatMap((session) => [
       ...Object.values(session).filter((value): value is number => typeof value === 'number'),
@@ -116,20 +183,30 @@ const moneyScale = (series: ReadonlyArray<CompleteSeries>) => {
   )
   const scale = Math.max(
     0,
-    ...values.map((value) => BigDecimal.fromNumberUnsafe(value).scale),
+    ...[...values, terms.allocationUsd, terms.maximumSessionLossUsd, terms.maximumDrawdownUsd].map(
+      (value) => BigDecimal.fromNumberUnsafe(value).scale,
+    ),
     BigDecimal.fromStringUnsafe(protocol.requiredOutcomes.netPnlVsBestMatchedControlAtLeastMultiplier).scale,
   )
   const units = (value: number): bigint => {
     const decimal = BigDecimal.fromNumberUnsafe(value)
     return decimal.value * 10n ** BigInt(scale - decimal.scale)
   }
-  const usd = (value: bigint, factor = 1): number =>
-    BigDecimal.toNumberUnsafe(BigDecimal.multiply(BigDecimal.make(value, scale), BigDecimal.fromNumberUnsafe(factor)))
+  const usd = (value: bigint, divisor = 1): number => {
+    if (divisor === 1) return BigDecimal.toNumberUnsafe(BigDecimal.make(value, scale))
+    // Binary64's smallest midpoint is 2^-1075. Retain the input scale and divisor digits before the sole Number rounding.
+    const precision = 1075 + String(divisor).length
+    const quotient = (value * 10n ** BigInt(precision)) / BigInt(divisor)
+    return BigDecimal.toNumberUnsafe(BigDecimal.make(quotient, scale + precision))
+  }
   return { units, usd }
 }
 
-const percentile = (values: ReadonlyArray<bigint>, probability: number): bigint => {
-  const selectedIndex = Math.floor((values.length - 1) * probability)
+const percentile = (values: ReadonlyArray<bigint>, probability: number, denominator?: bigint): bigint => {
+  const selectedIndex =
+    denominator === undefined
+      ? Math.floor((values.length - 1) * probability)
+      : Number((BigInt(values.length) - 1n) / denominator)
   return values
     .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0))
     .reduce((selected, value, index) => (index <= selectedIndex ? value : selected))
@@ -140,13 +217,15 @@ const confidenceBounds = (
   controls: ReadonlyArray<CompleteSeries>,
   attemptIndex: number,
   money: ReturnType<typeof moneyScale>,
+  plan: BootstrapPlan,
+  legacy: boolean,
 ) => {
-  let state = protocol.evaluation.uncertainty.seed >>> 0
+  let state = plan.seed >>> 0
   const nextStart = (): number => {
     state ^= state << 13
     state ^= state >>> 17
     state ^= state << 5
-    return Math.floor(((state >>> 0) / 2 ** 32) * candidate.sessions.length)
+    return Number((BigInt(state >>> 0) * BigInt(candidate.sessions.length)) / 4294967296n)
   }
   const candidatePnl = candidate.sessions.map((session) => money.units(session.netPnlUsd))
   const totals: bigint[] = []
@@ -155,12 +234,17 @@ const confidenceBounds = (
     pnl: control.sessions.map((session) => money.units(session.netPnlUsd)),
     differences: [] as bigint[],
   }))
-  for (let replicate = 0; replicate < protocol.evaluation.uncertainty.replicates; replicate += 1) {
+  for (let replicate = 0; replicate < plan.replicates; replicate += 1) {
     const weights = new Map<number, number>()
-    for (let block = 0; block < candidate.sessions.length / 2; block += 1) {
+    let sampled = 0
+    while (sampled < candidate.sessions.length) {
       const start = nextStart()
-      for (const index of [start, (start + 1) % candidate.sessions.length])
+      for (let offset = 0; offset < plan.blockLengthSessions; offset += 1) {
+        const index = (start + offset) % candidate.sessions.length
+        if (sampled === candidate.sessions.length) break
         weights.set(index, (weights.get(index) ?? 0) + 1)
+        sampled += 1
+      }
     }
     const weightedTotal = (pnl: ReadonlyArray<bigint>): bigint =>
       pnl.reduce((total, value, index) => total + value * BigInt(weights.get(index) ?? 0), 0n)
@@ -168,22 +252,37 @@ const confidenceBounds = (
     totals.push(candidateTotal)
     for (const comparison of comparisons) comparison.differences.push(candidateTotal - weightedTotal(comparison.pnl))
   }
-  const comparisonAlpha =
-    protocol.evaluation.uncertainty.familywiseAlpha / (attemptIndex * (attemptIndex + 1)) / controls.length
+  const comparisonAlpha = 0.05 / (attemptIndex * (attemptIndex + 1)) / (legacy ? controls.length : controls.length + 1)
   return {
-    netPnlLowerBound: percentile(totals, 0.05),
+    netPnlLowerBound: percentile(
+      totals,
+      legacy ? 0.05 : comparisonAlpha,
+      legacy ? undefined : 20n * BigInt(controls.length + 1) * BigInt(attemptIndex) * BigInt(attemptIndex + 1),
+    ),
     comparisonAlpha,
     paired: comparisons.map(({ control, pnl, differences }) => ({
       control: control.policy,
       incrementalNetPnl: sum(candidatePnl) - sum(pnl),
-      incrementalNetPnlLowerBound: percentile(differences, comparisonAlpha),
+      incrementalNetPnlLowerBound: percentile(
+        differences,
+        comparisonAlpha,
+        legacy ? undefined : 20n * BigInt(controls.length + 1) * BigInt(attemptIndex) * BigInt(attemptIndex + 1),
+      ),
     })),
   }
 }
 
-const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<CompleteSeries>, attemptIndex: number) => {
+const numericalReport = (
+  candidate: CompleteSeries,
+  controls: ReadonlyArray<CompleteSeries>,
+  attemptIndex: number,
+  version: JevAcceptanceVersion,
+  terms: NumericalAssessmentTerms,
+) => {
+  const protocol = protocolFor(version)
+  const legacy = version !== JevAcceptanceVersion.Current
   const rows = candidate.sessions
-  const money = moneyScale([candidate, ...controls])
+  const money = moneyScale([candidate, ...controls], protocol, terms)
   const sessionCount = BigInt(rows.length)
   const netPnl = sum(rows.map((s) => money.units(s.netPnlUsd)))
   const filledNotional = sum(rows.map((s) => money.units(s.filledNotionalUsd)))
@@ -192,8 +291,8 @@ const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<Comp
     policy: control.policy,
     netPnl: sum(control.sessions.map((s) => money.units(s.netPnlUsd))),
   }))
-  const bounds = confidenceBounds(candidate, controls, attemptIndex, money)
-  let peak = money.units(protocol.riskAcceptance.allocationUsd)
+  const bounds = confidenceBounds(candidate, controls, attemptIndex, money, terms.bootstrap, legacy)
+  let peak = money.units(terms.allocationUsd)
   let maximumDrawdown = 0n
   for (const session of rows) {
     maximumDrawdown = maximum([
@@ -211,32 +310,42 @@ const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<Comp
     rows.flatMap((s) => (s.p95LatencyStress.status === 'COMPLETE' ? [money.units(s.p95LatencyStress.netPnlUsd)] : [])),
   )
   const multiplier = BigDecimal.fromStringUnsafe(protocol.requiredOutcomes.netPnlVsBestMatchedControlAtLeastMultiplier)
-  const checks = {
-    frequency:
-      completedEpisodes >= protocol.evaluation.minimumCompletedEpisodes &&
-      completedEpisodes >= protocol.requiredOutcomes.completedEpisodesPerSessionAtLeast * rows.length,
-    volume:
-      filledNotional >=
-      money.units(protocol.requiredOutcomes.filledBuyPlusSellNotionalPerSessionUsdAtLeast) * sessionCount,
-    netProfit: netPnl >= money.units(protocol.requiredOutcomes.netPnlOver20SessionsUsdAtLeast),
-    observedControlAdvantage:
-      netPnl * 10n ** BigInt(multiplier.scale) >= maximum(controlNetPnl.map((c) => c.netPnl)) * multiplier.value,
-    positiveProfitLowerBound:
-      bounds.netPnlLowerBound >
-      money.units(protocol.evaluation.uncertainty.oneSided95PercentLowerBoundForMeanNetPnlGreaterThan) * sessionCount,
-    pairedIncrementalLowerBounds: bounds.paired.every(
-      (c) =>
-        c.incrementalNetPnlLowerBound >
-        money.units(protocol.evaluation.uncertainty.pairedMeanIncrementalNetPnlUsdLowerBoundGreaterThan) * sessionCount,
-    ),
-    profitWithoutBestSession:
-      netAfterDroppingBestSession >
-      money.units(protocol.requiredOutcomes.minimumNetAfterDroppingBestSessionUsdExclusive),
-    additionalExecutionCost: netAfterAdditionalCostBps > 0n,
-    p95BatchLatency: p95LatencyStressNetPnl > 0n,
-    drawdown: maximumDrawdown <= money.units(protocol.riskAcceptance.maximumMarkedPeakToTroughDrawdownUsd),
-    sessionLoss: maximumSessionLoss <= money.units(protocol.riskAcceptance.maximumSessionLossUsd),
-  }
+  const checks = legacy
+    ? {
+        frequency:
+          completedEpisodes >= protocol.evaluation.minimumCompletedEpisodes &&
+          completedEpisodes >= protocol.requiredOutcomes.completedEpisodesPerSessionAtLeast * rows.length,
+        volume:
+          filledNotional >=
+          money.units(protocol.requiredOutcomes.filledBuyPlusSellNotionalPerSessionUsdAtLeast) * sessionCount,
+        netProfit: netPnl >= money.units(protocol.requiredOutcomes.netPnlUsdAtLeast),
+        observedControlAdvantage:
+          netPnl * 10n ** BigInt(multiplier.scale) >= maximum(controlNetPnl.map((c) => c.netPnl)) * multiplier.value,
+        positiveProfitLowerBound:
+          bounds.netPnlLowerBound >
+          money.units(protocol.evaluation.uncertainty.oneSided95PercentLowerBoundForMeanNetPnlGreaterThan) *
+            sessionCount,
+        pairedIncrementalLowerBounds: bounds.paired.every(
+          (c) =>
+            c.incrementalNetPnlLowerBound >
+            money.units(protocol.evaluation.uncertainty.pairedMeanIncrementalNetPnlUsdLowerBoundGreaterThan) *
+              sessionCount,
+        ),
+        profitWithoutBestSession:
+          netAfterDroppingBestSession >
+          money.units(protocol.requiredOutcomes.minimumNetAfterDroppingBestSessionUsdExclusive),
+        additionalExecutionCost: netAfterAdditionalCostBps > 0n,
+        p95BatchLatency: p95LatencyStressNetPnl > 0n,
+        drawdown: maximumDrawdown <= money.units(protocol.riskAcceptance.maximumMarkedPeakToTroughDrawdownUsd),
+        sessionLoss: maximumSessionLoss <= money.units(protocol.riskAcceptance.maximumSessionLossUsd),
+      }
+    : {
+        netProfit: netPnl > 0n,
+        positiveProfitLowerBound: bounds.netPnlLowerBound > 0n,
+        pairedIncrementalLowerBounds: bounds.paired.every((c) => c.incrementalNetPnlLowerBound > 0n),
+        drawdown: maximumDrawdown <= money.units(terms.maximumDrawdownUsd),
+        sessionLoss: maximumSessionLoss <= money.units(terms.maximumSessionLossUsd),
+      }
   return {
     verdict: Object.values(checks).every(Boolean) ? JevNumericalVerdict.Passed : JevNumericalVerdict.Missed,
     checks,
@@ -245,30 +354,34 @@ const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<Comp
       filledNotionalUsd: money.usd(filledNotional),
       completedEpisodes,
       completedEpisodesPerSession: completedEpisodes / rows.length,
-      filledNotionalPerSessionUsd: money.usd(filledNotional, 1 / rows.length),
+      filledNotionalPerSessionUsd: money.usd(filledNotional, rows.length),
       maximumDrawdownUsd: money.usd(maximumDrawdown),
       maximumSessionLossUsd: money.usd(maximumSessionLoss),
       netAfterDroppingBestSessionUsd: money.usd(netAfterDroppingBestSession),
-      netAfterAdditionalCostUsd: money.usd(netAfterAdditionalCostBps, 1 / 10_000),
-      p95LatencyStressNetPnlUsd: money.usd(p95LatencyStressNetPnl),
+      netAfterAdditionalCostUsd: money.usd(netAfterAdditionalCostBps, 10_000),
+      p95LatencyStressNetPnlUsd:
+        !legacy && rows.some((session) => session.p95LatencyStress.status !== 'COMPLETE')
+          ? null
+          : money.usd(p95LatencyStressNetPnl),
       controlNetPnlUsd: controlNetPnl.map((control) => ({
         policy: control.policy,
         netPnlUsd: money.usd(control.netPnl),
       })),
     },
     confidence: {
-      meanNetPnlUsdLowerBound: money.usd(bounds.netPnlLowerBound, 1 / rows.length),
+      meanNetPnlUsdLowerBound: money.usd(bounds.netPnlLowerBound, rows.length),
       comparisonAlpha: bounds.comparisonAlpha,
+      ...(legacy ? {} : { profitAlpha: bounds.comparisonAlpha }),
       paired: bounds.paired.map((comparison) => ({
         control: comparison.control,
-        meanIncrementalNetPnlUsd: money.usd(comparison.incrementalNetPnl, 1 / rows.length),
-        meanIncrementalNetPnlUsdLowerBound: money.usd(comparison.incrementalNetPnlLowerBound, 1 / rows.length),
+        meanIncrementalNetPnlUsd: money.usd(comparison.incrementalNetPnl, rows.length),
+        meanIncrementalNetPnlUsdLowerBound: money.usd(comparison.incrementalNetPnlLowerBound, rows.length),
       })),
     },
   }
 }
 
-export const evaluateJevAcceptance = (input: unknown) =>
+export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVersion.Current) =>
   Schema.decodeUnknownResult(
     JevAcceptanceInputSchema,
     strictParseOptions,
@@ -276,15 +389,50 @@ export const evaluateJevAcceptance = (input: unknown) =>
     Result.mapError((cause) => new JevAcceptanceError({ message: 'Jev acceptance input is malformed', cause })),
     Result.flatMap((data) =>
       Result.gen(function* () {
-        const protocolHash = yield* jevAcceptanceProtocolHash()
+        const protocol = protocolFor(version)
+        const legacy = version !== JevAcceptanceVersion.Current
+        const protocolHash = yield* jevAcceptanceProtocolHash(version)
+        if (
+          version === JevAcceptanceVersion.RetainedV2 &&
+          data.registration.sessions.length !== retainedProtocol.evaluation.consecutiveSessions
+        )
+          return yield* Result.fail(
+            new JevAcceptanceError({ message: 'Retained v2 evidence must retain its original calendar length' }),
+          )
         const inputHash = yield* canonicalHashV1Result(data)
         const invalid = (message: string) => Result.fail(new JevAcceptanceError({ message }))
         if (data.protocolHash !== protocolHash)
-          return yield* invalid('Acceptance protocol hash differs from the frozen version')
-        if (Date.parse(data.registration.lockedAt) < Date.parse(protocol.frozenAt))
-          return yield* invalid('Candidate registration predates the frozen acceptance protocol')
-        if (new Set(data.policies.map((p) => p.policy)).size !== 4)
-          return yield* invalid('Acceptance requires the candidate and all three distinct controls')
+          return yield* invalid('Acceptance protocol hash differs from the active policy')
+        if (Date.parse(data.registration.lockedAt) < Date.parse(protocol.programStartedAt))
+          return yield* invalid('Candidate registration predates the evaluation program')
+        if (
+          new Set(data.policies.map((p) => p.policy)).size !== data.policies.length ||
+          (legacy && data.policies.length !== 4)
+        )
+          return yield* invalid(
+            legacy
+              ? 'Acceptance requires the candidate and all three distinct controls'
+              : 'Acceptance requires distinct selected policies',
+          )
+        const analysis = data.registration.analysis
+        if (!legacy && analysis === undefined)
+          return yield* invalid('Current evaluation requires prospectively registered analysis terms')
+        const terms: NumericalAssessmentTerms = analysis ?? {
+          allocationUsd: protocol.riskAcceptance.allocationUsd,
+          maximumSessionLossUsd: protocol.riskAcceptance.maximumSessionLossUsd,
+          maximumDrawdownUsd: protocol.riskAcceptance.maximumMarkedPeakToTroughDrawdownUsd,
+          maximumMarkGapMs: 60_000,
+          bootstrap: { blockLengthSessions: 2, replicates: 10000, seed: 20260921 },
+        }
+        if (!legacy) {
+          const plan = validateBootstrapPlan(
+            terms.bootstrap,
+            data.registration.sessions.length,
+            data.registration.attemptIndex,
+            data.policies.length - 1,
+          )
+          if (Result.isFailure(plan)) return yield* invalid(plan.failure)
+        }
         let previousClose = data.registration.lockedAt
         let previousDate = ''
         for (const session of data.registration.sessions) {
@@ -293,7 +441,7 @@ export const evaluateJevAcceptance = (input: unknown) =>
             session.closeAt <= session.openAt ||
             session.sessionDate <= previousDate ||
             session.openAt.slice(0, 10) !== session.sessionDate ||
-            session.closeAt.slice(0, 10) !== session.sessionDate
+            (legacy && session.closeAt.slice(0, 10) !== session.sessionDate)
           )
             return yield* invalid(
               'Registered sessions must be ordered, nonoverlapping and locked before the first open',
@@ -303,9 +451,17 @@ export const evaluateJevAcceptance = (input: unknown) =>
         }
         const series: CompleteSeries[] = []
         const unresolved: { policy: JevResearchPolicy; sessionDate: string; kind: string }[] = []
+        if (!legacy && data.registration.sessions.length <= terms.bootstrap.blockLengthSessions)
+          unresolved.push({
+            policy: JevResearchPolicy.Candidate,
+            sessionDate: data.registration.sessions[0]?.sessionDate ?? '',
+            kind: 'INSUFFICIENT_INDEPENDENT_BLOCKS',
+          })
         for (const policy of data.policies) {
+          if (policy.sessions.length !== data.registration.sessions.length)
+            return yield* invalid('Policy sessions do not cover the complete registered calendar')
           const complete: (typeof CompleteSession.Type)[] = []
-          let previousEquity = protocol.riskAcceptance.allocationUsd
+          let previousEquity = terms.allocationUsd
           for (const [index, session] of policy.sessions.entries()) {
             if (session.sessionDate !== data.registration.sessions[index]?.sessionDate)
               return yield* invalid('Policy sessions differ from the registered calendar')
@@ -313,9 +469,9 @@ export const evaluateJevAcceptance = (input: unknown) =>
               unresolved.push({ policy: policy.policy, sessionDate: session.sessionDate, kind: 'BASE' })
               continue
             }
-            if (session.p95LatencyStress.status === 'UNRESOLVED')
+            if (legacy && session.p95LatencyStress.status === 'UNRESOLVED')
               unresolved.push({ policy: policy.policy, sessionDate: session.sessionDate, kind: 'P95_LATENCY' })
-            if (session.maximumMarkGapMs > 60_000)
+            if (session.maximumMarkGapMs > terms.maximumMarkGapMs)
               unresolved.push({ policy: policy.policy, sessionDate: session.sessionDate, kind: 'MARK_COVERAGE' })
             if (
               session.minimumEquityUsd > Math.min(session.openingEquityUsd, session.closingEquityUsd) ||
@@ -342,7 +498,7 @@ export const evaluateJevAcceptance = (input: unknown) =>
           protocol.evaluation.uncertainty.familywiseAlpha /
           (data.registration.attemptIndex * (data.registration.attemptIndex + 1)) /
           3
-        if (comparisonAlpha * protocol.evaluation.uncertainty.replicates < 1)
+        if (legacy && comparisonAlpha * protocol.evaluation.uncertainty.replicates < 1)
           return yield* invalid(
             'The registered attempt requires more tail resolution than the frozen bootstrap supplies',
           )
@@ -360,6 +516,8 @@ export const evaluateJevAcceptance = (input: unknown) =>
                 candidate,
                 series.filter((s) => s.policy !== JevResearchPolicy.Candidate),
                 data.registration.attemptIndex,
+                version,
+                terms,
               )),
         }
         const reportHash = yield* canonicalHashV1Result(report)

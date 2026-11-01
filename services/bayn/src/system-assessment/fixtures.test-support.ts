@@ -18,7 +18,7 @@ import {
 } from '../jev/entry-ablation-policy'
 import { IsoDateSchema } from '../schemas'
 import { canonicalHashV1Result, sha256 } from '../hash'
-import { jevAcceptanceProtocolHash, JevResearchPolicy } from '../jev/acceptance'
+import { jevAcceptanceProtocolHash, JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
 import { ObligationClass, ObligationOutcome } from './reliability'
 import { systemQualificationPolicyHash, type SystemRegistration } from './policy'
@@ -48,11 +48,11 @@ export const registeredRiskFixture = (accountId: string) => {
   }
 }
 
-export const activeEvaluationSessions = (now: number) => {
+export const activeEvaluationSessions = (now: number, sessionCount = 20) => {
   const day = 86_400_000
   const requestedOpen = now + 1500
   const opens = Math.min(requestedOpen, (Math.floor(requestedOpen / day) + 1) * day - 2)
-  const sessions = Array.from({ length: 20 }, (_, index) => {
+  const sessions = Array.from({ length: sessionCount }, (_, index) => {
     const requested = opens + index * day
     const lastMillisecond = (Math.floor(requested / day) + 1) * day - 1
     const open = index === 0 ? requested : Math.min(requested, lastMillisecond - 120_000)
@@ -96,8 +96,10 @@ const momentumIdentity = Result.getOrThrow(
   ),
 )
 
-const baseRegistrationFixture = (): SystemRegistration => ({
-  schemaVersion: 'bayn.system-registration.v2',
+const baseRegistrationFixture = (sessionCount: number): SystemRegistration => ({
+  schemaVersion: 'bayn.system-registration.v3',
+  allocationMicros: '100000000000',
+  bootstrap: { blockLengthSessions: Math.min(2, sessionCount), replicates: 10000, seed: 20260921 },
   program: 'BAYN_SYSTEM_QUALIFICATION',
   environment: 'PAPER',
   policyHash: Result.getOrThrow(systemQualificationPolicyHash()),
@@ -110,7 +112,7 @@ const baseRegistrationFixture = (): SystemRegistration => ({
     tradingMarkets: [MarketKind.Equity, MarketKind.Crypto],
     operatingHours: 'REGULAR_SESSION',
     sourceHash: sha256('synthetic calendar'),
-    sessions: Array.from({ length: 20 }, (_, i) => {
+    sessions: Array.from({ length: sessionCount }, (_, i) => {
       const day = Schema.decodeUnknownSync(IsoDateSchema)(
         new Date(Date.UTC(2026, 10, 2 + i + Math.floor(i / 5) * 2)).toISOString().slice(0, 10),
       )
@@ -247,8 +249,12 @@ export const withRegistrationCommitments = (registration: SystemRegistration): S
   }
 }
 
-export const registrationFixture = (registeredAt?: string): SystemRegistration => {
-  let registration = baseRegistrationFixture()
+export const registrationFixture = (
+  registeredAt?: string,
+  sessionCount = 20,
+  version = JevAcceptanceVersion.Current,
+): SystemRegistration => {
+  let registration = baseRegistrationFixture(sessionCount)
   if (registeredAt !== undefined) {
     const firstMonday = new Date(registeredAt)
     firstMonday.setUTCDate(firstMonday.getUTCDate() + ((8 - firstMonday.getUTCDay()) % 7 || 7))
@@ -287,6 +293,15 @@ export const registrationFixture = (registeredAt?: string): SystemRegistration =
       },
     })),
   }
+  if (version !== JevAcceptanceVersion.Current && registration.schemaVersion === 'bayn.system-registration.v3') {
+    const { allocationMicros: _allocation, bootstrap: _bootstrap, ...retained } = registration
+    registration = {
+      ...retained,
+      schemaVersion: 'bayn.system-registration.v2',
+      policyHash: Result.getOrThrow(systemQualificationPolicyHash(version)),
+      acceptanceProtocolHash: Result.getOrThrow(jevAcceptanceProtocolHash(version)),
+    }
+  }
   return withRegistrationCommitments({
     ...registration,
     calendar: { ...registration.calendar, sourceHash: testHash(calendarFixture(registration)) },
@@ -294,7 +309,12 @@ export const registrationFixture = (registeredAt?: string): SystemRegistration =
 }
 
 export const assessmentFixture = (registration: SystemRegistration = registrationFixture()) => {
-  const asOf = '2026-12-01T00:00:00.000Z'
+  const asOf = new Date(
+    Math.max(
+      Date.parse('2026-12-01T00:00:00.000Z'),
+      Date.parse(registration.calendar.sessions.at(-1)?.closeAt ?? '') + 1,
+    ),
+  ).toISOString()
   const verifiedSources = new Set<string>()
   const source = (hash: string) => {
     verifiedSources.add(hash)
@@ -501,8 +521,8 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
   return { input, verifiedSources, source }
 }
 
-export const supportedAssessmentFixture = () => {
-  const fixture = assessmentFixture()
+export const supportedAssessmentFixture = (sessionCount = 20) => {
+  const fixture = assessmentFixture(registrationFixture(undefined, sessionCount))
   const decisions: (typeof DecisionRealismSchema.Type)[] = []
   const fills: (typeof FillRealismSchema.Type)[] = []
   for (const policy of fixture.input.policies) {

@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export default async function AccessPage() {
   const identity = await getTengriIdentity(await headers())
   return (
-    <main className="min-h-screen bg-zinc-950 px-6 py-10 text-zinc-100">
+    <main className="tengri-theme font-geist min-h-screen bg-zinc-950 px-6 py-10 text-zinc-100">
       <div className="mx-auto max-w-4xl space-y-6">
         <header className="flex items-center justify-between">
           <h1 className="text-xl font-semibold">Tengri access</h1>
