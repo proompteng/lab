@@ -705,7 +705,6 @@ identityTest(
         },
         stdio: 'pipe',
       })
-    bootstrap(githubSecret, 'fixture-bff-secret-not-production-0000000')
     const adminCall = async (endpoint: string, method = 'GET', body?: unknown) => {
       const tokenResponse = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
         method: 'POST',
@@ -726,6 +725,62 @@ identityTest(
       if (!response.ok) throw new Error(`Fixture Keycloak setup ${response.status} ${endpoint}`)
       return response
     }
+    // Start from the shipped broker-only realm; bootstrap upgrades it after passkeys are enrolled.
+    const legacyRealm = z
+      .object({
+        browserFlow: z.string(),
+        authenticationFlows: z.array(
+          z
+            .object({
+              alias: z.string(),
+              authenticationExecutions: z.array(z.object({ authenticator: z.string().optional() }).passthrough()),
+            })
+            .passthrough(),
+        ),
+        authenticatorConfig: z.array(
+          z.object({ alias: z.string(), config: z.record(z.string(), z.string()) }).passthrough(),
+        ),
+        clients: z.array(z.object({ secret: z.string().optional() }).passthrough()),
+        identityProviders: z.array(z.object({ config: z.record(z.string(), z.string()) }).passthrough()),
+      })
+      .passthrough()
+      .parse(JSON.parse(readFileSync(path.join(root, 'argocd/applications/keycloak/tengri/realm.json'), 'utf8')))
+    legacyRealm.browserFlow = 'tengri-github'
+    legacyRealm.authenticationFlows = legacyRealm.authenticationFlows.filter(
+      (flow) => flow.alias !== 'platform-browser',
+    )
+    const legacyBroker = legacyRealm.authenticationFlows.find((flow) => flow.alias === 'tengri-github')
+    const legacyAssurance = legacyRealm.authenticatorConfig.find((config) => config.alias === 'tengri-level-two')
+    if (!legacyBroker || !legacyAssurance || !legacyRealm.clients[0] || !legacyRealm.identityProviders[0])
+      throw new Error('Legacy identity fixture definition missing')
+    legacyBroker.authenticationExecutions = legacyBroker.authenticationExecutions.filter(
+      (execution) => execution.authenticator === 'identity-provider-redirector',
+    )
+    legacyAssurance.config['loa-max-age'] = '0'
+    legacyRealm.clients[0].secret = 'fixture-bff-secret-not-production-0000000'
+    Object.assign(legacyRealm.identityProviders[0].config, { clientId: 'fixture-github', clientSecret: githubSecret })
+    const seedToken = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
+      method: 'POST',
+      body: new URLSearchParams({
+        client_id: 'admin-cli',
+        grant_type: 'password',
+        username: 'fixture-admin',
+        password: 'fixture-only-password',
+      }),
+    })
+    if (!seedToken.ok) throw new Error('Legacy fixture administrator unavailable')
+    const token = z.object({ access_token: z.string() }).parse(await seedToken.json()).access_token
+    const seeded = await fetch(adminBase + '/admin/realms', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(legacyRealm),
+    })
+    if (seeded.status !== 201) throw new Error(`Legacy realm seed failed: ${seeded.status}`)
+    await adminCall(
+      '/users/profile',
+      'PUT',
+      JSON.parse(readFileSync(path.join(root, 'argocd/applications/keycloak/tengri/user-profile.json'), 'utf8')),
+    )
     const provider = z
       .object({ config: z.record(z.string(), z.string()) })
       .passthrough()
@@ -1151,9 +1206,11 @@ identityTest(
     expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
     await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
+    bootstrap(githubSecret, rotatedBffSecret)
     expect(await (await adminCall('')).json()).toMatchObject({
       ...webAuthnPolicy,
       loginTheme: 'tengri',
+      browserFlow: 'platform-browser',
       webAuthnPolicyUserVerificationRequirement: 'discouraged',
     })
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
@@ -1512,7 +1569,7 @@ identityTest(
     await page.waitForURL(base + '/')
     await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
-    const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
+    let replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
     expect(Date.now() - keycloakFailoverStarted).toBeLessThan(30_000)
     expect(await credentialIdentities()).toEqual(passkeysBeforeFailover)
@@ -1530,6 +1587,30 @@ identityTest(
     ).toBe(subjectBeforeFailover)
     console.log(
       'PASS: two production Keycloak 26.7.4 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
+    )
+
+    const challengesBeforeSso = webAuthnRequests.length
+    const ssoUrl = await page.evaluate(async () => {
+      const response = await fetch('/api/auth/login', { method: 'POST' })
+      if (!response.ok) throw new Error('SSO sign-in could not start')
+      return (await response.json()).url
+    })
+    expect(new URL(ssoUrl).searchParams.has('prompt')).toBe(false)
+    expect(new URL(ssoUrl).searchParams.get('max_age')).toBe('28800')
+    await page.goto(ssoUrl)
+    await page.waitForURL(base + '/')
+    expect(webAuthnRequests).toHaveLength(challengesBeforeSso)
+    const ssoCookie = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
+    const ssoIdentity = await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${ssoCookie?.value}` }))
+    expect(ssoIdentity?.session.id).toBe(survivingSession?.session.id)
+    expect(ssoIdentity?.session.mfaAtUnixMs).toBe(survivingSession?.session.mfaAtUnixMs)
+    expect(ssoIdentity?.session.expiresAtUnixMs).toBeLessThanOrEqual(
+      (survivingSession?.session.mfaAtUnixMs || BigInt(0)) + BigInt(28_800_000),
+    )
+    expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }))).toBeNull()
+    replacement = ssoCookie
+    console.log(
+      'PASS: broker-only realm upgrades with enrolled passkeys; repeated bootstrap converges, ordinary SSO preserves authority and assurance without a new challenge or a sliding expiry',
     )
 
     // A second numeric GitHub identity has the same verified email upstream.
@@ -1597,6 +1678,7 @@ identityTest(
     expect(distinct.rowCount).toBe(2)
     expect(new Set(distinct.rows.map((row) => row.identity_subject)).size).toBe(2)
     await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await secondContext.clearCookies({ domain: 'auth.proompteng.ai' })
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
     await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
     await secondPage.getByRole('link', { name: 'GitHub fixture 2', exact: true }).click()
@@ -1761,7 +1843,7 @@ identityTest(
           "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
         )
       ).rows[0]?.count,
-    ).toBe('5')
+    ).toBe('6')
     expect(webAuthnRequests.length).toBeGreaterThan(0)
     for (const request of webAuthnRequests)
       expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
@@ -1796,6 +1878,7 @@ identityTest(
     })
     await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId })
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await context.clearCookies({ domain: 'auth.proompteng.ai' })
     await page.setViewportSize({ width: 390, height: 844 })
     await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()

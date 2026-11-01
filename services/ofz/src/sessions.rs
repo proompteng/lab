@@ -281,7 +281,7 @@ impl Issuer {
             || claims.exp <= now
             || claims.auth_time > now + 30
             || claims.auth_time > claims.iat + 30
-            || claims.auth_time + 120 < now
+            || claims.auth_time + 28_800 <= now
         {
             return Err(Status::unauthenticated("identity claim binding failed"));
         }
@@ -590,11 +590,12 @@ async fn establish_verified(
             .await?;
         }
     }
+    let expires_at = (claims.auth_time * 1000 + 28_800_000).min(state.now_ms + 28_800_000);
     let session = Session {
         id: id.to_string(),
         human_id: human.clone(),
-        expires_at_unix_ms: state.now_ms + 28_800_000,
-        idle_deadline_unix_ms: state.now_ms + 1_800_000,
+        expires_at_unix_ms: expires_at,
+        idle_deadline_unix_ms: expires_at.min(state.now_ms + 1_800_000),
         mfa_at_unix_ms: claims.auth_time * 1000,
         recovery_generation: state.recovery_generation,
         credential: request.credential.clone(),

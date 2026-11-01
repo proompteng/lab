@@ -151,6 +151,10 @@ The BFF supplies a fresh 256-bit credential when establishing a session and reus
 RPC retries. Ofz binds its operation ID to the credential hash and full request fingerprint. A committed retry returns
 the same still-active credential without consuming another OIDC nonce, creating a session, extending idle time, or
 writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
+Ordinary browser sign-in may reuse the issuer's verified passkey SSO. Ofz still requires a token issued within two
+minutes, the gateway's audience and authorized party, and level-two assurance authenticated within eight hours.
+The absolute session deadline never exceeds that authentication time plus eight hours; SSO cannot slide it forward.
+Sensitive changes retain their separate fresh-MFA requirement.
 A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
 
 `AuthorizeCommand` checks human command permission before the BFF resolves an external subject. It produces an audit

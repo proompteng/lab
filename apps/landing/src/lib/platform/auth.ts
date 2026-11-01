@@ -146,9 +146,12 @@ export async function handlePlatformAuth(request: Request) {
           code_challenge_method: 'S256',
           kc_idp_hint: 'github',
           acr_values: '2',
-          prompt: 'login',
-          max_age: '0',
+          max_age: '28800',
         }).toString()
+        if (url.pathname !== '/api/auth/login') {
+          authorize.searchParams.set('prompt', 'login')
+          authorize.searchParams.set('max_age', '0')
+        }
         if (url.pathname === '/api/auth/add-passkey') authorize.searchParams.set('kc_action', 'webauthn-register')
         responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, binding, 300))
         return Response.json({ url: authorize.href }, { headers: responseHeaders })

@@ -5,13 +5,20 @@ It preserves the master realm, Headlamp and Agents Shell clients.
 
 `bootstrap.py` imports only a new, initially disabled realm. It locks managed profile attributes, verifies the GitHub
 provider, exact client callbacks, protocol mappers, required actions and authentication flows before enabling it.
-Repeat runs verify configuration and fail on drift outside the managed login theme and WebAuthn user-verification
-policy. After verification they reconcile those settings and the mounted GitHub and BFF client secrets through the
+Repeat runs verify configuration and fail on drift outside the managed browser SSO flow, login theme and WebAuthn
+user-verification policy. After verification they reconcile those settings and the mounted GitHub and BFF client secrets through the
 administrator API, then verify the realm settings and BFF secret readback. They preserve users, passkeys and broker
 links. Keycloak replaces the WebAuthn policy as a unit when its RP entity name is present, so reconciliation sends
 the current complete policy with only the user-verification requirement changed. The isolated browser fixture
 migrates the former PIN-required policy, rotates both secrets after passkey
 enrollment, rejects the old BFF secret and completes a fresh login using the rotated GitHub and BFF credentials.
+
+`platform-browser` reuses verified level-two SSO for up to eight hours and composes the existing GitHub and passkey
+flows. Ordinary sign-in can return directly to the application. Step-up and passkey enrollment request forced
+reauthentication, which resets the current assurance level before the passkey flow runs. Ofz still verifies signed
+level-two assurance and token freshness, caps session expiry at the original authentication deadline, and requires
+recent MFA for sensitive changes. The browser fixture starts from the shipped broker-only configuration with enrolled
+passkeys and verifies its upgrade, ordinary SSO without a new challenge, and fresh step-up.
 
 The dedicated `tengri` login theme extends Keycloak's built-in theme. Its shared layout covers passkey setup,
 verification and errors with the landing app's Geist font, pear mark, dark wallpaper, window and blue actions.
