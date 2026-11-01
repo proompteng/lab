@@ -5,9 +5,10 @@ Relay client installation is an authenticated guest-control operation. It uses t
 installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The Relay MCP bridge uses the platform proxy's required execute-or-lookup envelope. Each request has its own proof
-over the exact body. After a lost execution response, the bridge requests receipt metadata without resending the
-operation. It returns an MCP error with the known outcome or `unknown`; it cannot recover the original result body.
-Successful calls and recovery responses include operation and receipt IDs in `_meta.relay`.
+over the exact body. After a failed call or an unusable response, including Kubernetes RBAC and missing-resource failures,
+the bridge requests receipt metadata without resending the operation. It returns an MCP error with the known
+outcome or `unknown` if lookup is denied or unavailable; it cannot recover the original result body.
+Successful calls and confirmed recovery responses include operation and receipt IDs in `_meta.relay`.
 
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
@@ -58,7 +59,7 @@ failures stop immediately; closing the viewer cancels any retry without reportin
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 9 hard-migrates Relay client installation; protocol 8 added `StatFile`,
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 10 scopes uncertain-operation fences to each conversation; protocol 9 hard-migrated Relay client installation; protocol 8 added `StatFile`,
 which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
 workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
 images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview
@@ -78,8 +79,8 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
-requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 10. This version
+requires conversation-scoped pending-operation fences, confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
 for file operations, file events, and terminal working directories. The BFF
 requires that version in the controller's existing authenticated audience response before signing a request. The signed
 target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real

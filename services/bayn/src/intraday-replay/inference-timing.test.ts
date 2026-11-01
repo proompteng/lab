@@ -1,9 +1,10 @@
+import { evaluateFixtureEntry } from '../jev/evaluation.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { entryEvaluationRequestFixture, nativeChartInference } from '../jev/entry-inference.test-support'
 import { nativeJevInference } from '../jev/native.test-support'
 import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
-import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../jev/entry-inference'
+import { EntryInferenceJournal } from '../jev/entry-inference'
 import { expect, test } from 'bun:test'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -594,7 +595,7 @@ test('a substituted response identity fails the replay after preserving the actu
 })
 
 test.each([1000, null])(
-  'chart, durable handoff and Jev share the original deadline (Jev latency %s)',
+  'chart, selected base, durable handoff and Jev share the original deadline (Jev latency %s)',
   async (latencyMs) => {
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -605,7 +606,7 @@ test.each([1000, null])(
         const chartReceived = yield* Deferred.make<void>()
         let committed = false
         let cancelled = false
-        const budget = makeReplayInferenceBudget(2)
+        const budget = makeReplayInferenceBudget(3)
         const timing = yield* makeReplayInferenceTiming({
           ...f,
           budget,
@@ -640,7 +641,7 @@ test.each([1000, null])(
           },
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
         const operation = timing.run(
-          evaluateClaimedEntryInference({
+          evaluateFixtureEntry({
             requestId: request.requestId,
             input: request.request,
             observedAt: request.observedAt,
@@ -650,13 +651,30 @@ test.each([1000, null])(
             Effect.provideService(JevClient, timing.clients.jev),
             Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, {
-              recordHandoff: () =>
-                f.providerClock.adjust(1000).pipe(
-                  Effect.as({ dispatchAllowed: true }),
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      committed = true
-                    }),
+              recordVisualClaims: (claims) =>
+                Effect.succeed(claims.map((claim) => ({ requestId: claim.requestId, dispatchAllowed: true }))),
+              recordTransitions: (transitions) =>
+                Effect.forEach(transitions, ({ terminal, successor }) =>
+                  (successor.kind === 'HANDOFF'
+                    ? f.providerClock.adjust(1000).pipe(
+                        Effect.as({ dispatchAllowed: true }),
+                        Effect.tap(() =>
+                          Effect.sync(() => {
+                            committed = true
+                          }),
+                        ),
+                      )
+                    : Effect.succeed({ dispatchAllowed: successor.kind === 'VISUAL' })
+                  ).pipe(
+                    Effect.map((admission) => ({
+                      requestId:
+                        terminal === null
+                          ? successor.kind === 'HANDOFF'
+                            ? successor.handoff.requestId
+                            : ''
+                          : terminal.requestId,
+                      ...admission,
+                    })),
                   ),
                 ),
             }),
@@ -666,14 +684,15 @@ test.each([1000, null])(
         const fiber = yield* operation.pipe(Effect.forkChild)
         yield* Deferred.await(chartReceived)
         yield* Deferred.await(jevStarted)
-        expect(budgets).toEqual([10_000, 6000])
-        if (latencyMs === null) yield* f.providerClock.adjust(6000)
+        expect(budgets).toEqual([10_000, 7000, 3000])
+        if (latencyMs === null) yield* f.providerClock.adjust(3000)
         const result = yield* Fiber.join(fiber)
         expect(f.calls.map((call) => [call.stage, call.budgetMs])).toEqual([
           ['CHART', 10_000],
-          ['JEV', 6000],
+          ['BASE_START', 7000],
+          ['JEV', 3000],
         ])
-        expect(budget.dispatchCount()).toBe(2)
+        expect(budget.dispatchCount()).toBe(3)
         if (latencyMs === null) {
           expect(cancelled).toBe(true)
           expect(result.jev).toMatchObject({ status: 'FAILED', failure: JevFailure.Timeout })
@@ -705,7 +724,7 @@ test('exhausting the shared budget after the chart retains its paid call and pre
       }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
       const result = yield* timing
         .run(
-          evaluateClaimedEntryInference({
+          evaluateFixtureEntry({
             requestId: request.requestId,
             input: request.request,
             observedAt: request.observedAt,
@@ -715,7 +734,15 @@ test('exhausting the shared budget after the chart retains its paid call and pre
             Effect.provideService(JevClient, timing.clients.jev),
             Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, {
-              recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
+              recordVisualClaims: (claims) =>
+                Effect.succeed(claims.map((claim) => ({ requestId: claim.requestId, dispatchAllowed: true }))),
+              recordTransitions: (inputs) =>
+                Effect.succeed(
+                  inputs.map((input) => ({
+                    requestId: input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId,
+                    dispatchAllowed: input.successor.kind !== 'NONE',
+                  })),
+                ),
             }),
             Effect.provideService(Clock.Clock, f.marketClock),
           ),
