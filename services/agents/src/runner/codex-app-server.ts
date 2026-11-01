@@ -17,6 +17,7 @@ import { ensureFileDirectory } from '../../scripts/codex/lib/fs'
 import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../runner-result'
 
 import { RUNNER_LOG_SUFFIX, type RunnerTelemetry } from '../runner-telemetry'
+import { encodeRunnerStatus } from '../runner-status'
 
 import { uploadOutputArtifacts } from './artifact-upload'
 import { createRunnerTelemetry, createTelemetryPublisher } from './telemetry'
@@ -841,7 +842,13 @@ const writeStatus = async (statusPath: string | undefined, status: CodexAppServe
   if (!statusPath) return
   try {
     await ensureFileDirectory(statusPath)
-    await writeFile(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
+    const encoded = encodeRunnerStatus(status)
+    if (encoded.logLine) {
+      await new Promise<void>((resolve, reject) => {
+        process.stdout.write(encoded.logLine, (error) => (error ? reject(error) : resolve()))
+      })
+    }
+    await writeFile(statusPath, encoded.message, 'utf8')
   } catch (error) {
     throw new CodexRunnerStatusError({ operation: 'write-status', path: statusPath, cause: error })
   }

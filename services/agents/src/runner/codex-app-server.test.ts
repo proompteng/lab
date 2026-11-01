@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { extractRunnerStatusFromJobPods } from '../server/agents-controller/runner-status'
+import { RUNNER_STATUS_EVENT, RUNNER_TERMINATION_BYTES } from '../runner-status'
 
 import {
   CodexRunnerArtifactError,
@@ -127,6 +129,73 @@ describe('codex app-server runner adapter', () => {
       },
     })
     expect(await readFile(logPath, 'utf8')).toContain('checkout unavailable')
+  })
+
+  it('keeps long artifact references and Unicode previews within the termination byte limit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'runner-status-budget-'))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
+    const runPath = join(dir, 'run.json')
+    await writeFile(runPath, JSON.stringify({ implementation: { text: 'task' } }))
+    const statusPath = join(dir, 'status.json')
+    const logPath = join(dir, 'runner.log')
+    const stdout = vi.spyOn(process.stdout, 'write')
+    onTestFinished(() => stdout.mockRestore())
+    await runCodexAppServerAdapter(
+      {
+        provider: 'codex',
+        payloads: { eventFilePath: runPath },
+        artifacts: { statusPath, logPath },
+        providerSpec: {
+          outputArtifacts: [
+            { name: 'runner-result', path: join(dir, 'result.json'), key: 'r'.repeat(512) },
+            { name: 'runner-log', path: logPath },
+            { name: 'extra', path: join(dir, 'extra.json'), key: 'e'.repeat(512) },
+          ],
+        },
+      },
+      { prompt: 'task' },
+      {
+        createClient: () => ({
+          runTurnStream: async () => ({
+            threadId: 'thread',
+            turnId: 'turn',
+            stream: (async function* () {
+              yield { type: 'message' as const, delta: '界'.repeat(256) }
+              return makeTurn('completed')
+            })(),
+          }),
+        }),
+        uploadArtifacts: async (artifacts) =>
+          artifacts.map((artifact) => ({ ...artifact, url: `s3://agents-artifacts/${artifact.key}` })),
+      },
+    )
+    const message = await readFile(statusPath, 'utf8')
+    expect(Buffer.byteLength(message)).toBeLessThanOrEqual(RUNNER_TERMINATION_BYTES)
+    expect(JSON.parse(message)).toHaveProperty('runnerStatusDigest')
+    const logs = stdout.mock.calls.map(([line]) => String(line)).join('')
+    expect(logs).toContain(RUNNER_STATUS_EVENT)
+    const kube = {
+      list: vi.fn(async () => ({
+        items: [
+          {
+            metadata: { name: 'pod' },
+            status: { containerStatuses: [{ name: 'agent-runner', state: { terminated: { message } } }] },
+          },
+        ],
+      })),
+      logs: vi.fn(async () => `${logs}later diagnostic\n`),
+    }
+    const retained = await extractRunnerStatusFromJobPods(kube, 'agents', 'job')
+    expect(retained).toMatchObject({
+      status: 'succeeded',
+      telemetry: { state: 'finished' },
+      result: { text: '界'.repeat(256) },
+    })
+    expect(retained?.artifacts?.outputArtifacts).toHaveLength(3)
+    expect(retained?.artifacts?.outputArtifacts?.[0]?.url).toBe(`s3://agents-artifacts/${'r'.repeat(512)}`)
+    expect(kube.logs).toHaveBeenCalledWith(
+      expect.objectContaining({ pod: 'pod', namespace: 'agents', container: 'agent-runner', limitBytes: 1_048_576 }),
+    )
   })
 
   it('uses an absolute Codex binary path by default for Bun child-process spawning', () => {

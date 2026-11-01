@@ -85,6 +85,20 @@ for identity_mode in default override; do
   rm -f "${identity_render}"
 done
 
+runner_rbac_render="$(mktemp)"
+run_with_helm3 helm template agents "${CHART_DIR}" --namespace agents \
+  --set runnerServiceAccount.create=true --set runnerServiceAccount.rbac.create=true \
+  --show-only templates/runner-rbac.yaml > "${runner_rbac_render}"
+python3 - "${runner_rbac_render}" <<'PY'
+import sys
+import yaml
+
+role = next(doc for doc in yaml.safe_load_all(open(sys.argv[1])) if doc['kind'] == 'Role')
+write_rules = [rule for rule in role['rules'] if set(rule['verbs']) & {'create', 'update', 'patch', 'delete', '*'}]
+assert write_rules == [{'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['patch']}], write_rules
+PY
+rm -f "${runner_rbac_render}"
+
 chart_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/Chart.yaml" | sed "s/[\"']//g")"
 artifacthub_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/artifacthub-pkg.yml" | sed "s/[\"']//g")"
 if [[ -z "${chart_version}" || -z "${artifacthub_version}" || "${chart_version}" != "${artifacthub_version}" ]]; then

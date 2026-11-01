@@ -155,6 +155,11 @@ the worker is active. The API reads a dedicated ConfigMap owned by the exact
 AgentRun UID; it never writes progress into the Kubernetes AgentRun status.
 The snapshot is retained in `agentRun.payload.resource.status.runner.telemetry`
 after resource cleanup. Terminal runner status carries the final snapshot.
+Termination files are bounded to 4 KiB of compact UTF-8 JSON. When a larger
+status is needed, the file carries a SHA-256 reference to a structured terminal
+event in the same container's logs. The controller resolves and validates that
+event before retaining the full status; it retries unavailable or mismatched
+references instead of accepting incomplete metadata. Log reads are bounded to 1 MiB.
 
 The snapshot includes heartbeat and last-activity timestamps, active tools and
 start times, thread and turn IDs, configured model and reasoning effort, cumulative
@@ -168,6 +173,8 @@ ConfigMap permissions. Providers that use a separate, audience-scoped identity
 projection keep local/stdout and terminal telemetry without adding a Kubernetes
 API credential. Publication failures are logged and counted without failing the
 task. Heartbeat liveness and model/tool activity have separate timestamps.
+The optional chart-managed runner Role grants ConfigMap patch for publication;
+its other resource permissions remain read-only.
 
 With the existing `agents-artifacts` Secret and a keyed `runner-result` artifact,
 the runner archives the completed JSONL log at `<result-key>.events.jsonl` on both

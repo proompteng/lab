@@ -122,7 +122,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 163 control-plane source files, 50236 LOC across 6 current boundaries.
+Summary: 163 control-plane source files, 50285 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -237,7 +237,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/rate-limits.ts`             |   97 |
 | `services/agents/src/server/agents-controller/resource-reconcilers.ts`    |  763 |
 | `services/agents/src/server/agents-controller/run-utils.ts`               |  153 |
-| `services/agents/src/server/agents-controller/runner-status.ts`           |  244 |
+| `services/agents/src/server/agents-controller/runner-status.ts`           |  293 |
 | `services/agents/src/server/agents-controller/runtime-config.ts`          |  265 |
 | `services/agents/src/server/agents-controller/runtime-debris.ts`          |  160 |
 | `services/agents/src/server/agents-controller/runtime-resources.ts`       |   84 |
