@@ -419,21 +419,12 @@ def evaluate (json : Json) : Except String Json := do
         ("unrealizedPnlMicros", toJson (toString value.unrealized)),
         ("positionCount", toJson value.positionCount)]
   | "registeredRisk" =>
-    let limitsJson ← json.getObjVal? "limits"
-    let limits : RegisteredRiskLimits := {
-      order := ← readNatural limitsJson "order",
-      symbol := ← readNatural limitsJson "symbol",
-      gross := ← readNatural limitsJson "gross",
-      net := ← readNatural limitsJson "net",
-      turnover := ← readNatural limitsJson "turnover"
-    }
     let binding : RegisteredRiskBinding := {
       declaredPolicyHash := ← json.getObjValAs? String "declaredPolicyHash",
       materialPolicyHash := ← json.getObjValAs? String "materialPolicyHash",
       declaredAccountHash := ← json.getObjValAs? String "declaredAccountHash",
       materialAccountHash := ← json.getObjValAs? String "materialAccountHash",
-      approvedPolicyHashes := ← json.getObjValAs? (List String) "approvedPolicyHashes",
-      limits
+      approvedPolicyHashes := ← json.getObjValAs? (List String) "approvedPolicyHashes"
     }
     return toJson (decide (registeredRiskPreserved binding))
   | "frozenQuantity" =>
@@ -797,17 +788,17 @@ def evaluate (json : Json) : Except String Json := do
       return (← readNatural row "good", ← readNatural row "scheduled")
     let evidence : QualificationEvidence := {
       sessionCount := ← readNatural json "sessionCount",
+      controlCount := ← readNatural json "controlCount",
+      blockLength := ← readNatural json "blockLengthSessions",
+      bootstrapReplicates := ← readNatural json "replicates",
+      attemptIndex := ← readNatural json "attemptIndex",
       netProfit := ← readInteger json "netProfit",
-      bestControlProfit := ← readInteger json "bestControlProfit",
       profitLowerBoundTotal := ← readInteger json "profitLowerBoundTotal",
       pairedLowerBoundTotals := (← readIntegerArray (← json.getObjVal? "pairedLowerBoundTotals")).toList,
-      profitWithoutBest := ← readInteger json "profitWithoutBest",
-      additionalCostProfit := ← readInteger json "additionalCostProfit",
-      latencyStressProfit := ← readInteger json "latencyStressProfit",
       maximumSessionLoss := ← readNatural json "maximumSessionLoss",
       maximumDrawdown := ← readNatural json "maximumDrawdown",
-      completedEpisodes := ← readNatural json "completedEpisodes",
-      filledNotional := ← readNatural json "filledNotional",
+      maximumSessionLossLimit := ← readNatural json "maximumSessionLossLimit",
+      maximumDrawdownLimit := ← readNatural json "maximumDrawdownLimit",
       reliability := reliability.toList,
       safetyViolations := ← readNatural json "safetyViolations",
       completeEvidence := ← json.getObjValAs? Bool "completeEvidence",
@@ -831,10 +822,14 @@ def evaluate (json : Json) : Except String Json := do
     let candidate ← readIntegerArray (← json.getObjVal? "candidate")
     let controls ← (← (← json.getObjVal? "controls").getArr?).mapM readIntegerArray
     let attempt ← readNatural json "attemptIndex"
-    if candidate.size == 0 || controls.size != 3 || controls.any (fun c => c.size != candidate.size) then
-      throw "bootstrap requires a nonempty matched window and three controls"
-    if ¬ tailResolutionSupported attempt then throw "unsupported bootstrap tail resolution"
-    let result := frozenBootstrap candidate controls attempt
+    if candidate.size == 0 || controls.size == 0 || controls.any (fun c => c.size != candidate.size) then
+      throw "bootstrap requires a nonempty matched window and selected controls"
+    let blockLength ← readNatural json "blockLengthSessions"
+    let replicates ← readNatural json "replicates"
+    let seed ← readNatural json "seed"
+    if blockLength == 0 || candidate.size < blockLength || seed == 0 || 4294967295 < seed then throw "invalid registered bootstrap plan"
+    if ¬ tailResolutionSupported attempt controls.size replicates then throw "unsupported bootstrap tail resolution"
+    let result := registeredBootstrap candidate controls attempt blockLength replicates seed
     return Json.mkObj [
       ("lowerProfitTotalMicros", toJson (toString result.lowerProfitTotal)),
       ("lowerIncrementalTotalsMicros", toJson (result.lowerIncrementalTotals.map toString))]

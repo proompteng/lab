@@ -108,3 +108,25 @@ describe('system reliability', () => {
     )
   })
 })
+
+test('a verified empty recovery class is not applicable, while required empty classes remain undetermined', () => {
+  const noRecovery = schedule.filter((row) => row.class !== ObligationClass.Recovery)
+  const completions = noRecovery.map((row) => ({
+    obligationId: row.obligationId,
+    outcome: ObligationOutcome.Correct,
+    completedAt: deadlineAt,
+    evidenceHash: id(10),
+  }))
+  const input = { asOf, schedule: noRecovery, completions }
+  const current = Result.getOrThrow(measureReliability(input))
+  expect(current.status).toBe(ReliabilityStatus.MeetsTarget)
+  expect(current.classes.find((row) => row.class === ObligationClass.Recovery)).toMatchObject({
+    scheduled: '0',
+    correctOnTime: '0',
+    status: ReliabilityStatus.NotApplicable,
+  })
+  expect(Result.getOrThrow(measureReliability(input, true)).status).toBe(ReliabilityStatus.Undetermined)
+  expect(Result.getOrThrow(measureReliability({ asOf, schedule: [], completions: [] })).status).toBe(
+    ReliabilityStatus.Undetermined,
+  )
+})

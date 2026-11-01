@@ -1,3 +1,4 @@
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { registeredReplayInferenceTariff } from './inference-costs'
 import { jevInstructions } from '../jev/instructions'
@@ -272,7 +273,14 @@ test('registered latency replay preserves every equity session and the exact can
   }
   const prepared = Result.getOrThrow(prepareBacktest(original))
   const identity = prepared.identity
-  const material = Result.getOrThrow(latencyReplayPolicyMaterial(config.protocol, identity.accountId, original.policy))
+  const material = Result.getOrThrow(
+    latencyReplayPolicyMaterial(
+      config.protocol,
+      identity.accountId,
+      original.policy,
+      Result.getOrThrow(makeExecutionRiskPolicy(identity.accountId, config.protocol.universe)),
+    ),
+  )
   const registration = {
     ...base,
     calendar: { ...base.calendar, sourceHash: testHash(calendar), sessions },
