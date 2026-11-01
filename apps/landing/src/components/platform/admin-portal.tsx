@@ -159,6 +159,7 @@ export function AdminPortal({
   useEffect(() => {
     if (!identity) return
     const controller = new AbortController()
+    setError(undefined)
     void fetch('/api/platform/workspaces', { signal: controller.signal, cache: 'no-store' })
       .then(readPlatformResponse)
       .then((json) => {
@@ -172,7 +173,7 @@ export function AdminPortal({
           setError(cause instanceof Error ? cause : new Error('Workspaces could not be loaded.'))
       })
     return () => controller.abort()
-  }, [identity?.humanId, router, workspaceId, section])
+  }, [identity?.humanId, router, workspaceId, section, revision])
   useEffect(() => {
     if (!identity || !workspaceId) return
     const controller = new AbortController()
@@ -230,8 +231,8 @@ export function AdminPortal({
                     .then(() => router.refresh())
                     .catch((cause) => {
                       setError(cause instanceof Error ? cause : new Error('Sign out failed.'))
-                      setBusy(false)
                     })
+                    .finally(() => setBusy(false))
                 }}
               >
                 <LogOut className="size-4" />

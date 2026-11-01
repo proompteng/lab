@@ -18,6 +18,8 @@ let writes: PolicyWrite[] = []
 let applications = 0
 let loseReply = true
 let requireMfa = false
+let directoryFailures = 0
+let loginStarts = 0
 const outcomes = new Map<string, string>()
 const grants = new Map<string, string[]>([
   [identities[0]!, ['status_reader']],
@@ -53,7 +55,7 @@ beforeAll(async () => {
         setup(build) {
           build.onResolve({ filter: /^next\/navigation$/ }, () => ({ path: 'navigation', namespace: 'fixture' }))
           build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({
-            contents: `const router={push:(path)=>window.location.assign(path),replace:(path)=>window.location.replace(path),refresh:()=>window.location.reload()};export function useRouter(){return router}`,
+            contents: `const router={push:(path)=>window.location.assign(path),replace:(path)=>window.location.replace(path),refresh:()=>window.dispatchEvent(new Event('fixture-identity-refresh'))};export function useRouter(){return router}`,
             loader: 'js',
           }))
         },
@@ -82,8 +84,18 @@ beforeAll(async () => {
         })
       if (url.pathname === '/fixture.js')
         return new Response(script, { headers: { 'Content-Type': 'text/javascript' } })
-      if (url.pathname === '/api/platform/workspaces')
+      if (url.pathname === '/api/platform/workspaces') {
+        if (directoryFailures > 0) {
+          directoryFailures--
+          return Response.json({ error: 'Workspace discovery is temporarily unavailable.' }, { status: 503 })
+        }
         return Response.json({ workspaces: [metadata, { id: other, name: 'Other workspace' }] })
+      }
+      if (url.pathname === '/api/auth/logout') return Response.json({ loggedOut: true })
+      if (url.pathname === '/api/auth/login') {
+        loginStarts++
+        return Response.json({ url: url.origin + '/signed-in' })
+      }
       if (url.pathname === `/api/platform/workspaces/${workspace}`) return Response.json(detail)
       if (url.pathname.startsWith(`/api/platform/workspaces/${other}`))
         return Response.json({ error: 'Workspace access was removed.' }, { status: 403 })
@@ -152,7 +164,7 @@ beforeAll(async () => {
       }
       if (url.pathname.startsWith('/api/')) return Response.json({ error: 'Not found' }, { status: 404 })
       return new Response(
-        `<!doctype html><html class="dark"><head><title>Workspace administration fixture</title><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fixture.css"><style>${stylesheet ? '@font-face{font-family:FixtureGeist;src:url(/fixture-font.woff2)}:root{--font-geist-sans:FixtureGeist}' : '[data-slot="checkbox"]{display:inline-flex;width:18px;height:18px}[data-slot="dialog-content"]{position:fixed;inset:15%;background:#18181b;padding:24px}[data-slot="dialog-backdrop"]{position:fixed;inset:0;background:#0008}input{font-size:16px}'}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>`,
+        `<!doctype html><html class="dark"><head><title>Workspace administration fixture</title><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fixture.css"><style>@font-face{font-family:FixtureGeist;src:url(/fixture-font.woff2)}:root{--font-geist-sans:FixtureGeist}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>`,
         { headers: { 'Content-Type': 'text/html' } },
       )
     },
@@ -274,5 +286,35 @@ test('keeps portal navigation and member controls usable on desktop and phones',
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   } finally {
     await context.close()
+  }
+}, 30_000)
+
+test('retries workspace discovery after an initial failure at the portal root', async () => {
+  const page = await browser.newPage()
+  try {
+    directoryFailures = 1
+    await page.goto(base)
+    await browserExpect(page.getByRole('alert')).toContainText('Workspace discovery is temporarily unavailable.')
+    await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    await browserExpect(page.getByRole('region', { name: 'Resource access', exact: true })).toBeVisible()
+    await browserExpect(page).toHaveURL(`${base}/workspaces/${workspace}/integrations`)
+  } finally {
+    directoryFailures = 0
+    await page.close()
+  }
+}, 30_000)
+
+test('allows signing in after sign-out refreshes identity without remounting the portal', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${base}/workspaces/${workspace}/integrations`)
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    const signIn = page.getByRole('button', { name: /Continue with GitHub|Opening sign-in/ })
+    await browserExpect(signIn).toBeEnabled()
+    const before = loginStarts
+    await signIn.click()
+    await browserExpect.poll(() => loginStarts).toBe(before + 1)
+  } finally {
+    await page.close()
   }
 }, 30_000)
