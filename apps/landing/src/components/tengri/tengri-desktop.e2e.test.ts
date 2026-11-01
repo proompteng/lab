@@ -5,6 +5,7 @@ import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/conne
 import { policyWriteSchema } from '@/lib/platform/policies'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import type { TengriCodexEvent } from '@/lib/tengri/types'
 import { codexThreadTitle, type TengriCodexThreadSummary } from '@/lib/tengri/codex-threads'
 
 async function openSettingsPane(settings: Locator, name: string) {
@@ -2487,6 +2488,37 @@ test('automatically recovers a saved conversation after a temporary control-plan
   await page.clock.runFor(1_000)
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
+  expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
+test('clears a resume conflict after the existing conversation loads without submitting a turn', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page, {
+    resumeThreadErrors: [{ status: 503, error: 'The conversation changed while loading. Reconnecting…' }],
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-existing',
+            status: 'completed',
+            items: [{ id: 'reply-existing', type: 'agentMessage', text: 'Restored conversation content' }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
+  await expect(tengri.getByText('Tengri resource already exists', { exact: true })).toHaveCount(0)
+  await page.clock.runFor(1_000)
+  await expect(tengri.getByText('Restored conversation content', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
+  await expect(tengri.getByRole('alert')).toHaveCount(0)
+  await page.clock.runFor(31_000)
   expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
@@ -10245,6 +10277,61 @@ test('lets a slow final status complete while another conversation keeps polling
   await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
 })
 
+test('clears a recovered active-run outage when the turn finishes before its retry', async ({ page }, testInfo) => {
+  await page.clock.install()
+  const run: TengriCodexRun = {
+    runId: '33333333-3333-4333-8333-333333333333',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  let unavailable = false
+  let failedReads = 0
+  let recoveredReads = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'active-codex-runs')
+      return route.fallback()
+    if (unavailable) {
+      failedReads += 1
+      return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+    }
+    recoveredReads += 1
+    return route.fallback()
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-recovered'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await composer.fill('Keep this unsent follow-up')
+  unavailable = true
+  await page.clock.runFor(2_100)
+  await expect.poll(() => failedReads).toBeGreaterThan(0)
+  await page.clock.runFor(3_100)
+  await expect(chat.getByRole('alert')).toHaveText('Reconnecting to your agent…')
+  const readsBeforeCompletion = recoveredReads
+  unavailable = false
+  await emitCodexEvent(page, {
+    sequence: 10,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-recovered',
+    turnId: 'turn-recovered',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{"params":{"turn":{"id":"turn-recovered","status":"completed"}}}',
+  } satisfies TengriCodexEvent)
+  await expect.poll(() => recoveredReads).toBeGreaterThan(readsBeforeCompletion)
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(chat.getByText('Agent returned an invalid event', { exact: true })).toHaveCount(0)
+  await expect(chat.getByRole('alert')).toHaveCount(0)
+  await expect(composer).toHaveValue('Keep this unsent follow-up')
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+  await page.screenshot({ path: testInfo.outputPath('recovered-chat.png'), animations: 'disabled' })
+})
+
 for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
   test(`clears a recovered ${recoveryAction} outage without sending another turn`, async ({ page }) => {
     await page.clock.install()
@@ -11563,6 +11650,58 @@ test('editing a platform role does not validate unrelated fractional GiB quota f
   })
 })
 
+test('returns from phone layout without shrinking saved desktop windows', async ({ page }) => {
+  await mockTengri(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  const chat = page.locator('section[aria-label="Tengri window"]')
+  await expect(chat.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeVisible()
+  const before = await chat.boundingBox()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(async () => (await chat.boundingBox())?.width).toBe(390)
+  await chat.getByRole('button', { name: 'Minimize Tengri', exact: true }).click()
+  await expect(chat).toBeHidden()
+  await expect(chat.locator('..')).toHaveCSS('transform', 'none')
+  await page.getByRole('button', { name: 'Open Tengri', exact: true }).click()
+  await expect(chat).toBeVisible()
+  await chat.getByRole('button', { name: 'Maximize Tengri', exact: true }).click()
+  await chat.getByRole('button', { name: 'Restore Tengri', exact: true }).click()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect.poll(() => chat.boundingBox()).toEqual(before)
+  await page.reload()
+  await expect.poll(() => chat.boundingBox()).toEqual(before)
+})
+
+test('touch layout fills landscape and preserves its draft through rotation', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  })
+  try {
+    const page = await context.newPage()
+    await mockTengri(page)
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
+    const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+    await composer.fill('Preserve this draft through rotation')
+    await page.setViewportSize({ width: 844, height: 390 })
+    await expect.poll(async () => (await chat.boundingBox())?.width).toBe(844)
+    await expect(chat).toHaveCSS('border-radius', '0px')
+    await expect(composer).toBeInViewport()
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+    await page.screenshot({ path: test.info().outputPath('phone-landscape.png') })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect.poll(async () => (await chat.boundingBox())?.width).toBe(390)
+    await expect(composer).toHaveValue('Preserve this draft through rotation')
+    expect(await page.evaluate(() => scrollY)).toBe(0)
+  } finally {
+    await context.close()
+  }
+})
+
 for (const width of [320, 390, 430]) {
   test(`phone chat keeps its draft and controls stable through keyboard resize at ${width}px`, async ({
     browser,
@@ -11592,6 +11731,22 @@ for (const width of [320, 390, 430]) {
       const before = await chat.boundingBox()
       expect(before?.x).toBeCloseTo(0, 0)
       expect(before?.width).toBeCloseTo(width, 0)
+      await page.evaluate(async () => {
+        const visual = window.visualViewport
+        if (!visual) throw new Error('Visual viewport is required')
+        Object.defineProperty(visual, 'height', { configurable: true, value: 0 })
+        Object.defineProperty(visual, 'width', { configurable: true, value: 0 })
+        visual.dispatchEvent(new Event('resize'))
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      })
+      await expect
+        .poll(() => page.locator('[data-tengri-desktop]').evaluate((element) => element.getBoundingClientRect().height))
+        .toBe(844)
+      await page.evaluate(() => {
+        if (!window.visualViewport) return
+        Reflect.deleteProperty(window.visualViewport, 'height')
+        Reflect.deleteProperty(window.visualViewport, 'width')
+      })
       await page.evaluate(() => {
         const visual = window.visualViewport
         if (!visual) return
