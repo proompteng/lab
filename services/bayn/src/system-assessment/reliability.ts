@@ -19,6 +19,7 @@ export enum ReliabilityStatus {
   MeetsTarget = 'MEETS_TARGET',
   MissesTarget = 'MISSES_TARGET',
   Undetermined = 'UNDETERMINED',
+  NotApplicable = 'NOT_APPLICABLE',
 }
 
 export const ScheduledObligationSchema = Schema.Struct({
@@ -53,7 +54,7 @@ export const reliabilityFraction = (good: bigint, scheduled: bigint): Reliabilit
       : ReliabilityStatus.MissesTarget
 
 /** The schedule includes work that never started; retries cannot alter its deadline or denominator. */
-export const measureReliability = (input: unknown) =>
+export const measureReliability = (input: unknown, retainedPolicy = false) =>
   Schema.decodeUnknownResult(
     ReliabilityInputSchema,
     strictParseOptions,
@@ -94,7 +95,12 @@ export const measureReliability = (input: unknown) =>
             else missed.push(obligation.obligationId)
           }
           const scheduled = BigInt(obligations.length)
-          const status = pending > 0n ? ReliabilityStatus.Undetermined : reliabilityFraction(good, scheduled)
+          const status =
+            !retainedPolicy && kind === ObligationClass.Recovery && scheduled === 0n
+              ? ReliabilityStatus.NotApplicable
+              : pending > 0n
+                ? ReliabilityStatus.Undetermined
+                : reliabilityFraction(good, scheduled)
           return {
             class: kind,
             status,
@@ -112,7 +118,10 @@ export const measureReliability = (input: unknown) =>
           },
           status: classes.some((item) => item.status === ReliabilityStatus.MissesTarget)
             ? ReliabilityStatus.MissesTarget
-            : classes.every((item) => item.status === ReliabilityStatus.MeetsTarget)
+            : classes.every(
+                  (item) =>
+                    item.status === ReliabilityStatus.MeetsTarget || item.status === ReliabilityStatus.NotApplicable,
+                )
               ? ReliabilityStatus.MeetsTarget
               : ReliabilityStatus.Undetermined,
           classes,

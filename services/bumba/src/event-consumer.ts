@@ -555,7 +555,7 @@ const generateMainMergeMemoryNoteEffect = (
         process.env.OPENAI_API_BASE ??
         'http://flamingo.flamingo.svc.cluster.local/v1'
       ).replace(/\/+$/, '')
-      const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo'
+      const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen38-flamingo'
       const reasoningEffort = normalizeAstraReasoningEffort(
         model,
         normalizeOptionalText(process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT) ?? 'none',
@@ -751,7 +751,7 @@ const publishMainMergeMemoryNoteEffect = (
         ingestionFailed: counts.failed,
         enrichmentCount: enrichments.length,
         diffFileCount: diffFiles.length,
-        noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo',
+        noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen38-flamingo',
       },
     })
   })

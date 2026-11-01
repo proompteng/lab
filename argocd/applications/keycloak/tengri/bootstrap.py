@@ -48,9 +48,17 @@ def bootstrap():
         clientId=required("GITHUB_CLIENT_ID"),
         clientSecret=required("GITHUB_CLIENT_SECRET"),
     )
-    realm["clients"][0]["secret"] = required("TENGRI_OIDC_CLIENT_SECRET")
-    if len(realm["clients"][0]["secret"]) < 32:
-        raise RuntimeError("OIDC client secret must have at least 32 characters")
+    client_secrets = {
+        "tengri-bff": required("TENGRI_OIDC_CLIENT_SECRET"),
+        "platform-admin": required("PLATFORM_ADMIN_OIDC_CLIENT_SECRET"),
+    }
+    for client in realm["clients"]:
+        if client["clientId"] in client_secrets:
+            client["secret"] = client_secrets[client["clientId"]]
+            if len(client["secret"]) < 32:
+                raise RuntimeError(
+                    "OIDC client secret must have at least 32 characters"
+                )
     base = required("KEYCLOAK_ADMIN_URL").rstrip("/")
     parsed = urllib.parse.urlsplit(base)
     if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
@@ -114,6 +122,9 @@ def bootstrap():
         # A failed qualification leaves this new realm disabled for repair.
         current = dict(current)
         current["enabled"] = True
+        if current.get("browserFlow") not in {"tengri-github", realm["browserFlow"]}:
+            raise RuntimeError("Dedicated browser flow drift")
+        current["browserFlow"] = realm["browserFlow"]
         scalar = {
             key: value
             for key, value in realm.items()
@@ -160,12 +171,16 @@ def bootstrap():
     for expected_client in realm["clients"]:
         query = urllib.parse.urlencode({"clientId": expected_client["clientId"]})
         clients = request("GET", path + "/clients?" + query, token)
+        if not clients and "secret" in expected_client:
+            request("POST", path + "/clients", token, expected_client, expected=(201,))
+            clients = request("GET", path + "/clients?" + query, token)
         wanted = copy.deepcopy(expected_client)
         wanted.pop("secret", None)
         if len(clients) != 1 or not contains(clients[0], wanted):
             raise RuntimeError("Dedicated realm client configuration drift")
         if "secret" in expected_client:
             client_credentials.append((clients[0]["id"], expected_client["secret"]))
+    configure_browser_sso(request, path, token, realm)
     for flow in realm["authenticationFlows"]:
         alias = urllib.parse.quote(flow["alias"], safe="")
         executions = request(
@@ -233,6 +248,7 @@ def bootstrap():
     }
     managed.update(
         enabled=True,
+        browserFlow=realm["browserFlow"],
         loginTheme=realm["loginTheme"],
         webAuthnPolicyUserVerificationRequirement=realm[
             "webAuthnPolicyUserVerificationRequirement"
@@ -252,6 +268,104 @@ def bootstrap():
     print(
         "Dedicated Tengri realm, immutable GitHub identity and passkey requirements verified"
     )
+
+
+def configure_browser_sso(request, path, token, realm):
+    """Compose the existing broker/passkey flows without replacing enrolled identities."""
+    flows = {
+        flow["alias"]: flow
+        for flow in request("GET", path + "/authentication/flows", token)
+    }
+    desired = {flow["alias"]: flow for flow in realm["authenticationFlows"]}
+    # The flow collection lists top-level flows; resolve this shared subflow from its existing parent.
+    passkey = next(
+        entry
+        for entry in request(
+            "GET", path + "/authentication/flows/tengri-passkey/executions", token
+        )
+        if entry["level"] == 0 and entry.get("displayName") == "tengri-passkey-level"
+    )
+    if "platform-browser" not in flows:
+        request(
+            "POST",
+            path + "/authentication/flows",
+            token,
+            {
+                key: value
+                for key, value in desired["platform-browser"].items()
+                if key != "authenticationExecutions"
+            },
+            expected=(201,),
+        )
+        flows = {
+            flow["alias"]: flow
+            for flow in request("GET", path + "/authentication/flows", token)
+        }
+    flows["tengri-passkey-level"] = {"id": passkey["flowId"]}
+    for alias in ["platform-browser", "tengri-github"]:
+        entries = request(
+            "GET", path + f"/authentication/flows/{alias}/executions", token
+        )
+        direct = [entry for entry in entries if entry["level"] == 0]
+        by_provider = {
+            (entry.get("providerId") or entry.get("displayName")): entry
+            for entry in direct
+        }
+        expected = desired[alias]["authenticationExecutions"]
+        if len(by_provider) != len(direct) or not set(by_provider) <= {
+            entry.get("authenticator") or entry.get("flowAlias") for entry in expected
+        }:
+            raise RuntimeError("Dedicated browser execution drift")
+        for entry in expected:
+            key = entry.get("authenticator") or entry["flowAlias"]
+            if key in by_provider:
+                if by_provider[key]["requirement"] != entry["requirement"]:
+                    raise RuntimeError("Dedicated browser requirement drift")
+                continue
+            execution = {
+                "parentFlow": flows[alias]["id"],
+                "priority": entry["priority"],
+                "requirement": entry["requirement"],
+                "authenticatorFlow": entry["authenticatorFlow"],
+            }
+            if entry["authenticatorFlow"]:
+                execution["flowId"] = flows[entry["flowAlias"]]["id"]
+            else:
+                execution["authenticator"] = entry["authenticator"]
+            request(
+                "POST",
+                path + "/authentication/executions",
+                token,
+                execution,
+                expected=(201,),
+            )
+    levels = request(
+        "GET", path + "/authentication/flows/tengri-passkey-level/executions", token
+    )
+    level = next(
+        entry
+        for entry in levels
+        if entry.get("providerId") == "conditional-level-of-authentication"
+    )
+    execution = request(
+        "GET", path + "/authentication/executions/" + level["id"], token
+    )
+    config_path = path + "/authentication/config/" + execution["authenticatorConfig"]
+    current = request("GET", config_path, token)
+    wanted = next(
+        item
+        for item in realm["authenticatorConfig"]
+        if item["alias"] == "tengri-level-two"
+    )
+    if (
+        current.get("alias") != wanted["alias"]
+        or current.get("config", {}).get("loa-condition-level") != "2"
+        or current["config"].get("loa-max-age")
+        not in {"0", wanted["config"]["loa-max-age"]}
+    ):
+        raise RuntimeError("Dedicated passkey assurance drift")
+    if not contains(current, wanted):
+        request("PUT", config_path, token, wanted, expected=(204,))
 
 
 if __name__ == "__main__":

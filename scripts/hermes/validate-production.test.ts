@@ -395,10 +395,10 @@ test('rejects a Hermes config that is not pre-migrated to schema 46', async () =
 
 test('rejects changing the Qwen Flamingo model during the runtime upgrade', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace('default: qwen36-flamingo', 'default: replacement-model')
+  files.config = files.config.replace('default: qwen38-flamingo', 'default: replacement-model')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "model:\\n  default: qwen36-flamingo\\n  provider: flamingo\\n  context_length: 262144"`,
+    `${productionPaths.config}: missing production invariant "model:\\n  default: qwen38-flamingo\\n  provider: flamingo\\n  context_length: 262144"`,
   )
 })
 

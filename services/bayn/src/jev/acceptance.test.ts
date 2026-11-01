@@ -5,12 +5,15 @@ import fc from 'fast-check'
 import { checkProperty } from '../testing/property-test-support'
 
 import {
-  evaluateJevAcceptance,
+  evaluateJevAcceptance as evaluateAcceptance,
+  JevAcceptanceVersion,
   jevAcceptanceProtocolHash,
   JevNumericalVerdict,
   JevResearchPolicy,
   type JevAcceptanceInput,
 } from './acceptance'
+
+const evaluateJevAcceptance = (input: unknown) => evaluateAcceptance(input, JevAcceptanceVersion.RetainedV3)
 
 const dates = [
   '2026-09-21',
@@ -40,7 +43,7 @@ const inputFixture = (
   controlPnl: (index: number) => number = () => 100,
 ): JevAcceptanceInput => ({
   schemaVersion: 'bayn.jev-acceptance-input.v1',
-  protocolHash: Result.getOrThrow(jevAcceptanceProtocolHash()),
+  protocolHash: Result.getOrThrow(jevAcceptanceProtocolHash(JevAcceptanceVersion.RetainedV3)),
   registration: {
     planHash: 'a'.repeat(64),
     lockedAt: '2026-09-21T09:00:00.000Z',
