@@ -1,10 +1,6 @@
 import type { AskForApproval, ReasoningEffort, SandboxMode, ThreadGoalStatus } from '@proompteng/codex'
 
 export const AGENT_RUNNER_SCHEMA_VERSION = 'agents.proompteng.ai/runner/v1'
-export const AGENT_RUNNER_RESULT_PREVIEW_CHARS = 256
-
-export type AgentRunnerResultPreview = { text: string; truncated: boolean }
-
 export type AgentRunnerArtifacts = {
   statusPath?: string
   resultPath?: string

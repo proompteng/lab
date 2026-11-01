@@ -10,7 +10,9 @@ service RelayService {
   rpc GetExecution(GetExecutionRequest) returns (GetExecutionResponse);
 }
 message ListOperationsRequest {
-  string client_service = 1;
+  reserved 1;
+  reserved "client_service";
+  proompteng.authz.v1.PlatformSubject subject = 2;
 }
 message ConnectorOperation {
   string connector_id = 1;
