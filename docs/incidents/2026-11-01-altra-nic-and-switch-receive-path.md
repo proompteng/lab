@@ -143,8 +143,9 @@ No persistent Gen2 cap was installed. Persistence across reboot is untested. The
 not support that setting difference as the cause. The tests established failure to train above Gen2 on
 this path, without isolating the defective component. Other Altra high-speed endpoints already negotiated Gen3.
 
-Gen2 did not eliminate receive loss. Sampled standard AER counters were zero, which does not exclude a
-link-training or electrical problem. NIC temperatures were 94–97 C during the earlier investigation, with
+Gen2 did not eliminate receive loss. An earlier pre-test AER read was zero; later timed parent-port samples
+show advancing corrected receiver errors, BadTLP indications and endpoint replay timeouts. Do not generalize
+the earlier zero read or NIC endpoint counters to the entire PCIe path. NIC temperatures were 94–97 C during the earlier investigation, with
 an undated recorded peak of 109 C. Heat remains a hypothesis. NVIDIA's warning and firmware-shutdown
 thresholds are 105 C and 115 C respectively; exceeding a historical warning threshold does not prove causality.
 
@@ -283,6 +284,41 @@ command or persistence latency.
 
 The remaining network investigation is the NIC/riser/slot/root-port path. Lower sampled receive loss does not
 justify declaring the incident fixed, changing scrub concurrency or attributing client latency to one component.
+
+## Independent post-upgrade review
+
+A fresh [Oracle consultation](https://chatgpt.com/c/6ae7b768-e7f8-83e8-9346-6bed72bd3346) reviewed raw paired
+measurements and reported reading all five requested files at commit
+`d62b2e5dbc675371d618cfa59f8444d0ac1b0a63`. The request contained measurements, fixed constraints and competing
+explanations without a preferred diagnosis or action ranking. Preflight showed GPT-6, Pro at 5 of 5, and a Pro
+composer. The completed response's regeneration menu explicitly identified `6 Pro`. The review did not inspect
+the live hosts, switch or BMC and did not execute an intervention.
+
+Its first recommendation is to identify the exact carrier revision, connector, riser if present, and controller
+behind parent `0000:00:01.0`. DMI's `ES2` value does not establish the physical A1/A2 carrier revision.
+[ADLINK requires physical board identification before firmware selection](https://docs.ipi.wiki/com-hpc/aadk/firmware_A1vsA2.html).
+Once the path's supported speed and bifurcation are established, the preferred discriminator is an Altra-only
+test of the existing NIC through a verified compatible alternative path, if one is free. Keep firmware and
+runtime tuning unchanged for that test, and keep Turin online. If there is no safe alternative path, obtain
+board-specific vendor guidance or a qualified comparison device.
+
+Independent checks confirmed that [installed ADLINK 2.04.100.11](https://github.com/ADLINK/edk2_aadp/releases/tag/v2.04.100.11)
+already documents setting a Gen3 default instead of an unset speed after bifurcation changes, for active
+controllers. That change cannot be presented as a new benefit of a later flash. It may explain a configured
+Gen3 ceiling, but does not establish why this link negotiates Gen2 with advancing errors. NVIDIA's documented
+lane-skew and masked-AER fixes similarly predate the installed NIC firmware. The 16.35.8008 security-maintenance
+benefit remains separate from a proven PCIe repair.
+
+The Oracle could not retrieve and inspect either candidate firmware archive. Its board/image applicability
+assessment is therefore incomplete; it did not validate either flash as the first repair action. A new-version
+number or DMI label does not close that gap.
+
+Success for a future path test requires the expected negotiated speed and width after warm-up, stable outside
+training, with no new relevant AER errors over representative busy windows. Measure physical discards and
+out-of-buffer events separately, and assess client/storage latency separately. These are proposed experiment
+criteria, not vendor guarantees or observed repair results. Evidence of a clean expected-speed link before
+host-driver initialization that reproducibly degrades only when the driver starts would reverse the review's
+hardware-path-first direction. No physical move, flash, retrain, cooling change or new privilege was applied.
 
 ## Remaining work and authority
 
