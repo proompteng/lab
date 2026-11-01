@@ -955,6 +955,24 @@
     "action": "ACTION_BROWSER_CONTROL"
   },
   {
+    "surface": "browser_mcp_http",
+    "operation": "POST /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp_http",
+    "operation": "DELETE /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "release",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
     "surface": "browser_action",
     "operation": "status",
     "internal_only": true,
@@ -1178,6 +1196,12 @@
     "operation": "GetPlatformExecution",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ReadPolicyRelationships",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Registered platform administrator service, active human administrator session, fully consistent resource relationships and durable audit"
   },
   {
     "surface": "ofz_platform",

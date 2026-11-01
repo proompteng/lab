@@ -1,10 +1,16 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { evaluateJevAcceptance, JevNumericalVerdict, JevResearchPolicy } from '../jev/acceptance'
+import {
+  evaluateJevAcceptance,
+  usesLegacyAcceptance,
+  JevAcceptanceVersion,
+  JevNumericalVerdict,
+  JevResearchPolicy,
+} from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
-import { SystemRegistrationSchema, validateSystemRegistration } from './policy'
+import { SystemRegistrationSchema, validateSystemRegistration, registeredAssessmentTerms } from './policy'
 import { RealismEvidenceSchema, RealismStatus, measureRealism } from './realism'
 import { ReliabilityInputSchema, ReliabilityStatus, measureReliability } from './reliability'
 import { SessionEvidenceSchema, assessSession } from './session'
@@ -57,9 +63,9 @@ export const SystemAssessmentInputSchema = Schema.Struct({
   policies: Schema.Array(
     Schema.Struct({
       policy: Schema.Enum(JevResearchPolicy),
-      sessions: Schema.Array(SessionEvidenceSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
+      sessions: Schema.Array(SessionEvidenceSchema).check(Schema.isMinLength(1)),
     }),
-  ).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
+  ).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
   reliability: ReliabilityInputSchema,
   obligationCoverageHash: Sha256Schema,
   realism: RealismEvidenceSchema,
@@ -78,7 +84,11 @@ export const SystemAssessmentInputSchema = Schema.Struct({
   }),
 })
 
-export const evaluateSystemAssessment = (input: unknown, verifiedSources: ReadonlySet<string>) =>
+export const evaluateSystemAssessment = (
+  input: unknown,
+  verifiedSources: ReadonlySet<string>,
+  version = JevAcceptanceVersion.Current,
+) =>
   Result.gen(function* () {
     const data = yield* Schema.decodeUnknownResult(
       SystemAssessmentInputSchema,
@@ -88,7 +98,11 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
         (cause) => new SystemAssessmentError({ message: 'System assessment evidence is malformed', cause }),
       ),
     )
-    const { registration, registrationHash } = yield* validateSystemRegistration(data.registration)
+    const { registration, registrationHash, candidatePolicy } = yield* validateSystemRegistration(
+      data.registration,
+      version,
+    )
+    const legacy = usesLegacyAcceptance(version)
     yield* validateOperatingCostWindow(
       data.policies.flatMap((policy) => policy.sessions.map((session) => session.operatingCosts)),
     )
@@ -105,8 +119,13 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
     requireSource(registration.obligations.runtimeConfigurationHash)
     if (registration.obligations.configuration.controllerPlanHash === null)
       missing.push('MISSING_CONTROLLER_PLAN_BINDING')
-    requireSource(registration.latencyStressProtocolHash)
-    requireSource(registration.latencyReplayExecutionModelHash)
+    if (
+      legacy ||
+      data.policies.some((policy) => policy.sessions.some((session) => session.p95LatencyStress !== null))
+    ) {
+      requireSource(registration.latencyStressProtocolHash)
+      requireSource(registration.latencyReplayExecutionModelHash)
+    }
     for (const plan of registration.costAllocationPlans) requireSource(plan.basisSourceHash)
     for (const definition of registration.policies)
       for (const hash of [
@@ -151,13 +170,17 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
       const definition = registration.policies.find((p) => p.policy === policy.policy)
       if (definition === undefined)
         return yield* Result.fail(new SystemAssessmentError({ message: 'Unregistered policy' }))
+      if (policy.sessions.length !== registration.calendar.sessions.length)
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Policy evidence does not cover the complete registered calendar' }),
+        )
       const sessions = []
       for (const [index, session] of policy.sessions.entries()) {
         if (session.sessionDate !== registration.calendar.sessions[index]?.sessionDate)
           return yield* Result.fail(
             new SystemAssessmentError({ message: 'Omitted, substituted or reordered registered session' }),
           )
-        const result = yield* assessSession(session, registration, definition, data.asOf, verifiedSources)
+        const result = yield* assessSession(session, registration, definition, data.asOf, verifiedSources, version)
         missing.push(...result.missing.map((reason) => `${policy.policy}:${session.sessionDate}:${reason}`))
         violations.push(...result.violations.map((reason) => `${policy.policy}:${session.sessionDate}:${reason}`))
         sessions.push(result)
@@ -225,7 +248,7 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
         violations.push(`OBLIGATION_OUTSIDE_WINDOW:${obligation.obligationId}`)
     }
     for (const completion of data.reliability.completions) requireSource(completion.evidenceHash)
-    const reliability = yield* measureReliability(data.reliability)
+    const reliability = yield* measureReliability(data.reliability, legacy)
     const expectedSchedule = yield* registeredSchedule(registration)
     const providedScheduledWork = data.reliability.schedule.filter(
       (o) => o.class === ObligationClass.Decision || o.class === ObligationClass.Reconciliation,
@@ -252,21 +275,25 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
       requireSource(violation.sourceHash)
       violations.push(`SAFETY:${violation.kind}`)
     }
-    const numericalResult = evaluateJevAcceptance({
-      schemaVersion: 'bayn.jev-acceptance-input.v1',
-      protocolHash: registration.acceptanceProtocolHash,
-      registration: {
-        planHash: registrationHash,
-        lockedAt: registration.registeredAt,
-        attemptIndex: registration.attemptIndex,
-        sessions: registration.calendar.sessions,
+    const numericalResult = evaluateJevAcceptance(
+      {
+        schemaVersion: 'bayn.jev-acceptance-input.v1',
+        protocolHash: registration.acceptanceProtocolHash,
+        registration: {
+          planHash: registrationHash,
+          lockedAt: registration.registeredAt,
+          attemptIndex: registration.attemptIndex,
+          ...(legacy ? {} : { analysis: registeredAssessmentTerms(registration, candidatePolicy.riskPolicy) }),
+          sessions: registration.calendar.sessions,
+        },
+        policies: evaluated.map((p) => ({
+          policy: p.policy,
+          definitionHash: p.definitionHash,
+          sessions: p.sessions.map((s) => s.numerical),
+        })),
       },
-      policies: evaluated.map((p) => ({
-        policy: p.policy,
-        definitionHash: p.definitionHash,
-        sessions: p.sessions.map((s) => s.numerical),
-      })),
-    })
+      version,
+    )
     const numerical = Result.isSuccess(numericalResult) ? numericalResult.success : null
     if (Result.isFailure(numericalResult))
       violations.push(
@@ -290,6 +317,7 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
         : actual > 0n
           ? ProfitabilityStatus.Profitable
           : ProfitabilityStatus.NotProfitable
+    if (version === JevAcceptanceVersion.Current) missing.push('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
     const confidence = numerical !== null && 'confidence' in numerical ? numerical.confidence : null
     const edge =
       confidence === null || missing.length > 0 || violations.length > 0

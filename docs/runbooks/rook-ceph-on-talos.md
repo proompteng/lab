@@ -100,6 +100,16 @@ scrubs per OSD. Keep both bounds explicit when restoring this baseline: removing
 Ceph's persistent config store has reset. [Ceph's Tentacle reference](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#confval-osd_scrub_chunk_max)
 documents the chunk-size tradeoff between scrub throughput and client latency. These bounds update at runtime.
 
+Deep scrubs use `osd_deep_scrub_stride=4194304` (4 MiB), matching the common object size in the large pools.
+Ceph 20.2.4 [reads one stride and reschedules when more data remains](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/ReplicatedBackend.cc#L774-L806).
+The default 512 KiB stride splits a 4 MiB object across eight data reads; the larger stride reduces that overhead
+without increasing the number of objects held in a scrub batch. A larger individual read can delay clients, so
+compare native `scrub_replicated_read_bytes` and `scrub_replicated_read_cnt` deltas, per-PG progress and equal-duration
+client-latency windows. Reservation waits alone do not prove a stalled scan. Reject a throughput gain accompanied
+by worse WAL fsync, synchronous replication waits or application deadlines; restore an explicit
+`osd_deep_scrub_stride: "524288"` through reviewed GitOps if the change regresses. Removing the key does not prove
+Ceph's persistent store has reset. The stride updates at runtime; keep the OSD rollout annotation unchanged.
+
 For a reviewed latency trial, compare equal-duration windows of WAL fsync, synchronous replication waits, commit and
 inference-admission latency, deadline failures and scrub progress. Retain the three-reservation cap and durability
 settings. If the candidate does not demonstrate a useful improvement, restore both bounds to an explicit `5` through
@@ -162,6 +172,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
 1. `osd_max_scrubs: "3"`
 1. `osd_scrub_chunk_min: "5"` and `osd_scrub_chunk_max: "5"`
+1. `osd_deep_scrub_stride: "4194304"` (4 MiB)
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
@@ -180,7 +191,7 @@ done. In particular, remove these if they were set for a maintenance window:
 1. `osd_recovery_sleep_hdd`
 1. boosted scrub settings such as `osd_scrub_priority`, `osd_requested_scrub_priority`,
    `osd_scrub_chunk_min`, `osd_scrub_chunk_max`,
-   `osd_deep_scrub_stride`, and `osd_scrub_load_threshold`
+   or `osd_scrub_load_threshold`; retain the committed chunk bounds and deep-scrub stride above
 1. boosted recovery scan/chunk settings such as `osd_backfill_scan_min`,
    `osd_backfill_scan_max`, and `osd_recovery_max_chunk`
 

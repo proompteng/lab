@@ -48,6 +48,7 @@ export type ExecutionModelFailure =
       readonly priceMicros: bigint
       readonly reason: 'invalid-equity-or-price' | 'weight-exceeds-one'
     }
+  | { readonly _tag: 'UnsupportedEquityFeeDate'; readonly at: string }
   | {
       readonly _tag: 'InvalidFeeCostMultiplier'
       readonly costMultiplierMicros: bigint

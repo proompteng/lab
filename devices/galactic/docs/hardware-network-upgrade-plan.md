@@ -28,9 +28,14 @@ Turin's CPU, RAM, GPU, and NVMe inventory belongs to its [device README](../../t
 ## Target network
 
 ```text
-Altra NIC port 1 -- DAC -- CRS504 QSFP28 port 1
-Turin NIC port 1 -- DAC -- CRS504 QSFP28 port 2
+Altra NIC port 1 -- DAC -- CRS504 QSFP28 port 2
+Turin NIC port 1 -- DAC -- CRS504 QSFP28 port 1
 ```
+
+This physical mapping was verified through the hosts' MAC addresses and the switch forwarding table on
+2026-11-01 UTC. The live switch comments and historical bench-script labels are reversed. See the
+[receive-path investigation](../../../docs/incidents/2026-11-01-altra-nic-and-switch-receive-path.md)
+before targeting a switch port or treating the historical acceptance observations as current health.
 
 Use one 100G link per host. Leave the second NIC ports and two remaining switch ports unused.
 
@@ -54,8 +59,10 @@ Use one 100G link per host. Leave the second NIC ports and two remaining switch 
       MTU is 1500; neither has DHCP or a default gateway. Management addresses remain reachable.
 - [x] Install Multus and Whereabouts on all three nodes, including the IP-allocation reconciler and macvlan binary.
       Diagnostic pod transfers over the storage subnet passed bidirectional 1 MiB checksum checks.
-- [ ] Complete hardware acceptance: Altra cooling, PCIe capacity under load, switch peer-port identities and FEC
-      counters, then bidirectional 60-second `iperf3` tests. Altra has reported PCIe 2.5 GT/s ×16; Turin 16 GT/s ×16.
+- [ ] Complete hardware acceptance: Altra cooling, PCIe capacity under load, and bidirectional 60-second `iperf3` tests.
+      The November 1 investigation verified peer-port identities and sampled FEC counters without establishing
+      sustained hardware acceptance. Altra now negotiates 5 GT/s ×16 after bounded tests; Gen3 training still fails.
+      Its root port advertises 8 GT/s ×16 despite the platform's Gen4 specification. Turin negotiates 16 GT/s ×16.
       A 100G carrier does not establish 100 Gb/s throughput. Test MTU 9000 separately after MTU 1500 acceptance.
       Use the [NIC temperature command](../network/README.md#read-nic-temperature) to read current and peak values
       from either host before and during these checks.

@@ -252,3 +252,35 @@
       'Liberation Mono', 'Courier New', monospace;
   }
 }
+
+@media (max-width: 767px), (pointer: coarse) {
+  [data-tengri-desktop] {
+    position: fixed;
+    top: var(--tengri-viewport-offset, 0px);
+    left: 0;
+    right: 0;
+  }
+  .tengri-theme
+    :is(
+      input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+      textarea,
+      select,
+      [contenteditable='true']
+    ) {
+    font-size: 16px;
+  }
+  [data-tengri-window-frame] {
+    left: -12px !important;
+    top: -12px !important;
+    width: calc(100% + 24px) !important;
+    height: calc(100% + 24px - var(--tengri-dock-space, 88px)) !important;
+    transform: none !important;
+  }
+  [data-tengri-window-frame][data-window-mode='maximized'] {
+    height: calc(100% + 24px) !important;
+  }
+  [data-tengri-dock-container] {
+    height: var(--tengri-dock-space, 88px);
+    overflow: hidden;
+  }
+}

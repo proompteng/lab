@@ -71,6 +71,22 @@ pub(crate) async fn acknowledge_fixture_archive(admin: &Database) {
     admin.pool.get().await.unwrap().batch_execute("BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='control-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;").await.unwrap();
 }
 
+async fn seed_session(
+    client: &tokio_postgres::Client,
+    session: Uuid,
+    human: &str,
+    github_id: &str,
+) {
+    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
+    let hash = Sha256::digest(credential.as_bytes()).to_vec();
+    client.execute(
+        "WITH authority AS (INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id) \
+         VALUES($1,$2,$3,$3,ofz.now_ms()+3600000,ofz.now_ms()+3600000,ofz.now_ms(),1,$4) RETURNING id) \
+         INSERT INTO ofz.session_credentials(session_id,token_hash,operation_id,establishment_fingerprint) SELECT id,$5,$6,$5 FROM authority",
+        &[&session,&human,&Uuid::new_v4().to_string(),&github_id,&hash,&Uuid::new_v4()],
+    ).await.unwrap();
+}
+
 pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
@@ -104,7 +120,47 @@ pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)
     )
     .await
     .unwrap();
+    let legacy_schema = include_str!("../migrations/0001_control.sql");
+    conn.batch_execute(legacy_schema).await.unwrap();
+    conn.execute(
+        "INSERT INTO ofz.schema_version(version,checksum) VALUES(1,$1)",
+        &[&Sha256::digest(legacy_schema.as_bytes()).to_vec()],
+    )
+    .await
+    .unwrap();
+    let mut legacy_sessions = vec![];
+    for revoked in [false, true] {
+        let id = Uuid::new_v4();
+        let operation = Uuid::new_v4();
+        let hash = Sha256::digest(id.as_bytes()).to_vec();
+        conn.execute(
+            "INSERT INTO ofz.sessions(id,token_hash,human_id,github_id,identity_subject,identity_session,operation_id,establishment_fingerprint,expires_at_ms,idle_deadline_ms,recovery_generation,revoked) \
+             VALUES($1,$2,$3,'999','legacy-subject','legacy-session',$4,$2,ofz.now_ms()+3600000,ofz.now_ms()+1800000,1,$5)",
+            &[&id,&hash,&policy::github_human_id("999").unwrap(),&operation,&revoked],
+        ).await.unwrap();
+        legacy_sessions.push((id, operation, hash, revoked));
+    }
     admin.migrate().await.unwrap();
+    for (id, operation, hash, revoked) in legacy_sessions {
+        let row = conn.query_one(
+            "SELECT c.session_id,c.token_hash,c.establishment_fingerprint,c.revoked,s.revoked FROM ofz.session_credentials c JOIN ofz.sessions s ON s.id=c.session_id WHERE c.operation_id=$1",
+            &[&operation],
+        ).await.unwrap();
+        assert_eq!(row.get::<_, Uuid>(0), id);
+        assert_eq!(row.get::<_, Vec<u8>>(1), hash);
+        assert_eq!(row.get::<_, Vec<u8>>(2), hash);
+        assert_eq!(row.get::<_, bool>(3), revoked);
+        assert_eq!(row.get::<_, bool>(4), revoked);
+        conn.execute(
+            "DELETE FROM ofz.session_credentials WHERE session_id=$1",
+            &[&id],
+        )
+        .await
+        .unwrap();
+        conn.execute("DELETE FROM ofz.sessions WHERE id=$1", &[&id])
+            .await
+            .unwrap();
+    }
     admin.migrate().await.unwrap();
     let mut api_config = config;
     api_config
@@ -128,7 +184,6 @@ pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)
         .unwrap()
         .error_for_status()
         .unwrap();
-    let now = admin.state().await.unwrap().now_ms;
     let mut identities = vec![];
     let mut relationships = vec![];
     for number in 1..=4 {
@@ -164,8 +219,7 @@ pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)
                 &human,
             )));
         }
-        let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-        conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,$8,$2)", &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64),&number.to_string()]).await.unwrap();
+        seed_session(&conn, session, &human, &number.to_string()).await;
         identities.push((human, session.to_string()));
     }
     for (role, id) in [("bff", BFF_ID), ("controller", CONTROLLER_ID)] {
@@ -1229,12 +1283,7 @@ async fn verify_offboarding_preserves_removal(fixture: &ControlFixture) {
         .await;
     }
     let session = Uuid::new_v4();
-    let now = admin.state().await.unwrap().now_ms as i64;
-    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-    admin.pool.get().await.unwrap().execute(
-        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'7',$2)",
-        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&humans[0],&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
-    ).await.unwrap();
+    seed_session(&admin.pool.get().await.unwrap(), session, &humans[0], "7").await;
     let owner = (humans[0].clone(), session.to_string());
     let reservation_id = Uuid::new_v4().to_string();
     let workspace_uid = Uuid::new_v4().to_string();
@@ -1398,12 +1447,13 @@ async fn verify_offboarding_during_enrollment(fixture: &ControlFixture) {
     )
     .await;
     let session = Uuid::new_v4();
-    let now = fixture.admin.state().await.unwrap().now_ms as i64;
-    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-    fixture.admin.pool.get().await.unwrap().execute(
-        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'5',$2)",
-        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
-    ).await.unwrap();
+    seed_session(
+        &fixture.admin.pool.get().await.unwrap(),
+        session,
+        &human,
+        "5",
+    )
+    .await;
     let owner = (human.clone(), session.to_string());
     let reservation = Uuid::new_v4().to_string();
     execute(
@@ -1531,7 +1581,12 @@ async fn verify_session_bootstrap(fixture: &ControlFixture) {
     )
     .to_vec();
     let conn = admin.pool.get().await.unwrap();
-    conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) SELECT $1,$2,human_id,identity_subject,identity_session,$3,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,$4 FROM ofz.sessions WHERE id=$5", &[&retry_id,&Sha256::digest(retry_credential.as_bytes()).to_vec(),&retry_operation,&retry_fingerprint,&Uuid::parse_str(&owner.1).unwrap()]).await.unwrap();
+    conn.execute(
+        "WITH authority AS (INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id) \
+         SELECT $1,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id FROM ofz.sessions WHERE id=$2 RETURNING id) \
+         INSERT INTO ofz.session_credentials(session_id,token_hash,operation_id,establishment_fingerprint) SELECT id,$3,$4,$5 FROM authority",
+        &[&retry_id,&Uuid::parse_str(&owner.1).unwrap(),&Sha256::digest(retry_credential.as_bytes()).to_vec(),&retry_operation,&retry_fingerprint],
+    ).await.unwrap();
     let before_retry: i64 = conn
         .query_one("SELECT count(*) FROM ofz.sessions", &[])
         .await
@@ -1572,6 +1627,56 @@ async fn verify_session_bootstrap(fixture: &ControlFixture) {
             .unwrap_err()
             .code(),
         Code::AlreadyExists
+    );
+    let rotated_credential = URL_SAFE_NO_PAD.encode([8_u8; 32]);
+    conn.execute(
+        "UPDATE ofz.session_credentials SET revoked=true WHERE session_id=$1",
+        &[&retry_id],
+    )
+    .await
+    .unwrap();
+    conn.execute(
+        "INSERT INTO ofz.session_credentials(session_id,token_hash,operation_id,establishment_fingerprint) VALUES($1,$2,$3,$2)",
+        &[&retry_id,&Sha256::digest(rotated_credential.as_bytes()).to_vec(),&Uuid::new_v4()],
+    ).await.unwrap();
+    assert_eq!(
+        sessions::establish(database, native, &issuer, BFF_ID, retry_request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated,
+        "a lost establishment reply cannot resurrect a replaced browser credential"
+    );
+    assert_eq!(
+        sessions::revoke(
+            database,
+            native,
+            BFF_ID,
+            RevokeSessionRequest {
+                credential: retry_credential,
+                operation_id: Uuid::new_v4().to_string(),
+                origin: "https://proompteng.ai".into(),
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unauthenticated,
+        "a replaced cookie cannot revoke its successor's session authority"
+    );
+    assert_eq!(
+        sessions::inspect(
+            database,
+            native,
+            BFF_ID,
+            InspectSessionRequest {
+                session_id: rotated_credential
+            }
+        )
+        .await
+        .unwrap()
+        .id,
+        retry_id.to_string()
     );
     conn.execute(
         "UPDATE ofz.sessions SET revoked=true WHERE id=$1",
@@ -2117,7 +2222,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
         audit
             .receipts
             .windows(2)
-            .all(|pair| pair[0].sequence < pair[1].sequence)
+            .all(|pair| pair[0].sequence > pair[1].sequence)
     );
     for audit_read in [false, true] {
         let auditor = &identities[2];
@@ -3434,12 +3539,13 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
     )
     .await;
     let session = Uuid::new_v4();
-    let now = fixture.admin.state().await.unwrap().now_ms as i64;
-    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-    fixture.admin.pool.get().await.unwrap().execute(
-        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'6',$2)",
-        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
-    ).await.unwrap();
+    seed_session(
+        &fixture.admin.pool.get().await.unwrap(),
+        session,
+        &human,
+        "6",
+    )
+    .await;
     let viewer = &(human, session.to_string());
     let assignment = |scope| {
         Command::SetWorkspaceRole(SetWorkspaceRole {

@@ -21,7 +21,7 @@ import { executionOrderPlans } from './execution-plans'
 import { bindExecutionEvidence } from './execution-evidence'
 import { accountProtectionWork, decisionDocumentWork, entryAbstentionWork, positionHoldWork } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
-import { systemQualificationPolicy } from './policy'
+import { registeredAllocationMicros } from './policy'
 import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
 import { decisionAdmissionWitnesses } from './decision-admissions'
@@ -181,7 +181,7 @@ export const bindSystemSourceCut = (
       if (definition === undefined) return yield* fail('Unregistered financial policy')
       const account = financialAccounts.get(policy.policy)
       const sessions = []
-      let openingQualificationEquity: bigint | null = BigInt(systemQualificationPolicy.allocationMicros)
+      let openingQualificationEquity: bigint | null = BigInt(registeredAllocationMicros(data.registration))
       for (const session of policy.sessions) {
         const inference = cut.inference.filter(
           (i) => i.accountBindingHash === definition.accountBindingHash && i.sessionDate === session.sessionDate,

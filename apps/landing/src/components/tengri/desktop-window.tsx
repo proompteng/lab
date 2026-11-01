@@ -37,6 +37,7 @@ export function DesktopWindowFrame({
   dispatch,
   onCloseRequest,
   stageRef,
+  viewport,
   window,
 }: {
   active: boolean
@@ -44,6 +45,7 @@ export function DesktopWindowFrame({
   dispatch: (action: WindowAction) => void
   onCloseRequest?: () => void
   stageRef: RefObject<HTMLDivElement | null>
+  viewport: () => Bounds
   window: DesktopWindow
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null)
@@ -88,16 +90,14 @@ export function DesktopWindowFrame({
     resetTransientStyles(elementRef.current)
   }, [window.bounds])
 
-  const viewport = useCallback((): Bounds => {
-    const rect = stageRef.current?.getBoundingClientRect()
-    const browserWidth = typeof globalThis.window === 'undefined' ? 0 : globalThis.window.innerWidth
-    const browserHeight = typeof globalThis.window === 'undefined' ? 0 : Math.max(0, globalThis.window.innerHeight - 30)
-    return { x: 0, y: 0, width: rect?.width ?? browserWidth, height: rect?.height ?? browserHeight }
-  }, [stageRef])
-
   const begin = useCallback(
     (event: ReactPointerEvent<HTMLElement>, edge: ResizeEdge | null) => {
-      if (window.mode !== 'normal' || event.button !== 0) return
+      if (
+        window.mode !== 'normal' ||
+        event.button !== 0 ||
+        globalThis.window.matchMedia('(max-width:767px), (pointer:coarse)').matches
+      )
+        return
       event.preventDefault()
       dispatch({ type: 'focus', id: window.id })
       if (event.target instanceof Element) event.target.setPointerCapture(event.pointerId)
@@ -158,6 +158,8 @@ export function DesktopWindowFrame({
   const unifiedToolbar = window.app === 'finder' || window.app === 'settings'
   return (
     <motion.div
+      data-tengri-window-frame
+      data-window-mode={window.mode}
       ref={elementRef}
       className="absolute overflow-visible"
       initial={false}
@@ -192,7 +194,7 @@ export function DesktopWindowFrame({
         data-active={active}
         data-app={window.app}
         className={cn(
-          'tengri-window absolute inset-3 flex flex-col overflow-hidden bg-zinc-900 outline-none',
+          'tengri-window absolute inset-3 flex flex-col overflow-hidden bg-zinc-900 outline-none max-md:rounded-none [@media(pointer:coarse)]:rounded-none',
           window.mode === 'maximized'
             ? 'rounded-none'
             : cn(
