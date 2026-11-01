@@ -618,6 +618,11 @@ export function ReadyDesktop({
 
   const openSettings = useCallback(() => void openDesktopApp('settings'), [openDesktopApp])
 
+  useEffect(() => {
+    if (hydratedDesktopId === desktopId && new URL(window.location.href).searchParams.has('platform_connection'))
+      openSettings()
+  }, [desktopId, hydratedDesktopId, openSettings])
+
   const openChrome = useCallback(() => void openDesktopApp('chrome'), [openDesktopApp])
 
   const openFinder = useCallback(

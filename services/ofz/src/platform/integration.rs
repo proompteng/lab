@@ -1172,6 +1172,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             database.clone(),
             native.clone(),
             crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
+            super::providers::Providers::disabled(),
         );
         let query = p::ReadPolicyRelationshipsRequest {
             workspace_id: crate::registry::configured().unwrap().workspaces[0]
@@ -1961,6 +1962,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         database.clone(),
         native.clone(),
         crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
+        super::providers::Providers::disabled(),
     );
     let grpc = tokio::spawn(async move {
         let incoming =
@@ -2006,8 +2008,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         ))
         .await
         .unwrap()
-        .into_inner()
-        .relay_clients;
+        .into_inner();
     let operation = relay::registered::Operation {
         name: "read".into(),
         description: "Read a fixture account".into(),
@@ -2047,7 +2048,9 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         "fixture-http".into(),
         &kube_endpoint,
         Some(config_dir.join("ca.crt").to_str().unwrap()),
-        Some(token_file.to_str().unwrap().into()),
+        relay::credentials::Authentication::BearerFile {
+            path: token_file.to_str().unwrap().into(),
+        },
         vec![relay::http::HttpOperation {
             operation: operation.clone(),
             method: relay::http::Method::Get,
@@ -2320,6 +2323,31 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let response = relay.execute(invocation).await.unwrap().into_inner();
     assert_eq!(response.result, b"fixture log line\n");
     assert!(response.content_type.starts_with("text/plain"));
+    {
+        let owner = admin.clone();
+        let database = database.clone();
+        let native = native.clone();
+        let human = session(&humans[0]);
+        let administrator = administrators[0].clone();
+        let runtime = super::providers::integration::Runtime {
+            delegation_id: created.delegation_id.clone(),
+            credential: created.credential.clone(),
+            binding: payload.binding.clone().unwrap(),
+        };
+        tokio::spawn(async move {
+            super::providers::integration::qualify(
+                &owner,
+                &database,
+                &native,
+                human,
+                administrator,
+                runtime,
+            )
+            .await;
+        })
+        .await
+        .unwrap();
+    }
     let completed_payload = payload.clone();
     let lookup = delegated_lookup(&completed_payload, &created);
     let reused = lookup.get_ref().clone();

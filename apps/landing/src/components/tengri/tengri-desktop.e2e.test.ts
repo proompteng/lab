@@ -472,6 +472,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     })
   })
 
+  await page.route('**/api/platform/provider-connections**', (route) => route.fulfill({ json: { connections: [] } }))
   await page.route('**/api/tengri/connections**', (route) =>
     route.fulfill({ json: { connections: [], recoveryGeneration: '1' } }),
   )
@@ -11722,3 +11723,125 @@ test('keeps workspace sharing in Tengri and directs administration to its own po
     expect(new URL(read).searchParams.get('workspace')).toBeTruthy()
   }
 })
+
+for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
+  test(`restores provider authorization on a phone without repeating setup or prompting for passkeys: ${outcome}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await mockTengri(page, { preserveDraftStorageOnReload: true })
+    const saves: SaveConnection[] = []
+    let begins = 0
+    let signIns = 0
+    let accountReady = false
+    let connections: Record<string, unknown>[] = []
+    await page.route('**/api/auth/*', (route) => {
+      signIns++
+      return route.fulfill({ status: 500, json: { error: 'No sign-in expected' } })
+    })
+    await page.route('**/api/platform/connectors', (route) =>
+      route.fulfill({
+        json: {
+          operations: [
+            {
+              connectorId: 'inventory',
+              name: 'items',
+              action: 'inventory.items.read',
+              description: 'Read team inventory',
+              readOnly: true,
+              targets: [{ name: 'Team inventory', resource: { kind: 'inventory.account', id: 'inventory/team' } }],
+            },
+          ],
+        },
+      }),
+    )
+    await page.route('**/api/platform/provider-connections', (route) => {
+      if (route.request().method() === 'POST') {
+        begins++
+        return route.fulfill({
+          json: {
+            authorizationUrl: 'https://oauth.fixture.test/authorize',
+            connectionId: '77777777-7777-4777-8777-777777777777',
+          },
+        })
+      }
+      return route.fulfill({
+        json: {
+          connections: [
+            {
+              profileId: 'inventory',
+              name: 'Inventory',
+              connectorId: 'inventory',
+              state: accountReady ? 'PROVIDER_CONNECTION_STATE_READY' : 'PROVIDER_CONNECTION_STATE_RECONNECT',
+              accountName: accountReady ? 'Team' : '',
+              providerScopes: ['items.read'],
+            },
+          ],
+        },
+      })
+    })
+    await page.route('https://oauth.fixture.test/authorize', (route) => {
+      // The protocol fixture separately verifies code exchange; this exercises the actual browser return and saved UI intent.
+      accountReady = true
+      return route.fulfill({
+        status: 302,
+        headers: { location: desktopOrigin + '/?platform_connection=' + outcome + '&provider_profile=inventory' },
+        body: '',
+      })
+    })
+    await page.route('**/api/tengri/connections**', async (route) => {
+      if (route.request().method() === 'POST') {
+        const request = connectionRequestSchema.parse(route.request().postDataJSON())
+        if (request.kind === 'save') {
+          saves.push(request)
+          connections = [
+            {
+              id: request.connectionId,
+              clientService: 'tengri-web',
+              clientReference: readyAgent.uid + '/inventory',
+              actions: ['inventory.items.read'],
+              resources: request.targets,
+              binding: { service: 'tengri', id: readyAgent.uid },
+              enabled: true,
+              version: '1',
+              credentialActive: true,
+              credentialGeneration: '5',
+              recoveryGeneration: '1',
+              delegationId: '33333333-3333-4333-8333-333333333333',
+              proofKeyThumbprint: 'a'.repeat(43),
+              credentialBinding: { service: 'tengri', id: readyAgent.uid, generation: readyAgent.runtimeEpoch },
+              expiresAtUnixMs: String(Date.now() + 900_000),
+            },
+          ]
+        }
+      }
+      return route.fulfill({ json: { connections, recoveryGeneration: '1' } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+    await openSettingsPane(settings, 'Connections')
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (outcome === 'connected') {
+      await expect(settings.getByRole('button', { name: 'Manage', exact: true })).toBeVisible()
+      await expect(settings.getByText('Connected', { exact: true })).toBeVisible()
+      expect(saves).toHaveLength(1)
+      expect(saves[0]?.operations).toEqual(['items'])
+    } else {
+      await expect(
+        settings.getByText(
+          outcome === 'cancelled'
+            ? 'Connection cancelled. Your choices are saved.'
+            : 'Use the account you originally connected. The selected account was not connected.',
+          { exact: true },
+        ),
+      ).toBeVisible()
+      await expect(settings.getByRole('checkbox', { name: 'Team inventory', exact: true })).toBeChecked()
+      expect(saves).toHaveLength(0)
+    }
+    expect(begins).toBe(1)
+    expect(signIns).toBe(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await settings.screenshot({ path: test.info().outputPath('provider-return-phone-' + outcome + '.png') })
+  })
+}

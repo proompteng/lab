@@ -20,6 +20,7 @@ import { SettingsSelect } from './settings-select'
 import { WorkspaceClients } from './workspace-clients'
 import { WorkspacePeople } from './workspace-people'
 import { WorkspaceAccessRequests } from './workspace-access-requests'
+import { WorkspaceProviderAccounts } from './provider-accounts'
 
 import { portalSections, type PortalSection } from '@/lib/platform/portal'
 const activityNames: Record<string, string> = {
@@ -310,6 +311,11 @@ export function AdminPortal({
                 </TabsList>
                 <TabsContent value="integrations">
                   <div className="space-y-8">
+                    <WorkspaceProviderAccounts
+                      key={workspaceId + '-accounts'}
+                      workspaceId={workspaceId!}
+                      principalId={identity.humanId}
+                    />
                     <WorkspaceAccessRequests
                       key={workspaceId + '-requests'}
                       detail={current}
