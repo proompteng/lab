@@ -2491,6 +2491,37 @@ test('automatically recovers a saved conversation after a temporary control-plan
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
+test('clears a resume conflict after the existing conversation loads without submitting a turn', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page, {
+    resumeThreadErrors: [{ status: 503, error: 'The conversation changed while loading. Reconnecting…' }],
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-existing',
+            status: 'completed',
+            items: [{ id: 'reply-existing', type: 'agentMessage', text: 'Restored conversation content' }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
+  await expect(tengri.getByText('Tengri resource already exists', { exact: true })).toHaveCount(0)
+  await page.clock.runFor(1_000)
+  await expect(tengri.getByText('Restored conversation content', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
+  await expect(tengri.getByRole('alert')).toHaveCount(0)
+  await page.clock.runFor(31_000)
+  expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
 test('automatically recovers a saved conversation after a cleanly truncated history stream', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page, { resumeThreadTruncatedOnce: true })

@@ -10,12 +10,14 @@ import { stageResponseIdentity } from '../jev/staged-checkpoint'
 import type { ReplayInferenceCall } from './inference-timing'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { Clock, Effect, FileSystem, Layer, Option, Result } from 'effect'
+import { Clock, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { canonicalHashV1Result } from '../hash'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
+import { prepareJevRequest } from '../jev/contract'
+import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { DecisionsClient, prepareDecisionsRequest } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import {
@@ -123,11 +125,38 @@ test('native entry commits source and request before inference, reproduces its r
         evaluate: (input) =>
           Effect.gen(function* () {
             calls++
-            expect(yield* fs.exists(`${directory}/request-${request.requestId}.json`).pipe(Effect.orDie)).toBeTrue()
+            const prepared = Result.getOrThrow(prepareJevRequest(input))
+            const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+              prepared.request.state,
+            )
+            const dispatched = plan.candidates.find((candidate) => candidate.symbol === symbol)
+            if (dispatched?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing dispatched candidate')
+            const actual = dispatched.request
+            const persistedRequest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+              yield* fs.readFileString(`${directory}/request-${actual.requestId}.json`),
+            )
+            expect(persistedRequest).toEqual(actual)
             expect(yield* fs.exists(`${directory}/batch-${plan.batchId}.json`).pipe(Effect.orDie)).toBeTrue()
-            expect(yield* fs.exists(`${directory}/handoff-${request.requestId}.json`).pipe(Effect.orDie)).toBeTrue()
+            const persistedHandoff = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+              yield* fs.readFileString(`${directory}/handoff-${actual.requestId}.json`),
+            )
+            const handoff = Result.getOrThrow(
+              decodeEntryHandoff(
+                {
+                  requestId: actual.requestId,
+                  input: actual.request,
+                  observedAt: actual.observedAt,
+                  expiresAt: actual.expiresAt,
+                },
+                persistedHandoff,
+              ),
+            )
+            if (handoff.disposition.status !== 'READY') throw new Error('Dispatched handoff is not ready')
+            expect(Result.getOrThrow(prepareJevRequest(handoff.disposition.jevRequest)).requestHash).toBe(
+              prepared.requestHash,
+            )
             return nativeJevInference(input, new Date(yield* Clock.currentTimeMillis).toISOString(), true)
-          }),
+          }).pipe(Effect.orDie),
       }
       const evaluation = evaluateJevObservation({
         cycleId: observation.cycleId,

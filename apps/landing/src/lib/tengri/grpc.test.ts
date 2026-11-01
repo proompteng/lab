@@ -29,6 +29,7 @@ let removalCheck: (() => void) | undefined
 const removalOperations = new Set<string>()
 let loseCommandResponse = false
 let supersedeRuntimeCommand = false
+let conflictedConversationResumes = 0
 const identity: TengriIdentity = {
   subject: 'github:42',
   user: { id: '42', name: 'Fixture', email: '', image: null },
@@ -702,6 +703,10 @@ beforeAll(async () => {
       }
       if (threadId === 'unavailable-conversation') {
         call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
+        return
+      }
+      if (threadId === 'conflicted-conversation' && conflictedConversationResumes++ === 0) {
+        call.emit('error', serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'))
         return
       }
       call.write({
@@ -1895,6 +1900,18 @@ describe('Tengri gRPC BFF transport', () => {
       status: 503,
       code: undefined,
     })
+  })
+
+  test('keeps a conversation resume conflict retryable without exposing guest details', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread(identity, 'agent-test', 'conflicted-conversation'))).toMatchObject({
+      message: 'The conversation changed while loading. Reconnecting…',
+      status: 503,
+      code: undefined,
+    })
+    expect(await restoredThread('conflicted-conversation')).toMatchObject({ id: 'conflicted-conversation' })
+    expect(conflictedConversationResumes).toBe(2)
   })
 
   test('sanitizes upstream failures and treats verifier failures as service errors', async () => {
