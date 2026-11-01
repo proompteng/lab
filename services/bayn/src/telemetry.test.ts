@@ -33,6 +33,60 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test.each(
+    ['success', 'failure', 'defect', 'interruption'].flatMap((outcome) =>
+      ['logger', 'timing'].map((sink) => ({ outcome, sink })),
+    ),
+  )('diagnostic-only stages preserve $outcome when the $sink sink throws', async ({ outcome, sink }) => {
+    const failure = { reason: 'original operation failure' }
+    const operation =
+      outcome === 'success'
+        ? Effect.succeed('committed')
+        : outcome === 'failure'
+          ? Effect.fail(failure)
+          : outcome === 'defect'
+            ? Effect.die(failure)
+            : Effect.interrupt
+    const actual = await Effect.runPromiseExit(
+      operation.pipe(
+        withObservedStage('bayn.jev.batch-completion.phase', {
+          operation: 'lock',
+          recordCompletion: true,
+          diagnosticOnly: true,
+        }),
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              if (sink === 'logger') throw new Error('diagnostic sink failed')
+            }),
+          ]),
+        ),
+        Effect.provideService(
+          ExecutionStageTimings,
+          new (class extends Map<string, ExecutionStageTiming> {
+            override set(key: string, value: ExecutionStageTiming) {
+              if (sink === 'timing') throw new Error('diagnostic timing sink failed')
+              return super.set(key, value)
+            }
+          })(),
+        ),
+      ),
+    )
+    if (outcome === 'success') {
+      expect(Exit.isSuccess(actual)).toBe(true)
+      if (Exit.isSuccess(actual)) expect(actual.value).toBe('committed')
+    } else {
+      expect(Exit.isFailure(actual)).toBe(true)
+      if (Exit.isFailure(actual)) {
+        expect(actual.cause.reasons).toHaveLength(1)
+        const reason = actual.cause.reasons[0]
+        expect(reason?._tag).toBe(outcome === 'failure' ? 'Fail' : outcome === 'defect' ? 'Die' : 'Interrupt')
+        if (reason?._tag === 'Fail') expect(reason.error).toBe(failure)
+        if (reason?._tag === 'Die') expect(reason.defect).toBe(failure)
+      }
+    }
+  })
+
   test.each(['success', 'failure', 'defect', 'interruption'])(
     'retains the native millisecond interval through %s and finalizes once',
     async (outcome) => {
