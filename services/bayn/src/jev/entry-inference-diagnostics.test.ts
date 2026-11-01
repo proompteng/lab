@@ -4,12 +4,19 @@ import { TestClock } from 'effect/testing'
 import { operationalError } from '../errors'
 import { JevClient } from './client'
 import { DecisionsClient } from './decisions'
-import { EntryInferenceJournal, prepareClaimedEntry } from './entry-inference'
+import {
+  EntryInferenceJournal,
+  EntrySourceFeasibilityReason,
+  evaluateEntrySourceFeasibility,
+  hasFeasibleEntrySource,
+  prepareClaimedEntry,
+} from './entry-inference'
+import { makeNativeChartEvidence } from './chart-evidence'
 import { evaluateClaimedEntryInferences } from './entry-inference-batch'
 import { entryHandoffDiagnostic } from './entry-inference-diagnostics'
 import { entryCompletionFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevEvaluationStore, makeJevDispatch } from './evaluation'
-import { makeJevEvaluationRequest } from './evidence'
+import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { prepareEntryInferenceInput } from './entry-inference-input'
 
 const noQuantityRequest = () => {
@@ -35,11 +42,111 @@ const noQuantityRequest = () => {
   )
 }
 
+const prepare = (request: JevEvaluationRequest) =>
+  Result.getOrThrow(
+    prepareClaimedEntry({
+      requestId: request.requestId,
+      input: request.request,
+      observedAt: request.observedAt,
+      expiresAt: request.expiresAt,
+      claimedAt: request.observedAt,
+    }),
+  )
+
+const quietCryptoRequest = () => {
+  const original = entryEvaluationRequestFixture()
+  const symbol = 'ETH/USD'
+  const bars = original.request.chartSource.bars.map((bar) => ({
+    ...bar,
+    open: 100,
+    high: 100.03,
+    low: 99.99,
+    close: 100,
+  }))
+  const prepared = Result.getOrThrow(
+    prepareEntryInferenceInput({
+      ...original.request,
+      chartSource: { ...original.request.chartSource, symbol, bars },
+      numericalState: { ...original.request.numericalState, candidate: { symbol, bars1m: bars } },
+      funding: { ...original.request.funding, bidMicros: '100000000', askMicros: '100010000' },
+    }),
+  )
+  return Result.getOrThrow(
+    makeJevEvaluationRequest({
+      schemaVersion: original.schemaVersion,
+      cycleId: original.cycleId,
+      authorityGenerationHash: original.authorityGenerationHash,
+      snapshotId: original.snapshotId,
+      symbol,
+      observedAt: original.observedAt,
+      expiresAt: original.expiresAt,
+      request: prepared.input,
+      requestHash: prepared.requestHash,
+    }),
+  )
+}
+
+test.each([
+  {
+    fixture: entryEvaluationRequestFixture,
+    feasible: true,
+    reason: EntrySourceFeasibilityReason.Feasible,
+    requestHash: 'be19f5d58f4b86cd7939f762abbce434e211afc0bb8a01b4f9574a088eab8ee6',
+    claimHash: 'a044472ea9dea0e0115d61cc2c08ea60be4dc4db1399adc774170f5775a53768',
+  },
+  {
+    fixture: noQuantityRequest,
+    feasible: false,
+    reason: EntrySourceFeasibilityReason.NoExecutableQuantity,
+    requestHash: 'ccb33549552054b35da7e18c2102059fb3c0ee7ce7e340556e308c4363cd7fd8',
+    claimHash: null,
+  },
+  {
+    fixture: quietCryptoRequest,
+    feasible: false,
+    reason: EntrySourceFeasibilityReason.NoFundedSourceStructure,
+    requestHash: '5beadcb12b1bfc032dbde19e33532658a5f638abbe67841d04bec302cc5f15f6',
+    claimHash: null,
+  },
+])(
+  'retains pre-change boolean and immutable identity oracles for $reason',
+  ({ fixture, feasible, reason, requestHash, claimHash }) => {
+    const request = fixture()
+    const prepared = prepare(request)
+    const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
+    expect(Result.getOrThrow(hasFeasibleEntrySource(request.request, chart))).toBe(feasible)
+    expect(prepared.sourceFeasibility).toMatchObject({ feasible, reason })
+    expect(request.requestHash).toBe(requestHash)
+    expect(prepared.visualClaim?.claimHash ?? null).toBe(claimHash)
+    if (!feasible)
+      expect(prepared.sourceFeasibility).toMatchObject({
+        supportBarCount: 0,
+        resistanceBarCount: 0,
+        baseWindowCount: 0,
+      })
+  },
+)
+
+test('feasibility diagnostic preserves invalid economics as failure rather than an abstention', () => {
+  const request = entryEvaluationRequestFixture()
+  const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
+  const invalid = { ...request.request, funding: { ...request.request.funding, askMicros: '0' } }
+  const diagnostic = evaluateEntrySourceFeasibility(invalid, chart)
+  const boolean = hasFeasibleEntrySource(invalid, chart)
+  expect(Result.isFailure(diagnostic)).toBe(true)
+  expect(Result.isFailure(boolean)).toBe(true)
+  if (Result.isFailure(diagnostic) && Result.isFailure(boolean)) {
+    expect(diagnostic.failure._tag).toBe('JevContractError')
+    expect(boolean.failure.message).toBe(diagnostic.failure.message)
+  }
+})
+
 test('projects authentic ready and unfunded derivations without provider or financial material', () => {
   const request = entryEvaluationRequestFixture()
   const ready = entryCompletionFixture(request).handoff
   expect(ready.disposition.status).toBe('READY')
-  const diagnostic = entryHandoffDiagnostic(request.cycleId, ready)
+  expect(ready.handoffHash).toBe('df3b19ef518e023c26f92593d2e4d521229f6272d99bf61ce25517ecb94f46b9')
+  const diagnostic = entryHandoffDiagnostic(request.cycleId, ready, prepare(request).sourceFeasibility)
   expect(diagnostic.disposition).toBe('READY')
   expect(diagnostic.proposalCount).toBeGreaterThan(0)
   expect(Object.keys(diagnostic).sort()).toEqual([
@@ -50,9 +157,12 @@ test('projects authentic ready and unfunded derivations without provider or fina
     'proposalCount',
     'rejectionCounts',
     'requestId',
+    'sourceFeasibility',
   ])
   const unfunded = entryCompletionFixture(noQuantityRequest()).handoff
-  expect(entryHandoffDiagnostic(request.cycleId, unfunded)).toMatchObject({
+  expect(
+    entryHandoffDiagnostic(request.cycleId, unfunded, prepare(noQuantityRequest()).sourceFeasibility),
+  ).toMatchObject({
     disposition: 'NO_FUNDED_PROPOSALS',
     proposalCount: 0,
     rejectionCounts: [{ reason: 'NO_BUY_QUANTITY', count: 2 }],
@@ -71,8 +181,10 @@ test('projects authentic ready and unfunded derivations without provider or fina
     expect(serialized).not.toContain(forbidden)
 })
 
-const runSourceInfeasible = async (mode: 'success' | 'commit-failure' | 'replay' | 'logger-defect') => {
-  const request = noQuantityRequest()
+const runSourceInfeasible = async (
+  mode: 'success' | 'commit-failure' | 'replay' | 'logger-defect',
+  request = noQuantityRequest(),
+) => {
   const claim = {
     requestId: request.requestId,
     observedAt: request.observedAt,
@@ -137,6 +249,27 @@ test('source-infeasible committed handoff emits one bounded correlated event wit
     disposition: 'SOURCE_INFEASIBLE',
     proposalCount: 0,
     rejectionCounts: [],
+    sourceFeasibility: {
+      reason: 'NO_EXECUTABLE_QUANTITY',
+      supportBarCount: 0,
+      resistanceBarCount: 0,
+      baseWindowCount: 0,
+    },
+  })
+})
+
+test('quiet crypto source logs no funded structure, not a quantity failure, after commit', async () => {
+  const { exit, messages } = await runSourceInfeasible('success', quietCryptoRequest())
+  expect(Exit.isSuccess(exit)).toBe(true)
+  expect(messages).toHaveLength(1)
+  expect(messages[0]).toMatchObject({
+    disposition: 'SOURCE_INFEASIBLE',
+    sourceFeasibility: {
+      reason: 'NO_FUNDED_SOURCE_STRUCTURE',
+      supportBarCount: 0,
+      resistanceBarCount: 0,
+      baseWindowCount: 0,
+    },
   })
 })
 
