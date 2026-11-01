@@ -2,6 +2,7 @@ import { createAgentRunTools } from './agent-runs'
 import { createFileTools } from './file'
 import { createGitTools } from './git'
 import { createGuideTools } from './guide'
+import { createInfrastructureTools } from './infrastructure'
 import { createKubectlTools } from './kubectl'
 import { createPatchTools } from './patch'
 import { createRepoSessionTools } from './repo-session'
@@ -15,5 +16,6 @@ export const createAgentsShellTools = () => [
   ...createShellTools(),
   ...createGitTools(),
   ...createKubectlTools(),
+  ...createInfrastructureTools(),
   ...createAgentRunTools(),
 ]
