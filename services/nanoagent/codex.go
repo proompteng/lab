@@ -113,6 +113,7 @@ type codexSupervisor struct {
 	relayRoot       string
 	operationMu     sync.Mutex
 	responseTimeout time.Duration
+	processes       sync.WaitGroup
 
 	mu              sync.Mutex
 	command         *exec.Cmd
@@ -174,7 +175,11 @@ func approvalKey(generation *codexProcessGeneration, id json.RawMessage) string 
 }
 
 func (supervisor *codexSupervisor) start() {
-	go supervisor.run()
+	supervisor.processes.Add(1)
+	go func() {
+		defer supervisor.processes.Done()
+		supervisor.run()
+	}()
 }
 
 func (supervisor *codexSupervisor) isReady() bool {
@@ -334,6 +339,7 @@ func (supervisor *codexSupervisor) close() {
 	if command != nil && command.Process != nil {
 		stopCodexProcess(command)
 	}
+	supervisor.processes.Wait()
 }
 
 func killProcessGroup(command *exec.Cmd) {

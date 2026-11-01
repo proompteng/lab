@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +17,34 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func TestCodexSupervisorCloseWaitsForGenerationCleanup(t *testing.T) {
+	workspace := t.TempDir()
+	binary := filepath.Join(workspace, "codex-fixture")
+	script := `#!/bin/sh
+IFS= read -r initialize
+id=$(printf '%s\n' "$initialize" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%s,"result":{}}\n' "$id"
+IFS= read -r initialized
+sleep 60
+`
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := newCodexSupervisor(binary, workspace)
+	generation := supervisor.generation
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := supervisor.waitForGeneration(ctx, generation); err != nil {
+		t.Fatal(err)
+	}
+	supervisor.close()
+	if !supervisor.generationProcessesStopped(generation.id) {
+		t.Fatal("supervisor close returned before generation cleanup finished")
+	}
+}
 
 func TestCodexProcessConfirmsDetachedChildrenStopBeforeRecovery(t *testing.T) {
 	for _, ending := range []string{"native exit", "supervisor stop", "supervisor parent exit"} {
