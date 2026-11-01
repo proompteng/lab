@@ -27,6 +27,7 @@ const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, 
 
 const makeTurn = (status: Turn['status'], error: Turn['error'] = null): Turn => ({
   id: `turn-${status}`,
+  rootTurnId: null,
   items: [],
   itemsView: 'full',
   status,
@@ -123,6 +124,7 @@ describe('codex app-server runner adapter', () => {
         },
         artifacts: {
           statusPath,
+          resultPath: join(dir, 'result.json'),
           logPath,
         },
         providerSpec: {
@@ -188,6 +190,7 @@ describe('codex app-server runner adapter', () => {
       threadId: 'thread-1',
       turnId: 'turn-1',
     })
+    expect(status.result).toEqual({ text: 'done', truncated: false })
     expect(status.artifacts).toMatchObject({
       outputArtifacts: [
         {
@@ -199,6 +202,12 @@ describe('codex app-server runner adapter', () => {
       ],
     })
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
+    expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toMatchObject({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      responseText: 'done',
+      responseTruncated: false,
+    })
   })
 
   it('waits for the app-server thread to settle before reporting success', async () => {
@@ -223,7 +232,22 @@ describe('codex app-server runner adapter', () => {
       }),
       waitForThreadIdle: async (threadId) => {
         waitedForThreadId = threadId
-        return { lastTurn: makeTurn('completed') }
+        return {
+          lastTurn: {
+            ...makeTurn('completed'),
+            items: [
+              {
+                type: 'agentMessage',
+                id: 'final-message',
+                text: 'completed after continuation',
+                phase: 'final_answer',
+                memoryCitation: null,
+                delivery: null,
+                questions: null,
+              },
+            ],
+          },
+        }
       },
       stop: () => undefined,
     }
@@ -236,6 +260,7 @@ describe('codex app-server runner adapter', () => {
         },
         artifacts: {
           statusPath,
+          resultPath: join(dir, 'result.json'),
         },
       },
       {
@@ -253,7 +278,13 @@ describe('codex app-server runner adapter', () => {
     expect(status).toMatchObject({
       status: 'succeeded',
       threadId: 'thread-continuation',
+      turnId: 'turn-completed',
       turnStatus: 'completed',
+    })
+    expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toMatchObject({
+      turnId: 'turn-completed',
+      responseText: 'completed after continuation',
+      responseTruncated: false,
     })
   })
 
