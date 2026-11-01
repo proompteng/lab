@@ -1,3 +1,4 @@
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
 import { readSystemExecutionOrders } from './execution-capture'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -27,7 +28,7 @@ import {
   registerSystemQualification,
 } from './postgres'
 import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
-import { QualificationVerdict } from './assessment'
+import { QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
   readRegisteredFinancialIdentity,
   readSystemCashObservations,
@@ -46,7 +47,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
@@ -57,6 +58,7 @@ import {
 } from './replay-execution'
 
 import { validateSystemRegistration } from './policy'
+import { emptySourceCutFixture } from './source-cut.test-support'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const role = 'bayn_assessment_test_app'
@@ -90,10 +92,10 @@ const makeRuntime = (url: string) =>
 postgres('PostgreSQL prospective system qualification', () => {
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
-  const registration = () => {
+  const registration = (sessionCount = 20, version = JevAcceptanceVersion.Current) => {
     if (databaseObservedAt === undefined) throw new Error('Database clock must precede fixture construction')
     return {
-      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString()),
+      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString(), sessionCount, version),
       priorAttemptHash: testHash(history),
     }
   }
@@ -143,6 +145,201 @@ postgres('PostgreSQL prospective system qualification', () => {
         }),
       )
     })
+
+  test.each([1, 3, 21])('persists a %i-session registration with its actual closing boundary', async (sessionCount) => {
+    const first = registration(sessionCount)
+    const saved = await runtime.runPromise(asApplication(registerFixture(first)))
+    expect(await runtime.runPromise(readSystemRegistration(saved.registrationHash))).toEqual(first)
+    const next = withRegistrationCommitments({ ...first, attemptIndex: 2, priorAttemptHash: saved.registrationHash })
+    const payload = Result.getOrThrow(canonicalJsonV1Result(next))
+    const opening = next.calendar.sessions[0]
+    const closing = next.calendar.sessions.at(-1)
+    if (opening === undefined || closing === undefined) throw Error('Missing registered boundaries')
+    const rejected = await runtime.runPromiseExit(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO system_qualification_registrations
+        (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+        VALUES (${testHash(next)}, ${next.program}, ${next.attemptIndex}, ${next.priorAttemptHash}, ${next.registeredAt},
+          ${opening.openAt}, ${new Date(Date.parse(closing.closeAt) + 1).toISOString()}, ${payload})`
+        }),
+      ),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
+    const accepted = await runtime.runPromise(asApplication(registerFixture(next)))
+    expect(accepted.registration.attemptIndex).toBe(2)
+    expect(accepted.registration.calendar.sessions).toHaveLength(sessionCount)
+  })
+
+  test('the window migration preserves existing registration bytes, hashes and attempt order', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 167))),
+          table: 'schema_migrations',
+        })
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
+      }),
+    )
+    const retained = withRegistrationCommitments({
+      ...registration(20, JevAcceptanceVersion.RetainedV2),
+      policyHash: '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b',
+      acceptanceProtocolHash: '33be41cdb552c926fdf003dd9320d570db4cd0012ae15227bc8338fd5f571375',
+    })
+    const retainedHash = testHash(retained)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const payload = Result.getOrThrow(canonicalJsonV1Result(retained))
+        yield* sql`INSERT INTO system_qualification_registrations
+        (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+        VALUES (${retainedHash}, ${retained.program}, ${retained.attemptIndex}, ${retained.priorAttemptHash}, ${retained.registeredAt},
+          ${retained.calendar.sessions[0]?.openAt}, ${retained.calendar.sessions.at(-1)?.closeAt}, ${payload})`
+      }),
+    )
+    const original = { registrationHash: retainedHash, registration: retained }
+    expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const before = yield* sql`SELECT registration_hash, payload_text, attempt_index, prior_attempt_hash, created_at
+        FROM system_qualification_registrations`
+        yield* postgresMigrations
+        expect(
+          yield* sql`SELECT registration_hash, payload_text, attempt_index, prior_attempt_hash, created_at
+        FROM system_qualification_registrations`,
+        ).toEqual(before)
+      }),
+    )
+    const next = withRegistrationCommitments({
+      ...registration(3),
+      attemptIndex: 2,
+      priorAttemptHash: original.registrationHash,
+    })
+    const saved = await runtime.runPromise(registerFixture(next))
+    expect(saved.registration.attemptIndex).toBe(2)
+    expect(saved.registration.calendar.sessions).toHaveLength(3)
+    expect(await runtime.runPromise(readSystemRegistration(original.registrationHash))).toEqual(original.registration)
+    const { input, verifiedSources } = assessmentFixture(retained)
+    const asOf = await runtime.runPromise(databaseNow)
+    const template = emptySourceCutFixture().cut
+    const cut = {
+      ...template,
+      registrationHash: retainedHash,
+      asOf,
+      runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
+    }
+    const savedCut = await runtime.runPromise(persistSystemSourceCut(cut))
+    verifiedSources.add(savedCut.sourceCutHash)
+    const historicalInput = {
+      ...input,
+      asOf,
+      sourceCutHash: savedCut.sourceCutHash,
+      reliability: { ...input.reliability, asOf, completions: [] },
+      safety: { ...input.safety, asOf },
+    }
+    const historical = Result.getOrThrow(
+      evaluateSystemAssessment(historicalInput, verifiedSources, JevAcceptanceVersion.RetainedV2),
+    )
+    expect(historical.verdict).not.toBe(QualificationVerdict.Qualified)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const { assessmentHash, ...material } = historical
+        yield* sql`INSERT INTO system_assessment_receipts
+        (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+        VALUES (${assessmentHash}, ${retainedHash}, ${savedCut.sourceCutHash}, ${asOf}, ${historical.verdict},
+          ${Result.getOrThrow(canonicalJsonV1Result(historicalInput))}, ${Result.getOrThrow(canonicalJsonV1Result(material))})`
+      }),
+    )
+    expect(await runtime.runPromise(readPersistedSystemAssessment(historical.assessmentHash))).toEqual(historical)
+  })
+
+  test('current registration permits a selected control, approved PAPER limits and contracted discounts without issuing authority', async () => {
+    const base = registration(4)
+    const policies = base.policies
+      .filter((p) => p.policy === JevResearchPolicy.Candidate || p.policy === JevResearchPolicy.Momentum)
+      .map((p) => {
+        const riskPolicy = Result.getOrThrow(
+          makeExecutionRiskPolicy(p.riskPolicy.accountId, p.riskPolicy.allowedSymbols, BrokerEnvironment.Sandbox),
+        )
+        return {
+          ...p,
+          riskPolicy,
+          riskPolicyHash: testHash(riskPolicy),
+          inferenceRateCard: {
+            ...p.inferenceRateCard,
+            rates: p.inferenceRateCard.rates.map((rate) =>
+              rate.provider !== 'typesafe' ? rate : { ...rate, inputMicrosPerMillionTokens: '1' },
+            ),
+          },
+        }
+      })
+    const proposal = withRegistrationCommitments({ ...base, policies, costAllocationPlans: [] })
+    const saved = await runtime.runPromise(asApplication(registerFixture(proposal)))
+    expect(saved.registration.policies).toHaveLength(2)
+    expect(saved.registration.policies.some((p) => p.policy === JevResearchPolicy.Deployed)).toBe(false)
+    expect(await runtime.runPromise(readSystemRegistration(saved.registrationHash))).toEqual(proposal)
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql`SELECT count(*)::integer AS count FROM authority_generations`
+      }),
+    )
+    expect(rows).toEqual([{ count: 0 }])
+  })
+
+  test('direct SQL cannot admit missing, fractional, substituted or underresolved bootstrap plans', async () => {
+    const input = registration(4)
+    if (input.schemaVersion !== 'bayn.system-registration.v3') throw new Error('Expected current registration')
+    for (const changes of [
+      { bootstrap: null },
+      { bootstrap: { ...input.bootstrap, blockLengthSessions: 1.5 } },
+      { bootstrap: { ...input.bootstrap, blockLengthSessions: 5 } },
+      { bootstrap: { ...input.bootstrap, seed: 0 } },
+      { bootstrap: { ...input.bootstrap, replicates: 159 } },
+      { bootstrap: { ...input.bootstrap, replicates: null } },
+      { policyHash: testHash('retired policy') },
+      { allocationMicros: '100000000001' },
+    ]) {
+      const payload = Result.getOrThrow(canonicalJsonV1Result({ ...input, ...changes }))
+      const exit = await runtime.runPromiseExit(
+        asApplication(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* sql`INSERT INTO system_qualification_registrations
+              (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+              VALUES (${sha256(payload)}, ${input.program}, 1, ${input.priorAttemptHash}, ${input.registeredAt},
+                ${input.calendar.sessions[0]?.openAt}, ${input.calendar.sessions.at(-1)?.closeAt}, ${payload})`
+          }),
+        ),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+    }
+    expect((await runtime.runPromise(asApplication(registerFixture(input)))).registration.attemptIndex).toBe(1)
+  })
+
+  test('prospective attempt order continues beyond twelve with adequate registered bootstrap work', async () => {
+    const base = registration(4)
+    if (base.schemaVersion !== 'bayn.system-registration.v3') throw new Error('Expected current registration')
+    let priorAttemptHash = base.priorAttemptHash
+    for (let attemptIndex = 1; attemptIndex <= 13; attemptIndex += 1) {
+      const proposal = withRegistrationCommitments({
+        ...base,
+        attemptIndex,
+        priorAttemptHash,
+        bootstrap: { ...base.bootstrap, replicates: Math.max(10000, 80 * attemptIndex * (attemptIndex + 1)) },
+      })
+      const saved = await runtime.runPromise(asApplication(registerFixture(proposal)))
+      expect(saved.registration.attemptIndex).toBe(attemptIndex)
+      priorAttemptHash = saved.registrationHash
+    }
+  }, 15000)
 
   test('registers and replays exact content, while preserving failed attempts and rejecting resets', async () => {
     const first = registration()
@@ -1042,16 +1239,29 @@ postgres('PostgreSQL prospective system qualification', () => {
     ).toBe(true)
   })
 
-  const activeEvaluation = async () => {
-    const base = registration()
+  const seedRetainedRegistration = (value: ReturnType<typeof registrationFixture>) =>
+    Effect.gen(function* () {
+      if (value.schemaVersion !== 'bayn.system-registration.v2')
+        throw new Error('Historical seed requires original registration material')
+      const sql = yield* PgClient.PgClient
+      const payload = Result.getOrThrow(canonicalJsonV1Result(value))
+      const registrationHash = testHash(value)
+      yield* sql`INSERT INTO system_qualification_registrations
+      (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+      VALUES (${registrationHash}, ${value.program}, ${value.attemptIndex}, ${value.priorAttemptHash}, ${value.registeredAt},
+        ${value.calendar.sessions[0]?.openAt}, ${value.calendar.sessions.at(-1)?.closeAt}, ${payload})`
+      return { registrationHash, registration: value }
+    })
+
+  const activeEvaluation = async (retained = false) => {
+    const base = registration(20, retained ? JevAcceptanceVersion.RetainedV3 : JevAcceptanceVersion.Current)
     const { opens, sessions } = activeEvaluationSessions(Date.now())
+    const value = withRegistrationCommitments({ ...base, calendar: { ...base.calendar, sessions } })
     const registered = await runtime.runPromise(
-      registerFixture(
-        withRegistrationCommitments({
-          ...base,
-          calendar: { ...base.calendar, sessions },
-        }),
-      ),
+      Effect.gen(function* () {
+        if (retained) return yield* seedRetainedRegistration(value)
+        return yield* registerFixture(value)
+      }),
     )
     const definition = registered.registration.policies.find((p) => p.policy === 'JEV')
     if (definition === undefined) throw new Error('Missing candidate')
@@ -1597,7 +1807,7 @@ postgres('PostgreSQL prospective system qualification', () => {
         databaseObservedAt = yield* databaseNow
       }),
     )
-    const { account, opens, registered } = await activeEvaluation()
+    const { account, opens, registered } = await activeEvaluation(true)
     const source = sha256('evidence retained before migration 157')
     await runtime.runPromise(
       Effect.gen(function* () {

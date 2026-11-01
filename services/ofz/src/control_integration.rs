@@ -2117,7 +2117,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
         audit
             .receipts
             .windows(2)
-            .all(|pair| pair[0].sequence < pair[1].sequence)
+            .all(|pair| pair[0].sequence > pair[1].sequence)
     );
     for audit_read in [false, true] {
         let auditor = &identities[2];

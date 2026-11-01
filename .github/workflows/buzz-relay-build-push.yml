@@ -68,6 +68,7 @@ jobs:
         with:
           context: upstream
           file: third_party/buzz/Dockerfile
+          ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: false
           build-args: |
@@ -117,6 +118,7 @@ jobs:
         with:
           context: upstream
           file: third_party/buzz/Dockerfile
+          ulimit: nofile=65536:65536
           platforms: linux/${{ matrix.architecture }}
           push: true
           tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}

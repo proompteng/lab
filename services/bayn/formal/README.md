@@ -3,22 +3,22 @@
 This directory contains the offline Lean model and executable used to check Bayn's production decisions. It is excluded
 from the trading image. `lean-toolchain` pins Lean 4.35.0; `lake-manifest.json` pins Mathlib and its dependencies.
 
-From this directory, run:
+From the repository root, run the same proof and conformance command as CI:
 
 ```sh
-lake -q build
-bash check.sh
+bun run --filter @proompteng/bayn verify:formal
 ```
 
-From the repository root, run the production conformance tests with the built executable:
+This requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
+sandboxing. On macOS, use a Linux VM or container. Missing tools, a different Lean version, build failures, checker
+rejections, and conformance failures return a nonzero exit code. The command builds the model and sets
+`BAYN_FORMAL_EXECUTABLE` itself, so a missing environment variable cannot skip conformance. Ordinary `bun test` skips
+this suite without that variable and is not a substitute for `verify:formal`.
 
-```sh
-BAYN_FORMAL_EXECUTABLE="$PWD/services/bayn/formal/.lake/build/bin/bayn-model" \
-  bun test services/bayn/src/system-assessment/formal-conformance.test.ts
-```
-
-The formal CI workflow runs both steps on Linux with `bubblewrap`. `check.sh` exports the built default targets in
-a sandbox and passes the retained export to pinned `lake check --from-export ... --paranoid`. This separates the
+The command runs `lake -q build`, `bash check.sh`, and the production conformance suite. The formal CI workflow also
+runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` exports the
+built default targets in a sandbox and passes the retained export to pinned `lake check --from-export ... --paranoid`.
+This separates the
 export from Lake's pipe transport, which stalled locally while the child was blocked writing stdout. Build/export
 and checker sandboxes retain read-only inputs, a writable build cache and no network. The exported environment is rechecked with the
 official kernel, its hardened allocator variant, Lean4Lean, Nanoda, con-leche and con-ron. All must accept. Con-leche
@@ -31,6 +31,20 @@ and [con-ron's verification boundary](https://arena.lean-lang.org/checker/con-ro
 The checkers verify proof terms against their definitions and permitted axioms. They do not observe broker executions
 or validate a market model. Arena test results compare particular checker versions and workloads; they do not prove
 soundness or replace checks of Bayn's own proof export with the pinned toolchain.
+
+## Registered evaluation windows
+
+Assessment and replay use the nonempty calendar chosen before the first open. The model has no fixed session
+count. `Bootstrap.lean` proves exact sample length and in-range indices for any positive registered block length,
+including truncated final blocks. Conformance compares multiple block lengths and 1-, 3-, 7-, 19-, 20-, 21-, and
+25-session windows, including later attempts with an adequate preregistered replicate budget. Current absolute and
+paired bounds share the exact familywise-corrected percentile rank. A whole-window block cannot establish edge.
+
+`Qualification.lean` requires positive actual profit, a positive absolute lower bound, a positive paired bound for
+every selected control, source-approved risk limits, complete evidence, 99.9% reliability, and zero safety violations.
+An empty recovery schedule is permitted; empty required operational classes are not. The reachable example uses
+small positive profit and no invented recovery event. Activity, turnover, control multiples, and stress scenarios do
+not enter the current predicate. The model does not supply market probabilities or prove future returns.
 
 ## Repeated momentum and native-control commitments
 
@@ -68,7 +82,7 @@ material. None of these results supplies a market probability or establishes pro
 The PostgreSQL/TigerBeetle suite also runs a compiled Node replay command through a complete synthetic momentum
 episode. It checks executable identity, entry and exit fills, a flat close, exact reconciliation, no provider calls,
 and a positive execution profit made negative by the declared data cost. This exercises the command and accounting
-boundaries; it does not replace the complete twenty-session matched-control stress assessment.
+boundaries; it does not replace the complete registered matched-control stress assessment.
 
 ## Frozen deployed control
 
@@ -76,6 +90,10 @@ boundaries; it does not replace the complete twenty-session matched-control stre
 and continuation/exits. `deployed_control_admission_preserves_every_identity` requires every identity to match;
 changing any component rejects admission. Conformance exercises all 64 changed/unchanged combinations through
 `validateSystemRegistration`, including the one admitted unchanged registration.
+Actual PostgreSQL tests additionally reject substitution, a missing control and duplicate controls through direct
+SQL, then admit the original control. These checks establish identity admission; they do not prove the retained
+image's availability or the equivalence of a rebuilt control. The retained evidence and execution boundary are in
+the [assessment contract](../src/system-assessment/README.md#evidence-and-assessment).
 
 `Economics.lean` models the original six-decimal share quantity as exactly 1,000 current quantity atoms per unit.
 `frozen_quantity_roundtrip`, `frozen_quantity_is_exact`, and `frozen_notional_value_is_preserved` prove exact conversion
@@ -95,7 +113,7 @@ TypeScript implementation of the model.
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Economics.lean`                                  | `src/operating-costs.ts` and `src/system-assessment/economics.ts`                                                                                   | `profit_conservation`, `qualification_conservative`, `invoice_replaces_tariff`, `account_paid_operating_cost_is_deducted_once`, `binary_edge_break_even`; executable comparison of signed economics and probability-weighted expectancy.                                                                                                                                                                                                                                                                                                            |
 | `Reliability.lean`                                | `src/system-assessment/reliability.ts`                                                                                                              | `reliability_error_budget`, `no_empty_perfect_reliability`, `small_populations_allow_no_failures`, `late_completion_is_failure`; executable comparison of the exact integer fraction. Schedule construction and source completeness are separate obligations.                                                                                                                                                                                                                                                                                       |
-| `Bootstrap.lean`                                  | `src/jev/acceptance.ts`                                                                                                                             | `sampled_indices_in_range`, `frozen_sample_has_twenty_sessions`, `paired_samples_use_shared_indices`; executable comparison of the frozen seed, 10,000 circular-block samples, percentile bounds and attempt-adjusted tails.                                                                                                                                                                                                                                                                                                                        |
+| `Bootstrap.lean`                                  | `src/jev/acceptance.ts`                                                                                                                             | `sampled_indices_in_range`, `sample_has_registered_length`, `session_sample_indices_in_range`, `odd_window_has_exactly_registered_sessions`, `paired_samples_use_shared_indices`; executable comparison of registered seeds, block lengths and replicate budgets over the complete window, exact percentile bounds and claim/attempt-adjusted tails.                                                                                                                                                                                                |
 | `Qualification.lean`                              | `src/system-assessment/assessment.ts`                                                                                                               | `missing_evidence_cannot_qualify`, `safety_has_no_error_budget`, `losing_control_cannot_replace_absolute_profit`, `qualification_is_reachable`; complete synthetic success and rejected evidence, safety and reliability cases.                                                                                                                                                                                                                                                                                                                     |
 | `Execution.lean` numeric and controller functions | `src/strategy/execution-model/fixed-point.ts`, `src/broker/alpaca/cash-reporting.ts`, `src/execution/order-terms.ts`, `src/execution/controller.ts` | Quantity rounding and cash conservation; stale epoch and foreign worker rejection; executable comparison of actual sizing, signed cash rounding, order terms and controller tick decisions.                                                                                                                                                                                                                                                                                                                                                         |
 | `Execution.lean` timing                           | `src/system-assessment/realism.ts`                                                                                                                  | `supported_routing_follows_durable_decision`, `waiting_in_guard_cannot_hide_stale_quote`, `expired_admission_cannot_route`, `execution_timing_has_reachable_success`; executable comparison of persistence, guard, dispatch, quote, admission and fill boundaries.                                                                                                                                                                                                                                                                                  |
@@ -122,26 +140,13 @@ The causal conclusion assumes PostgreSQL visibility and that the coordinator rou
 returns. The assessment exposes these assumptions and retains original producer routing timestamps as upper bounds,
 rather than claiming an exact physical commit time.
 
-`Qualification.lean` also maps `deployedControlPreserved` to the frozen-control admission rule in
-`src/system-assessment/policy.ts`. `deployed_control_admission_preserves_every_identity` proves preservation of
-strategy, parameter and protocol identities, `changed_deployed_parameters_are_rejected` rejects parameter drift,
-and `original_deployed_control_is_reachable` prevents an always-rejecting definition. Executable conformance compares
-the full TypeScript registration validator over all eight combinations of matching and changed identities.
-Actual PostgreSQL tests additionally reject substitution, a missing control and duplicate controls through direct
-SQL, then admit the original control. These checks establish identity admission; they do not prove the retained
-image's availability or the equivalence of a rebuilt control. The retained evidence and execution boundary are in
-the [assessment contract](../src/system-assessment/README.md#frozen-deployed-control).
-
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
 `unapproved_risk_cannot_register` requires membership in the source-approved policy identities.
-`admitted_risk_preserves_every_frozen_ceiling` and `expanded_turnover_cannot_register` enforce all five explicit
-integer limits, including the $200,000 daily-turnover ceiling. A complete boundary example is accepted.
-Conformance calls the full registration validator with the real production policy constructor, both retained and
-expanded PAPER policies, foreign accounts, changed hashes and rehashed expanded limits. PostgreSQL tests reject
-each ceiling exceeded by one microdollar and missing material through direct SQL, then retain the complete valid
-policy in the first admitted attempt. Cryptographic collision resistance and authority-record authenticity are
-external assumptions; these theorems do not grant capital or reconstruct those records.
+The production factory supplies the approved identities for the account and universe; its existing PAPER and
+live-style limits remain unchanged. Current registration no longer overlays a retired experiment's turnover ceiling.
+Conformance accepts both approved variants and rejects changed material, foreign accounts, and unapproved hashes.
+Cryptographic collision resistance and authority-record authenticity remain explicit external assumptions.
 
 The economics conformance suite also runs the production source binder and session evaluator for all four policy
 accounts across twenty synthetic sessions. It removes submitted financial amounts and compares the resulting cash
@@ -155,14 +160,13 @@ authentic. The retained source review remains an explicit assumption.
 `negative_session_reduces_equity` preserves a losing session, and `unknown_prefix_remains_unknown` prevents later
 profits from resetting a missing cumulative balance. A reachable example includes a losing trade session and a
 zero-trade operating loss. Conformance compares 500 seeded known and unknown inputs, and source-binding tests check
-the registered allocation, prior losses and missing evidence across the complete twenty-session window.
+the registered allocation, prior losses and missing evidence across the complete registered window.
 
-`Economics.lean` also maps `tariffMeetsFloor` to prospective tariff admission in `src/system-assessment/policy.ts`.
-`accepted_tariff_preserves_cost_floor` proves that accepted rates cannot understate the frozen tariff charge for any
-nonnegative input and output usage. `frozen_tariff_boundary` checks equality and one micro below the input-rate floor.
-Executable conformance compares complete production registrations at the boundary and over seeded rate samples.
-Registration tests cover all four policies and effective-period boundaries. Invoices still determine actual economics;
-this admission rule constrains qualification tariffs only.
+`Economics.lean` also retains `tariffMeetsFloor` for historical registration verification.
+`accepted_tariff_preserves_cost_floor` and `frozen_tariff_boundary` describe that retired policy's invoice/tariff
+comparison. Conformance explicitly selects the retained version for those cases. Current registrations accept actual
+contracted rates and current qualification uses actual fully attributed expenses; the conservative premium remains
+an operating-cost diagnostic. The retained theorem does not impose a floor on current economics.
 
 `DecisionWork.lean` maps `registeredMarketWindow` to the time boundary in `sourceFitsRegisteredSession`.
 Evidence from either native market must fall in the same half-open registered session. The continuous crypto calendar

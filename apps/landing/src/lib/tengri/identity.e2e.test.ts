@@ -487,13 +487,14 @@ identityTest(
     })
     if (!bundle.success) throw new Error('Identity browser fixture bundle failed')
     const javascript = await bundle.outputs[0]?.text()
+    // This functional fixture omits Tailwind; keep empty checkbox roots actionable when unchecked.
     const bff = httpsServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, async (request, response) => {
       try {
         const url = new URL(request.url || '/', process.env.TENGRI_DESKTOP_ORIGIN)
         if (url.pathname === '/') {
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
-            '<!doctype html><html><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
+            '<!doctype html><html><head><style>[data-slot="checkbox"]{display:inline-flex;width:16px;height:16px}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
           )
           return
         }
@@ -970,7 +971,7 @@ identityTest(
       )
     }
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
-    await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: false })
     const sessions = await control.query(
       'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
@@ -1066,7 +1067,7 @@ identityTest(
     expect(survivingIdentity.session.id).toBe(inspected.session.id)
     expect(Date.now() - failoverStarted).toBeLessThan(30_000)
     await page.reload()
-    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('button', { name: 'Add member', exact: true })).toBeVisible()
     console.log(
       'PASS: two real Ofz processes share SQL authority; unchanged client target recovers the same passkey session after SIGKILL of the serving replica',
     )
@@ -1155,8 +1156,19 @@ identityTest(
       const result = page.waitForResponse(
         (response) => response.url() === base + '/api/tengri/access' && response.request().method() === 'POST',
       )
-      await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+      await page.getByRole('button', { name: 'Save changes', exact: true }).click()
       expect((await result).status()).toBe(status)
+    }
+    const selectAccessOption = async (field: 'Change' | 'Role', label: string) => {
+      if (field === 'Change') {
+        if (label === 'Quota')
+          await page.getByRole('button', { name: 'Adjust limits for GitHub #1', exact: true }).click()
+        else await page.getByRole('button', { name: 'Add member', exact: true }).click()
+        return
+      }
+      await page.getByLabel(field, { exact: true }).click()
+      await page.getByRole('option', { name: label, exact: true }).click()
+      await browserExpect(page.getByRole('listbox')).toHaveCount(0)
     }
     const postAccess = (command: Record<string, unknown>) =>
       page.evaluate(async (input) => {
@@ -1167,14 +1179,17 @@ identityTest(
         })
         return { status: response.status, body: await response.json() }
       }, command)
-    await page.getByLabel('Change', { exact: true }).selectOption('quota')
-    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
-    await page.getByLabel('total', { exact: true }).fill('3')
-    await page.getByLabel('active', { exact: true }).fill('2')
-    await page.getByLabel('retainedGiB', { exact: true }).fill('96')
+    await selectAccessOption('Change', 'Quota')
+    await page.getByLabel('Total workspaces', { exact: true }).fill('3')
+    await page.getByLabel('Running workspaces', { exact: true }).fill('2')
+    await page.getByLabel('Storage limit (GiB)', { exact: true }).fill('96')
     await page.getByLabel('Reason', { exact: true }).fill('Isolated quota qualification')
     await applyChange(200)
-    expect(identityLookups).toBeGreaterThan(0)
+    expect(identityLookups).toBe(0)
+    await browserExpect(
+      page.getByText(`Policy version ${administrationVersion + BigInt(1)}`, { exact: true }),
+    ).toHaveCount(1)
+    await page.getByText('Policy details', { exact: true }).click()
     await browserExpect(
       page.getByText(`Policy version ${administrationVersion + BigInt(1)}`, { exact: true }),
     ).toBeVisible()
@@ -1187,24 +1202,28 @@ identityTest(
       ).rows[0],
     ).toMatchObject({ total_workspaces: 3, active_workspaces: 2, retained_bytes: String(96 * 1_073_741_824) })
 
-    await page.getByLabel('Change', { exact: true }).selectOption('membership')
+    await selectAccessOption('Change', 'Membership')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
-    await page.getByLabel('Role', { exact: true }).selectOption('administrator')
-    await page.getByLabel('Enable this access', { exact: true }).uncheck()
+    await selectAccessOption('Role', 'Administrator')
+    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).uncheck()
     await page.getByLabel('Reason', { exact: true }).fill('Attempt to remove required second administrator')
     await applyChange(422)
     await browserExpect(page.getByRole('alert').filter({ hasText: 'constraint' })).toBeVisible()
     expect((await control.query('SELECT count(*) FROM ofz.memberships WHERE role=2')).rows[0]?.count).toBe('2')
 
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
-    await page.getByLabel('Role', { exact: true }).selectOption('member')
-    await page.getByLabel('Enable this access', { exact: true }).check()
+    await selectAccessOption('Role', 'Member')
+    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).check()
     await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
     await applyChange(200)
     await browserExpect(
       page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
+    ).toHaveCount(1)
+    await page.getByText('Policy details', { exact: true }).click()
+    await browserExpect(
+      page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
     ).toBeVisible()
-    await browserExpect(page.getByText('GitHub #3', { exact: true })).toBeVisible()
+    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=3"]')).toBeVisible()
 
     // Seed a stopped, enrolled workspace; creation and enrollment are exercised by the controller wire fixture above.
     const scopedWorkspace = randomUUID()
@@ -1220,12 +1239,15 @@ identityTest(
       ],
     })
     await page.goto(base + '/?workspace=' + scopedWorkspace)
-    const contentOptIn = page.getByLabel('Approve bounded Viewer content access', { exact: true })
+    await page.getByRole('button', { name: 'Add collaborator', exact: true }).click()
+    const contentOptIn = page.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true })
     await browserExpect(contentOptIn).not.toBeChecked()
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
     await page.getByLabel('Reason', { exact: true }).fill('Grant metadata-only Viewer access')
     await applyChange(200)
-    const viewerRow = page.getByRole('row').filter({ has: page.getByText('GitHub #3', { exact: true }) })
+    const viewerRow = page
+      .locator('[data-slot="item"]')
+      .filter({ has: page.locator('a[href="https://github.com/account/redirect?user_id=3"]') })
     await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
     const viewerId = createHash('sha256').update('github:3').digest('hex')
     const storedViewer = async () =>
@@ -1242,7 +1264,7 @@ identityTest(
     await roots.fill('/workspace/../private')
     const lookupsBeforeInvalidScope = identityLookups
     const versionBeforeInvalidScope = (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version
-    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
     await browserExpect(roots).toHaveAttribute('aria-invalid', 'true')
     await browserExpect(page.getByRole('alert').filter({ hasText: 'canonical path under /workspace' })).toBeVisible()
     expect(identityLookups).toBe(lookupsBeforeInvalidScope)
@@ -1255,7 +1277,7 @@ identityTest(
         return prefix + 'x'.repeat(4096 - prefix.length)
       }).join('\n'),
     )
-    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
     await browserExpect(page.getByRole('alert').filter({ hasText: 'Access request exceeds 64 KiB' })).toBeVisible()
     expect(identityLookups).toBe(lookupsBeforeInvalidScope)
     expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
@@ -1267,8 +1289,11 @@ identityTest(
     await page.getByLabel('Terminal IDs', { exact: true }).fill(' shared-id ')
     await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
     await page.getByLabel('Maximum items', { exact: true }).fill('20')
-    await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
+    await browserExpect(
+      page.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true }),
+    ).not.toBeChecked()
     await applyChange(200)
+    await viewerRow.getByText('Access details', { exact: true }).click()
     for (const [label, target] of [
       ['File roots', '/workspace/src '],
       ['Codex thread IDs', ' shared-id '],
@@ -1296,8 +1321,9 @@ identityTest(
     await roots.fill('/workspace/narrow')
     await page.getByLabel('Codex thread IDs', { exact: true }).fill('')
     await page.getByLabel('Terminal IDs', { exact: true }).fill('')
-    await page.getByLabel('Allow browser screenshots', { exact: true }).check()
+    await page.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true }).check()
     await applyChange(200)
+    await viewerRow.getByText('Access details', { exact: true }).click()
     await browserExpect(viewerRow.getByText(JSON.stringify('/workspace/narrow'), { exact: true })).toBeVisible()
     await browserExpect(viewerRow.getByText(/Browser status and screenshots/)).toBeVisible()
     expect(await storedViewer()).toEqual({
@@ -1326,7 +1352,7 @@ identityTest(
       expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
       reason: 'Maximum accepted Viewer command',
       workspaceUid: scopedWorkspace,
-      login: 'fixture-3',
+      recipient: { kind: 'github-login', login: 'fixture-3' },
       role: 'viewer',
       enabled: true,
       scope: {
@@ -1383,9 +1409,10 @@ identityTest(
     ).toBe(200)
     await page.reload()
     const diagnosticRow = page
-      .getByRole('row')
+      .locator('[data-slot="item"]')
       .filter({ has: page.getByText(`Grant ${metadataGrant}`, { exact: true }) })
     await browserExpect(diagnosticRow).toBeVisible()
+    await diagnosticRow.getByText('Access details', { exact: true }).click()
     await browserExpect(diagnosticRow).not.toContainText('Browser status')
     await browserExpect(diagnosticRow.getByText('up to 1024 bytes / 20 items', { exact: true })).toBeVisible()
     expect(
@@ -1412,15 +1439,14 @@ identityTest(
       'PASS: real Access UI and BFF preserve metadata-only Viewers, reject invalid scope inline before identity lookup, commit exact bounded scopes, require a new subject opt-in, narrow targets and remove content without starting the retained workspace',
     )
     await page.goto(base)
-    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('button', { name: 'Add member', exact: true })).toBeVisible()
 
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])
-    await page.getByLabel('Change', { exact: true }).selectOption('quota')
-    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
+    await selectAccessOption('Change', 'Quota')
     await page.getByLabel('Reason', { exact: true }).fill('A stale passkey must not authorize this change')
     await applyChange(428)
-    await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify with your passkey' })).toBeVisible()
-    await page.getByRole('button', { name: 'Verify passkey', exact: true }).click()
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify your identity' })).toBeVisible()
+    await page.getByRole('button', { name: 'Verify identity', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
@@ -1442,7 +1468,7 @@ identityTest(
     await once(kc.server, 'exit')
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
-    await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
@@ -1549,7 +1575,7 @@ identityTest(
           operationId,
           expectedVersion: '3',
           reason: 'Member must not consume external identity lookups',
-          login: 'fixture-2',
+          recipient: { kind: 'github-login', login: 'fixture-2' },
           role: 'administrator',
           enabled: true,
         }),
@@ -1590,7 +1616,12 @@ identityTest(
         'access.token.claim': 'false',
       },
     })
-    await page.getByRole('button', { name: 'Verify passkey', exact: true }).click()
+    const stepUp = await page.evaluate(async () => {
+      const response = await fetch('/api/auth/step-up', { method: 'POST' })
+      if (!response.ok) throw new Error('The fixture step-up could not start')
+      return response.json()
+    })
+    await page.goto(z.object({ url: z.url() }).parse(stepUp).url)
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL((url) => url.origin === base)
@@ -1620,7 +1651,7 @@ identityTest(
       operationId: randomUUID(),
       expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
       reason: 'Retain two administrators during self-demotion recovery',
-      login: 'fixture-3',
+      recipient: { kind: 'github-login', login: 'fixture-3' },
       role: 'administrator',
       enabled: true,
     })
@@ -1630,7 +1661,7 @@ identityTest(
       operationId: randomUUID(),
       expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
       reason: 'Recover a committed self-demotion after a lost response',
-      login: 'fixture-1',
+      recipient: { kind: 'github-login', login: 'fixture-1' },
       role: 'administrator',
       enabled: false,
     }
@@ -1648,7 +1679,9 @@ identityTest(
       .parse(committed.body).receipt
     expect(committedReceipt.operationId).toBe(selfDemotion.operationId)
     expect(identityLookups).toBe(lookupsAfterCommit)
-    expect((await postAccess({ ...selfDemotion, login: 'fixture-2' })).status).toBe(409)
+    expect(
+      (await postAccess({ ...selfDemotion, recipient: { kind: 'github-login', login: 'fixture-2' } })).status,
+    ).toBe(409)
     expect(
       (
         await control.query(

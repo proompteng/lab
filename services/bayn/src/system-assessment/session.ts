@@ -12,7 +12,8 @@ import {
   SystemAssessmentError,
 } from './economics'
 import { CashFlowEvidenceSchema, cashFlowTotals, cashFlowsSupported, cashFlowsMatchSession } from './cash-flows'
-import type { SystemRegistration } from './policy'
+import { registeredAssessmentTerms, type SystemRegistration } from './policy'
+import { JevAcceptanceVersion } from '../jev/acceptance'
 import { costAttributionRule, indexOperatingCosts } from './cost-attribution'
 import { validateFrozenCostAllocations } from './cost-allocation'
 
@@ -89,8 +90,13 @@ export const assessSession = (
   definition: SystemRegistration['policies'][number],
   asOf: string,
   verifiedSources: ReadonlySet<string>,
+  version = registration.schemaVersion === 'bayn.system-registration.v3'
+    ? JevAcceptanceVersion.Current
+    : JevAcceptanceVersion.RetainedV3,
 ) =>
   Result.gen(function* () {
+    const legacy = version !== JevAcceptanceVersion.Current
+    const terms = registeredAssessmentTerms(registration, definition.riskPolicy)
     const missing: string[] = []
     const violations: string[] = []
     const requireSource = (hash: string) => {
@@ -142,7 +148,8 @@ export const assessSession = (
     const costs =
       inference === null ? null : yield* makeOperatingCostReport(inference, session.operatingCosts, verifiedSources)
     if (costs === null || !costs.fullyCosted) missing.push('INCOMPLETE_OPERATING_COSTS')
-    if (costs === null || costs.qualificationInferenceCostMicros === null) missing.push('INCOMPLETE_INFERENCE_USAGE')
+    if (costs === null || (legacy && costs.qualificationInferenceCostMicros === null))
+      missing.push('INCOMPLETE_INFERENCE_USAGE')
     const financial = session.financial
     if (session.cashFlows === null || !(yield* cashFlowsSupported(session.cashFlows, verifiedSources)))
       missing.push('INCOMPLETE_CASH_FLOW_EVIDENCE')
@@ -197,7 +204,11 @@ export const assessSession = (
         ? costs
         : null
     const actual = economics?.netEconomicPnlMicros == null ? null : BigInt(economics.netEconomicPnlMicros)
-    const qualification = economics?.qualificationPnlMicros == null ? null : BigInt(economics.qualificationPnlMicros)
+    const qualification = legacy
+      ? economics?.qualificationPnlMicros == null
+        ? null
+        : BigInt(economics.qualificationPnlMicros)
+      : actual
     const economicEvidenceComplete = missing.length === 0 && violations.length === 0 && actual !== null
     if (financial !== null && (financial.openingPositionCount !== 0 || financial.closingPositionCount !== 0))
       missing.push('NONFLAT_SESSION')
@@ -205,7 +216,8 @@ export const assessSession = (
     let maximumMarkGapMs = 0
     const first = session.marks[0]
     const equity: bigint[] = first === undefined ? [] : [BigInt(first.cashFlowAdjustedTradingEquityMicros)]
-    const costsAt = costs === null || inference === null ? null : indexOperatingCosts(costs, inference, calendar)
+    const costsAt =
+      costs === null || inference === null ? null : indexOperatingCosts(costs, inference, calendar, !legacy)
     let completeCostPath = costsAt !== null
     for (const mark of session.marks) {
       requireSource(mark.sourceHash)
@@ -224,7 +236,7 @@ export const assessSession = (
         equity.push(
           BigInt(mark.cashFlowAdjustedTradingEquityMicros) -
             BigInt(accrued.operatingCostMicros) -
-            BigInt(accrued.qualificationPremiumMicros),
+            (legacy ? BigInt(accrued.qualificationPremiumMicros) : 0n),
         )
     }
     if (!completeCostPath) missing.push('INCOMPLETE_COST_ATTRIBUTION')
@@ -234,7 +246,7 @@ export const assessSession = (
       last === undefined ||
       Date.parse(first.at) !== Date.parse(calendar.openAt) ||
       Date.parse(last.at) !== Date.parse(calendar.closeAt) ||
-      maximumMarkGapMs > 60_000
+      maximumMarkGapMs > terms.maximumMarkGapMs
     )
       missing.push('INCOMPLETE_MARK_COVERAGE')
     const opening = equity[0]
@@ -249,8 +261,8 @@ export const assessSession = (
       violations.push('MARK_PROFIT_MISMATCH')
     if (equity.some((mark) => mark < 0n)) violations.push('NEGATIVE_REGISTERED_EQUITY')
     const stress = session.p95LatencyStress
-    if (stress === null) missing.push('MISSING_FULL_DECISION_LATENCY_STRESS')
-    else {
+    if (stress === null && legacy) missing.push('MISSING_FULL_DECISION_LATENCY_STRESS')
+    if (stress !== null) {
       requireSource(stress.sourceHash)
       requireSource(stress.executionReceiptHash)
       if (stress.protocolHash !== registration.latencyStressProtocolHash) violations.push('LATENCY_PROTOCOL_MISMATCH')
@@ -264,7 +276,7 @@ export const assessSession = (
       financial !== null &&
       opening !== undefined &&
       closing !== undefined &&
-      stress !== null
+      (!legacy || stress !== null)
     const numerical = complete
       ? {
           status: 'COMPLETE' as const,
@@ -279,11 +291,14 @@ export const assessSession = (
           maximumEquityUsd: yield* exactUsd(equity.reduce((a, b) => (a > b ? a : b))),
           maximumDrawdownUsd: yield* exactUsd(BigInt(markedRisk(equity).maximumDrawdownMicros)),
           maximumMarkGapMs,
-          p95LatencyStress: {
-            status: 'COMPLETE' as const,
-            netPnlUsd: yield* exactUsd(BigInt(stress.qualificationPnlMicros)),
-            evidenceHash: stress.sourceHash,
-          },
+          p95LatencyStress:
+            stress === null
+              ? { status: 'UNRESOLVED' as const, evidenceHash }
+              : {
+                  status: 'COMPLETE' as const,
+                  netPnlUsd: yield* exactUsd(BigInt(stress.qualificationPnlMicros)),
+                  evidenceHash: stress.sourceHash,
+                },
         }
       : { status: 'UNRESOLVED' as const, sessionDate: session.sessionDate, evidenceHash }
     return {

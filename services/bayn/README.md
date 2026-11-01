@@ -447,12 +447,16 @@ error-reporting failures cannot replace the pass result. The manual GlitchTip sm
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
-Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
-sessions. The working target remains the frozen
-[`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
-20 consecutive registered sessions on the existing $100,000 PAPER allocation, maximum session loss $1,000, and
-maximum marked drawdown $2,500. Its paired-control, uncertainty, execution-stress, activity, and evidence requirements
-all remain in force. Activity targets never require an otherwise unjustified order.
+Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
+untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
+fully costed profit and positive absolute and paired lower bounds over the exact registered calendar. It has no
+fixed session count, activity or turnover quota, dollar profit hurdle, control-profit multiple, or mandatory stress
+scenario. Allocation and loss limits come from the registered source-approved risk policy. Bootstrap terms and
+selected matched controls are fixed before the first open. Operational reliability remains 99.9% independently for
+eligible classes, with zero safety violations and complete realistic evidence. An assessment grants no capital authority.
+See [current and retained acceptance rules](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
+Historical contracts and assessment receipts retain their original terms and hashes; prospective attempt numbering
+continues across the policy change.
 
 The immediate priorities are reliable recovery and complete cost accounting, then the existing
 [`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
@@ -984,8 +988,8 @@ records retained wire bytes, match and body row counts, and elapsed read time wi
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
-or capital authority. Economic qualification uses the frozen protocol in
-[`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
+or capital authority. Economic qualification uses the [current registered evidence policy](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
+The frozen v2 contract remains available for historical verification.
 
 - `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are static capability ceilings. Effective execution additionally
   requires an exact durable grant bound to the source, image, strategy, account, and risk policy.
@@ -1266,23 +1270,30 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v5`. Its hashed `scope` records the requested
+The forward-performance command emits `bayn.forward-performance-report.v6`. Its hashed `scope` records the requested
 `AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
 account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
 bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v4 trading receipt
-is unchanged. `operatingCostCoverage` remains `INCOMPLETE` until invoice and other operating-cost evidence exists;
-tariff estimates cannot establish fully costed profitability.
+is unchanged. With `--assessment <assessment-sha256>`, the report attaches a persisted system assessment for the same
+account and authority generation. `operatingCostCoverage` is `COMPLETE` only when every candidate session in that
+assessment is fully costed. `operatingCostScope` identifies its registration, source cut, and as-of time; it does not
+extend that evidence to other windows. Without a matching assessment, coverage remains `INCOMPLETE`. Tariff estimates
+cannot establish fully costed profitability. See the [system assessment command](src/system-assessment/README.md#private-reporting-command)
+for prospective registration, source capture, and immutable assessment receipts.
 
 ### Private inference operating-cost report
 
-The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
-coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
+The v4 trading receipt verifies trading transfers and broker fees. Its fields do not include operating expenses:
+`otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
 `OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Independently known cost-coverage, missing-ledger and
 unsettled-fee gaps remain explicit when starting capital is unavailable; unavailable financial totals remain null.
-Verified gross trading P&L and fees remain visible when the required financial boundary exists.
+Verified gross trading P&L and fees remain visible when the required financial boundary exists. The v6 report's
+attached `systemAssessment` supplies actual net economic profit, the policy-bound qualification basis, and
+separate profitability and edge verdicts for its registered window. Current assessments use actual fully costed profit;
+retained assessments keep their original conservative basis. It does not rewrite the v4 receipt.
 Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
 Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
 receipts keep their original bytes and hashes; this correction applies to newly computed reports.
@@ -1437,6 +1448,9 @@ subtracts `qualificationPremiumMicros`, the excess of the greater invoice-or-tar
 amount, from actual profit. This applies the conservative inference rule once. The qualification figure is null if
 any operating-cost category, trading P&L, or required inference usage is unresolved. Zero-trade sessions still retain
 their operating expenses. A positive actual profit can therefore have negative qualification profit.
+These operating-cost report fields retain their existing conservative meaning. The current system assessment uses
+actual fully costed profit for its qualification series and marked-risk path; the tariff premium remains a diagnostic.
+Retained assessments continue to reproduce their original conservative deductions.
 
 `netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
 Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source
@@ -1642,7 +1656,7 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v5`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v6`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds the requested scope and all report content. The report does not

@@ -17,8 +17,8 @@ export class ResearchError extends Data.TaggedError('ResearchError')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
-export const editorModel = 'qwen36-flamingo'
-export const editorCheckpoint = '739af1e7aac320af1682ed1e0cce369af4c5265d'
+export const editorModel = 'qwen38-flamingo'
+export const editorCheckpoint = '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'
 export const maximumResearchStreamBytes = 2 * 1024 * 1024
 export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
@@ -83,6 +83,13 @@ const RetainedResearchRunSchema = Schema.Struct({
   ...ResearchRunSchema.fields,
   policy: Schema.Union([
     ResearchPolicySchema,
+    Schema.Struct({
+      ...FlamingoResearchPolicySchema.fields,
+      model: Schema.Literal('qwen36-flamingo'),
+      checkpoint: Schema.Literal('739af1e7aac320af1682ed1e0cce369af4c5265d'),
+      tokenizerRevision: Schema.Literal('739af1e7aac320af1682ed1e0cce369af4c5265d'),
+      chatTemplateRevision: Schema.Literal('739af1e7aac320af1682ed1e0cce369af4c5265d'),
+    }),
     Schema.Struct({
       ...FlamingoResearchPolicySchema.fields,
       model: Schema.Literal('qwen3-jev-editor-b968826d9c46'),

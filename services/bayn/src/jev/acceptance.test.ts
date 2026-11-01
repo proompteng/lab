@@ -5,12 +5,15 @@ import fc from 'fast-check'
 import { checkProperty } from '../testing/property-test-support'
 
 import {
-  evaluateJevAcceptance,
+  evaluateJevAcceptance as evaluateAcceptance,
+  JevAcceptanceVersion,
   jevAcceptanceProtocolHash,
   JevNumericalVerdict,
   JevResearchPolicy,
   type JevAcceptanceInput,
 } from './acceptance'
+
+const evaluateJevAcceptance = (input: unknown) => evaluateAcceptance(input, JevAcceptanceVersion.RetainedV3)
 
 const dates = [
   '2026-09-21',
@@ -40,7 +43,7 @@ const inputFixture = (
   controlPnl: (index: number) => number = () => 100,
 ): JevAcceptanceInput => ({
   schemaVersion: 'bayn.jev-acceptance-input.v1',
-  protocolHash: Result.getOrThrow(jevAcceptanceProtocolHash()),
+  protocolHash: Result.getOrThrow(jevAcceptanceProtocolHash(JevAcceptanceVersion.RetainedV3)),
   registration: {
     planHash: 'a'.repeat(64),
     lockedAt: '2026-09-21T09:00:00.000Z',
@@ -116,7 +119,58 @@ const sampledTotals = (microDollars: ReadonlyArray<bigint>) => {
   return totals.toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0))
 }
 
-describe('Jev frozen numerical acceptance', () => {
+describe('Jev registered-window numerical acceptance', () => {
+  test.each([1, 3, 7, 19, 21, 25])('evaluates the exact prospectively registered %i-session window', (sessionCount) => {
+    const original = inputFixture(() => 2000)
+    const input = {
+      ...original,
+      registration: {
+        ...original.registration,
+        sessions: Array.from({ length: sessionCount }, (_, index) => {
+          const date = new Date(Date.UTC(2026, 8, 21 + index)).toISOString().slice(0, 10)
+          return { sessionDate: date, openAt: `${date}T13:30:00.000Z`, closeAt: `${date}T20:00:00.000Z` }
+        }),
+      },
+      policies: original.policies.map((policy) => ({
+        ...policy,
+        sessions: Array.from({ length: sessionCount }, (_, index) => {
+          const row = policy.sessions[index % policy.sessions.length]
+          if (row === undefined || row.status !== 'COMPLETE') throw Error('Missing complete fixture session')
+          const pnl = row.netPnlUsd
+          const date = new Date(Date.UTC(2026, 8, 21 + index)).toISOString().slice(0, 10)
+          return {
+            ...row,
+            sessionDate: date,
+            completedEpisodes: 200,
+            openingEquityUsd: 100000 + index * pnl,
+            closingEquityUsd: 100000 + (index + 1) * pnl,
+            minimumEquityUsd: 100000 + index * pnl,
+            maximumEquityUsd: 100000 + (index + 1) * pnl,
+          }
+        }),
+      })),
+    }
+    const report = numerical(input)
+    expect(report.registration.sessions).toHaveLength(sessionCount)
+    expect(report.metrics.netPnlUsd).toBe(2000 * sessionCount)
+    expect(report.metrics.completedEpisodesPerSession).toBe(200)
+    expect(report.verdict).toBe(sessionCount === 1 ? JevNumericalVerdict.Missed : JevNumericalVerdict.Passed)
+    expect(report.confidence.meanNetPnlUsdLowerBound).toBe(2000)
+    expect(
+      Result.isFailure(
+        evaluateJevAcceptance({
+          ...input,
+          policies: input.policies.map((policy, index) =>
+            index === 0 ? { ...policy, sessions: policy.sessions.slice(1) } : policy,
+          ),
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(evaluateJevAcceptance({ ...input, registration: { ...input.registration, sessions: [] } })),
+    ).toBe(true)
+  })
+
   test('rejects an exact $50 paired bootstrap lower bound with fractional-dollar inputs', () => {
     const report = Result.getOrThrow(
       evaluateJevAcceptance(

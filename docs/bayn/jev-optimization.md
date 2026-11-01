@@ -168,9 +168,9 @@ through the existing identity, authority and Kargo delivery contracts.
 
 ## Shared proposal model
 
-The editor uses Flamingo's `qwen36-flamingo`, backed by `unsloth/Qwen3.6-35B-A3B-NVFP4`, through
+The editor uses Flamingo's `qwen38-flamingo`, backed by `Qwen/Qwen3.8-27B-FP8`, through
 `http://flamingo.flamingo.svc.cluster.local/v1/chat/completions`. The model and tokenizer revisions are pinned to
-`739af1e7aac320af1682ed1e0cce369af4c5265d`. Every accepted response must contain Flamingo's loaded serving identity
+`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`. Every accepted response must contain Flamingo's loaded serving identity
 and the matching model name in the stream. The registered policy enables thinking with a 4,096-token output cap,
 temperature 0.6, top-p 0.95 and top-k 20. The complete wire response and actual usage remain in the immutable receipt.
 

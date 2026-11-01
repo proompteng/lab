@@ -254,6 +254,54 @@ test('offset lag retains integer precision and distinguishes unknown ends from z
   expect(partitionLagMeasurements(positions, undefined).every(({ lagOffsets }) => lagOffsets === null)).toBe(true)
 })
 
+test.each(['future event', 'late arrival', 'only future', 'at observation'])(
+  'projection freshness uses only quote and trade revisions available at the observation: %s',
+  (scenario) => {
+    const { cut, query } = streamingFixture()
+    const observedAtMs = Date.parse(query.observedAt)
+    const quote = cut.projection.quotes.get('SPY')
+    const trade = cut.projection.trades.get('SPY')
+    if (quote === undefined || trade === undefined) throw new Error('Fixture must retain quote and trade evidence')
+    const eventAt = new Date(observedAtMs + (scenario === 'future event' ? 1000 : -500)).toISOString()
+    const availableAtMs = observedAtMs + (scenario === 'at observation' ? 0 : 1000)
+    const laterQuote = { ...quote, availableAtMs, value: { ...quote.value, eventAt } }
+    const laterTrade = { ...trade, availableAtMs, value: { ...trade.value, eventAt } }
+    const projection = {
+      ...cut.projection,
+      quotes: new Map(cut.projection.quotes).set('SPY', laterQuote),
+      trades: new Map(cut.projection.trades).set('SPY', laterTrade),
+      quoteHistory: new Map(cut.projection.quoteHistory).set(
+        'SPY',
+        scenario === 'only future' ? [laterQuote] : [quote, laterQuote],
+      ),
+      tradeHistory: new Map(cut.projection.tradeHistory).set(
+        'SPY',
+        scenario === 'only future' ? [laterTrade] : [trade, laterTrade],
+      ),
+    }
+    const expected = {
+      symbol: 'SPY',
+      quoteAgeMs:
+        scenario === 'only future'
+          ? null
+          : scenario === 'at observation'
+            ? 500
+            : observedAtMs - Date.parse(quote.value.eventAt),
+      tradeAgeMs:
+        scenario === 'only future'
+          ? null
+          : scenario === 'at observation'
+            ? 500
+            : observedAtMs - Date.parse(trade.value.eventAt),
+    }
+    expect(projectionCoverageMeasurements(projection, ['SPY'], observedAtMs).symbols[0]).toMatchObject(expected)
+    const failure = new IntradaySnapshotFailure({ reason: 'not-ready', message: 'Required evidence unavailable' })
+    expect(snapshotFailureMeasurement(failure, query, projection).projectionCoverage.symbols).toContainEqual(
+      expect.objectContaining(expected),
+    )
+  },
+)
+
 test('an absent symbol reports missing coverage without fabricating zero event age', () => {
   const observedAtMs = Date.parse('2026-09-11T14:00:02Z')
   const measurements = projectionCoverageMeasurements(emptyStreamingProjection('epoch'), ['AMD'], observedAtMs)

@@ -348,17 +348,22 @@ export function SettingsApp({
             ) : null}
             {visitedSections.includes('access') ? (
               <div hidden={selectedSection !== 'access'} className="space-y-5">
-                <section aria-label="Passkeys" className={groupClass + ' p-3'}>
-                  <PasskeyRegistration />
-                </section>
-                <div className={groupClass + ' flex items-center justify-between gap-4 px-3 py-3'}>
-                  <span>GitHub account</span>
-                  <button type="button" disabled={lifecycleBlocked} className={secondaryButton} onClick={onSignOut}>
-                    <LogOut aria-hidden="true" className="size-3.5" />
-                    Sign Out
-                  </button>
-                </div>
                 <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
+                <details className={groupClass}>
+                  <summary className="cursor-pointer px-3 py-3 text-xs font-medium">Sign-in & passkeys</summary>
+                  <div className="space-y-4 border-t border-zinc-700/60 p-3">
+                    <section aria-label="Passkeys">
+                      <PasskeyRegistration />
+                    </section>
+                    <div className="flex items-center justify-between gap-4">
+                      <span>GitHub account</span>
+                      <button type="button" disabled={lifecycleBlocked} className={secondaryButton} onClick={onSignOut}>
+                        <LogOut aria-hidden="true" className="size-3.5" />
+                        Sign Out
+                      </button>
+                    </div>
+                  </div>
+                </details>
               </div>
             ) : null}
             {selectedSection === 'about' ? (

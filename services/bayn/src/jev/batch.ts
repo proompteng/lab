@@ -12,6 +12,7 @@ import {
   JevEvaluationReceiptSchema,
   JevEvaluationRequestSchema,
   JevEvidenceError,
+  JevAvailabilityReason,
   entryInferenceAvailableAt,
 } from './evidence'
 import { decodeJevResolution, JevResolutionSchema, JevResolutionStatus } from './resolution'
@@ -97,7 +98,8 @@ const ResultMaterialSchema = Schema.Struct({
 export const JevBatchResultSchema = Schema.Struct({ ...ResultMaterialSchema.fields, resultHash: Sha256Schema })
 export type JevBatchResult = typeof JevBatchResultSchema.Type
 
-const invalid = (message: string) => Result.fail(new JevEvidenceError({ message }))
+const invalid = (message: string, availabilityReason?: JevAvailabilityReason) =>
+  Result.fail(new JevEvidenceError({ message, ...(availabilityReason === undefined ? {} : { availabilityReason }) }))
 const hash = (value: unknown) =>
   canonicalHashV1Result(value).pipe(
     Result.mapError(() => new JevEvidenceError({ message: 'Jev batch evidence cannot be hashed' })),
@@ -210,10 +212,13 @@ export const usableEntryBatchInferences = (
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(sourcePlan)
     if (plan.schemaVersion !== expectedVersion)
-      return yield* invalid('Entry batch belongs to a different selection policy')
+      return yield* invalid('Entry batch belongs to a different selection policy', JevAvailabilityReason.PolicyMismatch)
     const result = yield* decodeJevBatchResult(plan, sourceResult)
     if (!Number.isSafeInteger(now) || now < Date.parse(result.completedAt) || now >= Date.parse(plan.expiresAt))
-      return yield* invalid('Jev batch decision is outside the complete batch validity window')
+      return yield* invalid(
+        'Jev batch decision is outside the complete batch validity window',
+        JevAvailabilityReason.OutsideValidityWindow,
+      )
     const inferences = []
     for (const [index, candidate] of result.candidates.entries()) {
       const planned = plan.candidates[index]
@@ -224,7 +229,10 @@ export const usableEntryBatchInferences = (
         candidate.resolution.status !== JevResolutionStatus.Recorded ||
         candidate.receipt === null
       )
-        return yield* invalid('Every requested Jev candidate must have a recorded result before selection')
+        return yield* invalid(
+          'Every requested Jev candidate must have a recorded result before selection',
+          JevAvailabilityReason.IncompleteBatch,
+        )
       const inference = yield* entryInferenceAvailableAt(
         planned.request,
         candidate.receipt,
@@ -243,7 +251,7 @@ export const usableEntryBatchInferences = (
           (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),
       )
     )
-      return yield* invalid('No Jev candidate has usable inference evidence')
+      return yield* invalid('No Jev candidate has usable inference evidence', JevAvailabilityReason.NoUsableCandidates)
     return inferences
   })
 

@@ -69,6 +69,26 @@
 }
 
 @layer utilities {
+  .tengri-theme {
+    --background: var(--color-zinc-950);
+    --foreground: var(--color-zinc-100);
+    --card: var(--color-zinc-900);
+    --card-foreground: var(--color-zinc-100);
+    --popover: var(--color-zinc-900);
+    --popover-foreground: var(--color-zinc-100);
+    --primary: var(--color-zinc-100);
+    --primary-foreground: var(--color-zinc-950);
+    --secondary: var(--color-zinc-800);
+    --secondary-foreground: var(--color-zinc-100);
+    --muted: var(--color-zinc-900);
+    --muted-foreground: var(--color-zinc-400);
+    --accent: var(--color-zinc-800);
+    --accent-foreground: var(--color-zinc-100);
+    --border: var(--color-zinc-800);
+    --input: var(--color-zinc-700);
+    --ring: var(--color-zinc-400);
+  }
+
   .tengri-chat-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: rgb(82 82 91 / 55%) transparent;
@@ -230,5 +250,37 @@
     font-family:
       var(--font-jetbrains-mono, 'JetBrains Mono'), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       'Liberation Mono', 'Courier New', monospace;
+  }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  [data-tengri-desktop] {
+    position: fixed;
+    top: var(--tengri-viewport-offset, 0px);
+    left: 0;
+    right: 0;
+  }
+  .tengri-theme
+    :is(
+      input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+      textarea,
+      select,
+      [contenteditable='true']
+    ) {
+    font-size: 16px;
+  }
+  [data-tengri-window-frame] {
+    left: -12px !important;
+    top: -12px !important;
+    width: calc(100% + 24px) !important;
+    height: calc(100% + 24px - var(--tengri-dock-space, 88px)) !important;
+    transform: none !important;
+  }
+  [data-tengri-window-frame][data-window-mode='maximized'] {
+    height: calc(100% + 24px) !important;
+  }
+  [data-tengri-dock-container] {
+    height: var(--tengri-dock-space, 88px);
+    overflow: hidden;
   }
 }

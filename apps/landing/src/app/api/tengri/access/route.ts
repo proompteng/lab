@@ -132,7 +132,7 @@ async function handlePOST(request: Request) {
         { headers: noStoreHeaders() },
       )
     }
-    if ('login' in parsed) {
+    if ('recipient' in parsed) {
       const permission = {
         membership: Action.MEMBERS_MANAGE,
         collaborator: Action.COLLABORATORS_MANAGE,
@@ -155,7 +155,15 @@ async function handlePOST(request: Request) {
       )
       if (!authorization.allowed) throw new OfzError(403, authorization.auditReceiptId)
     }
-    const human = 'login' in parsed ? await resolveGithubIdentity(parsed.login) : undefined
+    const human =
+      'recipient' in parsed
+        ? parsed.recipient.kind === 'github-login'
+          ? await resolveGithubIdentity(parsed.recipient.login)
+          : {
+              githubId: parsed.recipient.githubId,
+              humanId: createHash('sha256').update(`github:${parsed.recipient.githubId}`).digest('hex'),
+            }
+        : undefined
     switch (parsed.action) {
       case 'membership':
         if (!human) throw new OfzError(400)

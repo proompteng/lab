@@ -5,7 +5,7 @@ import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
-import { validateSystemRegistration } from './policy'
+import { validateSystemRegistration, verifyStoredSystemRegistration } from './policy'
 import { readSystemSourceCut } from './source-cut'
 import { bindSystemSourceCut } from './bind-source'
 import { SystemAssessmentInputSchema } from './assessment'
@@ -115,7 +115,7 @@ export const readSystemRegistration = (hash: string) =>
     )
     const row = rows[0]
     if (row === undefined) return yield* new SystemAssessmentError({ message: 'System registration does not exist' })
-    const result = yield* Effect.fromResult(validateSystemRegistration(row.payload))
+    const result = yield* Effect.fromResult(verifyStoredSystemRegistration(row.payload))
     if (result.registrationHash !== registrationHash)
       return yield* new SystemAssessmentError({ message: 'Stored registration hash differs from its contents' })
     return result.registration
@@ -151,7 +151,8 @@ export const assessAndPersistSystem = (
       ),
     )
     const bound = yield* Effect.fromResult(bindSystemSourceCut(decoded, cut, verifiedSources, timings, stress))
-    const assessment = yield* Effect.fromResult(evaluateSystemAssessment(bound.input, bound.verifiedSources))
+    const { version } = yield* Effect.fromResult(verifyStoredSystemRegistration(bound.input.registration))
+    const assessment = yield* Effect.fromResult(evaluateSystemAssessment(bound.input, bound.verifiedSources, version))
     yield* readSystemRegistration(assessment.registrationHash)
     const { assessmentHash, ...material } = assessment
     const text = yield* Effect.fromResult(canonicalJsonV1Result(material))
@@ -180,8 +181,10 @@ export const readPersistedSystemAssessment = (hash: string) =>
     )
     const row = rows[0]
     if (row === undefined) return yield* new SystemAssessmentError({ message: 'Assessment receipt does not exist' })
+    const decoded = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(row.input)
+    const { version } = yield* Effect.fromResult(verifyStoredSystemRegistration(decoded.registration))
     const assessment = yield* Effect.fromResult(
-      evaluateSystemAssessment(row.input, new Set(row.assessment.verifiedSourceHashes)),
+      evaluateSystemAssessment(decoded, new Set(row.assessment.verifiedSourceHashes), version),
     )
     if (assessment.assessmentHash !== assessmentHash)
       return yield* new SystemAssessmentError({ message: 'Recomputed assessment differs from its immutable receipt' })

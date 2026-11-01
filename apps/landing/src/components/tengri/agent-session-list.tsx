@@ -1,8 +1,7 @@
 'use client'
 
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Skeleton } from '@proompteng/design/ui'
-import { Archive, ArrowLeft, Ellipsis, RotateCcw } from 'lucide-react'
+import { Button, Skeleton } from '@proompteng/design/ui'
+import { Archive, ArrowLeft, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import { cn } from '@/lib/utils'
@@ -161,53 +160,50 @@ export function AgentSessionList({
             const busy = busyThreadIds.has(thread.id)
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   data-conversation-id={thread.id}
                   disabled={!canSelect || index.archived}
                   aria-current={active ? 'true' : undefined}
+                  aria-description={busy ? 'Response in progress' : undefined}
                   onClick={() => onSelect(thread.id)}
                   className={cn(
-                    'flex min-w-0 flex-1 flex-col rounded-md py-2 pl-2.5 pr-8 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none',
+                    'h-8 min-w-0 flex-1 justify-start gap-2 pl-2.5 pr-8 text-left [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
                     active
                       ? 'bg-white/[0.06] text-zinc-100'
                       : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
                   )}
                 >
-                  <span className="max-w-full truncate text-label-14">{thread.title}</span>
-                  {unavailable ? <span className="mt-0.5 text-label-12 text-zinc-400">Unavailable</span> : null}
-                </button>
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      aria-label={`Chat actions for ${thread.title}`}
-                      className="absolute right-1 grid size-7 place-items-center rounded text-zinc-400 outline-none hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
-                    >
-                      <Ellipsis className="size-4" aria-hidden="true" />
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      align="end"
-                      sideOffset={4}
-                      className="z-[100] min-w-36 rounded-md border border-white/[0.08] bg-zinc-900 p-1 text-copy-13 text-zinc-200 shadow-xl"
-                    >
-                      <DropdownMenu.Item
-                        disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
-                        onSelect={() => void setArchived(thread.id, !index.archived)}
-                        className="flex cursor-default items-center gap-2 rounded px-2 py-1.5 outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-white/[0.06]"
-                      >
-                        {index.archived ? (
-                          <RotateCcw className="size-3.5" aria-hidden="true" />
-                        ) : (
-                          <Archive className="size-3.5" aria-hidden="true" />
-                        )}
-                        {index.archived ? 'Restore' : busy ? 'Finish response to archive' : 'Archive'}
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
+                  <span className="min-w-0 flex-1 truncate text-copy-14">{thread.title}</span>
+                  {busy ? (
+                    <LoaderCircle
+                      className="size-3 shrink-0 animate-spin text-zinc-500 motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`${index.archived ? 'Restore' : 'Archive'} ${thread.title}`}
+                  title={
+                    index.archived ? 'Restore chat' : busy ? 'Finish the response before archiving' : 'Archive chat'
+                  }
+                  disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
+                  onClick={() => void setArchived(thread.id, !index.archived)}
+                  className="absolute right-1 size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
+                >
+                  {changing.has(thread.id) ? (
+                    <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  ) : index.archived ? (
+                    <RotateCcw aria-hidden="true" className="size-3.5" />
+                  ) : (
+                    <Archive aria-hidden="true" className="size-3.5" />
+                  )}
+                </Button>
               </li>
             )
           })}

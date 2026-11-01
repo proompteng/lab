@@ -291,8 +291,8 @@ export const reproduceFrozenControlReport = (
       opening.state.fees.length !== 0 ||
       opening.state.sessionCloses.length !== 0 ||
       !(yield* same(report.sessionDates, input.backtest.sessionDates)) ||
-      report.sessions.length !== 20 ||
-      report.brokerState.sessionCloses.length !== 20
+      report.sessions.length !== input.backtest.sessionDates.length ||
+      report.brokerState.sessionCloses.length !== input.backtest.sessionDates.length
     )
       return yield* fail(
         'Frozen control evidence changed its registered input, opening state, costs or full session coverage',
