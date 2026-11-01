@@ -19,6 +19,7 @@ import { ResourceAccessPanel } from './resource-access-panel'
 import { SettingsSelect } from './settings-select'
 import { WorkspaceClients } from './workspace-clients'
 import { WorkspacePeople } from './workspace-people'
+import { WorkspaceAccessRequests } from './workspace-access-requests'
 
 import { portalSections, type PortalSection } from '@/lib/platform/portal'
 const activityNames: Record<string, string> = {
@@ -28,6 +29,10 @@ const activityNames: Record<string, string> = {
   'ofz.workspaces.activity': 'Activity viewed',
   'ofz.connections.put': 'Connection saved',
   'ofz.connections.revoke': 'Connection disconnected',
+  'ofz.access_requests.create': 'Access requested',
+  'ofz.access_requests.review': 'Access request reviewed',
+  'ofz.access_requests.cancel': 'Access request cancelled',
+  'ofz.access_requests.list': 'Access requests viewed',
   'ofz.delegations.create': 'Agent credential issued',
   'ofz.delegations.activate': 'Agent connection activated',
   'ofz.delegations.revoke': 'Agent connection revoked',
@@ -305,6 +310,12 @@ export function AdminPortal({
                 </TabsList>
                 <TabsContent value="integrations">
                   <div className="space-y-8">
+                    <WorkspaceAccessRequests
+                      key={workspaceId + '-requests'}
+                      detail={current}
+                      humanId={identity.humanId}
+                      onChanged={refresh}
+                    />
                     <WorkspaceClients
                       key={workspaceId + '-clients'}
                       detail={current}
