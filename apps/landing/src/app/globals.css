@@ -269,14 +269,12 @@
     ) {
     font-size: 16px;
   }
-}
-
-@media (max-width: 639px) {
   [data-tengri-window-frame] {
     left: -12px !important;
     top: -12px !important;
     width: calc(100% + 24px) !important;
     height: calc(100% + 24px - var(--tengri-dock-space, 88px)) !important;
+    transform: none !important;
   }
   [data-tengri-window-frame][data-window-mode='maximized'] {
     height: calc(100% + 24px) !important;

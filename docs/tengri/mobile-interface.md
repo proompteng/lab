@@ -3,6 +3,10 @@
 The mobile chat uses the same components and operations as the desktop. Phone windows fill the available application
 area, editing controls use 16 CSS px, and each chat has a direct archive/restore icon. Pointer users reveal the icon
 on row hover or keyboard focus; touch users receive a persistent 44 by 44 CSS px target.
+Touch surfaces keep this full-window layout in landscape. Mobile viewport changes do not overwrite stored desktop
+window bounds; returning to desktop restores those bounds. Window actions share the last desktop viewport, while
+mobile CSS owns the visible frame. Mobile minimize/restore fades instead of applying a desktop-geometry transform.
+Transient zero-sized visual viewport measurements are ignored until the browser reports a visible area again.
 
 ## Browser evidence
 
@@ -39,7 +43,8 @@ Exercise phone widths 320, 390 and 430px with touch input. Verify text-entry siz
 page overflow, an accessible direct archive icon, and no composer focus merely from reading another chat. Exercise
 visual viewport height and offset changes through keyboard open/close and verify composer bounds, unchanged document
 scroll and preservation of the reader's position. Keep existing transcript follow behavior only while the reader is
-at the end. Desktop pointer and keyboard interactions must continue to work.
+at the end. Exercise zero-sized viewport events, portrait/landscape rotation and a desktop/phone/desktop round trip.
+Desktop pointer and keyboard interactions must continue to work.
 
 Playwright exercises browser rendering and emulates VisualViewport events because a headless browser cannot display
 a physical phone's operating-system keyboard. Those tests establish the layout and event contract; they do not prove
