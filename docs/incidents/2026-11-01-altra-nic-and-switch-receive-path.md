@@ -5,14 +5,16 @@
 Read-only switch inspection on 2026-11-01 UTC confirmed that Altra's PAUSE frames reach the CRS504 while
 receive flow control is disabled. Altra continues to discard received packets at its NIC. The switch's
 transmit-drop, receive-overflow, CRC and FEC counters did not increase between the two inspected snapshots.
-Disabled backpressure is a concrete configuration mismatch with the NIC's requests. Its contribution to
-packet loss and application latency has not been measured through a controlled change.
+Disabled backpressure is a concrete configuration mismatch with the NIC's requests. The subsequently
+authorized single-setting trial enabled effective RX PAUSE handling but did not establish a loss or
+client-latency benefit. It was rolled back. The workload changed during observation, limiting causal claims.
 
 Altra also has an independent PCIe training problem. It originally negotiated Gen1, now negotiates Gen2,
 and repeatedly fails to establish Gen3. Neither the Ethernet switch nor a 100 Gb/s carrier establishes the
 CPU-to-NIC PCIe speed. The exact physical, thermal or firmware cause remains unresolved.
 
-The switch inspection made no configuration changes, cleared no counters and restarted nothing.
+The initial switch inspection made no configuration changes, cleared no counters and restarted nothing.
+The operator subsequently authorized the bounded RX-flow-control trial recorded below.
 Earlier bounded PCIe tests changed the negotiated runtime link as recorded below. No NIC firmware,
 platform firmware, fan profile, ring size, channel count, coalescing, Ceph scheduling or workload
 concurrency change was applied. `osd_max_scrubs=3` remains the fixed constraint on all six OSDs.
@@ -43,13 +45,13 @@ matched against `/interface bridge host print detail without-paging`.
 | Altra | `enp1s0f1np1`      | `C0:01:22:34:8C:85` | `qsfp28-2-1`        | `Turin port 1`, stale |
 | Turin | `ens1f1np1`        | `C0:01:22:DC:2C:B7` | `qsfp28-1-1`        | `Altra port 1`, stale |
 
-The retained bench script also labels the ports in reverse. Do not select a port from those comments or
-reimport that configuration as a diagnostic operation. The network README and hardware plan now record
-the observed mapping. No cables or live comments were changed during this inspection.
+The retained bench script originally labeled the ports in reverse. The trial change corrects its host labels;
+the live comments remain stale. Select ports by learned host MAC, and do not reimport the complete bench
+configuration as a diagnostic operation. No cables or live comments were changed.
 
 Both links negotiated 100 Gb/s, full duplex, with auto-negotiation complete and RS-FEC `fec91` active.
 Both use MikroTik XQ+DA0001 1 m DACs with good EEPROM checksums. MTU is 1500, L2MTU is 1584, and port
-bandwidth limits are unlimited. Both configured and effective RX/TX flow control were off.
+bandwidth limits are unlimited. Before the trial, both configured and effective RX/TX flow control were off.
 
 ## Switch counter comparison
 
@@ -146,16 +148,97 @@ link-training or electrical problem. NIC temperatures were 94–97 C during the 
 an undated recorded peak of 109 C. Heat remains a hypothesis. NVIDIA's warning and firmware-shutdown
 thresholds are 105 C and 115 C respectively; exceeding a historical warning threshold does not prove causality.
 
+## Authorized RX-flow-control trial
+
+The operator authorized this experiment after receiving the warning that flow-control changes can interrupt
+switch ports. The learned MAC mapping and both original RX/TX settings were rechecked before execution.
+Only `qsfp28-2-1` RX flow control changed. No counters were cleared and the complete bench script was not imported.
+
+```routeros
+/interface ethernet set qsfp28-2-1 rx-flow-control=on
+/interface ethernet monitor qsfp28-2-1 once
+```
+
+The enable command was submitted at `08:40:50.089 UTC` and returned by `08:40:51.071 UTC`.
+The first monitor showed Altra's port temporarily at `no-link`, while Turin's port remained `link-ok`.
+A subsequent read confirmed Altra at `100Gbps`, full duplex, `fec91`, effective RX flow control `yes`
+and TX `no`. Both bridge ports retained actual `H` hardware offload. These observations bound recovery;
+they do not measure the precise interruption duration or rule out a shorter interruption on Turin.
+
+The comparison uses actual first/last counter samples, without extrapolating `increase()` counts:
+
+| Measurement                                     |        Immediately before |                RX enabled |              Restored off |
+| ----------------------------------------------- | ------------------------: | ------------------------: | ------------------------: |
+| Altra NIC sample window, UTC                    | 08:35:42.655–08:40:12.655 | 08:41:42.655–08:46:12.655 | 08:47:12.655–08:51:42.655 |
+| Altra physical RX discards, 270 s               |                    19,113 |                    29,586 |                    32,543 |
+| Altra received PHY packets                      |                 6,490,210 |                14,145,590 |                14,353,987 |
+| Altra received PHY bytes                        |             8,596,984,920 |            19,715,666,086 |            20,010,845,785 |
+| Altra discards per million received PHY packets |                     2,945 |                     2,092 |                     2,267 |
+| Altra receive out-of-buffer events              |                     1,218 |                     1,617 |                     4,285 |
+| Altra transmitted PAUSE frames                  |                     3,475 |                     8,104 |                     8,035 |
+| Turin physical RX discards                      |                        51 |                        15 |                       127 |
+| Primary WAL mean fsync, operations              |             332.9 ms, 118 |             487.7 ms, 119 |             392.6 ms, 121 |
+| Standby WAL mean fsync, operations              |             213.0 ms, 136 |              318.7 ms, 90 |              343.6 ms, 99 |
+| Primary RBD mean write time                     |                  420.5 ms |                  471.5 ms |                  765.4 ms |
+| Standby RBD mean write time                     |                  317.4 ms |                  461.1 ms |                  711.4 ms |
+| Weighted OSD mean write time                    |                  300.0 ms |                  467.8 ms |                  638.1 ms |
+| Summed OSD write input bytes                    |             8,680,439,463 |            17,752,598,408 |            17,613,380,881 |
+
+Before/enabled NIC, RBD and OSD comparisons span 270 actual seconds, with exporter-specific boundaries.
+Restored Altra NIC/RBD and both OSD windows also span 270 s. Restored Turin NIC/RBD spans
+`08:47:36.174–08:51:36.174` (240 s, nine samples). WAL boundaries
+are `08:35:32.188–08:40:27.188` and `08:41:32.188–08:46:27.188` for the primary (295 s each),
+and `08:35:33.799–08:40:28.799` (295 s) and `08:41:33.799–08:46:23.799` (290 s) for the standby.
+Restored WAL windows are `08:47:12.188–08:52:07.188` and `08:47:13.799–08:52:08.799` (295 s each).
+WAL means sum synchronization-time deltas across WAL backend classes and divide by their operation-count
+deltas. These are counter means, not transaction percentiles. RBD identity was reverified from the PVC/PV
+image and native mapping: primary `bayn-db-2` on Turin `rbd3`, standby `bayn-db-1` on Altra `rbd24`.
+
+Two earlier pre-change 270-second windows recorded 8,645 and 9,545 Altra discards, or 1,847 and 2,094
+per million received PHY packets. The enabled window's normalized discard count falls within that baseline
+variation. Received traffic and OSD write bytes more than doubled relative to the immediate baseline.
+The experiment therefore neither isolates a flow-control latency penalty nor proves a throughput gain.
+Persistent loss and the absence of demonstrated client improvement did not justify retaining the change.
+The restored window also retained substantial loss and showed mixed latency changes: primary WAL improved,
+while standby WAL, RBD and OSD means worsened. This reversal does not prove flow control is ineffective
+or harmful; a stronger claim requires repeated comparisons with representative, comparable traffic.
+Ceph-specific TCP retransmissions were not captured in this trial, so no retransmission improvement is claimed.
+
+Switch transmit drops, receive overflow, FCS and alignment counts remained unchanged through the inspected
+enabled snapshots. Altra's switch FEC totals increased across enable/renegotiation from 6,695/10/6,712 to
+17,992/14/18,004 corrected/uncorrected/symbol errors. They then stayed unchanged between subsequent
+snapshots while traffic advanced. This does not establish an ongoing FEC fault or attribute every increment
+to link training. After rollback, Altra's totals read 39,217/15/39,224 and stayed unchanged across two
+post-rollback snapshots with advancing traffic and zero switch drops/overflows. Turin's FEC totals
+stayed at 571/99/251.
+
+At `08:46:44.040–08:46:45.161 UTC`, the trial restored the original setting:
+
+```routeros
+/interface ethernet set qsfp28-2-1 rx-flow-control=off
+/interface ethernet monitor qsfp28-2-1 once
+```
+
+Effective readback confirmed `link-ok`, `100Gbps`, `fec91`, RX `no`, TX `no`. All six OSDs remained up/in,
+all 601 PGs remained active/clean, and monitor quorum stayed `i,o,p`. Bayn retained the same primary and
+two ready instances. `fsync`, `full_page_writes` and `synchronous_commit` remained `on`, with
+`ANY 1 ("bayn-db-1")`, a streaming quorum standby and zero unflushed bytes at the SQL check.
+All six OSDs read back `osd_max_scrubs=3`. No placement, bulk concurrency or durability setting changed.
+
+The `08:52:51 UTC` cluster check retained 15 deep and three shallow scrubs, 23 overdue deep scrubs
+and the existing retained daemon-crash warning. No PG scrub-completion timestamp advanced between the
+`08:42:56` and final PG snapshots. This bounded interval does not establish a stalled scrub or a throughput
+change. A native trial read still showed Altra PCIe Gen2 ×16 at 97 C, versus Turin Gen4 ×16 at 88 C.
+
 ## Remaining work and authority
 
-The operator chose to keep the current hardware/runtime state. This inspection and documentation do not
-authorize a switch configuration change, firmware flash, cold boot, fan change or workload disruption.
+The operator chose to preserve the hardware/runtime state, then explicitly authorized the single-port
+RX-flow-control trial after receiving the switch-chip reset warning. That authorization does not cover
+a firmware flash, cold boot, fan change, workload migration or concurrency reduction.
 
-A scoped switch RX-flow-control experiment on the **verified Altra port 2** is now better motivated than
-an unqualified firmware flash. Prepare its impact and recovery before seeking a maintenance decision.
-MikroTik warns that flow-control changes can reset the switch chip on some models and interrupt ports;
-do not promise a nondisruptive toggle without model/version evidence. Compare physical discards, PAUSE,
-Ceph retransmissions, RBD/WAL latency and scrub progress under comparable traffic. No benefit is measured yet.
+MikroTik warns that flow-control changes can reset the switch chip on some models and interrupt ports.
+The trial therefore includes effective-link readback, Ceph and database continuity, switch drop counters,
+and hardware-loss and latency comparisons. PCIe maintenance remains a separate decision.
 
 Separately, PCIe diagnosis needs pre-OS versus post-driver speed observations, controlled cooling/contact/slot
 checks and vendor-supported firmware investigation. Installed ADLINK firmware is 2.04.100.11; vendor 2.10.100.02
