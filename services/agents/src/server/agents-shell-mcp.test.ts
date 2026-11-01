@@ -81,6 +81,7 @@ const initializeRepoFixture = (config: AgentsShellConfig) => {
   execFileSync('git', ['init', '-b', 'main', repo])
   execFileSync('git', ['-C', repo, 'config', 'user.name', 'Agents Shell Test'])
   execFileSync('git', ['-C', repo, 'config', 'user.email', 'agents-shell@example.test'])
+  execFileSync('git', ['-C', repo, 'config', 'commit.gpgsign', 'false'])
   writeFileSync(join(repo, 'README.md'), '# fixture\n')
   writeFileSync(join(repo, '.gitignore'), '.env\n')
   execFileSync('git', ['-C', repo, 'add', 'README.md', '.gitignore'])
@@ -329,10 +330,10 @@ describe('agents-shell MCP tools', () => {
         'git_write',
         'kubectl',
         'kubectl_admin',
-        'agent_start',
-        'agent_status',
-        'agent_read',
-        'agent_cancel',
+        'create_agent_run',
+        'cancel_agent_run',
+        'get_agent_run',
+        'get_agent_run_logs',
       ].sort(),
     )
 
@@ -386,8 +387,8 @@ describe('agents-shell MCP tools', () => {
       securitySchemes: linkedOauthScheme,
     })
 
-    const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
-    expect(agentStart?.annotations?.destructiveHint).toBe(true)
+    const agentStart = tools.tools.find((tool) => tool.name === 'create_agent_run')
+    expect(agentStart?.annotations?.destructiveHint).toBe(false)
     expect(agentStart?.annotations?.openWorldHint).toBe(true)
     expect(agentStart?._meta).toMatchObject({
       securitySchemes: linkedOauthScheme,
@@ -1100,92 +1101,73 @@ process.exit(result.status ?? 1)
     }
   })
 
-  it('starts and observes delegated AgentRun lifecycle through generic kubectl', async () => {
+  it('uses the canonical AgentRun API and preserves the delivery id across reconnects', async () => {
     const config = makeConfig()
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(
-      join(bin, 'kubectl'),
-      `#!/bin/sh
-printf '%s\\n' "$@" >> "\${PWD}/kubectl-calls.txt"
-if [ "$1" = "apply" ]; then
-  cat > "\${PWD}/kubectl-stdin.json"
-  printf '%s\\n' 'agentrun.agents.proompteng.ai/created configured'
-elif [ "$1" = "get" ] && [ "$2" = "agentrun" ]; then
-  printf '%s\\n' '{"status":{"phase":"Running","vcs":{"headBranch":"codex/demo"}}}'
-elif [ "$1" = "get" ] && [ "$2" = "jobs" ]; then
-  printf '%s\\n' '{"items":[{"metadata":{"name":"job-1"}}]}'
-elif [ "$1" = "logs" ]; then
-  printf '%s\\n' 'delegated log line'
-elif [ "$1" = "delete" ]; then
-  printf '%s\\n' 'agentrun deleted'
-fi
-`,
-    )
-    chmodSync(join(bin, 'kubectl'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(
-      config,
-      makeAuth(['agents-shell.read', 'agents-shell.write']),
-    )
-
+    const apiCalls: Array<{ path: string; idempotencyKey: string | null; body: unknown }> = []
+    const record = { id: 'run-1', externalRunId: 'codex-job-1', status: 'Running' }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      const headers = new Headers(init?.headers)
+      apiCalls.push({
+        path: url.pathname,
+        idempotencyKey: headers.get('Idempotency-Key'),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      })
+      if (url.pathname === '/v1/control-plane/logs') {
+        return Response.json({ ok: true, logs: 'delegated log line', pods: [] })
+      }
+      return Response.json({
+        ok: true,
+        agentRun: record,
+        resource: { kind: 'AgentRun', metadata: { name: record.externalRunId, namespace: 'agents' } },
+      })
+    })
+    const args = {
+      deliveryId: 'oracle-task-1',
+      secretBindingRef: 'codex-github-token',
+      payload: {
+        agentRef: { name: 'codex-agent' },
+        implementation: { text: 'Make a scoped change and return its test evidence.' },
+        goal: { objective: 'Complete the scoped change.' },
+        runtime: { type: 'job' },
+        parameters: { repository: 'proompteng/lab', base: 'main', head: 'codex/demo' },
+        secrets: ['codex-auth', 'github-token'],
+      },
+    }
+    const first = await connectServer(config)
     try {
-      const start = await client.callTool({
-        name: 'agent_start',
-        arguments: {
-          task: 'Make a small repo change, test it, commit, push, create a PR, and monitor CI.',
-          headBranch: 'codex/demo',
-        },
-      })
+      const start = await first.client.callTool({ name: 'create_agent_run', arguments: args })
       expect(start.isError).not.toBe(true)
-      const startContent = start.structuredContent as {
-        agentRunName?: string
-        headBranch?: string
-        apply?: { stdout?: string }
-      }
-      expect(startContent.headBranch).toBe('codex/demo')
-      expect(startContent.apply?.stdout).toContain('agentrun.agents.proompteng.ai/created configured')
-
-      const manifest = JSON.parse(readFileSync(join(config.workspaceRoot, 'kubectl-stdin.json'), 'utf8')) as {
-        spec?: {
-          implementation?: { inline?: { text?: string } }
-          parameters?: { repository?: string; base?: string; head?: string }
-          vcsPolicy?: { mode?: string }
-        }
-      }
-      expect(manifest.spec?.implementation?.inline?.text).toContain('Make a small repo change')
-      expect(manifest.spec?.parameters).toMatchObject({
-        repository: 'proompteng/lab',
-        base: 'main',
-        head: 'codex/demo',
+      expect(start.structuredContent).toMatchObject({ ok: true, result: { agentRun: record } })
+      expect(apiCalls[0]).toMatchObject({
+        path: '/v1/agent-runs',
+        idempotencyKey: args.deliveryId,
+        body: { ...args.payload, policy: { secretBindingRef: 'codex-github-token' } },
       })
-      expect(manifest.spec?.vcsPolicy?.mode).toBe('read-write')
-
-      const agentRunName = startContent.agentRunName!
-      const status = await client.callTool({ name: 'agent_status', arguments: { agentRunName } })
-      expect((status.structuredContent as { agentRun?: { status?: { phase?: string } } }).agentRun?.status?.phase).toBe(
-        'Running',
-      )
-
-      const logs = await client.callTool({ name: 'agent_read', arguments: { agentRunName } })
-      expect((logs.structuredContent as { stdout?: string }).stdout).toContain('delegated log line')
-
-      const cancel = await client.callTool({ name: 'agent_cancel', arguments: { agentRunName } })
-      expect((cancel.structuredContent as { stdout?: string }).stdout).toContain('agentrun deleted')
-    } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
+      await first.client.close()
+      await first.server.close()
+      const second = await connectServer(config)
+      try {
+        const replay = await second.client.callTool({ name: 'create_agent_run', arguments: args })
+        expect(replay.structuredContent).toMatchObject({ result: { agentRun: { id: record.id } } })
+        expect(apiCalls[1].idempotencyKey).toBe(args.deliveryId)
+        const status = await second.client.callTool({ name: 'get_agent_run', arguments: { id: record.id } })
+        expect(status.structuredContent).toMatchObject({ result: { agentRun: { status: 'Running' } } })
+        const logs = await second.client.callTool({
+          name: 'get_agent_run_logs',
+          arguments: { name: record.externalRunId, namespace: 'agents', tailLines: 5 },
+        })
+        expect(logs.structuredContent).toMatchObject({ result: { logs: 'delegated log line' } })
+        const legacy = await second.client.callTool({ name: 'agent_start', arguments: { task: 'legacy' } })
+        expect(legacy.isError).toBe(true)
+      } finally {
+        await second.client.close()
+        await second.server.close()
       }
+    } finally {
+      fetchMock.mockRestore()
+      await first.client.close()
+      await first.server.close()
     }
   })
 
@@ -1292,7 +1274,7 @@ fi
       expect(content.guide).toContain('repo_session_open')
       expect(content.guide).toContain('sessionId')
       expect(content.guide).toContain('repo_session_close')
-      expect(content.guide).toContain('Do not use agent_start/status/read/cancel')
+      expect(content.guide).toContain('Delegated AgentRun work')
       expect(content.guide).toContain('apply_patch')
       expect(content.guide).toContain('Commit as Greg Konush')
       expect(content.guide).toContain('create a pull request with gh')
