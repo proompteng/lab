@@ -50,7 +50,18 @@ replicas. A database crash or failover discards unfinished attempts and requires
 a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
 query deadline, verified database TLS, and existing attempt expiry and capacity limits.
 
-`/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+`/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+Workspace and Platform open with one row per person and focused add/manage actions. Workspace limits show usage
+beside the configured allowance. Diagnostic grants, ownership transfer and emergency recovery are under Advanced.
+Sign-in and passkey management is a separate disclosure below the access tabs. Audit starts with recent activity and
+keeps receipt IDs inside details.
+The Service access tab starts with registered clients. Choose a service and named resource to load its current
+SpiceDB relationships, then save only changed permissions in one audited command. Platform members can be selected
+under People’s resource permissions; the normal flow does not require SPIFFE IDs or Ofz identity hashes.
+The internal access command API uses a typed `recipient`: `github-login` for a new lookup, or `github-id` for an
+existing immutable roster identity. The former top-level `login` field is removed. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
+portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
+Identity verification appears beside the affected save action only when Ofz requires a fresh passkey check.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
@@ -99,7 +110,10 @@ The Codex view uses a near-black canvas, quiet zinc typography, and blue for pri
 right with a soft background; agent responses stay on the left without speaker headings. A left sidebar (~240–260px) reads
 the native paginated session index, with an active highlight and **New chat** control. Session menus provide **Archive**;
 **Archived chats** provides **Restore**. Archive state survives reloads and is shared across browsers through the
-retained native history. The browser-only session registry is removed; the selected ID remains `tengri-thread:${agentId}`. Saved history
+retained native history. Transient chat-index reads retry automatically while keeping cached chats and drafts.
+The retry preserves a failed page cursor and stops after recovery; changing views or closing chat cancels it.
+Permission and validation failures retain explicit recovery controls. Index recovery never repeats an archive write.
+The browser-only session registry is removed; the selected ID remains `tengri-thread:${agentId}`. Saved history
 loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
 reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs or its submission is pending. Late thread creation and send replies
@@ -207,6 +221,8 @@ Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has i
 The agent's computer tool operates the same browser, with a human takeover control.
 Browser approvals use a compact "Allow browser control?" card with request details available on demand. One-use,
 session, and deny choices retain the scopes advertised by the request.
+Questions and approvals compose the shared design controls in bounded cards. The desktop and portaled conversation
+menus use the same neutral theme and Geist typography; chat rows remain 32 px tall and menu items use 12 px text.
 See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
@@ -296,6 +312,7 @@ Local `/workspace/...` links in agent messages open file tabs above the conversa
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
 shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
 File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+File tabs and Finder Quick Look accept textual XML and JSON media types, including the XML type reported for Rust source.
 Resource previews use the authenticated `stat-file` metadata lookup without enumerating siblings. Folder resources
 open a directory listing, with child navigation, parent navigation,
 an empty-folder state, and refresh. The workspace root and folder links with trailing slashes are supported.

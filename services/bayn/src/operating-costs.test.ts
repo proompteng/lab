@@ -4,8 +4,8 @@ import { Effect, FileSystem, Result } from 'effect'
 
 import { sha256, canonicalHashV1Result } from './hash'
 import { parseInferenceCostArgs } from './inference-cost-command'
-import { makeInferenceCostReport } from './inference-costs'
-import { expenseSourceFixture } from './inference-expense.test-support'
+
+import { costReportFromEvidence, expenseSourceFixture } from './inference-expense.test-support'
 import { readOperatingCostPacket } from './operating-cost-files'
 import {
   makeOperatingCostReport,
@@ -23,7 +23,7 @@ const inference = (missing = false) => {
   const row = expenseSourceFixture({ inputTokens: 100_000, missing })
   const request = row.request
   return Result.getOrThrow(
-    makeInferenceCostReport(
+    costReportFromEvidence(
       {
         schemaVersion: 'bayn.inference-cost-evidence.v2',
         accountBindingHash: account,
@@ -255,6 +255,8 @@ describe('document-bound external operating costs', () => {
     expect(report.totalOperatingCostMicros).toBeNull()
     expect(report.netEconomicPnlMicros).toBeNull()
     expect(report.qualificationInferenceCostMicros).toBeNull()
+    expect(report.qualificationPremiumMicros).toBeNull()
+    expect(report.qualificationPnlMicros).toBeNull()
   })
 
   test('reconciles credits and all allocation shares, replacing rather than adding the tariff estimate', () => {
@@ -267,6 +269,8 @@ describe('document-bound external operating costs', () => {
     expect(report.netEconomicPnlMicros).toBe('998000')
     expect(report.invoiceReconciled).toBe(true)
     expect(report.qualificationInferenceCostMicros).toBe('4200')
+    expect(report.qualificationPremiumMicros).toBe('2200')
+    expect(report.qualificationPnlMicros).toBe('995800')
     expect(report.importedUnallocatedCostMicros).toBe('0')
     const { reportHash, ...material } = report
     expect(reportHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
@@ -292,11 +296,57 @@ describe('document-bound external operating costs', () => {
     const report = Result.getOrThrow(makeOperatingCostReport(inference(), input, verified))
     expect(report.qualificationInferenceCostMicros).toBe('9000')
     expect(report.netEconomicPnlMicros).toBe('991000')
+    expect(report.qualificationPremiumMicros).toBe('0')
+    expect(report.qualificationPnlMicros).toBe('991000')
     const missing = Result.getOrThrow(makeOperatingCostReport(inference(true), input, verified))
     expect(missing.invoiceReconciled).toBe(true)
     expect(missing.unknownInferenceUsageCount).toBe(1)
     expect(missing.qualificationInferenceCostMicros).toBeNull()
+    expect(missing.qualificationPremiumMicros).toBeNull()
+    expect(missing.qualificationPnlMicros).toBeNull()
   })
+
+  test.each([
+    { tradingMicros: '0', actualMicros: '-2000', qualificationMicros: '-4200' },
+    { tradingMicros: '1000', actualMicros: '-1000', qualificationMicros: '-3200' },
+    { tradingMicros: '3000', actualMicros: '1000', qualificationMicros: '-1200' },
+  ])('retains all costs when session trading P&L is $tradingMicros micros', (expected) => {
+    const report = Result.getOrThrow(
+      makeOperatingCostReport(
+        inference(),
+        {
+          ...evidence(true),
+          trading: { netPnlAfterExecutionFeesMicros: expected.tradingMicros, sourceHash: source },
+          consumption: [charge()],
+        },
+        verified,
+      ),
+    )
+    expect(report.schemaVersion).toBe('bayn.operating-cost-report.v2')
+    expect(report.netEconomicPnlMicros).toBe(expected.actualMicros)
+    expect(report.qualificationPnlMicros).toBe(expected.qualificationMicros)
+  })
+
+  test.each(Object.values(OperatingCostCategory))(
+    'missing %s costs cannot produce qualification profit',
+    (category) => {
+      const report = Result.getOrThrow(
+        makeOperatingCostReport(
+          inference(),
+          {
+            ...evidence(true),
+            coverage: evidence(true).coverage.map((row) =>
+              row.category === category ? { ...row, status: OperatingCostCoverage.Unknown, sourceHash: null } : row,
+            ),
+            consumption: [charge()],
+          },
+          verified,
+        ),
+      )
+      expect(report.netEconomicPnlMicros).toBeNull()
+      expect(report.qualificationPnlMicros).toBeNull()
+    },
+  )
 
   test('requires explicit evidence for every zero/complete category and all referenced artifacts', () => {
     for (const input of [

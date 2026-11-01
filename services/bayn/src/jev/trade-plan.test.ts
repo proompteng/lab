@@ -31,7 +31,7 @@ test('negative own and relative returns reach chart inference without a momentum
   for (const candidate of evidence.batchPlan.candidates) expect(candidate.status).toBe(JevCandidatePlanStatus.Requested)
   const candidate = evidence.batchPlan.candidates.find((value) => value.symbol === 'AAPL')
   if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected source request')
-  expect(JSON.stringify(candidate.request.request.numericalState)).toContain('lookbackReturnBps')
+  expect(JSON.stringify(candidate.request.request.numericalState)).toContain('returnsBps')
   expect(candidate.request.request.chartSource.symbol).toBe('AAPL')
 })
 

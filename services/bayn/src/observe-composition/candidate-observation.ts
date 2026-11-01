@@ -8,6 +8,7 @@ import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momen
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import type { makeJevObservation } from '../jev/observation'
 import type { JevPurpose } from '../jev/portfolio'
+import type { RepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 
 interface CandidateObservationInput {
   readonly cycleId: string
@@ -50,7 +51,10 @@ export type CandidateObservation =
 export class CandidateObservationStore extends Context.Service<
   CandidateObservationStore,
   {
-    readonly record: (observation: CandidateObservation) => Effect.Effect<void, OperationalError>
+    readonly record: (
+      observation: CandidateObservation,
+      momentumPolicy?: RepeatedMomentumPolicy,
+    ) => Effect.Effect<void, OperationalError>
     readonly latestJevWindowEnd: (input: {
       readonly cycleId: string
       readonly purpose: JevPurpose

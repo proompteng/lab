@@ -7,6 +7,13 @@ import { TestClock } from 'effect/testing'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { jevObservationForSnapshot } from './native.test-support'
+import { jevEntryPriceAllowances } from './entry-economics'
+import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { OrderType as AlpacaOrderType, TimeInForce as AlpacaTimeInForce } from '../broker/alpaca/model'
 import { JevBatchPlanVersion } from './batch'
 import { JevBatchStore } from './batch-evaluation'
 import { JevClient } from './client'
@@ -32,7 +39,7 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const decision = Result.getOrThrow(
@@ -66,6 +73,102 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
   )
   return { fixture, decision, pricing: snapshot }
 }
+
+const cryptoEntryFixture = () => {
+  const { snapshot } = cryptoMarketFixture('BTC/USD', { quoteSpreadBps: 2, observedPriceChoices: true })
+  const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
+  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol })
+  const decision = Result.getOrThrow(
+    decideJevEntry({
+      ...evidence,
+      batchResult: nativeJevBatchResult(evidence.batchPlan, evidence.decidedAt, (symbol) => symbol === 'BTC/USD'),
+    }),
+  )
+  expect(decision.selectedSymbols).toEqual(['BTC/USD'])
+  return { snapshot, decision }
+}
+
+test.each(['AAPL', 'BTC/USD'])(
+  '%s entry enforces its inference-ask cap through the submitted native limit',
+  (symbol) => {
+    const entry = symbol === 'BTC/USD' ? cryptoEntryFixture() : pricingFixture(100, 100.02)
+    const { decision } = entry
+    const snapshot = 'snapshot' in entry ? entry.snapshot : entry.fixture.snapshot
+    const timeInForce = symbol === 'BTC/USD' ? TimeInForce.ImmediateOrCancel : TimeInForce.Day
+    const compiled = Result.getOrThrow(compileJevEntry(decision, snapshot, snapshot))
+    const plan = decision.exitPolicy.plans[symbol]
+    const quantity = compiled.maximumBuyQuantityAtoms[symbol]
+    const ask = compiled.askPriceMicros[symbol]
+    if (plan === undefined || quantity === undefined || ask === undefined)
+      throw new Error('Missing funded crypto terms')
+    const pricing = Result.getOrThrow(
+      deriveExecutionIntentPricing({
+        symbol,
+        side: OrderSide.Buy,
+        orderType: OrderType.Limit,
+        timeInForce,
+        quantityAtoms: BigInt(quantity),
+        referencePriceMicros: BigInt(ask),
+        limitSlippageBps: BigInt(
+          jevEntryPriceAllowances(decision.evidence.observation.protocol, symbol).limitSlippageBps,
+        ),
+      }),
+    )
+    const body = Result.getOrThrow(
+      orderRequestBody({
+        symbol,
+        side: OrderSide.Buy,
+        orderType: OrderType.Limit,
+        timeInForce,
+        clientOrderId: 'b1_' + 'A'.repeat(43),
+        quantityAtoms: quantity,
+        limitPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
+        notionalLimitMicros: pricing.notionalLimitMicros.toString(),
+      }),
+    )
+    expect(pricing.expectedExecutionPriceMicros.toString()).toBe(plan.levels.maximumEntryPriceMicros)
+    expect(Number(body.limit_price)).toBe(Number(plan.levels.maximumEntryPriceMicros) / 1_000_000)
+    expect(body.time_in_force).toBe(symbol === 'BTC/USD' ? AlpacaTimeInForce.ImmediateOrCancel : AlpacaTimeInForce.Day)
+    expect(body.type).toBe(AlpacaOrderType.Limit)
+  },
+)
+
+test('crypto entry does not chase a fresh narrow quote above the inference ask', () => {
+  const { snapshot, decision } = cryptoEntryFixture()
+  const adverse = cryptoMarketFixture('BTC/USD', { quoteSpreadBps: 3, observedPriceChoices: true }).snapshot
+  const compiled = compileJevEntry(decision, snapshot, adverse)
+  expect(Result.isFailure(compiled)).toBe(true)
+  if (Result.isFailure(compiled)) {
+    expect(compiled.failure).toBeInstanceOf(JevAwaitingEvidence)
+    expect(compiled.failure).toMatchObject({ message: expect.stringContaining('entry cost price ceiling') })
+  }
+})
+
+test('equity entry retains the real refreshed ask and its funded buy ceiling', () => {
+  const original = pricingFixture(100, 100.02).fixture.snapshot.latestQuotes['AAPL']
+  if (original === undefined) throw new Error('Missing inference quote')
+  const ask = original.askPrice + 0.01
+  const { fixture, decision, pricing } = pricingFixture(ask - 0.02, ask)
+  const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
+  const plan = decision.exitPolicy.plans['AAPL']
+  if (plan === undefined) throw new Error('Missing funded plan')
+  expect(compiled.askPriceMicros['AAPL']).toBe(String(Math.round(ask * 1_000_000)))
+  const limit = Result.getOrThrow(
+    deriveExecutionIntentPricing({
+      symbol: 'AAPL',
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: BigInt(compiled.maximumBuyQuantityAtoms['AAPL'] ?? '0'),
+      referencePriceMicros: BigInt(compiled.askPriceMicros['AAPL'] ?? '0'),
+      limitSlippageBps: 0n,
+      maximumBuyPriceMicros: BigInt(plan.levels.maximumEntryPriceMicros),
+    }),
+  )
+  expect(limit.expectedExecutionPriceMicros.toString()).toBe(plan.levels.maximumEntryPriceMicros)
+  expect(limit.expectedExecutionPriceMicros).toBeLessThan(BigInt(compiled.askPriceMicros['AAPL'] ?? '0'))
+  expect(BigInt(compiled.maximumBuyQuantityAtoms['AAPL'] ?? '0')).toBeLessThanOrEqual(BigInt(plan.maximumQuantityAtoms))
+})
 
 describe('Jev entry execution quote eligibility', () => {
   test.each([0, -10000, 10000])('entry compilation preserves the stop boundary at offset %s micros', (offset) => {
@@ -114,23 +217,24 @@ describe('Jev entry execution quote eligibility', () => {
   })
 
   test('the existing exact spread boundary remains eligible', () => {
-    const { fixture, decision, pricing } = pricingFixture(99.975, 100.025)
+    const { fixture, decision, pricing } = pricingFixture(99.93501, 99.98499)
     expect(Result.isSuccess(compileJevEntry(decision, fixture.snapshot, pricing))).toBe(true)
   })
 
-  test('a narrow refreshed quote above the inference-bound cost ceiling cannot enter', () => {
-    const original = nativeJevFixture().snapshot.latestQuotes['AAPL']
-    if (original === undefined) throw new Error('Missing fixture quote')
-    const ask = original.askPrice * 1.001 + 0.02
-    const { fixture, decision, pricing } = pricingFixture(ask - 0.01, ask)
-    const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
-    expect(Result.isFailure(compiled)).toBe(true)
-    if (Result.isFailure(compiled)) {
-      expect(compiled.failure).toBeInstanceOf(JevAwaitingEvidence)
-      if (compiled.failure instanceof JevAwaitingEvidence)
-        expect(compiled.failure.message).toContain('entry cost price ceiling')
-    }
-  })
+  test.each([0, 10_000])(
+    'an equity quote at or beyond its fulfilled profit target cannot enter at offset %s',
+    (offset) => {
+      const original = pricingFixture(100, 100.02)
+      const plan = original.decision.exitPolicy.plans['AAPL']
+      if (plan === undefined) throw new Error('Missing fixture plan')
+      const bid = (Number(plan.levels.profitLimitPriceMicros) + offset) / 1_000_000
+      const { fixture, decision, pricing } = pricingFixture(bid, bid + 0.01)
+      const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+      expect(Result.isFailure(compiled)).toBe(true)
+      if (Result.isFailure(compiled))
+        expect(compiled.failure).toMatchObject({ message: expect.stringContaining('profit target already reached') })
+    },
+  )
 
   test('a rejected execution quote cannot reopen its consumed signal window', async () => {
     const { fixture, pricing } = pricingFixture(100, 100.06)
@@ -149,6 +253,7 @@ describe('Jev entry execution quote eligibility', () => {
         calls.snapshots += 1
         return fixture.snapshot
       }),
+      JevBatchPlanVersion.V8,
     ).pipe(
       Effect.flatMap(({ snapshot, evidence }) =>
         Effect.fromResult(decideJevEntry(evidence)).pipe(
@@ -180,6 +285,7 @@ describe('Jev entry execution quote eligibility', () => {
         Effect.provideService(JevBatchStore, {
           pending: () => Effect.succeed([]),
           read: () => unused,
+          complete: () => unused,
           finish: () => unused,
           begin: (plan, observation) =>
             Effect.gen(function* () {
@@ -194,7 +300,7 @@ describe('Jev entry execution quote eligibility', () => {
         Effect.provideService(JevEvaluationStore, {
           read: () => unused,
 
-          record: () => unused,
+          recordAll: () => unused,
           abandon: () => unused,
         }),
         Effect.provideService(JevClient, { evaluate: () => unused }),

@@ -15,6 +15,9 @@ import {
 } from 'react'
 
 import { signOutTengri } from '@/lib/tengri/auth-client'
+import { reportBrowserFailure } from '@/lib/observability/client'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
   APP_TITLES,
@@ -255,6 +258,38 @@ export function ReadyDesktop({
     initialWindowState(viewport, ['finder', 'tengri']),
   )
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
+  useEffect(() => {
+    if (busyAction !== null) return
+    const controller = new AbortController()
+    let pending = true
+    void renewWorkspaceConnections(agent.id, controller.signal).finally(() => {
+      pending = false
+    })
+    const renewActive = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId: agent.id },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        if (activeRuns.some((run) => run.agentId !== agent.id))
+          throw new Error('Active run belongs to another workspace')
+        if (activeRuns.some((run) => run.state.phase === 'running' || run.state.phase === 'recovering'))
+          await renewWorkspaceConnections(agent.id, controller.signal)
+      } catch {
+        if (!controller.signal.aborted) reportBrowserFailure('tengri.connection-renewal')
+      } finally {
+        pending = false
+      }
+    }
+    const timer = window.setInterval(() => void renewActive(), 60_000)
+    return () => {
+      controller.abort()
+      window.clearInterval(timer)
+    }
+  }, [agent.id, agent.runtimeEpoch, busyAction])
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
@@ -759,7 +794,7 @@ export function ReadyDesktop({
       <main
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
+        className="tengri-theme font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
