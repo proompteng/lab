@@ -1,12 +1,13 @@
 use super::{
     authorization, catalog, connections, executions,
     mutations::{self, Command},
-    onboarding,
+    onboarding, workspaces,
 };
 use crate::{
     native::Native,
     proto::{self, platform_authorization_service_server::PlatformAuthorizationService},
     registry,
+    sessions::{self, Issuer},
     store::Database,
     transport,
 };
@@ -18,19 +19,135 @@ use tonic::{Request, Response, Status};
 pub struct Service {
     database: Database,
     native: Native,
+    issuer: Issuer,
     capacity: Arc<Semaphore>,
 }
 impl Service {
-    pub fn new(database: Database, native: Native) -> Self {
+    pub fn new(database: Database, native: Native, issuer: Issuer) -> Self {
         Self {
             database,
             native,
+            issuer,
             capacity: Arc::new(Semaphore::new(128)),
         }
     }
 }
 #[tonic::async_trait]
 impl PlatformAuthorizationService for Service {
+    async fn list_platform_workspaces(
+        &self,
+        request: Request<proto::ListPlatformWorkspacesRequest>,
+    ) -> Result<Response<proto::ListPlatformWorkspacesResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform administration is busy"))?;
+        let peer = transport::peer(&request)?;
+        workspaces::list(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn get_platform_workspace(
+        &self,
+        request: Request<proto::GetPlatformWorkspaceRequest>,
+    ) -> Result<Response<proto::GetPlatformWorkspaceResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform administration is busy"))?;
+        let peer = transport::peer(&request)?;
+        workspaces::get(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn read_workspace_activity(
+        &self,
+        request: Request<proto::ReadWorkspaceActivityRequest>,
+    ) -> Result<Response<proto::ReadWorkspaceActivityResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform administration is busy"))?;
+        let peer = transport::peer(&request)?;
+        workspaces::activity(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn begin_sign_in(
+        &self,
+        request: Request<proto::BeginSignInRequest>,
+    ) -> Result<Response<proto::BeginSignInResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        sessions::begin_sign_in(&self.database, &peer, request.into_inner()).await?;
+        Ok(Response::new(proto::BeginSignInResponse {}))
+    }
+    async fn consume_sign_in(
+        &self,
+        request: Request<proto::ConsumeSignInRequest>,
+    ) -> Result<Response<proto::ConsumeSignInResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        Ok(Response::new(
+            sessions::consume_sign_in(&self.database, &peer, request.into_inner()).await?,
+        ))
+    }
+    async fn establish_session(
+        &self,
+        request: Request<proto::EstablishSessionRequest>,
+    ) -> Result<Response<proto::EstablishSessionResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        let session = sessions::establish(
+            &self.database,
+            &self.native,
+            &self.issuer,
+            &peer,
+            request.into_inner(),
+        )
+        .await?;
+        Ok(Response::new(proto::EstablishSessionResponse {
+            session: Some(session),
+        }))
+    }
+    async fn inspect_session(
+        &self,
+        request: Request<proto::InspectSessionRequest>,
+    ) -> Result<Response<proto::InspectSessionResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        let session =
+            sessions::inspect(&self.database, &self.native, &peer, request.into_inner()).await?;
+        Ok(Response::new(proto::InspectSessionResponse {
+            session: Some(session),
+        }))
+    }
+    async fn revoke_session(
+        &self,
+        request: Request<proto::RevokeSessionRequest>,
+    ) -> Result<Response<proto::RevokeSessionResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        let receipt = sessions::revoke(&self.database, &peer, request.into_inner()).await?;
+        Ok(Response::new(proto::RevokeSessionResponse {
+            receipt: Some(receipt),
+        }))
+    }
     async fn get_platform_configuration(
         &self,
         request: Request<proto::GetPlatformConfigurationRequest>,
@@ -53,6 +170,7 @@ impl PlatformAuthorizationService for Service {
                 .map(|s| proto::RegisteredRelayClient {
                     id: s.id.clone(),
                     identities: s.identities.clone(),
+                    display_name: s.name().into(),
                 })
                 .collect(),
             policy_catalog_json: serde_json::to_string(catalog::configured()?)
@@ -80,11 +198,7 @@ impl PlatformAuthorizationService for Service {
             .roles
             .iter()
             .any(|role| role == "platform.administration")
-            || !registration
-                .roles
-                .iter()
-                .any(|role| role == "platform.human-session")
-            || !registration.origins.contains(&session.origin)
+            || !registration.allows_origin(&session.origin)
         {
             return Err(Status::permission_denied(
                 "service cannot read policy relationships",
@@ -97,9 +211,9 @@ impl PlatformAuthorizationService for Service {
         let (allowed, revision) = self
             .native
             .check(&[crate::native::Check::new(
-                "platform",
-                "lab",
-                "manage_targets",
+                "platform_workspace",
+                &input.workspace_id,
+                "manage",
                 "human",
                 &session.human_id,
             )])
@@ -112,16 +226,17 @@ impl PlatformAuthorizationService for Service {
                 proto::Action::PolicyRead,
                 false,
                 &operation,
-                "resource permissions require a platform administrator",
+                "resource permissions require a workspace administrator",
             );
             denied.recovery_generation = state.recovery_generation;
             denied.platform_action = "ofz.relationships.read".into();
+            denied.platform_workspace_id = input.workspace_id.clone();
             denied.revision = revision;
             self.database
                 .audit(&denied, "ofz.relationships.read")
                 .await?;
             return Err(Status::permission_denied(
-                "platform policy administrator required",
+                "workspace administrator required",
             ));
         }
         let resource = input
@@ -139,29 +254,19 @@ impl PlatformAuthorizationService for Service {
             return Err(Status::invalid_argument("invalid policy resource"));
         }
         let definition = catalog::configured()?.resource(&resource.kind)?;
-        let subject = match input.subject_kind.as_str() {
-            "human" => {
-                proto::Actor {
-                    identity: Some(proto::actor::Identity::HumanId(input.subject_id.clone())),
-                }
-                .subject()?;
-                input.subject_id.clone()
-            }
-            "workload" if registry::configured()?.service(&input.subject_id).is_some() => {
-                crate::policy::workload_object_id(&input.subject_id)
-            }
-            _ => {
-                return Err(Status::invalid_argument(
-                    "registered policy recipient required",
-                ));
-            }
-        };
+        workspaces::resource_scope(&input.workspace_id, resource)?;
+        if input.subject_kind == "workspace" && input.subject_id != input.workspace_id {
+            return Err(Status::permission_denied(
+                "workspace grant cannot reference another workspace",
+            ));
+        }
+        let (subject_kind, subject) = workspaces::subject(&input.subject_kind, &input.subject_id)?;
         let relations = self
             .native
             .policy_relations(
                 &definition.native_type,
                 &resource.id,
-                &input.subject_kind,
+                subject_kind,
                 &subject,
             )
             .await?;
@@ -186,6 +291,7 @@ impl PlatformAuthorizationService for Service {
         receipt.recovery_generation = state.recovery_generation;
         receipt.revision = revision;
         receipt.platform_action = "ofz.relationships.read".into();
+        receipt.platform_workspace_id = input.workspace_id.clone();
         receipt.platform_resources = vec![format!("{}/{}", resource.kind, resource.id)];
         self.database
             .audit(&receipt, "ofz.relationships.read")
@@ -202,9 +308,9 @@ impl PlatformAuthorizationService for Service {
             || !self
                 .native
                 .check(&[crate::native::Check::new(
-                    "platform",
-                    "lab",
-                    "manage_targets",
+                    "platform_workspace",
+                    &input.workspace_id,
+                    "manage",
                     "human",
                     &session.human_id,
                 )])
@@ -233,6 +339,19 @@ impl PlatformAuthorizationService for Service {
                     .await?,
             ),
         }))
+    }
+    async fn discover_platform_access(
+        &self,
+        request: Request<proto::DiscoverPlatformAccessRequest>,
+    ) -> Result<Response<proto::DiscoverPlatformAccessResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        super::discovery::discover(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
     }
     async fn list_platform_connections(
         &self,

@@ -782,19 +782,31 @@
     "action": "ACTION_AUDIT_READ"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
+    "operation": "BeginSignIn",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ConsumeSignIn",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "EstablishSession",
     "internal_only": true,
     "action": "ACTION_SESSION_ESTABLISH"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "InspectSession",
     "internal_only": true,
     "action": "ACTION_SESSION_INSPECT"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "RevokeSession",
     "internal_only": true,
     "action": "ACTION_SESSION_REVOKE"
@@ -955,6 +967,24 @@
     "action": "ACTION_BROWSER_CONTROL"
   },
   {
+    "surface": "browser_mcp_http",
+    "operation": "POST /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp_http",
+    "operation": "DELETE /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "release",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
     "surface": "browser_action",
     "operation": "status",
     "internal_only": true,
@@ -1069,18 +1099,8 @@
   },
   {
     "surface": "bff_access",
-    "operation": "membership",
-    "action": "ACTION_MEMBERS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
     "operation": "collaborator",
     "action": "ACTION_COLLABORATORS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
-    "operation": "quota",
-    "action": "ACTION_QUOTAS_MANAGE"
   },
   {
     "surface": "bff_access",
@@ -1096,11 +1116,6 @@
     "surface": "bff_access",
     "operation": "transfer",
     "action": "ACTION_WORKSPACE_TRANSFER"
-  },
-  {
-    "surface": "bff_access",
-    "operation": "emergency",
-    "action": "ACTION_MEMBERS_MANAGE"
   },
   {
     "surface": "bff_auth",
@@ -1160,6 +1175,12 @@
     "operation": "GetPlatformConfiguration",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "DiscoverPlatformAccess",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Attested client and current human or workload; native resource and workspace checks before catalog disclosure; durable audit"
   },
   {
     "surface": "ofz_platform",
@@ -1286,5 +1307,47 @@
     "operation": "GET /api/tengri/connections",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Owner-scoped saved connection metadata without credentials"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListPlatformWorkspaces",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Attested administration gateway and current workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformWorkspace",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Attested administration gateway and current workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ReadWorkspaceActivity",
+    "action": "ACTION_AUDIT_READ",
+    "dispatch": "Attested administration gateway and current workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/workspaces",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/workspaces/[workspaceId]",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/workspaces/[workspaceId]/activity",
+    "action": "ACTION_AUDIT_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/workspaces/[workspaceId]/people",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
   }
 ]

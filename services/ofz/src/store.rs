@@ -30,6 +30,12 @@ const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
         3,
         include_str!("../migrations/0004_session_credentials.sql"),
     ),
+    (4, include_str!("../migrations/0005_session_gateways.sql")),
+    (5, include_str!("../migrations/0006_sign_in_attempts.sql")),
+    (
+        6,
+        include_str!("../migrations/0007_workspace_onboarding.sql"),
+    ),
 ];
 
 fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {
@@ -288,6 +294,10 @@ impl Database {
             (
                 7,
                 include_str!("../../tengri/migrations/0007_ephemeral_oauth.sql"),
+            ),
+            (
+                8,
+                include_str!("../../tengri/migrations/0008_platform_sign_in.sql"),
             ),
         ];
         let mut client = self
@@ -624,6 +634,7 @@ pub fn receipt(
         platform_resources: Vec::new(),
         platform_client: String::new(),
         platform_request_hash: Vec::new(),
+        platform_workspace_id: String::new(),
     }
 }
 
