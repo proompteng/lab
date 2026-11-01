@@ -487,13 +487,14 @@ identityTest(
     })
     if (!bundle.success) throw new Error('Identity browser fixture bundle failed')
     const javascript = await bundle.outputs[0]?.text()
+    // This functional fixture omits Tailwind; keep empty checkbox roots actionable when unchecked.
     const bff = httpsServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, async (request, response) => {
       try {
         const url = new URL(request.url || '/', process.env.TENGRI_DESKTOP_ORIGIN)
         if (url.pathname === '/') {
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
-            '<!doctype html><html><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
+            '<!doctype html><html><head><style>[data-slot="checkbox"]{display:inline-flex;width:16px;height:16px}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
           )
           return
         }
@@ -970,7 +971,7 @@ identityTest(
       )
     }
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
-    await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: false })
     const sessions = await control.query(
       'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
@@ -1204,7 +1205,7 @@ identityTest(
     await selectAccessOption('Change', 'Membership')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
     await selectAccessOption('Role', 'Administrator')
-    await page.getByLabel('Enable this access', { exact: true }).uncheck()
+    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).uncheck()
     await page.getByLabel('Reason', { exact: true }).fill('Attempt to remove required second administrator')
     await applyChange(422)
     await browserExpect(page.getByRole('alert').filter({ hasText: 'constraint' })).toBeVisible()
@@ -1212,7 +1213,7 @@ identityTest(
 
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
     await selectAccessOption('Role', 'Member')
-    await page.getByLabel('Enable this access', { exact: true }).check()
+    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).check()
     await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
     await applyChange(200)
     await browserExpect(
@@ -1222,7 +1223,7 @@ identityTest(
     await browserExpect(
       page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
     ).toBeVisible()
-    await browserExpect(page.getByText('GitHub #3', { exact: true })).toBeVisible()
+    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=3"]')).toBeVisible()
 
     // Seed a stopped, enrolled workspace; creation and enrollment are exercised by the controller wire fixture above.
     const scopedWorkspace = randomUUID()
@@ -1239,12 +1240,14 @@ identityTest(
     })
     await page.goto(base + '/?workspace=' + scopedWorkspace)
     await page.getByRole('button', { name: 'Add collaborator', exact: true }).click()
-    const contentOptIn = page.getByLabel('Approve bounded Viewer content access', { exact: true })
+    const contentOptIn = page.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true })
     await browserExpect(contentOptIn).not.toBeChecked()
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
     await page.getByLabel('Reason', { exact: true }).fill('Grant metadata-only Viewer access')
     await applyChange(200)
-    const viewerRow = page.locator('[data-slot="item"]').filter({ has: page.getByText('GitHub #3', { exact: true }) })
+    const viewerRow = page
+      .locator('[data-slot="item"]')
+      .filter({ has: page.locator('a[href="https://github.com/account/redirect?user_id=3"]') })
     await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
     const viewerId = createHash('sha256').update('github:3').digest('hex')
     const storedViewer = async () =>
@@ -1286,7 +1289,9 @@ identityTest(
     await page.getByLabel('Terminal IDs', { exact: true }).fill(' shared-id ')
     await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
     await page.getByLabel('Maximum items', { exact: true }).fill('20')
-    await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
+    await browserExpect(
+      page.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true }),
+    ).not.toBeChecked()
     await applyChange(200)
     await viewerRow.getByText('Access details', { exact: true }).click()
     for (const [label, target] of [
@@ -1316,7 +1321,7 @@ identityTest(
     await roots.fill('/workspace/narrow')
     await page.getByLabel('Codex thread IDs', { exact: true }).fill('')
     await page.getByLabel('Terminal IDs', { exact: true }).fill('')
-    await page.getByLabel('Allow browser screenshots', { exact: true }).check()
+    await page.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true }).check()
     await applyChange(200)
     await viewerRow.getByText('Access details', { exact: true }).click()
     await browserExpect(viewerRow.getByText(JSON.stringify('/workspace/narrow'), { exact: true })).toBeVisible()
@@ -1404,9 +1409,10 @@ identityTest(
     ).toBe(200)
     await page.reload()
     const diagnosticRow = page
-      .getByRole('row')
+      .locator('[data-slot="item"]')
       .filter({ has: page.getByText(`Grant ${metadataGrant}`, { exact: true }) })
     await browserExpect(diagnosticRow).toBeVisible()
+    await diagnosticRow.getByText('Access details', { exact: true }).click()
     await browserExpect(diagnosticRow).not.toContainText('Browser status')
     await browserExpect(diagnosticRow.getByText('up to 1024 bytes / 20 items', { exact: true })).toBeVisible()
     expect(
@@ -1462,7 +1468,7 @@ identityTest(
     await once(kc.server, 'exit')
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
-    await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
