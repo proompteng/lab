@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
-import type { TengriIdentity } from './auth'
+import { RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { SessionSchema } from './generated/proompteng/authz/v1/platform_pb'
+import type { PlatformIdentity } from '../platform/auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
@@ -29,7 +30,8 @@ let removalCheck: (() => void) | undefined
 const removalOperations = new Set<string>()
 let loseCommandResponse = false
 let supersedeRuntimeCommand = false
-const identity: TengriIdentity = {
+let conflictedConversationResumes = 0
+const identity: PlatformIdentity = {
   subject: 'github:42',
   user: { id: '42', name: 'Fixture', email: '', image: null },
   session: create(SessionSchema, {
@@ -220,7 +222,7 @@ beforeAll(async () => {
     ),
   )
   process.env.OFZ_GRPC_ENDPOINT = `localhost:${ofzPort}`
-  process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+  process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     getRequestAudience(
@@ -702,6 +704,10 @@ beforeAll(async () => {
       }
       if (threadId === 'unavailable-conversation') {
         call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
+        return
+      }
+      if (threadId === 'conflicted-conversation' && conflictedConversationResumes++ === 0) {
+        call.emit('error', serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'))
         return
       }
       call.write({
@@ -1895,6 +1901,18 @@ describe('Tengri gRPC BFF transport', () => {
       status: 503,
       code: undefined,
     })
+  })
+
+  test('keeps a conversation resume conflict retryable without exposing guest details', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread(identity, 'agent-test', 'conflicted-conversation'))).toMatchObject({
+      message: 'The conversation changed while loading. Reconnecting…',
+      status: 503,
+      code: undefined,
+    })
+    expect(await restoredThread('conflicted-conversation')).toMatchObject({ id: 'conflicted-conversation' })
+    expect(conflictedConversationResumes).toBe(2)
   })
 
   test('sanitizes upstream failures and treats verifier failures as service errors', async () => {

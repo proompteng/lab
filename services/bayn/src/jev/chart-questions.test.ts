@@ -109,6 +109,7 @@ describe('source-bound chart questions', () => {
       expect(start.choices.map((choice) => choice.value)).toContain(first.id)
       const economics = Result.getOrThrow(
         jevEntryEconomics({
+          feeAt: '2026-09-04T14:15:00.000Z',
           ...funding,
           symbol: chart.symbol,
           protocol: defaultJevProtocolDocument,

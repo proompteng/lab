@@ -103,7 +103,7 @@ export class AgentsShellRunner {
 
   async openRepoSession(args: { name?: string; baseBranch?: string }, auth: AuthContext) {
     const seed = this.repoSeedPath()
-    const baseBranch = args.baseBranch ?? this.config.agentBaseBranch
+    const baseBranch = args.baseBranch ?? this.config.repoBaseBranch
     if (baseBranch.startsWith('-')) throw new Error(`invalid base branch: ${baseBranch}`)
     const identity = createRepoSessionIdentity(this.config.workspaceRoot, args.name)
     mkdirSync(resolve(this.config.workspaceRoot, 'worktrees', 'lab'), { recursive: true })

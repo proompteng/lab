@@ -1,4 +1,4 @@
-import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
+import { expect, request as playwrightRequest, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { codexModelFixtures } from './codex-models.fixture'
 
 test.afterEach(async ({ request }, testInfo) => {
@@ -100,14 +100,14 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     const action = route.request().postDataJSON()
     let result: unknown = null
     if (action.action === 'browser-session') {
-      if (action.renewal) automaticRenewals++
+      if (action.renewal && !action.windowId.endsWith('-chatgpt')) automaticRenewals++
       const response = await request.get(
         `http://127.0.0.1:18082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
         { timeout: 300_000 },
       )
       expect(response.ok()).toBeTruthy()
       result = await response.json()
-      browserOrigin = (result as { previewOrigin: string }).previewOrigin
+      if (!action.windowId.endsWith('-chatgpt')) browserOrigin = (result as { previewOrigin: string }).previewOrigin
     } else if (action.action === 'revoke-editor-sessions') {
       signOutActions.push('revoke-editor-sessions')
       if (failRevocation) {
@@ -258,17 +258,101 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   expect(download.isError, JSON.stringify(download.content)).not.toBe(true)
   await expect.poll(async () => (await state()).download).toBe('CHROMIUM_DOWNLOAD_OK\n')
 
-  await frame.getByRole('button', { name: 'Take control', exact: true }).click()
-  await expect(frame.getByRole('button', { name: 'Let agent use browser', exact: true })).toBeVisible()
-  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
-  expect((await computer({ action: 'screenshot' })).isError).toBe(true)
-  expect((await computer({ action: 'type', text: 'must not type' })).isError).toBe(true)
-  await frame.getByRole('button', { name: 'Let agent use browser', exact: true }).click()
-  await expect(frame.getByRole('button', { name: 'Take control', exact: true })).toBeVisible()
-  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(false)
-  expect((await computer({ action: 'screenshot' })).isError).not.toBe(true)
-  await chrome.getByRole('button', { name: 'Close Chrome', exact: true }).click()
-  await expect(chrome).toHaveCount(0)
+  await frame.getByRole('button', { name: 'Connect ChatGPT', exact: true }).click()
+  const connectionDialog = page.getByRole('alertdialog', { name: 'Connect ChatGPT to Chrome?' })
+  await expect(connectionDialog).toBeVisible()
+  const downloaded = page.waitForEvent('download')
+  await connectionDialog.getByRole('button', { name: 'Download connection', exact: true }).click()
+  const connectionFile = await downloaded
+  expect(connectionFile.suggestedFilename()).toBe('tengri-browser-connection.json')
+  const stream = await connectionFile.createReadStream()
+  expect(stream).not.toBeNull()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream!) chunks.push(chunk)
+  const connection = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  await connectionFile.delete()
+  expect(connection.version).toBe(1)
+  expect(connection.previewOrigin).not.toBe(browserOrigin)
+  const externalRequest = await playwrightRequest.newContext({ ignoreHTTPSErrors: true })
+  try {
+    const launch = new URL(connection.launchUrl)
+    const opened = await externalRequest.post(`${launch.origin}${launch.pathname}`, {
+      data: { token: launch.hash.slice(1) },
+      maxRedirects: 0,
+    })
+    expect(opened.ok()).toBe(true)
+    const location = new URL((await opened.json()).location)
+    expect(location.origin).toBe(connection.previewOrigin)
+    const bootstrap = await externalRequest.post(`${location.origin}/_tengri/bootstrap`, {
+      data: { token: location.hash.slice(1) },
+      maxRedirects: 0,
+    })
+    expect(bootstrap.ok()).toBe(true)
+    const mcpUrl = `${connection.previewOrigin}/mcp`
+    const initialize = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } }
+    const unauthenticatedMCP = await request.post(mcpUrl, { data: initialize, ignoreHTTPSErrors: true })
+    expect(unauthenticatedMCP.status()).toBe(401)
+    const initializedMCP = await externalRequest.post(mcpUrl, { data: initialize })
+    expect(initializedMCP.ok()).toBe(true)
+    const mcpSession = initializedMCP.headers()['mcp-session-id'] ?? ''
+    expect(mcpSession).toMatch(/^[a-f0-9]{64}$/)
+    let mcpRequestId = 1
+    const externalComputer = async (arguments_: Record<string, unknown>) => {
+      const response = await externalRequest.post(mcpUrl, {
+        data: {
+          jsonrpc: '2.0',
+          id: ++mcpRequestId,
+          method: 'tools/call',
+          params: { name: 'computer', arguments: arguments_ },
+        },
+        headers: { 'Mcp-Session-Id': mcpSession },
+        ignoreHTTPSErrors: true,
+        timeout: 300_000,
+      })
+      expect(response.ok()).toBe(true)
+      const value = await response.json()
+      expect(value.error).toBeUndefined()
+      return value.result
+    }
+    const externalScreenshot = await externalComputer({ action: 'screenshot' })
+    expect(externalScreenshot.isError).not.toBe(true)
+    expect(externalScreenshot.structuredContent.width).toBe(screenshot.structuredContent.width)
+    expect((await computer({ action: 'screenshot' })).isError).toBe(true)
+    const externalUrl = `http://127.0.0.1:8080/_test/site?external-mcp=1&run=${Date.now()}`
+    expect((await externalComputer({ action: 'navigate', url: externalUrl })).isError).not.toBe(true)
+    await expect.poll(async () => (await state()).loaded?.url).toBe(externalUrl)
+    const externalTarget = (await state()).loaded.messageCenter
+    expect((await externalComputer({ action: 'click', ...externalTarget })).isError).not.toBe(true)
+    expect((await externalComputer({ action: 'type', text: 'External MCP input works: 世界 🌍' })).isError).not.toBe(
+      true,
+    )
+    expect((await externalComputer({ action: 'key', key: 'Return' })).isError).not.toBe(true)
+    await expect.poll(async () => (await state()).submitted?.message).toBe('External MCP input works: 世界 🌍')
+
+    await frame.getByRole('button', { name: 'Take control', exact: true }).click()
+    await expect(frame.getByRole('button', { name: 'Let agent use browser', exact: true })).toBeVisible()
+    expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
+    expect((await computer({ action: 'screenshot' })).isError).toBe(true)
+    expect((await computer({ action: 'type', text: 'must not type' })).isError).toBe(true)
+    expect((await externalComputer({ action: 'screenshot' })).isError).toBe(true)
+    expect((await externalComputer({ action: 'type', text: 'must not type' })).isError).toBe(true)
+    await frame.getByRole('button', { name: 'Let agent use browser', exact: true }).click()
+    await expect(frame.getByRole('button', { name: 'Take control', exact: true })).toBeVisible()
+    expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(false)
+    expect((await externalComputer({ action: 'screenshot' })).isError).not.toBe(true)
+    expect((await externalComputer({ action: 'release' })).isError).not.toBe(true)
+    expect((await computer({ action: 'screenshot' })).isError).not.toBe(true)
+    await chrome.getByRole('button', { name: 'Close Chrome', exact: true }).click()
+    await expect(chrome).toHaveCount(0)
+    const revokedMCP = await externalRequest.post(mcpUrl, {
+      data: { jsonrpc: '2.0', id: ++mcpRequestId, method: 'tools/list' },
+      headers: { 'Mcp-Session-Id': mcpSession },
+      ignoreHTTPSErrors: true,
+    })
+    expect(revokedMCP.status()).toBe(401)
+  } finally {
+    await externalRequest.dispose()
+  }
   await expect.poll(() => sockets.length > 0 && sockets.every((socket) => socket.isClosed())).toBe(true)
   await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
   await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true')

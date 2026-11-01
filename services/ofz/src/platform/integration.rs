@@ -12,70 +12,11 @@ use platform_client::{ExecutionLookup, ExecutionPayload, authz as sdk, relay as 
 use sha2::{Digest, Sha256};
 use tonic::{Code, Request};
 use uuid::Uuid;
+const ADMIN: &str = "spiffe://proompteng.ai/ns/proompteng/sa/platform-admin";
 const RELAY: &str = "spiffe://proompteng.ai/ns/relay/sa/relay";
 const OPENCODE: &str = "spiffe://proompteng.ai/ns/opencode/sa/opencode";
 const FIXTURE_FIRST: &str = "spiffe://proompteng.ai/ns/fixture/sa/first";
 const FIXTURE_SECOND: &str = "spiffe://proompteng.ai/ns/fixture/sa/second";
-
-struct FixtureConnector {
-    resource_id: String,
-}
-#[tonic::async_trait]
-impl relay::connector::Connector for FixtureConnector {
-    fn id(&self) -> &str {
-        "fixture"
-    }
-    fn operations(&self) -> Vec<wire::ConnectorOperation> {
-        vec![wire::ConnectorOperation {
-            connector_id: "fixture".into(),
-            name: "read".into(),
-            description: "Read a fixture value without HTTP".into(),
-            action: "fixture.status.read".into(),
-            input_schema_json: br#"{"type":"object","properties":{},"additionalProperties":false}"#
-                .to_vec(),
-            targets: vec![wire::ConnectorTarget {
-                name: "fixture".into(),
-                resource: Some(sdk::PlatformResource {
-                    kind: "kubernetes.namespace".into(),
-                    id: self.resource_id.clone(),
-                    target: String::new(),
-                }),
-            }],
-            read_only: true,
-        }]
-    }
-    fn normalize(
-        &self,
-        operation: &str,
-        arguments: &[u8],
-    ) -> Result<relay::connector::Normalized, tonic::Status> {
-        if operation != "read"
-            || serde_json::from_slice::<serde_json::Value>(arguments).ok()
-                != Some(serde_json::json!({}))
-        {
-            return Err(tonic::Status::invalid_argument("invalid fixture operation"));
-        }
-        Ok(relay::connector::Normalized {
-            action: "fixture.status.read".into(),
-            resources: vec![sdk::PlatformResource {
-                kind: "kubernetes.namespace".into(),
-                id: self.resource_id.clone(),
-                target: String::new(),
-            }],
-            prepared_request: b"second adapter".to_vec(),
-        })
-    }
-    async fn execute(
-        &self,
-        prepared: &relay::connector::Normalized,
-    ) -> Result<relay::connector::Output, relay::connector::Failure> {
-        Ok(relay::connector::Output {
-            bytes: prepared.prepared_request.clone(),
-            content_type: "text/plain".into(),
-            upstream_status: 0,
-        })
-    }
-}
 
 fn workload_lookup(
     body: &[u8],
@@ -176,6 +117,402 @@ fn resource(id: &str) -> p::PlatformResource {
         target: String::new(),
     }
 }
+async fn access_requests(
+    owner: &crate::store::Database,
+    database: &crate::store::Database,
+    native: &crate::native::Native,
+    humans: &[(String, String)],
+    administrator: &p::PlatformHumanSession,
+) {
+    use super::requests;
+    let connection = owner.pool.get().await.unwrap();
+    let workspace = crate::registry::configured().unwrap().workspaces[0]
+        .id
+        .clone();
+    let requester = session(&humans[3]);
+    let target = resource("galactic/11111111-1111-4111-8111-111111111111");
+    let mut create = p::CreatePlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        requester: Some(requester.clone()),
+        workspace_id: workspace.clone(),
+        resource: Some(target.clone()),
+        actions: vec![
+            "kubernetes.status.read".into(),
+            "kubernetes.logs.read".into(),
+        ],
+        reason: "Read namespace state for a support investigation".into(),
+    };
+    let caller = crate::registry::configured()
+        .unwrap()
+        .service(policy::BFF_ID)
+        .unwrap();
+    assert!(
+        requests::requestable(native, caller, &requester.human_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|scope| scope.resource.as_ref() == Some(&target))
+    );
+    let first = mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::RequestAccess(create.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(first.decision.allowed);
+    assert!(
+        !native
+            .check(
+                &authorization::resource_checks(
+                    &target,
+                    "kubernetes.status.read",
+                    "human",
+                    &requester.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    create.actions.reverse();
+    let renewed = Uuid::new_v4();
+    crate::control_integration::seed_session(&connection, renewed, &requester.human_id, "4").await;
+    create.requester.as_mut().unwrap().session_id = renewed.to_string();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::RequestAccess(create.clone())
+        )
+        .await
+        .unwrap()
+        .decision
+        .audit_receipt_id,
+        first.decision.audit_receipt_id
+    );
+    let mut duplicate = create.clone();
+    duplicate.operation_id = Uuid::new_v4().to_string();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::RequestAccess(duplicate.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::AlreadyExists
+    );
+    duplicate.workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::RequestAccess(duplicate)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let list = p::ListPlatformAccessRequestsRequest {
+        administrator: Some(administrator.clone()),
+        workspace_id: workspace.clone(),
+    };
+    assert_eq!(
+        requests::list(database, native, ADMIN, list.clone())
+            .await
+            .unwrap()
+            .requests
+            .len(),
+        1
+    );
+    assert_eq!(
+        requests::list(database, native, policy::BFF_ID, list.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let mut review = p::ReviewPlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        administrator: Some(administrator.clone()),
+        workspace_id: workspace.clone(),
+        request_id: create.operation_id.clone(),
+        decision: p::PlatformAccessRequestDecision::Approve as i32,
+        reason: "Approved bounded namespace support reads".into(),
+    };
+    let mut wrong_workspace = review.clone();
+    wrong_workspace.workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(wrong_workspace)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::NotFound
+    );
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .unwrap_err()
+        .message()
+        .contains("multifactor authentication required")
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    connection.batch_execute("CREATE FUNCTION ofz.fixture_interrupt_access_request() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.receipt->>'platform_action'='ofz.access_requests.review' THEN RAISE EXCEPTION 'isolated request interruption'; END IF; RETURN NEW; END $$; CREATE TRIGGER fixture_interrupt_access_request BEFORE INSERT ON ofz.audit FOR EACH ROW EXECUTE FUNCTION ofz.fixture_interrupt_access_request();").await.unwrap();
+    assert!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        native
+            .applied(&format!("platform-command/{}", review.operation_id))
+            .await
+            .unwrap()
+            .0
+    );
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT state FROM ofz.platform_access_requests WHERE id=$1",
+                &[&Uuid::parse_str(&create.operation_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, i16>(0),
+        1
+    );
+    connection.batch_execute("DROP TRIGGER fixture_interrupt_access_request ON ofz.audit; DROP FUNCTION ofz.fixture_interrupt_access_request();").await.unwrap();
+    let approved = mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::ReviewAccess(review.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        native
+            .check(
+                &authorization::resource_checks(
+                    &target,
+                    "kubernetes.status.read",
+                    "human",
+                    &requester.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    assert!(
+        requests::list(database, native, ADMIN, list.clone())
+            .await
+            .unwrap()
+            .requests
+            .is_empty()
+    );
+    let cancel = p::CancelPlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        requester: Some(requester.clone()),
+        request_id: create.operation_id.clone(),
+    };
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::CancelAccess(cancel)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::FailedPrecondition
+    );
+    let version = database.state().await.unwrap().version;
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            version,
+            &[
+                Update::delete(Relationship::new(
+                    "kubernetes_namespace",
+                    &target.id,
+                    "status_reader",
+                    "human",
+                    &requester.human_id,
+                )),
+                Update::delete(Relationship::new(
+                    "kubernetes_namespace",
+                    &target.id,
+                    "log_reader",
+                    "human",
+                    &requester.human_id,
+                )),
+            ],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .unwrap()
+        .decision
+        .audit_receipt_id,
+        approved.decision.audit_receipt_id
+    );
+    assert!(
+        !native
+            .check(
+                &authorization::resource_checks(
+                    &target,
+                    "kubernetes.status.read",
+                    "human",
+                    &requester.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    create.operation_id = Uuid::new_v4().to_string();
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::RequestAccess(create.clone()),
+    )
+    .await
+    .unwrap();
+    let mut cancel = p::CancelPlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        requester: Some(session(&humans[2])),
+        request_id: create.operation_id.clone(),
+    };
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::CancelAccess(cancel.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::NotFound
+    );
+    cancel.requester = Some(requester);
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::CancelAccess(cancel.clone()),
+    )
+    .await
+    .unwrap();
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::CancelAccess(cancel),
+    )
+    .await
+    .unwrap();
+    create.operation_id = Uuid::new_v4().to_string();
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::RequestAccess(create.clone()),
+    )
+    .await
+    .unwrap();
+    review.operation_id = Uuid::new_v4().to_string();
+    review.request_id = create.operation_id;
+    review.decision = p::PlatformAccessRequestDecision::Decline as i32;
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    mutations::execute(database, native, ADMIN, Command::ReviewAccess(review))
+        .await
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        requests::list(database, native, ADMIN, list)
+            .await
+            .unwrap()
+            .requests
+            .is_empty()
+    );
+}
 fn check(id: &str) -> p::CheckPlatformAccessRequest {
     p::CheckPlatformAccessRequest {
         operation_id: Uuid::new_v4().to_string(),
@@ -189,11 +526,414 @@ fn check(id: &str) -> p::CheckPlatformAccessRequest {
         ..Default::default()
     }
 }
+async fn workspace_administration(
+    owner: &crate::store::Database,
+    database: &crate::store::Database,
+    native: &crate::native::Native,
+    humans: &[(String, String)],
+) {
+    use super::workspaces;
+    let connection = owner.pool.get().await.unwrap();
+    let workspace = crate::registry::configured().unwrap().workspaces[0]
+        .id
+        .clone();
+    let other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let mut sessions = Vec::new();
+    for (index, human) in humans.iter().take(3).enumerate() {
+        let id = Uuid::new_v4();
+        crate::control_integration::seed_session(
+            &connection,
+            id,
+            &human.0,
+            &(index + 1).to_string(),
+        )
+        .await;
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET gateway_service='platform-admin' WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap();
+        sessions.push(p::PlatformHumanSession {
+            human_id: human.0.clone(),
+            session_id: id.to_string(),
+            origin: "https://admin.proompteng.ai".into(),
+        });
+    }
+    // Global platform administration does not override a workspace administrator's removal.
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            database.state().await.unwrap().version,
+            &[Update::delete(Relationship::new(
+                "platform_workspace",
+                other,
+                "administrator",
+                "human",
+                &humans[0].0,
+            ))],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    let list = workspaces::list(
+        database,
+        native,
+        ADMIN,
+        p::ListPlatformWorkspacesRequest {
+            administrator: Some(sessions[0].clone()),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        list.workspaces
+            .iter()
+            .map(|space| space.id.as_str())
+            .collect::<Vec<_>>(),
+        [&workspace]
+    );
+    assert_eq!(
+        workspaces::get(
+            database,
+            native,
+            ADMIN,
+            p::GetPlatformWorkspaceRequest {
+                administrator: Some(sessions[0].clone()),
+                workspace_id: other.into()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        workspaces::get(
+            database,
+            native,
+            ADMIN,
+            p::GetPlatformWorkspaceRequest {
+                administrator: Some(session(&humans[0])),
+                workspace_id: workspace.clone()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let mut grant = p::WritePolicyRelationshipsRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        administrator: Some(sessions[0].clone()),
+        expected_policy_version: database.state().await.unwrap().version,
+        workspace_id: workspace.clone(),
+        reason: "workspace administration without global administrator role".into(),
+        relationships: vec![p::PolicyRelationship {
+            resource: Some(p::PlatformResource {
+                kind: "platform.workspace".into(),
+                id: workspace.clone(),
+                target: String::new(),
+            }),
+            relation: "administrator".into(),
+            subject_kind: "human".into(),
+            subject_id: humans[2].0.clone(),
+            enabled: true,
+        }],
+    };
+    mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::Relationships(grant.clone()),
+    )
+    .await
+    .unwrap();
+    let detail = workspaces::get(
+        database,
+        native,
+        ADMIN,
+        p::GetPlatformWorkspaceRequest {
+            administrator: Some(sessions[2].clone()),
+            workspace_id: workspace.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        detail
+            .members
+            .iter()
+            .find(|member| member.human_id == humans[2].0)
+            .unwrap()
+            .role,
+        p::PlatformWorkspaceRole::Administrator as i32
+    );
+    grant.operation_id = Uuid::new_v4().to_string();
+    grant.administrator = Some(sessions[2].clone());
+    grant.expected_policy_version = database.state().await.unwrap().version;
+    grant.relationships = vec![p::PolicyRelationship {
+        resource: Some(resource("galactic/33333333-3333-4333-8333-333333333333")),
+        relation: "status_reader".into(),
+        subject_kind: "human".into(),
+        subject_id: humans[2].0.clone(),
+        enabled: true,
+    }];
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::Relationships(grant.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    grant.relationships = humans
+        .iter()
+        .take(3)
+        .map(|human| p::PolicyRelationship {
+            resource: Some(p::PlatformResource {
+                kind: "platform.workspace".into(),
+                id: workspace.clone(),
+                target: String::new(),
+            }),
+            relation: "administrator".into(),
+            subject_kind: "human".into(),
+            subject_id: human.0.clone(),
+            enabled: false,
+        })
+        .collect();
+    grant.operation_id = Uuid::new_v4().to_string();
+    assert_eq!(
+        mutations::execute(database, native, ADMIN, Command::Relationships(grant))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::FailedPrecondition
+    );
+    let activity = workspaces::activity(
+        database,
+        native,
+        ADMIN,
+        p::ReadWorkspaceActivityRequest {
+            administrator: Some(sessions[2].clone()),
+            workspace_id: workspace.clone(),
+            cursor: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!activity.receipts.is_empty());
+    for receipt in &activity.receipts {
+        let stored = connection
+            .query_one(
+                "SELECT sequence,created_at_ms FROM ofz.audit WHERE id=$1",
+                &[&Uuid::parse_str(&receipt.id).unwrap()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt.created_at_unix_ms,
+            stored.get::<_, i64>(1) as u64,
+            "workspace activity must include the database audit timestamp"
+        );
+        assert_eq!(receipt.sequence, stored.get::<_, i64>(0) as u64);
+    }
+    assert!(
+        activity
+            .receipts
+            .iter()
+            .all(|receipt| receipt.platform_workspace_id == workspace)
+    );
+    assert_eq!(
+        workspaces::activity(
+            database,
+            native,
+            ADMIN,
+            p::ReadWorkspaceActivityRequest {
+                administrator: Some(sessions[2].clone()),
+                workspace_id: other.into(),
+                cursor: String::new()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        onboarding::execute(owner, native).await.unwrap(),
+        onboarding::execute(owner, native).await.unwrap()
+    );
+    assert!(
+        workspaces::manage(native, other, &humans[0].0)
+            .await
+            .is_err()
+    );
+    let demotion = p::WritePolicyRelationshipsRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        administrator: Some(sessions[2].clone()),
+        workspace_id: workspace.clone(),
+        expected_policy_version: database.state().await.unwrap().version,
+        reason: "recover a committed workspace self-demotion".into(),
+        relationships: ["member", "administrator"]
+            .into_iter()
+            .map(|relation| p::PolicyRelationship {
+                resource: Some(p::PlatformResource {
+                    kind: "platform.workspace".into(),
+                    id: workspace.clone(),
+                    target: String::new(),
+                }),
+                relation: relation.into(),
+                subject_kind: "human".into(),
+                subject_id: humans[2].0.clone(),
+                enabled: relation == "member",
+            })
+            .collect(),
+    };
+    let completed = mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::Relationships(demotion.clone()),
+    )
+    .await
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&sessions[2].session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    let recovered = mutations::execute(database, native, ADMIN, Command::Relationships(demotion))
+        .await
+        .unwrap();
+    assert_eq!(
+        completed.decision.audit_receipt_id,
+        recovered.decision.audit_receipt_id
+    );
+    assert!(
+        workspaces::manage(native, &workspace, &humans[2].0)
+            .await
+            .is_err()
+    );
+    let client_relationship = Relationship::new(
+        "platform_workspace",
+        &workspace,
+        "client",
+        "workload",
+        &policy::workload_object_id(OPENCODE),
+    );
+    let registry = crate::registry::configured().unwrap();
+    let opencode = registry.by_id("opencode").unwrap();
+    assert!(
+        !super::discovery::scopes(
+            native,
+            opencode,
+            "workload",
+            &policy::workload_object_id(OPENCODE)
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            database.state().await.unwrap().version,
+            &[Update::delete(client_relationship.clone())],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    assert!(
+        !authorization::check(
+            database,
+            native,
+            RELAY,
+            check("galactic/11111111-1111-4111-8111-111111111111")
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    onboarding::execute(owner, native).await.unwrap();
+    assert!(
+        super::discovery::scopes(
+            native,
+            opencode,
+            "workload",
+            &policy::workload_object_id(OPENCODE)
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        !authorization::check(
+            database,
+            native,
+            RELAY,
+            check("galactic/11111111-1111-4111-8111-111111111111")
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            database.state().await.unwrap().version,
+            &[Update::touch(client_relationship)],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL, SpiceDB and TLS Kubernetes fixture from test-control.sh platform"]
 async fn platform_policy_and_both_clients_execute_through_relay() {
     let (admin, database, native, humans) = setup().await;
     let connection = admin.pool.get().await.unwrap();
+    let mut administrators = Vec::new();
+    for (index, human) in humans.iter().enumerate() {
+        let id = Uuid::new_v4();
+        crate::control_integration::seed_session(
+            &connection,
+            id,
+            &human.0,
+            &(index + 1).to_string(),
+        )
+        .await;
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET gateway_service='platform-admin' WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap();
+        administrators.push(p::PlatformHumanSession {
+            human_id: human.0.clone(),
+            session_id: id.to_string(),
+            origin: "https://admin.proompteng.ai".into(),
+        });
+    }
+
     native
         .write_schema(include_str!(
             "../../tests/fixtures/authorization-before-platform.zed"
@@ -236,6 +976,30 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=2", &[])
         .await
         .unwrap();
+    let historical_operation = Uuid::new_v4();
+    let historical_audit = Uuid::new_v4();
+    let historical_receipt = crate::store::encode(&p::AuditReceipt {
+        id: historical_audit.to_string(),
+        operation_id: historical_operation.to_string(),
+        allowed: true,
+        workload_id: RELAY.into(),
+        platform_client: "opencode".into(),
+        platform_action: "kubernetes.status.read".into(),
+        platform_resources: vec![
+            "kubernetes.namespace/galactic/11111111-1111-4111-8111-111111111111#".into(),
+        ],
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(historical_receipt.get("platform_workspace_id").is_none());
+    connection
+        .execute(
+            "INSERT INTO ofz.audit(id,receipt,target_hash) VALUES($1,$2,$3)",
+            &[&historical_audit, &historical_receipt, &vec![0u8; 32]],
+        )
+        .await
+        .unwrap();
+    connection.execute("INSERT INTO ofz.platform_executions(operation_id,authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id) VALUES($1,$2,'succeeded',200,$3,$2)", &[&historical_operation, &historical_audit, &vec![0u8;32]]).await.unwrap();
     // The old control fixture seeds the original bootstrap state explicitly; never a production operation.
     let base_hash = native.schema_hash().await.unwrap();
     connection.execute("INSERT INTO ofz.bootstrap(fingerprint,manifest,schema_hash,bootstrap_audit_id,activation_audit_id,phase,bootstrap_receipt,activation_receipt) VALUES($1,'{}',$2,$3,$4,'active','{}','{}')", &[&vec![0u8;32],&base_hash,&Uuid::new_v4(),&Uuid::new_v4()]).await.unwrap();
@@ -286,7 +1050,31 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         base_hash
     );
     onboarding::verify(&database).await.unwrap();
-    let namespace = Uuid::new_v4().to_string();
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT workspace_id FROM ofz.platform_executions WHERE operation_id=$1",
+                &[&historical_operation]
+            )
+            .await
+            .unwrap()
+            .get::<_, Uuid>(0)
+            .to_string(),
+        crate::registry::configured().unwrap().workspaces[0].id
+    );
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT receipt FROM ofz.audit WHERE id=$1",
+                &[&historical_audit]
+            )
+            .await
+            .unwrap()
+            .get::<_, serde_json::Value>(0),
+        historical_receipt
+    );
+    access_requests(&admin, &database, &native, &humans, &administrators[0]).await;
+    let namespace = "11111111-1111-4111-8111-111111111111".to_string();
     let resource_id = format!("galactic/{namespace}");
     assert!(
         !authorization::check(&database, &native, RELAY, check(&resource_id))
@@ -327,24 +1115,22 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         }
     }));
     let mut write = p::WritePolicyRelationshipsRequest {
+        workspace_id: crate::registry::configured().unwrap().workspaces[0]
+            .id
+            .clone(),
         operation_id: Uuid::new_v4().to_string(),
-        administrator: Some(session(&humans[0])),
+        administrator: Some(administrators[0].clone()),
         expected_policy_version: database.state().await.unwrap().version,
         relationships: assignments,
         reason: "isolated namespace policy onboarding".into(),
     };
     let mut forged = write.clone();
-    forged.administrator = Some(session(&humans[2]));
+    forged.administrator = Some(administrators[2].clone());
     assert_eq!(
-        mutations::execute(
-            &database,
-            &native,
-            policy::BFF_ID,
-            Command::Relationships(forged)
-        )
-        .await
-        .unwrap_err()
-        .code(),
+        mutations::execute(&database, &native, ADMIN, Command::Relationships(forged))
+            .await
+            .unwrap_err()
+            .code(),
         Code::PermissionDenied
     );
     let state = database.state().await.unwrap();
@@ -382,35 +1168,112 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let applied = mutations::execute(
         &database,
         &native,
-        policy::BFF_ID,
+        ADMIN,
         Command::Relationships(write.clone()),
     )
     .await
     .unwrap();
     assert_eq!(
-        mutations::execute(
-            &database,
-            &native,
-            policy::BFF_ID,
-            Command::Relationships(write)
-        )
-        .await
-        .unwrap()
-        .decision
-        .audit_receipt_id,
+        mutations::execute(&database, &native, ADMIN, Command::Relationships(write))
+            .await
+            .unwrap()
+            .decision
+            .audit_receipt_id,
         applied.decision.audit_receipt_id
     );
+    {
+        use p::platform_authorization_service_server::PlatformAuthorizationService;
+        let service = super::service::Service::new(
+            database.clone(),
+            native.clone(),
+            crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
+            super::providers::Providers::disabled(),
+        );
+        let query = p::ReadPolicyRelationshipsRequest {
+            workspace_id: crate::registry::configured().unwrap().workspaces[0]
+                .id
+                .clone(),
+            administrator: Some(administrators[0].clone()),
+            resource: Some(resource(&resource_id)),
+            subject_kind: "workload".into(),
+            subject_id: OPENCODE.into(),
+        };
+        let rpc = |value: p::ReadPolicyRelationshipsRequest, peer: &str| {
+            let mut request = Request::new(value);
+            request
+                .metadata_mut()
+                .insert("x-ofz-contract-version", "1".parse().unwrap());
+            request
+                .extensions_mut()
+                .insert(crate::transport::Peer(peer.into()));
+            request
+        };
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE human_id=$1",
+                &[&humans[0].0],
+            )
+            .await
+            .unwrap();
+        let snapshot = service
+            .read_policy_relationships(rpc(query.clone(), ADMIN))
+            .await
+            .unwrap()
+            .into_inner();
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE human_id=$1",
+                &[&humans[0].0],
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.relations, vec!["status_reader"]);
+        assert_eq!(
+            snapshot.policy_version,
+            database.state().await.unwrap().version
+        );
+        let mut denied = query.clone();
+        denied.administrator = Some(administrators[2].clone());
+        assert_eq!(
+            service
+                .read_policy_relationships(rpc(denied, ADMIN))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::PermissionDenied
+        );
+        assert_eq!(
+            service
+                .read_policy_relationships(rpc(query.clone(), OPENCODE))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::PermissionDenied
+        );
+        let mut unknown = query;
+        unknown.subject_id = "spiffe://proompteng.ai/ns/unknown/sa/unknown".into();
+        assert_eq!(
+            service
+                .read_policy_relationships(rpc(unknown, ADMIN))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::InvalidArgument
+        );
+    }
+    workspace_administration(&admin, &database, &native, &humans).await;
     assert!(
         authorization::check(&database, &native, RELAY, check(&resource_id))
             .await
             .unwrap()
             .allowed
     );
-    assert!(
-        !authorization::check(&database, &native, RELAY, check("galactic/other-namespace"))
+    assert_eq!(
+        authorization::check(&database, &native, RELAY, check("galactic/other-namespace"))
             .await
-            .unwrap()
-            .allowed
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
     );
     assert_eq!(
         authorization::check(&database, &native, policy::BFF_ID, check(&resource_id))
@@ -562,7 +1425,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=version+1", &[])
         .await
         .unwrap();
-    let automatic_target = format!("galactic/{}", Uuid::new_v4());
+    let automatic_target = "galactic/22222222-2222-4222-8222-222222222222".to_string();
     let automatic = p::PutPlatformConnectionRequest {
         operation_id: Uuid::new_v4().to_string(),
         issuer: Some(session(&humans[0])),
@@ -606,53 +1469,46 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
+    // Connecting cannot grant permissions, including for a global administrator.
+    assert_eq!(
+        mutations::execute(
+            &database,
+            &native,
+            policy::BFF_ID,
+            Command::PutConnection(automatic.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let workspace_id = crate::registry::configured().unwrap().workspaces[0]
+        .id
+        .clone();
+    mutations::execute(
+        &database,
+        &native,
+        ADMIN,
+        Command::Relationships(p::WritePolicyRelationshipsRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            administrator: Some(administrators[0].clone()),
+            expected_policy_version: database.state().await.unwrap().version,
+            workspace_id: workspace_id.clone(),
+            reason: "approve status for workspace members".into(),
+            relationships: vec![p::PolicyRelationship {
+                resource: Some(resource(&automatic_target)),
+                relation: "status_workspace".into(),
+                subject_kind: "workspace".into(),
+                subject_id: workspace_id.clone(),
+                enabled: true,
+            }],
+        }),
+    )
+    .await
+    .unwrap();
     connection
         .execute(
             "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
-            &[&Uuid::parse_str(&humans[0].1).unwrap()],
-        )
-        .await
-        .unwrap();
-    let needs_verification = mutations::execute(
-        &database,
-        &native,
-        policy::BFF_ID,
-        Command::PutConnection(automatic.clone()),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(needs_verification.code(), Code::PermissionDenied);
-    assert_eq!(
-        needs_verification.message(),
-        "fresh multifactor authentication required"
-    );
-    assert_eq!(
-        connection
-            .query_one(
-                "SELECT count(*) FROM ofz.platform_connections WHERE id=$1",
-                &[&Uuid::parse_str(&automatic.connection_id).unwrap()]
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        0
-    );
-    assert!(
-        !native
-            .check(&[crate::native::Check::new(
-                "kubernetes_namespace",
-                &automatic_target,
-                "read_status",
-                "human",
-                &humans[0].0
-            )])
-            .await
-            .unwrap()
-            .0
-    );
-    connection
-        .execute(
-            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
             &[&Uuid::parse_str(&humans[0].1).unwrap()],
         )
         .await
@@ -692,12 +1548,6 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
-    assert!(
-        !authorization::check(&database, &native, RELAY, check(&automatic_target))
-            .await
-            .unwrap()
-            .allowed
-    );
     let repeated = mutations::execute(
         &database,
         &native,
@@ -710,7 +1560,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         repeated.decision.audit_receipt_id,
         automatic_saved.decision.audit_receipt_id
     );
-    let automatic_receipt: serde_json::Value = connection
+    let receipt: serde_json::Value = connection
         .query_one(
             "SELECT receipt FROM ofz.audit WHERE id=$1",
             &[&Uuid::parse_str(&automatic_saved.decision.audit_receipt_id).unwrap()],
@@ -718,14 +1568,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .await
         .unwrap()
         .get(0);
-    assert!(
-        automatic_receipt["platform_resources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .any(|entry| entry.contains("status_reader") && entry.contains(&automatic_target))
-    );
+    assert_eq!(receipt["platform_workspace_id"], workspace_id);
     let version = database.state().await.unwrap().version;
     native
         .apply(
@@ -734,9 +1577,9 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             &[Update::delete(Relationship::new(
                 "kubernetes_namespace",
                 &automatic_target,
-                "status_reader",
-                "human",
-                &humans[0].0,
+                "status_workspace",
+                "platform_workspace",
+                &workspace_id,
             ))],
         )
         .await
@@ -745,25 +1588,6 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=version+1", &[])
         .await
         .unwrap();
-    let gateway = crate::registry::configured()
-        .unwrap()
-        .service(policy::BFF_ID)
-        .unwrap();
-    assert_eq!(
-        connections::scope_authority(
-            &database,
-            &native,
-            gateway,
-            &automatic.actions,
-            &automatic.resources,
-            automatic.binding.as_ref(),
-            &humans[0].0
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::PermissionDenied
-    );
     assert_eq!(
         mutations::execute(
             &database,
@@ -789,6 +1613,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     // A workspace owner can delegate approved reads without being a platform administrator.
     let version = database.state().await.unwrap().version;
     native
@@ -1142,7 +1973,12 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let authority = listener.local_addr().unwrap();
-    let ofz = super::service::Service::new(database.clone(), native.clone());
+    let ofz = super::service::Service::new(
+        database.clone(),
+        native.clone(),
+        crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
+        super::providers::Providers::disabled(),
+    );
     let grpc = tokio::spawn(async move {
         let incoming =
             async_stream::stream! {loop{yield listener.accept().await.map(|(stream,_)|stream);}};
@@ -1163,13 +1999,19 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let _config=relay::config::Config::parse(&serde_json::to_vec(&serde_json::json!({"version":1,"connectors":[{"type":"kubernetes","id":"galactic","endpoint":kube_endpoint,"ca_file":config_dir.join("ca.crt"),"token_file":token_file,"namespaces":[{"name":"fixture","uid":namespace}]}]})).unwrap()).unwrap();
     let adapter = relay::kubernetes::Kubernetes::new(
         "galactic".into(),
-        kube_endpoint,
+        kube_endpoint.clone(),
         config_dir.join("ca.crt").to_str().unwrap(),
         token_file.to_str().unwrap().into(),
-        vec![relay::config::Namespace {
-            name: "fixture".into(),
-            uid: namespace.clone(),
-        }],
+        vec![
+            relay::config::Namespace {
+                name: "fixture".into(),
+                uid: namespace.clone(),
+            },
+            relay::config::Namespace {
+                name: "private-workspace".into(),
+                uid: "33333333-3333-4333-8333-333333333333".into(),
+            },
+        ],
     )
     .unwrap();
     let clients =
@@ -1181,15 +2023,98 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         ))
         .await
         .unwrap()
-        .into_inner()
-        .relay_clients;
+        .into_inner();
+    let operation = relay::registered::Operation {
+        name: "read".into(),
+        description: "Read a fixture account".into(),
+        action: "fixture.status.read".into(),
+        target: relay::registered::Target {
+            name: "Fixture account".into(),
+            kind: "kubernetes.namespace".into(),
+            id: resource_id.clone(),
+        },
+        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+    };
+    let python = std::process::Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap().trim().to_owned();
+    let cli = relay::cli::Cli::new(
+        "fixture".into(),
+        vec![relay::cli::CliOperation {
+            operation: operation.clone(),
+            process: relay::process::Profile {
+                program: python.clone(),
+                arguments: vec![
+                    "-c".into(),
+                    "import json,sys; json.load(sys.stdin); print(json.dumps('second adapter'))"
+                        .into(),
+                ],
+                directory: config_dir.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
+        }],
+    )
+    .unwrap();
+    let http = relay::http::Http::new(
+        "fixture-http".into(),
+        &kube_endpoint,
+        Some(config_dir.join("ca.crt").to_str().unwrap()),
+        relay::credentials::Authentication::BearerFile {
+            path: token_file.to_str().unwrap().into(),
+        },
+        vec![relay::http::HttpOperation {
+            operation: operation.clone(),
+            method: relay::http::Method::Get,
+            path: "/fixture/status".into(),
+        }],
+    )
+    .unwrap();
+    let mcp_script = config_dir.join("upstream-mcp.py");
+    std::fs::write(
+        &mcp_script,
+        include_str!("../../../relay/tests/fixtures/mcp.py"),
+    )
+    .unwrap();
+    let mcp_schema = config_dir.join("upstream-mcp-schema.json");
+    std::fs::write(
+        &mcp_schema,
+        serde_json::to_vec(&operation.input_schema).unwrap(),
+    )
+    .unwrap();
+    let mcp_calls = config_dir.join("upstream-mcp-calls.jsonl");
+    let mcp = relay::mcp::Mcp::new(
+        "fixture-mcp".into(),
+        relay::mcp::Transport::Stdio {
+            process: relay::process::Profile {
+                program: python,
+                arguments: vec![
+                    mcp_script.to_str().unwrap().into(),
+                    mcp_schema.to_str().unwrap().into(),
+                    "normal".into(),
+                    mcp_calls.to_str().unwrap().into(),
+                ],
+                directory: config_dir.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
+        },
+        vec![relay::mcp::McpOperation {
+            operation,
+            tool: "fixture_read".into(),
+        }],
+    )
+    .unwrap();
     let relay = relay::service::Service::new(
         clients,
         vec![
             Box::new(adapter),
-            Box::new(FixtureConnector {
-                resource_id: resource_id.clone(),
-            }),
+            Box::new(cli),
+            Box::new(http),
+            Box::new(mcp),
         ],
         channel,
     )
@@ -1203,6 +2128,55 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         }
     });
     use wire::relay_service_server::RelayService;
+    for (client, peer, identity, expected) in [
+        (
+            "opencode",
+            OPENCODE,
+            sdk::platform_subject::Identity::WorkloadId(OPENCODE.into()),
+            vec!["status"],
+        ),
+        (
+            "tengri-web",
+            policy::BFF_ID,
+            sdk::platform_subject::Identity::Human(sdk::PlatformHumanSession {
+                human_id: humans[0].0.clone(),
+                session_id: humans[0].1.to_string(),
+                origin: "https://proompteng.ai".into(),
+            }),
+            vec!["logs", "status"],
+        ),
+    ] {
+        let mut request = platform_client::request(wire::ListOperationsRequest {
+            subject: Some(sdk::PlatformSubject {
+                client_service: client.into(),
+                identity: Some(identity),
+            }),
+        });
+        request
+            .extensions_mut()
+            .insert(platform_client::tls::Peer(peer.into()));
+        let catalog = relay.list_operations(request).await.unwrap().into_inner();
+        let mut operations: Vec<_> = catalog
+            .operations
+            .iter()
+            .filter(|operation| operation.connector_id == "galactic")
+            .map(|operation| operation.name.as_str())
+            .collect();
+        operations.sort();
+        assert_eq!(operations, expected);
+        for operation in &catalog.operations {
+            assert_eq!(operation.targets.len(), 1);
+            assert_eq!(
+                operation.targets[0].resource.as_ref().unwrap().id,
+                resource_id
+            );
+            assert!(
+                !String::from_utf8_lossy(&operation.input_schema_json)
+                    .contains("private-workspace")
+            );
+        }
+    }
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
     let payload = ExecutionPayload {
         operation_id: Uuid::new_v4().to_string(),
         client_service: "opencode".into(),
@@ -1259,61 +2233,76 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         provider_requests
     );
 
-    let fixture_payload = ExecutionPayload {
-        operation_id: Uuid::new_v4().to_string(),
-        client_service: "fixture-client".into(),
-        connector_id: "fixture".into(),
-        operation: "read".into(),
-        arguments: serde_json::json!({}),
-        binding: None,
-        delegation_id: None,
-    };
-    let fixture_body = serde_json::to_vec(&fixture_payload).unwrap();
-    let mut fixture_request = platform_client::request(wire::ExecuteRequest {
-        subject: Some(sdk::PlatformSubject {
+    for connector in ["fixture", "fixture-http", "fixture-mcp"] {
+        let before = requests.load(std::sync::atomic::Ordering::SeqCst);
+        let fixture_payload = ExecutionPayload {
+            operation_id: Uuid::new_v4().to_string(),
             client_service: "fixture-client".into(),
-            identity: Some(sdk::platform_subject::Identity::WorkloadId(
-                FIXTURE_FIRST.into(),
-            )),
-        }),
-        body: fixture_body.clone(),
-    });
-    fixture_request
-        .extensions_mut()
-        .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
-    let fixture_output = relay.execute(fixture_request).await.unwrap().into_inner();
-    assert_eq!(fixture_output.result, b"second adapter");
-    assert_eq!(
-        relay
-            .get_execution(workload_lookup(
-                &fixture_body,
-                "fixture-client",
-                FIXTURE_FIRST
-            ))
-            .await
-            .unwrap()
-            .into_inner()
-            .execution
-            .unwrap()
-            .outcome,
-        "succeeded"
-    );
-    assert_eq!(
-        relay
-            .get_execution(workload_lookup(
-                &fixture_body,
-                "fixture-client",
-                FIXTURE_SECOND
-            ))
-            .await
-            .unwrap_err()
-            .code(),
-        Code::NotFound
-    );
-    assert_eq!(
-        requests.load(std::sync::atomic::Ordering::SeqCst),
-        provider_requests
-    );
+            connector_id: connector.into(),
+            operation: "read".into(),
+            arguments: serde_json::json!({}),
+            binding: None,
+            delegation_id: None,
+        };
+        let fixture_body = serde_json::to_vec(&fixture_payload).unwrap();
+        let mut fixture_request = platform_client::request(wire::ExecuteRequest {
+            subject: Some(sdk::PlatformSubject {
+                client_service: "fixture-client".into(),
+                identity: Some(sdk::platform_subject::Identity::WorkloadId(
+                    FIXTURE_FIRST.into(),
+                )),
+            }),
+            body: fixture_body.clone(),
+        });
+        fixture_request
+            .extensions_mut()
+            .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
+        let fixture_output = relay.execute(fixture_request).await.unwrap().into_inner();
+        if connector == "fixture-mcp" {
+            let output: serde_json::Value = serde_json::from_slice(&fixture_output.result).unwrap();
+            assert_eq!(output["content"][0]["text"], "{}");
+            assert_eq!(
+                std::fs::read_to_string(&mcp_calls).unwrap().lines().count(),
+                1
+            );
+        } else {
+            assert_eq!(
+                serde_json::from_slice::<String>(&fixture_output.result).unwrap(),
+                "second adapter"
+            );
+        }
+        assert_eq!(
+            relay
+                .get_execution(workload_lookup(
+                    &fixture_body,
+                    "fixture-client",
+                    FIXTURE_FIRST
+                ))
+                .await
+                .unwrap()
+                .into_inner()
+                .execution
+                .unwrap()
+                .outcome,
+            "succeeded"
+        );
+        assert_eq!(
+            relay
+                .get_execution(workload_lookup(
+                    &fixture_body,
+                    "fixture-client",
+                    FIXTURE_SECOND
+                ))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::NotFound
+        );
+        assert_eq!(
+            requests.load(std::sync::atomic::Ordering::SeqCst),
+            before + usize::from(connector == "fixture-http")
+        );
+    }
     let mut payload = ExecutionPayload {
         operation_id: Uuid::new_v4().to_string(),
         client_service: "tengri-web".into(),
@@ -1349,6 +2338,31 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let response = relay.execute(invocation).await.unwrap().into_inner();
     assert_eq!(response.result, b"fixture log line\n");
     assert!(response.content_type.starts_with("text/plain"));
+    {
+        let owner = admin.clone();
+        let database = database.clone();
+        let native = native.clone();
+        let human = session(&humans[0]);
+        let administrator = administrators[0].clone();
+        let runtime = super::providers::integration::Runtime {
+            delegation_id: created.delegation_id.clone(),
+            credential: created.credential.clone(),
+            binding: payload.binding.clone().unwrap(),
+        };
+        tokio::spawn(async move {
+            super::providers::integration::qualify(
+                &owner,
+                &database,
+                &native,
+                human,
+                administrator,
+                runtime,
+            )
+            .await;
+        })
+        .await
+        .unwrap();
+    }
     let completed_payload = payload.clone();
     let lookup = delegated_lookup(&completed_payload, &created);
     let reused = lookup.get_ref().clone();
@@ -1372,6 +2386,63 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         relay.get_execution(wrong_purpose).await.unwrap_err().code(),
         Code::Unauthenticated
     );
+    let log_permission = Relationship::new(
+        "kubernetes_namespace",
+        &resource_id,
+        "log_reader",
+        "human",
+        &humans[0].0,
+    );
+    for allowed in [true, false, true] {
+        native
+            .apply(
+                &Uuid::new_v4().to_string(),
+                database.state().await.unwrap().version,
+                &[if allowed {
+                    Update::touch(log_permission.clone())
+                } else {
+                    Update::delete(log_permission.clone())
+                }],
+            )
+            .await
+            .unwrap();
+        connection
+            .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+            .await
+            .unwrap();
+        let snapshot = connections::list(
+            &database,
+            &native,
+            policy::BFF_ID,
+            p::ListPlatformConnectionsRequest {
+                issuer: create.issuer.clone(),
+                client_service: create.client_service.clone(),
+                binding: create.binding.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            snapshot
+                .connections
+                .iter()
+                .find(|connection| connection.id == create.connection_id)
+                .unwrap()
+                .credential_active,
+            allowed
+        );
+        assert_eq!(
+            snapshot.available_scopes.iter().any(|scope| scope
+                .resource
+                .as_ref()
+                .is_some_and(|resource| resource.id == resource_id)
+                && scope
+                    .actions
+                    .iter()
+                    .any(|action| action == "kubernetes.logs.read")),
+            allowed
+        );
+    }
     let before_denials = requests.load(std::sync::atomic::Ordering::SeqCst);
     connection
         .execute(
@@ -1757,10 +2828,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     mutations::execute(
         &database,
         &native,
-        policy::BFF_ID,
+        ADMIN,
         Command::Relationships(p::WritePolicyRelationshipsRequest {
+            workspace_id: crate::registry::configured().unwrap().workspaces[0]
+                .id
+                .clone(),
             operation_id: Uuid::new_v4().to_string(),
-            administrator: Some(session(&humans[1])),
+            administrator: Some(administrators[1].clone()),
             expected_policy_version: database.state().await.unwrap().version,
             relationships: ["status_reader", "log_reader"]
                 .into_iter()
@@ -1929,7 +3003,9 @@ async fn kubernetes_fixture(
             );
             requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let forbidden = request.starts_with("GET /api/v1/namespaces/fixture/pods/denied/log?");
-            let body = if forbidden {
+            let body = if request.starts_with("GET /fixture/status HTTP/1.1") {
+                serde_json::to_vec("second adapter").unwrap()
+            } else if forbidden {
                 b"PRIVATE_PROVIDER_ERROR".to_vec()
             } else if request.starts_with("GET /api/v1/namespaces/fixture/pods/fixture-pod/log?") {
                 b"fixture log line\n".to_vec()

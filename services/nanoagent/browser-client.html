@@ -8,11 +8,14 @@ html,body,#screen{margin:0;width:100%;height:100%;overflow:hidden;background:#20
 #status{position:absolute;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none}
 #clipboard{position:absolute;right:12px;bottom:12px;padding:7px 12px;background:#303134;border:1px solid #ffffff20;border-radius:8px;color:inherit;cursor:pointer}
 #control{position:absolute;left:12px;bottom:12px;padding:7px 12px;background:#303134;border:1px solid #ffffff20;border-radius:8px;color:inherit;cursor:pointer}
+#chatgpt{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);padding:7px 12px;background:#303134;border:1px solid #ffffff20;border-radius:8px;color:inherit;cursor:pointer}
+@media(max-width:460px){#chatgpt{bottom:52px}}
 [hidden]{display:none!important}
 </style>
 <div id="screen" aria-label="Chrome browser" tabindex="0"></div>
 <div id="status" role="status">Connecting to Chrome…</div>
 <button id="clipboard" hidden>Copy selected text</button>
 <button id="control" title="Pause agent computer tools while you use Chrome">Take control</button>
+<button id="chatgpt" title="Connect ChatGPT to this browser">Connect ChatGPT</button>
 <script type="module" src="/browser.js"></script>
 </html>

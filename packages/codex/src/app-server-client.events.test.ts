@@ -216,6 +216,52 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('loads all persisted items for the requested continuation turn', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+    const firstRequest = nextRequest(child)
+    const result = client.getTurnItems('thread-1', 'continuation-2')
+    const first = await firstRequest
+    expect(first).toMatchObject({
+      method: 'thread/items/list',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'continuation-2',
+        cursor: null,
+        limit: 100,
+        sortDirection: 'asc',
+      },
+    })
+    const secondRequest = nextRequest(child)
+    writeLine(child, {
+      id: first.id,
+      result: {
+        data: [{ turnId: 'continuation-2', item: { type: 'agentMessage', id: 'message-1', text: 'first' } }],
+        nextCursor: 'page-2',
+        backwardsCursor: null,
+      },
+    })
+    const second = await secondRequest
+    expect(second).toMatchObject({
+      method: 'thread/items/list',
+      params: { turnId: 'continuation-2', cursor: 'page-2' },
+    })
+    writeLine(child, {
+      id: second.id,
+      result: {
+        data: [{ turnId: 'continuation-2', item: { type: 'agentMessage', id: 'message-2', text: 'last' } }],
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    })
+    expect(await result).toEqual([
+      { type: 'agentMessage', id: 'message-1', text: 'first' },
+      { type: 'agentMessage', id: 'message-2', text: 'last' },
+    ])
+    client.stop()
+  })
+
   it('advertises and handles attestation generation only when a handler is configured', async () => {
     const onAttestationGenerate = vi.fn(async () => ({ token: 'opaque-attestation-token' }))
     const { child, client } = setupClient({ onAttestationGenerate })
@@ -1207,6 +1253,38 @@ describe('CodexAppServerClient v2 notifications', () => {
         status: 'completed',
         revisedPrompt: 'astronaut cat',
         result: 'https://example.com/cat.png',
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'imageGeneration',
+          id: 'img-2',
+          status: 'completed',
+          revisedPrompt: null,
+          fileId: 'file-image-2',
+          savedPath: '/workspace/cat.png',
+          failure: null,
+          generationId: 'generation-2',
+        },
+      },
+    })
+    expect((await stream.next()).value).toEqual({
+      type: 'tool',
+      toolKind: 'imageGeneration',
+      id: 'img-2',
+      status: 'completed',
+      title: 'image generation',
+      detail: 'file-image-2',
+      data: {
+        status: 'completed',
+        revisedPrompt: null,
+        fileId: 'file-image-2',
+        savedPath: '/workspace/cat.png',
       },
     })
 

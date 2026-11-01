@@ -1,3 +1,4 @@
+import { JevProtocolSchema } from '../jev/protocol'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { Effect, Result, Schema } from 'effect'
 
@@ -85,7 +86,7 @@ export const fullBatchLatencyFixture = (
     (s) => s.date === native.snapshot.manifest.sessionDate,
   )
   if (session === undefined) throw new Error('Missing native session')
-  const base = registrationFixture()
+  const base = registrationFixture(undefined, sessions?.length ?? 20)
   const registration = withRegistrationCommitments({
     ...base,
     registeredAt: '2026-01-01T00:00:00.000Z',
@@ -298,7 +299,12 @@ export const nativeLatencyBacktestFixture = (
   const selected = f.registration.policies.find((p) => p.policy === policy)
   if (selected === undefined) throw new Error('Missing registered replay policy')
   const policyIdentity = Result.getOrThrow(
-    nativeReplayPolicyIdentity(policy, f.registration.obligations.configuration.protocol),
+    nativeReplayPolicyIdentity(
+      policy,
+      Result.getOrThrow(
+        Schema.decodeUnknownResult(JevProtocolSchema)(f.registration.obligations.configuration.protocol),
+      ),
+    ),
   )
   const build = {
     ...configuredBuild,
@@ -324,9 +330,12 @@ export const nativeLatencyBacktestFixture = (
   }
   const material = Result.getOrThrow(
     latencyReplayPolicyMaterial(
-      f.registration.obligations.configuration.protocol,
+      Result.getOrThrow(
+        Schema.decodeUnknownResult(JevProtocolSchema)(f.registration.obligations.configuration.protocol),
+      ),
       selected.riskPolicy.accountId,
       policy,
+      selected.riskPolicy,
     ),
   )
   const inferenceTariff = replayRateCardFixture({
@@ -397,7 +406,19 @@ export const nativeLatencyBacktestFixture = (
     fractionalTrading: false,
     calendar: [
       ...calendar,
-      { date: '2026-11-30', open: '09:30', close: '16:00', session_open: '0930', session_close: '1600' },
+      {
+        date: (() => {
+          const next = new Date(last.closeAt)
+          do {
+            next.setUTCDate(next.getUTCDate() + 1)
+          } while (next.getUTCDay() === 0 || next.getUTCDay() === 6)
+          return next.toISOString().slice(0, 10)
+        })(),
+        open: '09:30',
+        close: '16:00',
+        session_open: '0930',
+        session_close: '1600',
+      },
     ],
     assets: f.registration.obligations.configuration.protocol.universe.map((symbol, index) => ({
       id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
