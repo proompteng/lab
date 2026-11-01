@@ -2050,6 +2050,7 @@ integration('committed sequential provider handoff', () => {
     ['focused-entry-evidence', focusedEntryEvidence],
     ['observed-resistance', observedResistance],
     ['conditional-base-anchor', conditionalBaseAnchors],
+    ['dated-execution-fee', datedExecutionFees],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -2068,6 +2069,32 @@ integration('committed sequential provider handoff', () => {
       }),
     ),
   )
+
+  test('dated fee cutover refuses a held position without changing authority', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+          updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${request.cycleId}`
+        yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+        VALUES (${'1'.repeat(64)},'bayn.paper-position-snapshot.v1',${replayAccountId},${'2'.repeat(64)},${'3'.repeat(64)},1,clock_timestamp())`
+        const before =
+          yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a ORDER BY generation_hash`
+        const result = yield* sql.withTransaction(datedExecutionFees).pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result))
+          expect(result.failure).toMatchObject({
+            reason: {
+              cause: { code: '55000', message: expect.stringContaining('dated-execution-fee cutover requires') },
+            },
+          })
+        expect(
+          yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a ORDER BY generation_hash`,
+        ).toEqual(before)
+        expect(yield* sql`SELECT position_count FROM position_snapshots`).toEqual([{ position_count: 1 }])
+      }),
+    ))
 
   test.each([
     { effective: 'PAPER', kill: 'CLEAR', reason: null, changes: true },

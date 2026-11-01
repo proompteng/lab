@@ -9,7 +9,8 @@ v36 runtimes do not reference that incompatible request. Broker access stays rea
 Image selection and publication still use the normal Kargo path.
 
 Migration 170 makes new assessments research-only because bootstrap confidence coverage is unestablished. Migration
-171 admits only v36 provider dispatch while retaining already-paid v35 outcomes. No new activity or calendar quotas
+171 preserves the existing flat, settled, reconciled protocol cutover boundary before admitting only v36 provider
+dispatch, while retaining already-paid v35 outcomes. No new activity or calendar quotas
 are introduced. The operational target remains 99.9%, with zero safety violations.
 
 ## Chart structure before funding
