@@ -198,7 +198,7 @@ const kubeContext = args.get('context') ?? process.env.KUBE_CONTEXT ?? 'galactic
 const namespace = args.get('namespace') ?? process.env.FLAMINGO_NAMESPACE ?? 'flamingo'
 const deployment = args.get('deployment') ?? process.env.FLAMINGO_DEPLOYMENT ?? 'flamingo'
 const model = args.get('model') ?? process.env.FLAMINGO_MODEL ?? 'qwen38-flamingo'
-const tokenizer = args.get('tokenizer') ?? process.env.FLAMINGO_BENCH_TOKENIZER ?? 'Qwen/Qwen3.8-27B-FP8'
+const tokenizer = args.get('tokenizer') ?? process.env.FLAMINGO_BENCH_TOKENIZER ?? 'nvidia/Qwen3.8-27B-NVFP4'
 const baseUrl = (
   args.get('base-url') ??
   process.env.FLAMINGO_BASE_URL ??
