@@ -149,17 +149,17 @@ describe('complete system qualification', () => {
     expect(result.verdict).not.toBe(QualificationVerdict.Qualified)
     expect(result.violations.some((reason) => reason.endsWith('INFERENCE_TARIFF_REGISTRATION_MISMATCH'))).toBe(true)
   })
-  test('a complete synthetic evidence set reaches qualification and every removed evidence class prevents it', () => {
+  test('complete synthetic observations retain profit and diagnostics without establishing edge', () => {
     const { input, verifiedSources } = supportedAssessmentFixture()
     const result = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
-    expect(result.verdict).toBe(QualificationVerdict.Qualified)
-    expect(result.edge.status).toBe(EdgeStatus.Established)
+    expect(result.verdict).toBe(QualificationVerdict.Inconclusive)
+    expect(result.edge.status).toBe(EdgeStatus.Undetermined)
     const incomplete = new Set(verifiedSources)
     incomplete.delete(input.obligationCoverageHash)
     const missing = Result.getOrThrow(evaluateSystemAssessment(input, incomplete))
     expect(missing.verdict).not.toBe(QualificationVerdict.Qualified)
   })
-  test('complete base evidence qualifies without stress replay or invented recovery work', () => {
+  test('complete base evidence retains reliability without stress replay or invented recovery work', () => {
     const { input, verifiedSources } = supportedAssessmentFixture(4)
     const recoveryIds = new Set(
       input.reliability.schedule
@@ -179,7 +179,7 @@ describe('complete system qualification', () => {
       },
     }
     const result = Result.getOrThrow(evaluateSystemAssessment(changed, verifiedSources))
-    expect(result.verdict).toBe(QualificationVerdict.Qualified)
+    expect(result.verdict).toBe(QualificationVerdict.Inconclusive)
     expect(result.reliability.status).toBe(ReliabilityStatus.MeetsTarget)
     expect(result.reliability.classes.find((item) => item.class === ObligationClass.Recovery)?.status).toBe(
       ReliabilityStatus.NotApplicable,

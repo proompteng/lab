@@ -12,7 +12,7 @@ import { makeRepeatedMomentumPolicy, repeatedMomentumPromptPolicy } from '../str
 import { stagedChartQuestionPolicy } from '../jev/staged-chart-questions'
 import { entryJudgmentPolicy } from '../jev/entry-questions'
 import { jevPositionExitPolicy } from '../jev/exit-policy'
-import type { JevProtocol } from '../jev/protocol'
+import { JevProtocolSchema, type JevProtocol } from '../jev/protocol'
 import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { SystemAssessmentError } from './economics'
 import { measureFullBatchLatency } from './full-batch-latency'
@@ -83,7 +83,17 @@ export const bindLatencyReplayInput = (
     const definition = registration.policies.find((p) => p.policy === input.policy)
     const first = registration.calendar.sessions[0]
     const last = registration.calendar.sessions.at(-1)
-    const configuration = registration.obligations.configuration
+    const configuration = {
+      ...registration.obligations.configuration,
+      protocol: yield* Schema.decodeUnknownResult(JevProtocolSchema)(
+        registration.obligations.configuration.protocol,
+      ).pipe(
+        Result.mapError(
+          (cause) =>
+            new SystemAssessmentError({ message: 'New replay execution requires the current protocol', cause }),
+        ),
+      ),
+    }
     if (definition === undefined || first === undefined || last === undefined)
       return yield* fail('Latency replay requires the registered policy and complete calendar')
     const material = yield* latencyReplayPolicyMaterial(

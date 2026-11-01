@@ -295,6 +295,7 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
         ? {}
         : {
             feeSensitivity: hypotheticalCryptoFeeSensitivity({
+              feeAt: request.chartSource.windowEndAt,
               symbol: candidate.symbol,
               protocol: target.evidence.observation.protocol,
               economics: Result.getOrThrow(

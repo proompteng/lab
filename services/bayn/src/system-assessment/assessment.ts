@@ -1,7 +1,13 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { evaluateJevAcceptance, JevAcceptanceVersion, JevNumericalVerdict, JevResearchPolicy } from '../jev/acceptance'
+import {
+  evaluateJevAcceptance,
+  usesLegacyAcceptance,
+  JevAcceptanceVersion,
+  JevNumericalVerdict,
+  JevResearchPolicy,
+} from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { SystemRegistrationSchema, validateSystemRegistration, registeredAssessmentTerms } from './policy'
@@ -96,7 +102,7 @@ export const evaluateSystemAssessment = (
       data.registration,
       version,
     )
-    const legacy = version !== JevAcceptanceVersion.Current
+    const legacy = usesLegacyAcceptance(version)
     yield* validateOperatingCostWindow(
       data.policies.flatMap((policy) => policy.sessions.map((session) => session.operatingCosts)),
     )
@@ -311,6 +317,7 @@ export const evaluateSystemAssessment = (
         : actual > 0n
           ? ProfitabilityStatus.Profitable
           : ProfitabilityStatus.NotProfitable
+    if (version === JevAcceptanceVersion.Current) missing.push('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
     const confidence = numerical !== null && 'confidence' in numerical ? numerical.confidence : null
     const edge =
       confidence === null || missing.length > 0 || violations.length > 0

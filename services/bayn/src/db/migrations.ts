@@ -1,3 +1,5 @@
+import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
+import researchQualification from '../../migrations/0170_research_qualification'
 import economicQualification from '../../migrations/0169_economic_qualification'
 import registeredAssessmentWindow from '../../migrations/0168_registered_assessment_window'
 import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
@@ -176,6 +178,8 @@ export const migrationLoader = PgMigrator.fromRecord({
   '166_candidate_entry_evidence': candidateEntryEvidence,
   '168_registered_assessment_window': registeredAssessmentWindow,
   '169_economic_qualification': economicQualification,
+  '170_research_qualification': researchQualification,
+  '171_dated_execution_fees': datedExecutionFees,
   '167_chart_structure_before_funding': chartStructureBeforeFunding,
   '163_jev_observation_window_index': jevObservationWindowIndex,
   '160_crypto_quote_evidence': cryptoQuoteEvidence,
