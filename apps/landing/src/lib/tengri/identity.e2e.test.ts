@@ -559,6 +559,25 @@ identityTest(
       kcSecondaryHttps = await freePort()
     const base = `https://proompteng.ai:${bffAddress.port}`,
       issuer = `https://auth.proompteng.ai:${kcHttps}/realms/tengri`
+    const gateways = z
+      .object({
+        version: z.number(),
+        services: z.array(
+          z
+            .object({
+              id: z.string(),
+              session_gateway: z.object({ oidc_client_id: z.string(), origin: z.string() }).optional(),
+              proof_audience: z.string().optional(),
+            })
+            .passthrough(),
+        ),
+      })
+      .parse(JSON.parse(readFileSync(path.join(root, 'services/ofz/platform/services.json'), 'utf8')))
+    const gateway = gateways.services.find((service) => service.id === 'tengri-web')
+    if (!gateway?.session_gateway) throw new Error('Browser fixture gateway registration missing')
+    gateway.session_gateway.origin = base
+    gateway.proof_audience = base + '/api/platform/relay/agent'
+    const gatewayRegistryFile = secret('session-gateways.json', JSON.stringify(gateways))
     Object.assign(process.env, {
       TENGRI_DESKTOP_ORIGIN: base,
       TENGRI_OIDC_ISSUER: issuer,
@@ -790,7 +809,7 @@ identityTest(
           OFZ_SPICEDB_ENDPOINT: native,
           OFZ_SPICEDB_KEY_FILE: process.env.OFZ_TEST_NATIVE_KEY_FILE,
           OFZ_OIDC_ISSUER: issuer,
-          OFZ_OIDC_CLIENT_ID: 'tengri-bff',
+          OFZ_SERVICES_FILE: gatewayRegistryFile,
           OFZ_OIDC_CONNECT_IP: '127.0.0.1',
           OFZ_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
           OFZ_LISTEN: `127.0.0.1:${listenPort}`,

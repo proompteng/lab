@@ -405,11 +405,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         let service = super::service::Service::new(
             database.clone(),
             native.clone(),
-            crate::sessions::Issuer::new(
-                "https://identity.invalid/realms/tengri".into(),
-                "tengri-bff".into(),
-            )
-            .unwrap(),
+            crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
         );
         let query = p::ReadPolicyRelationshipsRequest {
             administrator: Some(session(&humans[0])),
@@ -1225,11 +1221,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let ofz = super::service::Service::new(
         database.clone(),
         native.clone(),
-        crate::sessions::Issuer::new(
-            "https://identity.invalid/realms/tengri".into(),
-            "tengri-bff".into(),
-        )
-        .unwrap(),
+        crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
     );
     let grpc = tokio::spawn(async move {
         let incoming =

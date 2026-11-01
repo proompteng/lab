@@ -10,11 +10,26 @@ pub struct ServiceRegistration {
     pub identities: Vec<String>,
     pub roles: Vec<String>,
     #[serde(default)]
-    pub origins: Vec<String>,
+    pub session_gateway: Option<SessionGateway>,
     #[serde(default)]
     pub proof_audience: Option<String>,
     #[serde(default)]
     pub binding: Option<BindingPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionGateway {
+    pub oidc_client_id: String,
+    pub origin: String,
+}
+
+impl ServiceRegistration {
+    pub fn allows_origin(&self, origin: &str) -> bool {
+        self.session_gateway
+            .as_ref()
+            .is_some_and(|gateway| gateway.origin == origin)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,6 +72,8 @@ impl Registry {
         }
         let mut ids = BTreeSet::new();
         let mut identities = BTreeSet::new();
+        let mut gateway_origins = BTreeSet::new();
+        let mut gateway_audiences = BTreeSet::new();
         for service in &registry.services {
             if !identifier(&service.id)
                 || !ids.insert(&service.id)
@@ -77,15 +94,27 @@ impl Registry {
                     ));
                 }
             }
-            let mut origins = BTreeSet::new();
-            for origin in &service.origins {
+            if let Some(gateway) = &service.session_gateway {
+                if gateway.oidc_client_id.is_empty()
+                    || gateway.oidc_client_id.len() > 256
+                    || gateway
+                        .oidc_client_id
+                        .chars()
+                        .any(|c| c.is_control() || c.is_whitespace())
+                    || !gateway_audiences.insert(&gateway.oidc_client_id)
+                {
+                    return Err(Status::invalid_argument(
+                        "OIDC audience required for a session gateway",
+                    ));
+                }
+                let origin = &gateway.origin;
                 let url = reqwest::Url::parse(origin)
                     .map_err(|_| Status::invalid_argument("invalid registered client origin"))?;
                 if url.scheme() != "https"
                     || !url.username().is_empty()
                     || url.password().is_some()
                     || url.origin().ascii_serialization() != *origin
-                    || !origins.insert(origin)
+                    || !gateway_origins.insert(origin)
                 {
                     return Err(Status::invalid_argument("invalid registered client origin"));
                 }
@@ -99,7 +128,7 @@ impl Registry {
                     || url.query().is_some()
                     || url.fragment().is_some()
                     || url.path() == "/"
-                    || !origins.contains(&url.origin().ascii_serialization())
+                    || !service.allows_origin(&url.origin().ascii_serialization())
                 {
                     return Err(Status::invalid_argument(
                         "proof audience must belong to a registered client origin",
@@ -147,6 +176,17 @@ impl Registry {
 
     pub fn by_id(&self, id: &str) -> Option<&ServiceRegistration> {
         self.services.iter().find(|service| service.id == id)
+    }
+
+    pub fn session_gateway(&self, peer: &str) -> Result<(&str, &SessionGateway), Status> {
+        let service = self
+            .service(peer)
+            .ok_or_else(|| Status::permission_denied("registered session gateway required"))?;
+        let gateway = service
+            .session_gateway
+            .as_ref()
+            .ok_or_else(|| Status::permission_denied("registered session gateway required"))?;
+        Ok((&service.id, gateway))
     }
 
     pub fn identities(&self) -> impl Iterator<Item = &str> {
@@ -200,6 +240,28 @@ mod tests {
                 .service("spiffe://proompteng.ai/ns/example/sa/other")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn independent_browser_gateways_enroll_without_application_branches() {
+        let input = json!({"version":1,"services":[
+            {"id":"product", "identities":["spiffe://proompteng.ai/ns/product/sa/web"],
+             "roles":["platform.client"], "session_gateway":{"oidc_client_id":"product", "origin":"https://product.example"}},
+            {"id":"admin", "identities":["spiffe://proompteng.ai/ns/admin/sa/web"],
+             "roles":["platform.administration"], "session_gateway":{"oidc_client_id":"admin", "origin":"https://admin.example"}}
+        ]});
+        assert!(Registry::parse(&serde_json::to_vec(&input).unwrap()).is_ok());
+        for invalid in [
+            json!({"oidc_client_id":"", "origin":"https://admin.example"}),
+            json!({"oidc_client_id":"admin", "origin":""}),
+            json!({"oidc_client_id":"admin", "origin":"http://admin.example"}),
+            json!({"oidc_client_id":"admin", "origin":"https://product.example"}),
+            json!({"oidc_client_id":"product", "origin":"https://admin.example"}),
+        ] {
+            let mut rejected = input.clone();
+            rejected["services"][1]["session_gateway"] = invalid;
+            assert!(Registry::parse(&serde_json::to_vec(&rejected).unwrap()).is_err());
+        }
     }
 
     #[test]

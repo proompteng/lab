@@ -79,8 +79,7 @@ impl PlatformAuthorizationService for Service {
             .try_acquire()
             .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
         let peer = transport::peer(&request)?;
-        let receipt =
-            sessions::revoke(&self.database, &self.native, &peer, request.into_inner()).await?;
+        let receipt = sessions::revoke(&self.database, &peer, request.into_inner()).await?;
         Ok(Response::new(proto::RevokeSessionResponse {
             receipt: Some(receipt),
         }))
@@ -134,11 +133,7 @@ impl PlatformAuthorizationService for Service {
             .roles
             .iter()
             .any(|role| role == "platform.administration")
-            || !registration
-                .roles
-                .iter()
-                .any(|role| role == "platform.human-session")
-            || !registration.origins.contains(&session.origin)
+            || !registration.allows_origin(&session.origin)
         {
             return Err(Status::permission_denied(
                 "service cannot read policy relationships",

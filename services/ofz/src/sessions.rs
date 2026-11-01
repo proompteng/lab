@@ -9,24 +9,25 @@ use uuid::Uuid;
 use crate::{
     decision,
     native::{Check, Native},
-    policy::{self, BFF_ID},
+    policy,
     proto::{
         Action, Actor, CommandReceipt, CommandState, EstablishSessionRequest,
         InspectSessionRequest, RequestContext, RevokeSessionRequest, Session, actor::Identity,
     },
+    registry,
     store::{self, Database, sql_error},
 };
 
 #[derive(Clone)]
 pub struct Issuer {
     url: String,
-    audience: String,
     client: reqwest::Client,
 }
 
 #[derive(Clone, Deserialize)]
 struct Claims {
     sub: String,
+    azp: String,
     sid: String,
     nonce: String,
     exp: u64,
@@ -44,16 +45,15 @@ struct Claims {
 }
 
 impl Issuer {
-    pub fn new(url: String, audience: String) -> anyhow::Result<Self> {
+    pub fn new(url: String) -> anyhow::Result<Self> {
         let parsed = reqwest::Url::parse(&url)?;
         anyhow::ensure!(
             parsed.scheme() == "https"
                 && parsed.username().is_empty()
                 && parsed.password().is_none()
                 && parsed.query().is_none()
-                && parsed.fragment().is_none()
-                && !audience.is_empty(),
-            "OIDC requires a fixed HTTPS issuer and audience"
+                && parsed.fragment().is_none(),
+            "OIDC requires a fixed HTTPS issuer"
         );
         let mut builder = reqwest::Client::builder()
             .timeout(crate::DECISION_TIMEOUT)
@@ -77,12 +77,17 @@ impl Issuer {
         let client = builder.build()?;
         Ok(Self {
             url: url.trim_end_matches('/').into(),
-            audience,
             client,
         })
     }
 
-    async fn verify(&self, token: &str, nonce: &str, now: u64) -> Result<Claims, Status> {
+    async fn verify(
+        &self,
+        token: &str,
+        nonce: &str,
+        now: u64,
+        audience: &str,
+    ) -> Result<Claims, Status> {
         if token.len() > 16384
             || nonce.len() < 32
             || nonce.len() > 128
@@ -129,7 +134,7 @@ impl Issuer {
             .map_err(|_| Status::unauthenticated("invalid identity signing key"))?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.url]);
-        validation.set_audience(&[&self.audience]);
+        validation.set_audience(&[audience]);
         validation.leeway = 0;
         validation.validate_nbf = true;
         validation.set_required_spec_claims(&["exp", "iat", "iss", "aud", "sub"]);
@@ -146,6 +151,7 @@ impl Issuer {
             .claims;
         for field in [
             "sub",
+            "azp",
             "sid",
             "nonce",
             "acr",
@@ -176,7 +182,8 @@ impl Issuer {
                 "verified passkey assurance required",
             ));
         }
-        if claims.nonce != nonce
+        if claims.azp != audience
+            || claims.nonce != nonce
             || claims.identity_provider != "github"
             || !policy::canonical_uuid(&claims.sub)
             || claims.sid.is_empty()
@@ -266,6 +273,11 @@ async fn recover_session(
                 identity: Some(Identity::HumanId(session.human_id.clone())),
             }),
             session_id: session.id.clone(),
+            origin: registry::configured()?
+                .session_gateway(peer)?
+                .1
+                .origin
+                .clone(),
             ..Default::default()
         },
         Action::SessionInspect,
@@ -325,12 +337,7 @@ async fn establish_verified(
     peer: &str,
     request: EstablishSessionRequest,
 ) -> Result<Session, Status> {
-    if peer != BFF_ID {
-        return Err(Status::permission_denied(
-            "session establishment caller denied",
-        ));
-    }
-    decision::workload(native, peer, Action::SessionEstablish).await?;
+    let (gateway_service, gateway) = registry::configured()?.session_gateway(peer)?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     if !URL_SAFE_NO_PAD
         .decode(&request.credential)
@@ -369,7 +376,12 @@ async fn establish_verified(
         return recover_session(database, native, peer, &request.credential, &state).await;
     }
     let claims = issuer
-        .verify(&request.identity_token, &request.nonce, state.now_ms / 1000)
+        .verify(
+            &request.identity_token,
+            &request.nonce,
+            state.now_ms / 1000,
+            &gateway.oidc_client_id,
+        )
         .await?;
     let human = policy::github_human_id(&claims.github_id)?;
     if !native
@@ -410,8 +422,8 @@ async fn establish_verified(
         tx.query_opt(
             "SELECT s.id,s.human_id,s.identity_subject,s.revoked,s.expires_at_ms,s.idle_deadline_ms,s.recovery_generation \
              FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id \
-             WHERE c.token_hash=$1 AND NOT c.revoked FOR UPDATE OF s,c",
-            &[&previous_hash],
+             WHERE c.token_hash=$1 AND s.gateway_service=$2 AND NOT c.revoked FOR UPDATE OF s,c",
+            &[&previous_hash,&gateway_service],
         )
         .await
         .map_err(sql_error)?
@@ -470,6 +482,7 @@ async fn establish_verified(
                     identity: Some(Identity::HumanId(previous.get(1))),
                 }),
                 session_id: previous_id.to_string(),
+                origin: gateway.origin.clone(),
                 contract_version: crate::CONTRACT_VERSION,
                 ..Default::default()
             };
@@ -503,11 +516,11 @@ async fn establish_verified(
         image_url: claims.picture.unwrap_or_default(),
     };
     tx.execute(
-        "INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url) \
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) \
+        "INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url,gateway_service) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
          ON CONFLICT(id) DO UPDATE SET identity_session=EXCLUDED.identity_session,expires_at_ms=EXCLUDED.expires_at_ms,\
          idle_deadline_ms=EXCLUDED.idle_deadline_ms,mfa_at_ms=EXCLUDED.mfa_at_ms,display_name=EXCLUDED.display_name,email=EXCLUDED.email,image_url=EXCLUDED.image_url",
-        &[&id,&human,&claims.sub,&claims.sid,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&session.display_name,&session.email,&session.image_url],
+        &[&id,&human,&claims.sub,&claims.sid,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&session.display_name,&session.email,&session.image_url,&gateway_service],
     ).await.map_err(sql_error)?;
     tx.execute(
         "INSERT INTO ofz.session_credentials(token_hash,session_id,operation_id,establishment_fingerprint) VALUES($1,$2,$3,$4)",
@@ -518,6 +531,7 @@ async fn establish_verified(
             identity: Some(Identity::HumanId(human)),
         }),
         session_id: id.to_string(),
+        origin: gateway.origin.clone(),
         grant_id: String::new(),
         trace_id: String::new(),
         deadline_unix_ms: state.now_ms + 2000,
@@ -548,7 +562,7 @@ pub async fn inspect(
     peer: &str,
     request: InspectSessionRequest,
 ) -> Result<Session, Status> {
-    decision::workload(native, peer, Action::SessionInspect).await?;
+    let (gateway_service, _) = registry::configured()?.session_gateway(peer)?;
     if request.session_id.len() != 43 {
         return Err(Status::unauthenticated("invalid session credential"));
     }
@@ -558,7 +572,7 @@ pub async fn inspect(
         .get()
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-    let row = client.query_opt("SELECT s.id,s.human_id,s.expires_at_ms,s.idle_deadline_ms,s.mfa_at_ms,s.recovery_generation,s.github_id,s.display_name,s.email,s.image_url FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 CROSS JOIN ofz.platform_state p WHERE c.token_hash=$1 AND NOT c.revoked AND NOT s.revoked AND s.expires_at_ms>ofz.now_ms() AND s.idle_deadline_ms>ofz.now_ms() AND s.recovery_generation=p.recovery_generation", &[&hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
+    let row = client.query_opt("SELECT s.id,s.human_id,s.expires_at_ms,s.idle_deadline_ms,s.mfa_at_ms,s.recovery_generation,s.github_id,s.display_name,s.email,s.image_url FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 CROSS JOIN ofz.platform_state p WHERE c.token_hash=$1 AND s.gateway_service=$2 AND NOT c.revoked AND NOT s.revoked AND s.expires_at_ms>ofz.now_ms() AND s.idle_deadline_ms>ofz.now_ms() AND s.recovery_generation=p.recovery_generation", &[&hash,&gateway_service]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
     let human: String = row.get(1);
     if !native
         .check(&[Check::new("platform", "lab", "admit", "human", &human)])
@@ -585,14 +599,15 @@ pub async fn inspect(
 
 pub async fn revoke(
     database: &Database,
-    native: &Native,
     peer: &str,
     request: RevokeSessionRequest,
 ) -> Result<CommandReceipt, Status> {
-    if peer != BFF_ID || request.credential.len() != 43 {
-        return Err(Status::unauthenticated("BFF session credential required"));
+    let (gateway_service, gateway) = registry::configured()?.session_gateway(peer)?;
+    if request.credential.len() != 43 || request.origin != gateway.origin {
+        return Err(Status::unauthenticated(
+            "gateway session credential and origin required",
+        ));
     }
-    decision::workload(native, peer, Action::SessionRevoke).await?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     let state = database.state().await?;
     let hash = Sha256::digest(request.credential.as_bytes()).to_vec();
@@ -604,8 +619,8 @@ pub async fn revoke(
     let tx = client.transaction().await.map_err(sql_error)?;
     let session = tx
         .query_opt(
-            "SELECT s.id,s.human_id,c.revoked FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id WHERE c.token_hash=$1 FOR UPDATE OF s,c",
-            &[&hash],
+            "SELECT s.id,s.human_id,c.revoked FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id WHERE c.token_hash=$1 AND s.gateway_service=$2 FOR UPDATE OF s,c",
+            &[&hash,&gateway_service],
         )
         .await
         .map_err(sql_error)?

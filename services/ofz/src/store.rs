@@ -30,6 +30,7 @@ const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
         3,
         include_str!("../migrations/0004_session_credentials.sql"),
     ),
+    (4, include_str!("../migrations/0005_session_gateways.sql")),
 ];
 
 fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {

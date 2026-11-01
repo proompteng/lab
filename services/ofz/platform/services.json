@@ -9,13 +9,25 @@
     {
       "id": "tengri-web",
       "identities": ["spiffe://proompteng.ai/ns/proompteng/sa/proompteng"],
-      "roles": ["tengri.web", "platform.administration", "relay.client", "platform.human-session", "platform.client"],
-      "origins": ["https://proompteng.ai"],
+      "roles": ["tengri.web", "platform.administration", "relay.client", "platform.client"],
+      "session_gateway": {
+        "oidc_client_id": "tengri-bff",
+        "origin": "https://proompteng.ai"
+      },
       "proof_audience": "https://proompteng.ai/api/platform/relay/agent",
       "binding": {
         "service": "tengri",
         "resourceKind": "tengri.workspace",
         "action": "tengri.delegations.manage"
+      }
+    },
+    {
+      "id": "platform-admin",
+      "identities": ["spiffe://proompteng.ai/ns/platform-admin/sa/platform-admin"],
+      "roles": ["platform.administration", "platform.client"],
+      "session_gateway": {
+        "oidc_client_id": "platform-admin",
+        "origin": "https://admin.proompteng.ai"
       }
     },
     {

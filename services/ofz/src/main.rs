@@ -77,10 +77,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     commands::recover(&database, &native).await?;
     tracing::debug!("pending commands reconciled");
-    let issuer = Issuer::new(
-        env::var("OFZ_OIDC_ISSUER")?,
-        env::var("OFZ_OIDC_CLIENT_ID")?,
-    )?;
+    let issuer = Issuer::new(env::var("OFZ_OIDC_ISSUER")?)?;
     let tls = transport::server_config().await?;
     tracing::debug!("attested authorization transport initialized");
     let listener =

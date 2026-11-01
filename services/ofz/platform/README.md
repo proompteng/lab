@@ -31,7 +31,7 @@ and the onboarding job must receive the same package; changes require restarting
 Registration establishes identity, without granting resource permissions. Relay reads the approved client roster
 from Ofz and refreshes it; it has no separate client list. Research OpenCode is deliberately unenrolled.
 
-Only trusted human-session gateways get `platform.human-session`, exact `origins`, and, where appropriate,
+Only trusted browser gateways get `session_gateway` configuration with an exact `origin` and `oidc_client_id`, and, where appropriate,
 `platform.administration`. Delegating gateways also need a registered HTTPS `proof_audience`. A client can require an
 execution binding through `binding`: service, resource kind and issuer permission. Tengri binds its workspace UID and
 current runtime epoch; independent OpenCode uses workload authority and needs no artificial workspace.
@@ -63,7 +63,7 @@ audit history are retained. The old policy is present only as a migration-test i
 
 `ReadPolicyRelationships` reads the fully consistent direct relationships for one declared resource and recipient.
 The BFF exposes it through `GET /api/platform/policies?kind=...&id=...&subjectKind=...&subjectId=...`.
-It requires a registered `platform.administration` and `platform.human-session` gateway, its exact allowed origin,
+It requires a registered `platform.administration` service with a configured session gateway, its exact allowed origin,
 an active human administrator session and native `manage_targets` permission. Reads are audited and recheck current
 authority after the receipt commits. They do not require fresh MFA. `GetPlatformConfiguration` remains metadata-only;
 ordinary registered clients cannot inspect permission assignments through that RPC.

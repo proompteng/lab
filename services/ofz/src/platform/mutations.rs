@@ -106,8 +106,7 @@ fn identity(
         "relay.client"
     };
     if !service.roles.iter().any(|r| r == role)
-        || !service.roles.iter().any(|r| r == "platform.human-session")
-        || !service.origins.contains(
+        || !service.allows_origin(
             &command
                 .session()
                 .ok_or_else(|| Status::unauthenticated("human session required"))?

@@ -226,12 +226,7 @@ pub async fn evaluate(
             }
         }
         platform_subject::Identity::Human(session) => {
-            if !client
-                .roles
-                .iter()
-                .any(|role| role == "platform.human-session")
-                || !client.origins.contains(&session.origin)
-            {
+            if !client.allows_origin(&session.origin) {
                 return Err(Status::permission_denied(
                     "client cannot assert this human session",
                 ));

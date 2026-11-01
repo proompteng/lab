@@ -178,12 +178,7 @@ pub(crate) async fn list(
         identity: Some(platform_subject::Identity::Human(issuer.clone())),
     };
     let client = authorization::caller(peer, &subject, registry::configured()?)?;
-    if !client
-        .roles
-        .iter()
-        .any(|role| role == "platform.human-session")
-        || !client.origins.contains(&issuer.origin)
-    {
+    if !client.allows_origin(&issuer.origin) {
         return Err(Status::permission_denied(
             "registered human gateway required",
         ));
