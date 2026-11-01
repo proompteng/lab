@@ -17,9 +17,9 @@ come from the [OpenAI migration guide](https://developers.openai.com/api/docs/gu
 - Jangar's production model inventory includes Astra alongside its existing Qwen default, allowing callers to
   select `gpt-6-astra` explicitly.
 - Codex CLI must be at least `0.153.0` for Astra, as documented in
-  [OpenAI's Codex setup guidance](https://help.openai.com/en/articles/20001354). The shared runtime pins `0.153.4`.
+  [OpenAI's Codex setup guidance](https://help.openai.com/en/articles/20001354). The shared runtime pins `0.166.0`.
   Older clients reject Astra before inference, even with valid credentials.
-- Docker build defaults, Codex CI, and Nanoagent's verified bootstrap also pin CLI `0.153.4`. Symphony resolves an
+- The Agents Docker runner and Codex CI also pin CLI `0.166.0`. Nanoagent's bootstrap retains its separate pin. Symphony resolves an
   explicit `codex.model` for every thread and turn, defaulting to Astra while preserving workflow overrides.
 - Jangar sets `HOME=/root` and `CODEX_HOME=/root/.codex`, includes the container configuration there, and uses the
   existing mounted `auth.json`. Renew an expired credential for the same verified account through

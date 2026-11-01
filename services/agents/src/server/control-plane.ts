@@ -362,6 +362,7 @@ const configureRuntimeDependencies = () => {
     runRead: {
       storeFactory: createPrimitivesStore,
       kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
     },
   })
 }
