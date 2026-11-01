@@ -261,6 +261,7 @@ Design references: Apple [windows](https://developer.apple.com/design/human-inte
 `bun run test:e2e` covers toolbar alignment, narrow layouts, all resize corners, drag continuity, Dock magnification,
 minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
 with the pinned Playwright browser on both macOS and Linux.
+Phone layout and focus follow the [mobile interface contract](../../docs/tengri/mobile-interface.md).
 
 The mocked desktop tests run independently with four workers in CI and two locally. CI builds the production desktop
 once and serves it for both the mocked browser suite and real acceptance fixtures, avoiding a second development
