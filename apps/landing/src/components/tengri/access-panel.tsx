@@ -243,7 +243,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     setError(undefined)
     setPersonName(entry ? entry.displayName || `GitHub #${entry.githubId}` : '')
     const scope = entry?.scope
-    const quota = roster?.quotas.find((value) => value.humanId === entry?.subjectId)
+    const quota = next === 'quota' ? roster?.quotas.find((value) => value.humanId === entry?.subjectId) : undefined
     form.reset({
       ...defaultAccessForm,
       action: next,
@@ -608,8 +608,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                                       ))}
                                     </dl>
                                     <p>
-                                      Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · up to{' '}
-                                      {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
+                                      {entry.role === 'viewer' || entry.actions.includes(Action.BROWSER_OBSERVE) ? (
+                                        <>Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · </>
+                                      ) : null}
+                                      up to {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
                                     </p>
                                   </>
                                 ) : null}

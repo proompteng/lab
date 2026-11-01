@@ -1,14 +1,7 @@
 'use client'
 
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  Skeleton,
-} from '@proompteng/design/ui'
-import { Archive, ArrowLeft, Ellipsis, LoaderCircle, RotateCcw } from 'lucide-react'
+import { Button, Skeleton } from '@proompteng/design/ui'
+import { Archive, ArrowLeft, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import { cn } from '@/lib/utils'
@@ -176,7 +169,7 @@ export function AgentSessionList({
                   aria-description={busy ? 'Response in progress' : undefined}
                   onClick={() => onSelect(thread.id)}
                   className={cn(
-                    'h-8 min-w-0 flex-1 justify-start gap-2 pl-2.5 pr-8 text-left',
+                    'h-8 min-w-0 flex-1 justify-start gap-2 pl-2.5 pr-8 text-left [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:pr-12',
                     active
                       ? 'bg-white/[0.06] text-zinc-100'
                       : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
@@ -191,36 +184,26 @@ export function AgentSessionList({
                   ) : null}
                   {unavailable ? <span className="text-label-12 text-zinc-400">Unavailable</span> : null}
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Chat actions for ${thread.title}`}
-                      className="absolute right-1 text-zinc-400 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100 data-popup-open:opacity-100"
-                    >
-                      <Ellipsis aria-hidden="true" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    sideOffset={4}
-                    className="tengri-theme font-geist w-40 border border-white/[0.08] shadow-lg"
-                  >
-                    <DropdownMenuItem
-                      disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
-                      onClick={() => void setArchived(thread.id, !index.archived)}
-                    >
-                      {index.archived ? (
-                        <RotateCcw className="size-3.5" aria-hidden="true" />
-                      ) : (
-                        <Archive className="size-3.5" aria-hidden="true" />
-                      )}
-                      {index.archived ? 'Restore' : busy ? 'Finish response to archive' : 'Archive'}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`${index.archived ? 'Restore' : 'Archive'} ${thread.title}`}
+                  title={
+                    index.archived ? 'Restore chat' : busy ? 'Finish the response before archiving' : 'Archive chat'
+                  }
+                  disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
+                  onClick={() => void setArchived(thread.id, !index.archived)}
+                  className="absolute right-1 size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11 [@media(hover:hover)]:invisible [@media(hover:hover)]:group-hover:visible [@media(hover:hover)]:group-focus-within:visible"
+                >
+                  {changing.has(thread.id) ? (
+                    <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+                  ) : index.archived ? (
+                    <RotateCcw aria-hidden="true" className="size-3.5" />
+                  ) : (
+                    <Archive aria-hidden="true" className="size-3.5" />
+                  )}
+                </Button>
               </li>
             )
           })}
