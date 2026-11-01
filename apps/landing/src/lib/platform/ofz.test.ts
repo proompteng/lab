@@ -11,7 +11,7 @@ import {
 import { createSpiffeFixture } from '../tengri/spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
-const { ofzCall, OfzError } = await import('./ofz')
+const { ofzCall, OfzError, platformRpcError } = await import('./ofz')
 // Keep one-time observability module loading outside the RPC deadline test.
 await import('@/lib/observability/server')
 const environment = {
@@ -23,6 +23,17 @@ const environment = {
 let fixture: Awaited<ReturnType<typeof createSpiffeFixture>> | undefined
 let server: grpc.Server | undefined
 const timers = new Set<ReturnType<typeof setTimeout>>()
+
+test('temporary authorization recovery is reported as a service outage', () => {
+  const failure = Object.assign(new Error('platform policy command requires recovery'), {
+    code: grpc.status.UNAVAILABLE,
+    details: 'platform policy command requires recovery',
+    metadata: new grpc.Metadata(),
+  })
+  const error = platformRpcError(failure)
+  expect(error.status).toBe(503)
+  expect(error.message).toBe('Access management is temporarily unavailable. Try again shortly.')
+})
 
 afterAll(() => {
   for (const timer of timers) clearTimeout(timer)
