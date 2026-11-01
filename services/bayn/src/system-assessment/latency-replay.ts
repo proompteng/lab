@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect'
+import type { Policy } from '../risk'
 
 import { BrokerEnvironment, BrokerIdentitySchema, type BrokerIdentity } from '../broker/identity'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -12,13 +13,13 @@ import { stagedChartQuestionPolicy } from '../jev/staged-chart-questions'
 import { entryJudgmentPolicy } from '../jev/entry-questions'
 import { jevPositionExitPolicy } from '../jev/exit-policy'
 import type { JevProtocol } from '../jev/protocol'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { SystemAssessmentError } from './economics'
 import { measureFullBatchLatency } from './full-batch-latency'
 import {
   SystemRegistrationSchema,
-  systemQualificationPolicy,
-  validateSystemRegistration,
+  registeredAllocationMicros,
+  verifyStoredSystemRegistration,
   type SystemRegistration,
 } from './policy'
 import { SystemSourceCutSchema } from './source-cut'
@@ -40,11 +41,23 @@ export const latencyReplayExecutionModelHash = (input: Pick<BacktestInput, 'assu
   })
 
 /** Material supplied by the selected compiled policy; source authenticity is verified separately. */
-export const latencyReplayPolicyMaterial = (protocol: JevProtocol, accountId: string, policy: NativeReplayPolicy) =>
+export const latencyReplayPolicyMaterial = (
+  protocol: JevProtocol,
+  accountId: string,
+  policy: NativeReplayPolicy,
+  riskPolicy: Policy,
+) =>
   Result.gen(function* () {
+    const approved = yield* approvedExecutionRiskPolicyHashes(accountId, protocol.universe)
+    if (!approved.includes(yield* canonicalHashV1Result(riskPolicy)))
+      return yield* Result.fail(
+        new SystemAssessmentError({
+          message: 'Replay risk material is not approved for its bound account and universe',
+        }),
+      )
     const { plans: _plans, ...positionProtection } = jevPositionExitPolicy(protocol, {})
     return {
-      riskPolicy: yield* makeExecutionRiskPolicy(accountId, protocol.universe),
+      riskPolicy,
       prompts:
         policy === JevResearchPolicy.Momentum
           ? repeatedMomentumPromptPolicy
@@ -77,6 +90,7 @@ export const bindLatencyReplayInput = (
       configuration.protocol,
       definition.riskPolicy.accountId,
       input.policy,
+      definition.riskPolicy,
     )
     const identity = yield* nativeReplayPolicyIdentity(input.policy, configuration.protocol)
     const tariff = yield* registeredReplayInferenceTariff(definition.inferenceRateCard, input.interval, input.policy)
@@ -110,7 +124,7 @@ export const bindLatencyReplayInput = (
       definition.strategyHash !== identity.strategy.behaviorHash ||
       definition.parametersHash !== identity.strategy.parameterHash ||
       definition.executionModelHash !== (yield* canonicalHashV1Result(configuration.protocol.executionModel)) ||
-      input.openingCashMicros !== systemQualificationPolicy.allocationMicros ||
+      input.openingCashMicros !== registeredAllocationMicros(registration) ||
       input.assetObservationPolicy !== 'retained-as-of-session' ||
       input.interval.startAt !== first.openAt ||
       input.interval.endAt !== last.closeAt
@@ -155,7 +169,7 @@ export const bindLatencyReplayInput = (
 
 export const prepareSystemLatencyReplay = (input: typeof SystemLatencyReplaySchema.Type) =>
   Result.gen(function* () {
-    const { registration } = yield* validateSystemRegistration(input.registration)
+    const { registration } = yield* verifyStoredSystemRegistration(input.registration)
     const protocolHash = yield* systemLatencyStressProtocolHash()
     if (
       registration.latencyStressProtocolHash !== protocolHash ||

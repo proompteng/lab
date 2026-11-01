@@ -448,13 +448,15 @@ error-reporting failures cannot replace the pass result. The manual GlitchTip sm
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
 Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
-untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) evaluates the exact
-nonempty calendar registered before its first open. There is no fixed session count or waiting period. Targets remain
-at least $5,000 net over that registered window on the existing $100,000 PAPER allocation, maximum session loss $1,000,
-and maximum marked drawdown $2,500. Paired-control, uncertainty, execution-stress, activity, and complete-evidence
-requirements remain in force. Activity targets never require an otherwise unjustified order. The historical
-[v1](../../docs/bayn/jev-migration-acceptance.json) and [v2](../../docs/bayn/jev-migration-acceptance-v2.json) contracts
-retain their original terms and records; their twenty-session rule does not govern new assessments.
+untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
+fully costed profit and positive absolute and paired lower bounds over the exact registered calendar. It has no
+fixed session count, activity or turnover quota, dollar profit hurdle, control-profit multiple, or mandatory stress
+scenario. Allocation and loss limits come from the registered source-approved risk policy. Bootstrap terms and
+selected matched controls are fixed before the first open. Operational reliability remains 99.9% independently for
+eligible classes, with zero safety violations and complete realistic evidence. An assessment grants no capital authority.
+See [current and retained acceptance rules](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
+Historical contracts and assessment receipts retain their original terms and hashes; prospective attempt numbering
+continues across the policy change.
 
 The immediate priorities are reliable recovery and complete cost accounting, then the existing
 [`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
@@ -986,8 +988,8 @@ records retained wire bytes, match and body row counts, and elapsed read time wi
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
-or capital authority. Economic qualification uses the frozen protocol in
-[`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
+or capital authority. Economic qualification uses the [current registered evidence policy](../../docs/bayn/jev-migration-validation.md#economic-acceptance).
+The frozen v2 contract remains available for historical verification.
 
 - `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are static capability ceilings. Effective execution additionally
   requires an exact durable grant bound to the source, image, strategy, account, and risk policy.
@@ -1289,8 +1291,9 @@ The v4 trading receipt verifies trading transfers and broker fees. Its fields do
 `OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Independently known cost-coverage, missing-ledger and
 unsettled-fee gaps remain explicit when starting capital is unavailable; unavailable financial totals remain null.
 Verified gross trading P&L and fees remain visible when the required financial boundary exists. The v6 report's
-attached `systemAssessment` supplies actual net economic profit, conservative qualification profit, and their
-separate profitability and edge verdicts for its registered window. It does not rewrite the v4 receipt.
+attached `systemAssessment` supplies actual net economic profit, the policy-bound qualification basis, and
+separate profitability and edge verdicts for its registered window. Current assessments use actual fully costed profit;
+retained assessments keep their original conservative basis. It does not rewrite the v4 receipt.
 Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
 Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
 receipts keep their original bytes and hashes; this correction applies to newly computed reports.
@@ -1445,6 +1448,9 @@ subtracts `qualificationPremiumMicros`, the excess of the greater invoice-or-tar
 amount, from actual profit. This applies the conservative inference rule once. The qualification figure is null if
 any operating-cost category, trading P&L, or required inference usage is unresolved. Zero-trade sessions still retain
 their operating expenses. A positive actual profit can therefore have negative qualification profit.
+These operating-cost report fields retain their existing conservative meaning. The current system assessment uses
+actual fully costed profit for its qualification series and marked-risk path; the tariff premium remains a diagnostic.
+Retained assessments continue to reproduce their original conservative deductions.
 
 `netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
 Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source

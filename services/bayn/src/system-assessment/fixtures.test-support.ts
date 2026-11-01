@@ -18,7 +18,7 @@ import {
 } from '../jev/entry-ablation-policy'
 import { IsoDateSchema } from '../schemas'
 import { canonicalHashV1Result, sha256 } from '../hash'
-import { jevAcceptanceProtocolHash, JevResearchPolicy } from '../jev/acceptance'
+import { jevAcceptanceProtocolHash, JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
 import { ObligationClass, ObligationOutcome } from './reliability'
 import { systemQualificationPolicyHash, type SystemRegistration } from './policy'
@@ -97,7 +97,9 @@ const momentumIdentity = Result.getOrThrow(
 )
 
 const baseRegistrationFixture = (sessionCount: number): SystemRegistration => ({
-  schemaVersion: 'bayn.system-registration.v2',
+  schemaVersion: 'bayn.system-registration.v3',
+  allocationMicros: '100000000000',
+  bootstrap: { blockLengthSessions: Math.min(2, sessionCount), replicates: 10000, seed: 20260921 },
   program: 'BAYN_SYSTEM_QUALIFICATION',
   environment: 'PAPER',
   policyHash: Result.getOrThrow(systemQualificationPolicyHash()),
@@ -247,7 +249,11 @@ export const withRegistrationCommitments = (registration: SystemRegistration): S
   }
 }
 
-export const registrationFixture = (registeredAt?: string, sessionCount = 20): SystemRegistration => {
+export const registrationFixture = (
+  registeredAt?: string,
+  sessionCount = 20,
+  version = JevAcceptanceVersion.Current,
+): SystemRegistration => {
   let registration = baseRegistrationFixture(sessionCount)
   if (registeredAt !== undefined) {
     const firstMonday = new Date(registeredAt)
@@ -286,6 +292,15 @@ export const registrationFixture = (registeredAt?: string, sessionCount = 20): S
         })),
       },
     })),
+  }
+  if (version !== JevAcceptanceVersion.Current && registration.schemaVersion === 'bayn.system-registration.v3') {
+    const { allocationMicros: _allocation, bootstrap: _bootstrap, ...retained } = registration
+    registration = {
+      ...retained,
+      schemaVersion: 'bayn.system-registration.v2',
+      policyHash: Result.getOrThrow(systemQualificationPolicyHash(version)),
+      acceptanceProtocolHash: Result.getOrThrow(jevAcceptanceProtocolHash(version)),
+    }
   }
   return withRegistrationCommitments({
     ...registration,
