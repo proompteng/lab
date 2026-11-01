@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         contract_version = ofz::CONTRACT_VERSION,
         "Ofz authorization API listening"
     );
-    transport::server()
+    let server = transport::server()
         .layer(
             tower_http::trace::TraceLayer::new_for_grpc()
                 .make_span_with(ofz::telemetry::RequestSpan)
@@ -99,8 +99,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .add_service(
             PlatformAuthorizationServiceServer::new(ofz::platform::service::Service::new(
-                database,
-                native,
+                database.clone(),
+                native.clone(),
                 issuer,
                 ofz::platform::providers::Providers::from_environment()?,
             ))
@@ -109,7 +109,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .serve_with_incoming_shutdown(transport::incoming(listener, tls), async {
             let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+        });
+    tokio::select! {
+        result = server => result?,
+        () = commands::maintain_recovery(&database, &native) => {}
+    }
     Ok(())
 }
