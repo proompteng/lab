@@ -308,9 +308,9 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         message: jevAvailabilityMessage(
           availability === null
             ? JevAvailabilityReason.NotCommitted
-            : Result.isFailure(availability)
+            : Result.isFailure(availability) && availability.failure._tag === 'JevEvidenceError'
               ? (availability.failure.availabilityReason ?? JevAvailabilityReason.InvalidEvidence)
-              : JevAvailabilityReason.NotCommitted,
+              : JevAvailabilityReason.InvalidEvidence,
         ),
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
