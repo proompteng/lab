@@ -71,7 +71,7 @@ pub(crate) async fn acknowledge_fixture_archive(admin: &Database) {
     admin.pool.get().await.unwrap().batch_execute("BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='control-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;").await.unwrap();
 }
 
-async fn seed_session(
+pub(crate) async fn seed_session(
     client: &tokio_postgres::Client,
     session: Uuid,
     human: &str,
@@ -1550,15 +1550,37 @@ async fn verify_offboarding_during_enrollment(fixture: &ControlFixture) {
 }
 
 async fn verify_sign_in_attempts(fixture: &ControlFixture) {
-    let admin_peer = "spiffe://proompteng.ai/ns/platform-admin/sa/platform-admin";
+    let admin_peer = "spiffe://proompteng.ai/ns/proompteng/sa/platform-admin";
     let token = |label: &str| URL_SAFE_NO_PAD.encode(Sha256::digest(label.as_bytes()));
     let request = BeginSignInRequest {
+        return_path: "/workspaces/test/people".into(),
         state: token("state"),
         binding: token("binding"),
         verifier: token("verifier"),
         nonce: token("nonce"),
         operation_id: Uuid::new_v4().to_string(),
     };
+    for invalid in [
+        "https://outside.invalid/",
+        "//outside.invalid/",
+        "/\\outside.invalid/",
+        "/invalid\r\nheader",
+    ] {
+        assert_eq!(
+            sessions::begin_sign_in(
+                &fixture.database,
+                BFF_ID,
+                BeginSignInRequest {
+                    return_path: invalid.into(),
+                    ..request.clone()
+                }
+            )
+            .await
+            .unwrap_err()
+            .code(),
+            Code::InvalidArgument
+        );
+    }
     let consume = ConsumeSignInRequest {
         state: request.state.clone(),
         binding: request.binding.clone(),
@@ -1590,6 +1612,7 @@ async fn verify_sign_in_attempts(fixture: &ControlFixture) {
     );
     assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
     let value = first.as_ref().or(second.as_ref()).unwrap();
+    assert_eq!(value.return_path, request.return_path);
     assert_eq!(value.operation_id, request.operation_id);
     assert_eq!(value.verifier, request.verifier);
     assert_eq!(value.nonce, request.nonce);
@@ -1639,7 +1662,7 @@ async fn verify_sign_in_attempts(fixture: &ControlFixture) {
         Code::InvalidArgument
     );
 
-    client.execute("INSERT INTO ofz.sign_in_attempts SELECT 'tengri-web',decode(md5(i::text)||md5(i::text),'hex'),decode(md5(i::text)||md5(i::text),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid(),ofz.now_ms()+300000 FROM generate_series(1,2000) i", &[]).await.unwrap();
+    client.execute("INSERT INTO ofz.sign_in_attempts(gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms) SELECT 'tengri-web',decode(md5(i::text)||md5(i::text),'hex'),decode(md5(i::text)||md5(i::text),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid(),ofz.now_ms()+300000 FROM generate_series(1,2000) i", &[]).await.unwrap();
     assert_eq!(
         sessions::begin_sign_in(&fixture.database, BFF_ID, request.clone())
             .await
@@ -1667,7 +1690,7 @@ async fn verify_browser_gateways(fixture: &ControlFixture) {
     let owner = &fixture.identities[0];
     let id = Uuid::new_v4();
     let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(id.as_bytes()));
-    let peer = "spiffe://proompteng.ai/ns/platform-admin/sa/platform-admin";
+    let peer = "spiffe://proompteng.ai/ns/proompteng/sa/platform-admin";
     let origin = "https://admin.proompteng.ai";
     let client = fixture.admin.pool.get().await.unwrap();
     seed_session(&client, id, &owner.0, "1").await;

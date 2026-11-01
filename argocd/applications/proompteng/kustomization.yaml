@@ -5,6 +5,10 @@ resources:
   - service-account.yaml
   - network-policy.yaml
   - deployment.yaml
+  - admin-deployment.yaml
+  - admin-service.yaml
+  - admin-network-policy.yaml
+  - admin-oidc-sealedsecret.yaml
   - service.yaml
   - ingressroute.yaml
   - ofz-credentials-sealedsecret.yaml

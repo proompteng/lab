@@ -6,10 +6,10 @@ use tokio_postgres::Client;
 use tonic::Status;
 use uuid::Uuid;
 
-use super::{authorization, catalog, connections, onboarding};
+use super::{authorization, catalog, connections, onboarding, workspaces};
 use crate::{
     decision,
-    native::{Check, Native, Relationship, Update},
+    native::{Native, Relationship, Update},
     policy, proto, registry,
     store::{self, Database, State, sql_error},
 };
@@ -82,6 +82,8 @@ struct Prepared {
     changes: Vec<Update>,
     delegation_id: String,
     credential_hash: Vec<u8>,
+    #[serde(default)]
+    workspace_id: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Outcome {
@@ -148,7 +150,7 @@ async fn delegation_authority(
             .get()
             .await
             .map_err(|_| Status::unavailable("connection database unavailable"))?;
-        let row = connection.query_opt("SELECT issuer_id,client_service,actions,resources,binding_service,binding_id,version,enabled FROM ofz.platform_connections WHERE id=$1", &[&connection_id]).await.map_err(sql_error)?
+        let row = connection.query_opt("SELECT issuer_id,client_service,actions,resources,binding_service,binding_id,version,enabled,workspace_id FROM ofz.platform_connections WHERE id=$1", &[&connection_id]).await.map_err(sql_error)?
             .ok_or_else(|| Status::not_found("connection unavailable"))?;
         if row.get::<_, String>(0) != human || row.get::<_, String>(1) != client.id {
             return Err(Status::not_found("connection unavailable"));
@@ -163,6 +165,14 @@ async fn delegation_authority(
         let actions: Vec<String> = store::decode(row.get(2))?;
         let resources: Vec<proto::PlatformResource> = store::decode(row.get(3))?;
         let (service, id) = connections::stable_binding(request.binding.as_ref());
+        if row
+            .get::<_, Option<Uuid>>(8)
+            .map(|id| id.to_string())
+            .as_deref()
+            != Some(&workspaces::resource_workspace_id(&request.resources)?)
+        {
+            return Err(Status::permission_denied("connection workspace changed"));
+        }
         if request.actions != actions
             || request.resources != resources
             || service != row.get::<_, String>(4)
@@ -196,9 +206,8 @@ pub async fn execute(
     let session = command
         .session()
         .ok_or_else(|| Status::unauthenticated("human session required"))?;
-    let fresh_mfa = matches!(&command, Command::Relationships(_));
     let (context, state, _) =
-        authorization::human_context(database, session, command.operation(), fresh_mfa).await?;
+        authorization::human_context(database, session, command.operation(), false).await?;
     let fingerprint = command.fingerprint()?;
     let mut connection = database.command_connection().await?;
     crate::commands::reconcile(database, native, &mut connection.client).await?;
@@ -228,6 +237,7 @@ pub async fn execute(
         changes: Vec::new(),
         delegation_id: String::new(),
         credential_hash: Vec::new(),
+        workspace_id: String::new(),
     };
     let mut credential = String::new();
     let validation:Result<(),Status>=async {
@@ -237,28 +247,17 @@ pub async fn execute(
                 return Err(Status::aborted("policy version conflict"));
             }
             if !(1..=128).contains(&request.relationships.len())
-                || !(3..=512).contains(&request.reason.trim().len())
+                || request.reason.trim().len() < 3 || request.reason.len() > 512
                 || request.reason.contains(['\0', '\n', '\r'])
             {
                 return Err(Status::invalid_argument(
                     "bounded relationships and audit reason required",
                 ));
             }
-            if !native
-                .check(&[Check::new(
-                    "platform",
-                    "lab",
-                    "manage_targets",
-                    "human",
-                    &session.human_id,
-                )])
-                .await?
-                .0
-            {
-                return Err(Status::permission_denied(
-                    "platform policy administrator required",
-                ));
-            }
+            prepared.workspace_id = request.workspace_id.clone();
+            workspaces::manage(native, &request.workspace_id, &session.human_id).await?;
+            authorization::human_context(database, session, command.operation(), true).await?;
+            workspaces::membership_changes(native, &request.workspace_id, &request.relationships).await?;
             let catalog = catalog::configured()?;
             let mut keys = std::collections::BTreeSet::new();
             for relationship in &request.relationships {
@@ -291,33 +290,11 @@ pub async fn execute(
                         "relationship subject kind is not onboarded",
                     ));
                 }
-                let subject = match relationship.subject_kind.as_str() {
-                    "human" => {
-                        proto::Actor {
-                            identity: Some(proto::actor::Identity::HumanId(
-                                relationship.subject_id.clone(),
-                            )),
-                        }
-                        .subject()?;
-                        relationship.subject_id.clone()
-                    }
-                    "workload" => {
-                        if registry::configured()?
-                            .service(&relationship.subject_id)
-                            .is_none()
-                        {
-                            return Err(Status::permission_denied(
-                                "relationship workload is not registered",
-                            ));
-                        }
-                        policy::workload_object_id(&relationship.subject_id)
-                    }
-                    _ => {
-                        return Err(Status::permission_denied(
-                            "unsupported relationship subject",
-                        ));
-                    }
-                };
+                workspaces::resource_scope(&request.workspace_id, resource)?;
+                if relationship.subject_kind == "workspace" && relationship.subject_id != request.workspace_id {
+                    return Err(Status::permission_denied("workspace grant cannot reference another workspace"));
+                }
+                let (subject_kind, subject) = workspaces::subject(&relationship.subject_kind, &relationship.subject_id)?;
                 if !keys.insert((
                     &resource.kind,
                     &resource.id,
@@ -327,11 +304,15 @@ pub async fn execute(
                 )) {
                     return Err(Status::invalid_argument("duplicate relationship"));
                 }
+                if resource.kind != "platform.workspace" && relationship.subject_kind != "workspace" && relationship.enabled
+                    && !native.check(&[crate::native::Check::new("platform_workspace", &request.workspace_id, "use", subject_kind, &subject)]).await?.0 {
+                    return Err(Status::permission_denied("policy recipient is not enrolled in this workspace"));
+                }
                 let native = Relationship::new(
                     &definition.native_type,
                     &resource.id,
                     &relationship.relation,
-                    &relationship.subject_kind,
+                    subject_kind,
                     &subject,
                 );
                 prepared.changes.push(if relationship.enabled {
@@ -350,8 +331,13 @@ pub async fn execute(
             {
                 return Err(Status::invalid_argument("invalid connection intent"));
             }
-            let previous = client.query_opt("SELECT issuer_id,client_service,client_reference,version FROM ofz.platform_connections WHERE id=$1", &[&id]).await.map_err(sql_error)?;
+            let previous = client.query_opt("SELECT issuer_id,client_service,client_reference,version,workspace_id FROM ofz.platform_connections WHERE id=$1", &[&id]).await.map_err(sql_error)?;
+            prepared.workspace_id = workspaces::resource_workspace_id(&request.resources)?;
+            decision::parse_uuid(&prepared.workspace_id)?;
             if let Some(row) = previous {
+                if row.get::<_, Option<Uuid>>(4).map(|id| id.to_string()).as_deref() != Some(&prepared.workspace_id) {
+                    return Err(Status::permission_denied("connection workspace changed"));
+                }
                 if row.get::<_, String>(0) != session.human_id || row.get::<_, String>(1) != caller.id {
                     return Err(Status::not_found("connection unavailable"));
                 }
@@ -364,20 +350,19 @@ pub async fn execute(
             if client.query_opt("SELECT id FROM ofz.platform_connections WHERE issuer_id=$1 AND client_service=$2 AND client_reference=$3 AND id<>$4", &[&session.human_id,&caller.id,&request.client_reference,&id]).await.map_err(sql_error)?.is_some() {
                 return Err(Status::already_exists("connection reference already exists"));
             }
-            prepared.changes = connections::connection_changes(database,native,caller,request,&session.human_id).await?;
-            if !prepared.changes.is_empty() {
-                authorization::human_context(database,session,command.operation(),true).await?;
-            }
+            connections::scope_authority(database,native,caller,&request.actions,&request.resources,request.binding.as_ref(),&session.human_id).await?;
         }
         Command::RevokeConnection(request) => {
             let id = decision::parse_uuid(&request.connection_id)?;
-            let row = client.query_opt("SELECT issuer_id,client_service FROM ofz.platform_connections WHERE id=$1", &[&id]).await.map_err(sql_error)?
+            let row = client.query_opt("SELECT issuer_id,client_service,workspace_id FROM ofz.platform_connections WHERE id=$1", &[&id]).await.map_err(sql_error)?
                 .ok_or_else(|| Status::not_found("connection unavailable"))?;
             if request.client_service != caller.id || row.get::<_, String>(0) != session.human_id || row.get::<_, String>(1) != caller.id {
                 return Err(Status::not_found("connection unavailable"));
             }
+            prepared.workspace_id = row.get::<_, Option<Uuid>>(2).map(|id| id.to_string()).unwrap_or_default();
         }
         Command::Create(request) => {
+            prepared.workspace_id = workspaces::resource_workspace_id(&request.resources)?;
             delegation_authority(
                 database,
                 native,
@@ -403,7 +388,7 @@ pub async fn execute(
             prepared.credential_hash = Sha256::digest(credential.as_bytes()).to_vec();
         }
         Command::Activate(request) => {
-            let row=client.query_opt("SELECT d.issuer_id,d.client_service,d.agent_id,d.actions,d.resources,d.binding,d.expires_at_ms,d.proof_key_thumbprint,d.connection_id,d.connection_version FROM ofz.platform_delegations d JOIN ofz.platform_connections c ON c.id=d.connection_id AND c.enabled AND c.version=d.connection_version AND c.last_delegation_id=d.id WHERE d.id=$1 AND NOT d.revoked AND d.recovery_generation=$2 AND d.expires_at_ms>ofz.now_ms()", &[&decision::parse_uuid(&request.delegation_id)?,&(current.recovery_generation as i64)]).await.map_err(sql_error)?.ok_or_else(||Status::permission_denied("delegation is not available for activation"))?;
+            let row=client.query_opt("SELECT d.issuer_id,d.client_service,d.agent_id,d.actions,d.resources,d.binding,d.expires_at_ms,d.proof_key_thumbprint,d.connection_id,d.connection_version,d.workspace_id FROM ofz.platform_delegations d JOIN ofz.platform_connections c ON c.id=d.connection_id AND c.enabled AND c.version=d.connection_version AND c.last_delegation_id=d.id WHERE d.id=$1 AND NOT d.revoked AND d.recovery_generation=$2 AND d.expires_at_ms>ofz.now_ms()", &[&decision::parse_uuid(&request.delegation_id)?,&(current.recovery_generation as i64)]).await.map_err(sql_error)?.ok_or_else(||Status::permission_denied("delegation is not available for activation"))?;
             if row.get::<_, String>(0) != session.human_id
                 || row.get::<_, String>(1) != caller.id
                 || row.get::<_, String>(7) != request.proof_key_thumbprint
@@ -412,6 +397,7 @@ pub async fn execute(
                     "delegation installation acknowledgement differs",
                 ));
             }
+            prepared.workspace_id = row.get::<_, Option<Uuid>>(10).map(|id| id.to_string()).unwrap_or_default();
             let create = proto::CreatePlatformDelegationRequest {
                 operation_id: request.operation_id.clone(),
                 issuer: Some(session.clone()),
@@ -456,7 +442,7 @@ pub async fn execute(
             prepared.delegation_id = request.delegation_id.clone();
         }
         Command::Revoke(request) => {
-            let row=client.query_opt("SELECT issuer_id,client_service,agent_id FROM ofz.platform_delegations WHERE id=$1", &[&decision::parse_uuid(&request.delegation_id)?]).await.map_err(sql_error)?.ok_or_else(||Status::not_found("delegation not found"))?;
+            let row=client.query_opt("SELECT issuer_id,client_service,agent_id,workspace_id FROM ofz.platform_delegations WHERE id=$1", &[&decision::parse_uuid(&request.delegation_id)?]).await.map_err(sql_error)?.ok_or_else(||Status::not_found("delegation not found"))?;
             if row.get::<_, String>(0) != session.human_id || row.get::<_, String>(1) != caller.id {
                 return Err(Status::permission_denied("delegation issuer required"));
             }
@@ -468,6 +454,7 @@ pub async fn execute(
                 &row.get::<_, Uuid>(2).to_string(),
             ))];
             prepared.delegation_id = request.delegation_id.clone();
+            prepared.workspace_id = row.get::<_, Option<Uuid>>(3).map(|id| id.to_string()).unwrap_or_default();
         }
     }
     Ok(()) }.await;
@@ -481,6 +468,7 @@ pub async fn execute(
             &operation.to_string(),
             "platform policy command rejected",
         );
+        receipt.platform_workspace_id = prepared.workspace_id.clone();
         receipt.platform_action = command.action().into();
         receipt.platform_client = caller.id.clone();
         receipt.platform_request_hash = fingerprint.clone();
@@ -548,7 +536,7 @@ async fn apply(
             let version = (r.expected_version + 1) as i64;
             let generation = (prepared.version + 1) as i64;
             let changed = if r.expected_version == 0 {
-                tx.execute("INSERT INTO ofz.platform_connections(id,issuer_id,client_service,client_reference,actions,resources,binding_service,binding_id,version,enabled,credential_generation,recovery_generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,true,$9,$10)", &[&id,issuer,&r.client_service,&r.client_reference,&store::encode(&r.actions)?,&store::encode(&r.resources)?,&binding_service,&binding_id,&generation,&(prepared.recovery_generation as i64)]).await.map_err(sql_error)?
+                tx.execute("INSERT INTO ofz.platform_connections(id,issuer_id,client_service,client_reference,actions,resources,binding_service,binding_id,version,enabled,credential_generation,recovery_generation,workspace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,true,$9,$10,$11)", &[&id,issuer,&r.client_service,&r.client_reference,&store::encode(&r.actions)?,&store::encode(&r.resources)?,&binding_service,&binding_id,&generation,&(prepared.recovery_generation as i64),&decision::parse_uuid(&prepared.workspace_id)?]).await.map_err(sql_error)?
             } else {
                 tx.execute("UPDATE ofz.platform_connections SET actions=$5,resources=$6,binding_service=$7,binding_id=$8,version=$9,enabled=true,last_delegation_id=NULL,credential_generation=$10,recovery_generation=$11,updated_at_ms=ofz.now_ms() WHERE id=$1 AND issuer_id=$2 AND client_service=$3 AND version=$4", &[&id,issuer,&r.client_service,&(r.expected_version as i64),&store::encode(&r.actions)?,&store::encode(&r.resources)?,&binding_service,&binding_id,&version,&generation,&(prepared.recovery_generation as i64)]).await.map_err(sql_error)?
             };
@@ -566,7 +554,7 @@ async fn apply(
             let connection_id = decision::parse_uuid(&r.connection_id)?;
             let delegation_id = decision::parse_uuid(&prepared.delegation_id)?;
             tx.execute("UPDATE ofz.platform_delegations SET revoked=true,active=false WHERE connection_id=$1", &[&connection_id]).await.map_err(sql_error)?;
-            tx.execute("INSERT INTO ofz.platform_delegations(id,operation_id,agent_id,issuer_id,client_service,credential_hash,proof_key_thumbprint,actions,resources,binding,expires_at_ms,recovery_generation,connection_id,connection_version,credential_generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", &[&delegation_id,&operation,&decision::parse_uuid(&r.agent_id)?,&r.issuer.as_ref().ok_or_else(||Status::internal("prepared issuer missing"))?.human_id,&r.client_service,&prepared.credential_hash,&r.proof_key_thumbprint,&store::encode(&r.actions)?,&store::encode(&r.resources)?,&store::encode(&r.binding)?,&(r.expires_at_unix_ms as i64),&(prepared.recovery_generation as i64),&connection_id,&(r.expected_connection_version as i64),&((prepared.version+1) as i64)]).await.map_err(sql_error)?;
+            tx.execute("INSERT INTO ofz.platform_delegations(id,operation_id,agent_id,issuer_id,client_service,credential_hash,proof_key_thumbprint,actions,resources,binding,expires_at_ms,recovery_generation,connection_id,connection_version,credential_generation,workspace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)", &[&delegation_id,&operation,&decision::parse_uuid(&r.agent_id)?,&r.issuer.as_ref().ok_or_else(||Status::internal("prepared issuer missing"))?.human_id,&r.client_service,&prepared.credential_hash,&r.proof_key_thumbprint,&store::encode(&r.actions)?,&store::encode(&r.resources)?,&store::encode(&r.binding)?,&(r.expires_at_unix_ms as i64),&(prepared.recovery_generation as i64),&connection_id,&(r.expected_connection_version as i64),&((prepared.version+1) as i64),&decision::parse_uuid(&prepared.workspace_id)?]).await.map_err(sql_error)?;
             if tx.execute("UPDATE ofz.platform_connections SET last_delegation_id=$2,credential_generation=$3,recovery_generation=$4,updated_at_ms=ofz.now_ms() WHERE id=$1 AND enabled AND version=$5", &[&connection_id,&delegation_id,&((prepared.version+1) as i64),&(prepared.recovery_generation as i64),&(r.expected_connection_version as i64)]).await.map_err(sql_error)? != 1 {
                 return Err(Status::aborted("connection changed during credential issuance"));
             }
@@ -596,21 +584,20 @@ async fn apply(
         proto::Action::PolicyCommand,
         true,
         &operation.to_string(),
-        "platform policy command",
+        match &prepared.command {
+            Command::Relationships(request) => &request.reason,
+            _ => "platform policy command",
+        },
     );
     receipt.revision = revision.clone();
     receipt.platform_action = prepared.command.action().into();
+    receipt.platform_workspace_id = prepared.workspace_id.clone();
     // Scope and relationship changes are inspectable without retaining delegated credentials.
     receipt.platform_resources = vec![
         serde_json::to_string(&prepared.command)
             .map_err(|_| Status::internal("encode platform policy audit"))?,
     ];
-    if matches!(prepared.command, Command::PutConnection(_)) && !prepared.changes.is_empty() {
-        receipt.platform_resources.push(
-            serde_json::to_string(&prepared.changes)
-                .map_err(|_| Status::internal("encode connection permission audit"))?,
-        );
-    }
+
     store::record_audit(&tx, &receipt, prepared.command.action()).await?;
     if tx.execute("UPDATE ofz.platform_state SET version=version+1 WHERE singleton AND version=$1 AND recovery_generation=$2", &[&(prepared.version as i64),&(prepared.recovery_generation as i64)]).await.map_err(sql_error)?!=1 {return Err(Status::aborted("platform version changed"));}
     let outcome = Outcome {

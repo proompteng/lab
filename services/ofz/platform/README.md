@@ -8,13 +8,17 @@ SpiceDB is the implementation; no separate Zanzibar server is involved.
 permissions and writable relationships. `schema.zed` supplies the corresponding native definitions. New application
 policies use these definitions without adding a Tengri action enum or a branch in the platform evaluator.
 
-An action can declare `grantRelation` to name the reviewed relationship that grants its permission. Qualification
-checks that relationship against the installed native schema. An administrator who explicitly connects a selected
-scope can receive those relationships and save the consent in one durable command. The gateway must also hold
-`platform.administration`; current membership, administrator authority, fresh MFA and execution-binding authority
-remain required. Ordinary users can connect only scopes they already hold. Credential renewal never assigns rights.
-Connecting already-authorized resources reuses the current verified session. The five-minute passkey freshness
-requirement applies when Connect assigns new relationships, not when saving or reconnecting existing access.
+An action declares `grantRelation` for direct assignments and `workspaceGrantRelation` for approved workspace-wide
+access. Qualification checks both against the installed native schema. Connecting records consent to existing
+permissions; it never assigns relationships. Saving and reconnecting an approved scope reuse the current verified
+session. Policy changes require a workspace administrator and fresh MFA through the independent admin gateway.
+
+`workspaces` in the service registry assign each external resource to one administrative workspace. SpiceDB owns
+workspace membership, administrators and enrolled clients. Resource authorization checks both the operation permission
+and current workspace use in one fully consistent bulk request. A global platform administrator cannot bypass a
+workspace's roles. Initial onboarding imports the existing platform members and registered clients for the initial
+workspace, once; enrollment markers prevent subsequent onboarding from restoring revoked access. Existing connections
+and delegations receive their immutable workspace ID during onboarding. Their scope cannot move to another workspace.
 
 The checked package is the approval boundary. Invalid definitions, duplicate identities/actions, unknown fields,
 wildcards and unknown policy actions fail closed. `OFZ_SERVICES_FILE`, `OFZ_POLICY_CATALOG_FILE`,
@@ -62,15 +66,15 @@ audit history are retained. The old policy is present only as a migration-test i
 ## Assign access
 
 `ReadPolicyRelationships` reads the fully consistent direct relationships for one declared resource and recipient.
-The BFF exposes it through `GET /api/platform/policies?kind=...&id=...&subjectKind=...&subjectId=...`.
+The admin gateway exposes it through `GET /api/platform/policies?workspaceId=...&kind=...&id=...&subjectKind=...&subjectId=...`.
 It requires a registered `platform.administration` service with a configured session gateway, its exact allowed origin,
-an active human administrator session and native `manage_targets` permission. Reads are audited and recheck current
+an active human session and native `manage` permission on the exact `workspaceId`. Reads are audited and recheck current
 authority after the receipt commits. They do not require fresh MFA. `GetPlatformConfiguration` remains metadata-only;
 ordinary registered clients cannot inspect permission assignments through that RPC.
 The Settings editor loads this snapshot before enabling changes and submits only the added/removed relationships
 against its policy version. An unconfirmed write retains the exact request and operation ID until retried.
 
-An authenticated administrator with fresh passkey verification uses `POST /api/platform/policies`. The Ofz RPC is
+An authenticated workspace administrator with fresh passkey verification uses `POST /api/platform/policies` on the admin host. The Ofz RPC is
 `WritePolicyRelationships`. It requires the expected policy version, exact resource, declared relation and subject,
 and an audit reason. Policy commands use a durable intent and native version marker; retries return the original
 receipt. Delegation credentials are delivered only once and never persisted in receipts.
@@ -84,6 +88,7 @@ const response = await fetch('/api/platform/policies', {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({
     operationId: crypto.randomUUID(),
+    workspaceId: '<administrative-workspace-uuid>',
     expectedPolicyVersion: configuration.policyVersion,
     relationships: [
       {

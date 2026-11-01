@@ -414,6 +414,7 @@ message AuditReceipt {
   repeated string platform_resources = 21;
   string platform_client = 22;
   bytes platform_request_hash = 23;
+  string platform_workspace_id = 24;
 }
 
 message ReadAuditResponse {

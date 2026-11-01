@@ -3,7 +3,7 @@ import { toJson } from '@bufbuild/protobuf'
 import { GetExecutionResponseSchema, RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
 import { relayCall } from '@/lib/platform/relay'
 import { relayEnvelope } from '@/lib/platform/relay-envelope'
-import { noStoreHeaders, readTengriJsonBody, tengriRouteError } from '@/lib/tengri/http'
+import { noStoreHeaders, readPlatformJsonBody, platformRouteError } from '@/lib/platform/http'
 import { OfzError } from '@/lib/platform/ofz'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     const delegationId = z.uuid().parse(request.headers.get('x-relay-delegation'))
     const proof = request.headers.get('dpop') || ''
     if (!credential || proof.length > 16_384 || !proof) throw new OfzError(401)
-    const envelope = relayEnvelope.parse(await readTengriJsonBody(request, { maxBytes: 360_000 }))
+    const envelope = relayEnvelope.parse(await readPlatformJsonBody(request, { maxBytes: 360_000 }))
     const input = {
       subject: {
         clientService: 'tengri-web',
@@ -45,6 +45,6 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof z.ZodError)
       return Response.json({ error: 'Invalid Relay agent request' }, { status: 400, headers: noStoreHeaders() })
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
 }

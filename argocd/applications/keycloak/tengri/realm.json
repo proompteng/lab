@@ -299,6 +299,72 @@
       ]
     },
     {
+      "clientId": "platform-admin",
+      "name": "Proompteng workspace administration",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "secret": "",
+      "redirectUris": [
+        "https://admin.proompteng.ai/api/auth/callback"
+      ],
+      "webOrigins": [
+        "https://admin.proompteng.ai"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "pkce.code.challenge.required": "true",
+        "minimum.acr.value": "2",
+        "default.acr.values": "2",
+        "acr.loa.map": "{\"2\":2}",
+        "use.refresh.tokens": "false",
+        "oauth2.device.authorization.grant.enabled": "false"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "acr"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "github-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "github_id",
+            "claim.name": "github_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "verified-provider",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "identity_provider",
+            "claim.name": "identity_provider",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
       "clientId": "account",
       "enabled": false
     },

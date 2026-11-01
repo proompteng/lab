@@ -1,3 +1,4 @@
+import { PlatformRequestError } from '@/lib/platform/http'
 import 'server-only'
 
 import {
@@ -115,12 +116,12 @@ type RuntimeDescriptor = {
   }
 }
 
-export class TengriUnavailableError extends Error {
+export class TengriUnavailableError extends PlatformRequestError {
   readonly status: number
   readonly code?: TengriErrorCode
 
   constructor(message: string, status = 503, code?: TengriErrorCode) {
-    super(message)
+    super(message, status, code)
     this.name = 'TengriUnavailableError'
     this.status = status
     this.code = code

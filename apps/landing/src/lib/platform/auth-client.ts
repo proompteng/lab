@@ -17,7 +17,9 @@ async function authRequest(path: string, operationId?: string) {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: operationId ? { 'x-platform-operation-id': operationId } : {},
+    headers: operationId
+      ? { 'x-platform-operation-id': operationId }
+      : { 'x-platform-return-path': window.location.pathname + window.location.search },
   })
   if (!response.ok) {
     const parsed = errorSchema.safeParse(await response.json().catch(() => null))

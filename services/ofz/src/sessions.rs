@@ -36,6 +36,15 @@ pub async fn begin_sign_in(
     request: BeginSignInRequest,
 ) -> Result<(), Status> {
     let (gateway, _) = registry::configured()?.session_gateway(peer)?;
+    if !request.return_path.starts_with('/')
+        || request.return_path.starts_with("//")
+        || request.return_path.len() > 2048
+        || request.return_path.contains(['\\', '\0', '\r', '\n', '#'])
+    {
+        return Err(Status::invalid_argument(
+            "local sign-in return path required",
+        ));
+    }
     let state_hash = opaque_hash(&request.state)?;
     let binding_hash = opaque_hash(&request.binding)?;
     opaque_hash(&request.verifier)?;
@@ -76,7 +85,7 @@ pub async fn begin_sign_in(
             "sign-in attempt capacity exhausted",
         ));
     }
-    tx.execute("INSERT INTO ofz.sign_in_attempts(gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,ofz.now_ms()+300000)", &[&gateway,&state_hash,&binding_hash,&request.verifier,&request.nonce,&operation]).await.map_err(sql_error)?;
+    tx.execute("INSERT INTO ofz.sign_in_attempts(gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms,return_path) VALUES($1,$2,$3,$4,$5,$6,ofz.now_ms()+300000,$7)", &[&gateway,&state_hash,&binding_hash,&request.verifier,&request.nonce,&operation,&request.return_path]).await.map_err(sql_error)?;
     tx.commit().await.map_err(sql_error)
 }
 
@@ -97,12 +106,13 @@ pub async fn consume_sign_in(
     tx.batch_execute("SET LOCAL synchronous_commit='local'")
         .await
         .map_err(sql_error)?;
-    let row = tx.query_opt("DELETE FROM ofz.sign_in_attempts WHERE gateway_service=$1 AND state_hash=$2 AND binding_hash=$3 AND expires_at_ms>ofz.now_ms() RETURNING verifier,nonce,operation_id", &[&gateway,&state_hash,&binding_hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("sign-in attempt expired or consumed"))?;
+    let row = tx.query_opt("DELETE FROM ofz.sign_in_attempts WHERE gateway_service=$1 AND state_hash=$2 AND binding_hash=$3 AND expires_at_ms>ofz.now_ms() RETURNING verifier,nonce,operation_id,return_path", &[&gateway,&state_hash,&binding_hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("sign-in attempt expired or consumed"))?;
     tx.commit().await.map_err(sql_error)?;
     Ok(ConsumeSignInResponse {
         verifier: row.get(0),
         nonce: row.get(1),
         operation_id: row.get::<_, Uuid>(2).to_string(),
+        return_path: row.get(3),
     })
 }
 

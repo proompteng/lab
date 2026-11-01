@@ -75,3 +75,9 @@ passkey enrollment, fresh verification, numeric identity separation, admission/a
 Real custodian enrollment, HA and deployed identity readback remain separate migration gates.
 Fixture providers may substitute an isolated GitHub HTTP service;
 the production verifier rejects provider endpoint overrides.
+
+The independent admin portal uses client `platform-admin` with only
+`https://admin.proompteng.ai/api/auth/callback` and its exact web origin. Its dedicated client secret is mounted from
+`keycloak-platform-admin`; `PLATFORM_ADMIN_OIDC_CLIENT_SECRET` supplies it to the bootstrap. Bootstrap creates a missing
+reviewed confidential client, verifies its configuration and secret, and preserves all existing users, passkeys and
+broker bindings. The product and admin clients share verified issuer SSO, with separate host-only sessions at Ofz.

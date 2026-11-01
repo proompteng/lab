@@ -1,12 +1,12 @@
 import { relayCall } from '@/lib/platform/relay'
 import { RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
-import { noStoreHeaders, requireSameOriginGet, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
+import { noStoreHeaders, requireSameOriginGet, requirePlatformIdentity, platformRouteError } from '@/lib/platform/http'
 
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
     requireSameOriginGet(request)
-    await requireTengriIdentity(request)
+    await requirePlatformIdentity(request)
     const response = await relayCall(
       RelayService.method.listOperations,
       { clientService: 'tengri-web' },
@@ -30,6 +30,6 @@ export async function GET(request: Request) {
       { headers: noStoreHeaders() },
     )
   } catch (error) {
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
 }

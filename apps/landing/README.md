@@ -53,18 +53,22 @@ Ofz owns five-minute PKCE attempts as well as sessions. Attempts are gateway-sco
 SPIFFE mTLS. Their unlogged table tolerates database failover by discarding unfinished sign-ins; established sessions,
 policies and audits remain durable. The web application holds no database password or database connection.
 
-`/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
-Workspace and Platform open with one row per person and focused add/manage actions. Workspace limits show usage
-beside the configured allowance. Diagnostic grants, ownership transfer and emergency recovery are under Advanced.
-Sign-in and passkey management is a separate disclosure below the access tabs. Audit starts with recent activity and
-keeps receipt IDs inside details.
-The Service access tab starts with registered clients. Choose a service and named resource to load its current
-SpiceDB relationships, then save only changed permissions in one audited command. Platform members can be selected
-under People’s resource permissions; the normal flow does not require SPIFFE IDs or Ofz identity hashes.
-The internal access command API uses a typed `recipient`: `github-login` for a new lookup, or `github-id` for an
-existing immutable roster identity. The former top-level `login` field is removed. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
-portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
-Identity verification appears beside the affected save action only when Ofz requires a fresh passkey check.
+`admin.proompteng.ai` hosts workspace administration. It uses the same web image with `PLATFORM_PORTAL=admin`,
+its own service account, SPIFFE identity, confidential OIDC client and host-only session. It has no Tengri controller,
+Relay executor, database, HMAC or guest credential. The issuer can reuse existing verified passkey SSO across clients;
+Ofz keeps their session authority separate. Step-up returns to the same local page.
+
+The portal's workspace selector controls the visible context. Ofz separately checks the administrator's current role
+for every resource, person, client and activity request. People & access manages workspace membership and prevents
+removing the last active administrator. Integrations enrolls clients and grants named resource operations to workspace
+members, individual people or registered clients. Activity shows changes, execution outcomes and denied access;
+receipt IDs stay inside details. Access changes require a reason and contextual fresh verification. Unconfirmed changes
+retain their exact operation in per-person, per-workspace browser storage until reconciled.
+
+Settings → Privacy & Security contains personal workspace sharing, scoped diagnostics, ownership transfer and passkey
+management. `/access` opens the administration portal. Product policy/quota/global-audit editors and their replaced
+handlers are removed. Settings → Connections records consent to already-approved resource access; it never grants
+permissions. Forms use the shared design components, and dropdowns use `components/platform/settings-select.tsx`.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits

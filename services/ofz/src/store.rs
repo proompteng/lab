@@ -32,6 +32,10 @@ const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
     ),
     (4, include_str!("../migrations/0005_session_gateways.sql")),
     (5, include_str!("../migrations/0006_sign_in_attempts.sql")),
+    (
+        6,
+        include_str!("../migrations/0007_workspace_onboarding.sql"),
+    ),
 ];
 
 fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {
@@ -630,6 +634,7 @@ pub fn receipt(
         platform_resources: Vec::new(),
         platform_client: String::new(),
         platform_request_hash: Vec::new(),
+        platform_workspace_id: String::new(),
     }
 }
 

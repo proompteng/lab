@@ -1,3 +1,5 @@
+import { AdminPage } from '@/components/platform/admin-page'
+import { isAdminPortal } from '@/lib/platform/admin'
 import type { Metadata } from 'next'
 import DesktopHero from '@/components/desktop-hero'
 import DesktopOnboarding from '@/components/tengri/desktop-onboarding'
@@ -43,10 +45,13 @@ const tengriMetadata: Metadata = {
 }
 
 export function generateMetadata(): Metadata {
+  if (isAdminPortal())
+    return { title: 'Workspace administration | Proompteng', robots: { index: false, follow: false } }
   return tengriAvailable() ? tengriMetadata : publicMetadata
 }
 
 export default function Home() {
+  if (isAdminPortal()) return <AdminPage />
   return tengriAvailable() ? <DesktopOnboarding /> : <DesktopHero />
 }
 

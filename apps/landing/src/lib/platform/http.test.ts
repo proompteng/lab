@@ -2,13 +2,13 @@ import { describe, expect, mock, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
 const {
-  MAX_CONCURRENT_TENGRI_ACTION_BODIES,
-  MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT,
-  MAX_TENGRI_ACTION_BODY_BYTES,
-  isTengriRateLimited,
-  readTengriJsonBody,
+  MAX_CONCURRENT_ACTION_BODIES,
+  MAX_CONCURRENT_ACTION_BODIES_PER_SUBJECT,
+  MAX_ACTION_BODY_BYTES,
+  isPlatformRateLimited,
+  readPlatformJsonBody,
   requireSameOrigin,
-  tengriRouteError,
+  platformRouteError,
 } = await import('./http')
 
 const bodyRequest = (body: ReadableStream<Uint8Array>, signal?: AbortSignal) =>
@@ -21,8 +21,8 @@ const bodyRequest = (body: ReadableStream<Uint8Array>, signal?: AbortSignal) =>
 
 const bodySlotState = () =>
   globalThis as typeof globalThis & {
-    tengriActiveActionBodies?: number
-    tengriActiveActionBodiesBySubject?: Map<string, number>
+    platformActiveActionBodies?: number
+    platformActiveActionBodiesBySubject?: Map<string, number>
   }
 
 const pendingBody = (controllers: ReadableStreamDefaultController<Uint8Array>[]) =>
@@ -41,8 +41,8 @@ const jsonBody = () =>
   })
 
 test('preserves the public conversation error code and prevents caching recovery failures', async () => {
-  const { TengriUnavailableError } = await import('./grpc')
-  const response = tengriRouteError(
+  const { TengriUnavailableError } = await import('../tengri/grpc')
+  const response = platformRouteError(
     new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found'),
   )
 
@@ -62,7 +62,7 @@ describe('Tengri BFF request bodies', () => {
       headers: { 'content-type': 'application/json' },
     })
 
-    expect(await readTengriJsonBody(request)).toEqual({ action: 'create-agent', displayName: 'Tengri' })
+    expect(await readPlatformJsonBody(request)).toEqual({ action: 'create-agent', displayName: 'Tengri' })
   })
 
   test('rejects declared and streamed oversized bodies with 413', async () => {
@@ -70,21 +70,21 @@ describe('Tengri BFF request bodies', () => {
       method: 'POST',
       body: '{}',
       headers: {
-        'content-length': String(MAX_TENGRI_ACTION_BODY_BYTES + 1),
+        'content-length': String(MAX_ACTION_BODY_BYTES + 1),
         'content-type': 'application/json',
       },
     })
     const streamed = new Request('https://proompteng.ai/api/tengri', {
       method: 'POST',
-      body: new Uint8Array(MAX_TENGRI_ACTION_BODY_BYTES + 1),
+      body: new Uint8Array(MAX_ACTION_BODY_BYTES + 1),
       headers: { 'content-type': 'application/json' },
     })
 
     for (const request of [declared, streamed]) {
-      const error = await readTengriJsonBody(request).catch((cause: unknown) => cause)
-      const response = tengriRouteError(error)
+      const error = await readPlatformJsonBody(request).catch((cause: unknown) => cause)
+      const response = platformRouteError(error)
       expect(response.status).toBe(413)
-      expect(await response.json()).toEqual({ error: 'Tengri action body is too large' })
+      expect(await response.json()).toEqual({ error: 'Request body is too large' })
     }
   })
 
@@ -94,8 +94,8 @@ describe('Tengri BFF request bodies', () => {
       body: new Uint8Array([0xff]),
       headers: { 'content-type': 'application/json' },
     })
-    const error = await readTengriJsonBody(request).catch((cause: unknown) => cause)
-    const response = tengriRouteError(error)
+    const error = await readPlatformJsonBody(request).catch((cause: unknown) => cause)
+    const response = platformRouteError(error)
 
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Request body is invalid JSON' })
@@ -108,8 +108,8 @@ describe('Tengri BFF request bodies', () => {
         body: new Uint8Array(65537),
         headers: { 'content-type': 'application/json', ...(declared ? { 'content-length': '65537' } : {}) },
       })
-      const error = await readTengriJsonBody(request, { maxBytes: 65536 }).catch((cause: unknown) => cause)
-      expect(tengriRouteError(error).status).toBe(413)
+      const error = await readPlatformJsonBody(request, { maxBytes: 65536 }).catch((cause: unknown) => cause)
+      expect(platformRouteError(error).status).toBe(413)
     }
   })
 
@@ -117,14 +117,14 @@ describe('Tengri BFF request bodies', () => {
     const content = '\u0000'.repeat(1024 * 1024)
     const body = JSON.stringify({ action: 'write-file', agentId: 'agent-test', path: '/workspace/nul.txt', content })
     expect(Buffer.byteLength(body)).toBeGreaterThan(5 * 1024 * 1024)
-    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(MAX_TENGRI_ACTION_BODY_BYTES)
+    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(MAX_ACTION_BODY_BYTES)
 
     const request = new Request('https://proompteng.ai/api/tengri', {
       method: 'POST',
       body,
       headers: { 'content-type': 'application/json' },
     })
-    expect(await readTengriJsonBody(request)).toEqual({
+    expect(await readPlatformJsonBody(request)).toEqual({
       action: 'write-file',
       agentId: 'agent-test',
       path: '/workspace/nul.txt',
@@ -134,7 +134,7 @@ describe('Tengri BFF request bodies', () => {
 
   test('bounds concurrent body memory and releases capacity after parsing', async () => {
     const controllers: ReadableStreamDefaultController<Uint8Array>[] = []
-    const activeParses = Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES }, () => {
+    const activeParses = Array.from({ length: MAX_CONCURRENT_ACTION_BODIES }, () => {
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
           controllers.push(controller)
@@ -144,7 +144,7 @@ describe('Tengri BFF request bodies', () => {
         body,
         headers: new Headers({ 'content-type': 'application/json' }),
       } as Request
-      return readTengriJsonBody(request)
+      return readPlatformJsonBody(request)
     })
 
     const blockedRequest = new Request('https://proompteng.ai/api/tengri', {
@@ -152,20 +152,18 @@ describe('Tengri BFF request bodies', () => {
       body: '{}',
       headers: { 'content-type': 'application/json' },
     })
-    const blockedError = await readTengriJsonBody(blockedRequest).catch((cause: unknown) => cause)
-    const blockedResponse = tengriRouteError(blockedError)
+    const blockedError = await readPlatformJsonBody(blockedRequest).catch((cause: unknown) => cause)
+    const blockedResponse = platformRouteError(blockedError)
     expect(blockedResponse.status).toBe(429)
-    expect(await blockedResponse.json()).toEqual({ error: 'Too many concurrent Tengri action bodies' })
+    expect(await blockedResponse.json()).toEqual({ error: 'Too many concurrent request bodies' })
 
     const encodedBody = new TextEncoder().encode('{}')
     for (const controller of controllers) {
       controller.enqueue(encodedBody)
       controller.close()
     }
-    expect(await Promise.all(activeParses)).toEqual(
-      Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES }, () => ({})),
-    )
-    expect(await readTengriJsonBody(blockedRequest.clone())).toEqual({})
+    expect(await Promise.all(activeParses)).toEqual(Array.from({ length: MAX_CONCURRENT_ACTION_BODIES }, () => ({})))
+    expect(await readPlatformJsonBody(blockedRequest.clone())).toEqual({})
   })
 
   test('enforces an inactivity deadline and releases a subject slot without awaiting hostile cancellation', async () => {
@@ -176,7 +174,7 @@ describe('Tengri BFF request bodies', () => {
         return new Promise<void>(() => {})
       },
     })
-    const pending = readTengriJsonBody(bodyRequest(body), {
+    const pending = readPlatformJsonBody(bodyRequest(body), {
       subject: 'github:body-timeout-test',
       totalTimeoutMs: 100,
       inactivityTimeoutMs: 10,
@@ -188,11 +186,11 @@ describe('Tengri BFF request bodies', () => {
     ])
 
     expect(result).not.toBe(timeoutSentinel)
-    expect(result).toMatchObject({ message: 'Tengri action body timed out', status: 408 })
+    expect(result).toMatchObject({ message: 'Request body timed out', status: 408 })
     expect(cancellations).toBe(1)
-    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
-    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
-    expect(await readTengriJsonBody(bodyRequest(jsonBody()), { subject: 'github:body-timeout-test' })).toEqual({})
+    expect(bodySlotState().platformActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodiesBySubject).toBeUndefined()
+    expect(await readPlatformJsonBody(bodyRequest(jsonBody()), { subject: 'github:body-timeout-test' })).toEqual({})
   })
 
   test('enforces the total deadline even when the body makes progress', async () => {
@@ -206,13 +204,13 @@ describe('Tengri BFF request bodies', () => {
         if (timer !== undefined) clearTimeout(timer)
       },
     })
-    const error = await readTengriJsonBody(bodyRequest(body), {
+    const error = await readPlatformJsonBody(bodyRequest(body), {
       totalTimeoutMs: 10,
       inactivityTimeoutMs: 100,
     }).catch((cause: unknown) => cause)
 
-    expect(error).toMatchObject({ message: 'Tengri action body timed out', status: 408 })
-    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
+    expect(error).toMatchObject({ message: 'Request body timed out', status: 408 })
+    expect(bodySlotState().platformActiveActionBodies).toBeUndefined()
   })
 
   test('cancels an in-flight reader when the connected request signal aborts', async () => {
@@ -224,7 +222,7 @@ describe('Tengri BFF request bodies', () => {
         return new Promise<void>(() => {})
       },
     })
-    const pending = readTengriJsonBody(bodyRequest(body, controller.signal), {
+    const pending = readPlatformJsonBody(bodyRequest(body, controller.signal), {
       subject: 'github:body-abort-test',
       totalTimeoutMs: 100,
       inactivityTimeoutMs: 100,
@@ -235,11 +233,11 @@ describe('Tengri BFF request bodies', () => {
       new Promise<symbol>((resolve) => setTimeout(() => resolve(Symbol('timeout')), 500)),
     ])
 
-    expect(error).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
-    expect(tengriRouteError(error).status).toBe(499)
+    expect(error).toMatchObject({ name: 'AbortError', message: 'Request was canceled' })
+    expect(platformRouteError(error).status).toBe(499)
     expect(cancellations).toBe(1)
-    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
-    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodiesBySubject).toBeUndefined()
   })
 
   test('returns capacity when getReader fails after slot acquisition', async () => {
@@ -253,35 +251,35 @@ describe('Tengri BFF request bodies', () => {
       headers: new Headers({ 'content-type': 'application/json' }),
       signal: new AbortController().signal,
     } as unknown as Request
-    const error = await readTengriJsonBody(request, { subject: 'github:reader-failure-test' }).catch(
+    const error = await readPlatformJsonBody(request, { subject: 'github:reader-failure-test' }).catch(
       (cause: unknown) => cause,
     )
 
     expect(error).toEqual(new Error('reader setup failed'))
-    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
-    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodiesBySubject).toBeUndefined()
   })
 
   test('limits one authenticated subject while retaining the global body bound', async () => {
     const controllers: ReadableStreamDefaultController<Uint8Array>[] = []
     const subject = 'github:body-fairness-test'
-    const activeForSubject = Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT }, () =>
-      readTengriJsonBody(bodyRequest(pendingBody(controllers)), { subject }),
+    const activeForSubject = Array.from({ length: MAX_CONCURRENT_ACTION_BODIES_PER_SUBJECT }, () =>
+      readPlatformJsonBody(bodyRequest(pendingBody(controllers)), { subject }),
     )
-    const sameSubjectError = await readTengriJsonBody(bodyRequest(new ReadableStream()), { subject }).catch(
+    const sameSubjectError = await readPlatformJsonBody(bodyRequest(new ReadableStream()), { subject }).catch(
       (cause: unknown) => cause,
     )
-    expect(tengriRouteError(sameSubjectError).status).toBe(429)
+    expect(platformRouteError(sameSubjectError).status).toBe(429)
 
     const otherSubject = 'github:body-other-subject-test'
     const activeForOtherSubject = Array.from(
-      { length: MAX_CONCURRENT_TENGRI_ACTION_BODIES - MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT },
-      () => readTengriJsonBody(bodyRequest(pendingBody(controllers)), { subject: otherSubject }),
+      { length: MAX_CONCURRENT_ACTION_BODIES - MAX_CONCURRENT_ACTION_BODIES_PER_SUBJECT },
+      () => readPlatformJsonBody(bodyRequest(pendingBody(controllers)), { subject: otherSubject }),
     )
-    const globalError = await readTengriJsonBody(bodyRequest(new ReadableStream()), {
+    const globalError = await readPlatformJsonBody(bodyRequest(new ReadableStream()), {
       subject: 'github:body-third-test',
     }).catch((cause: unknown) => cause)
-    expect(tengriRouteError(globalError).status).toBe(429)
+    expect(platformRouteError(globalError).status).toBe(429)
 
     const encodedBody = new TextEncoder().encode('{}')
     for (const streamController of controllers) {
@@ -289,8 +287,8 @@ describe('Tengri BFF request bodies', () => {
       streamController.close()
     }
     await Promise.all([...activeForSubject, ...activeForOtherSubject])
-    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
-    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().platformActiveActionBodiesBySubject).toBeUndefined()
   })
 
   test('requires JSON and rejects cross-origin state-changing requests', async () => {
@@ -300,8 +298,8 @@ describe('Tengri BFF request bodies', () => {
       body: '{}',
       headers: { 'content-type': 'text/plain' },
     })
-    const typeError = await readTengriJsonBody(wrongType).catch((cause: unknown) => cause)
-    expect(tengriRouteError(typeError).status).toBe(415)
+    const typeError = await readPlatformJsonBody(wrongType).catch((cause: unknown) => cause)
+    expect(platformRouteError(typeError).status).toBe(415)
 
     const sameOrigin = new Request('https://proompteng.ai/api/tengri', {
       method: 'POST',
@@ -322,7 +320,7 @@ describe('Tengri BFF request bodies', () => {
           return cause
         }
       })()
-      expect(tengriRouteError(error).status).toBe(403)
+      expect(platformRouteError(error).status).toBe(403)
     }
   })
 })
@@ -330,20 +328,20 @@ describe('Tengri BFF request bodies', () => {
 describe('Tengri BFF request throttling', () => {
   test('enforces the authenticated subject bucket without trusting caller IP headers', () => {
     const state = globalThis as typeof globalThis & {
-      tengriRateSweepAt?: number
-      tengriRateWindows?: Map<string, { count: number; resetsAt: number }>
+      platformRateSweepAt?: number
+      platformRateWindows?: Map<string, { count: number; resetsAt: number }>
     }
-    delete state.tengriRateSweepAt
-    delete state.tengriRateWindows
+    delete state.platformRateSweepAt
+    delete state.platformRateWindows
     for (let index = 0; index < 120; index += 1) {
-      expect(isTengriRateLimited('github:rate-test')).toBe(false)
+      expect(isPlatformRateLimited('github:rate-test')).toBe(false)
     }
-    expect(isTengriRateLimited('github:rate-test')).toBe(true)
-    const windows = Reflect.get(state, 'tengriRateWindows') as
+    expect(isPlatformRateLimited('github:rate-test')).toBe(true)
+    const windows = Reflect.get(state, 'platformRateWindows') as
       | Map<string, { count: number; resetsAt: number }>
       | undefined
     expect([...(windows?.keys() ?? [])]).toEqual(['subject:github:rate-test'])
-    delete state.tengriRateSweepAt
-    delete state.tengriRateWindows
+    delete state.platformRateSweepAt
+    delete state.platformRateWindows
   })
 })

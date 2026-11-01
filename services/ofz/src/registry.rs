@@ -7,6 +7,8 @@ use tonic::Status;
 #[serde(deny_unknown_fields)]
 pub struct ServiceRegistration {
     pub id: String,
+    #[serde(default)]
+    pub display_name: String,
     pub identities: Vec<String>,
     pub roles: Vec<String>,
     #[serde(default)]
@@ -25,6 +27,13 @@ pub struct SessionGateway {
 }
 
 impl ServiceRegistration {
+    pub fn name(&self) -> &str {
+        if self.display_name.is_empty() {
+            &self.id
+        } else {
+            &self.display_name
+        }
+    }
     pub fn allows_origin(&self, origin: &str) -> bool {
         self.session_gateway
             .as_ref()
@@ -45,6 +54,26 @@ pub struct BindingPolicy {
 pub struct Registry {
     pub version: u32,
     pub services: Vec<ServiceRegistration>,
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceRegistration>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRegistration {
+    pub id: String,
+    pub name: String,
+    pub resources: Vec<WorkspaceResource>,
+    pub initial_clients: Vec<String>,
+    pub import_platform_members: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceResource {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
 }
 
 pub fn identifier(value: &str) -> bool {
@@ -76,6 +105,7 @@ impl Registry {
         let mut gateway_audiences = BTreeSet::new();
         for service in &registry.services {
             if !identifier(&service.id)
+                || (!service.display_name.is_empty() && !display_name(&service.display_name))
                 || !ids.insert(&service.id)
                 || service.identities.is_empty()
                 || service.identities.len() > 16
@@ -157,6 +187,52 @@ impl Registry {
                 }
             }
         }
+        if registry.workspaces.len() > 64 {
+            return Err(Status::invalid_argument(
+                "workspace registry exceeds its limit",
+            ));
+        }
+        let mut workspaces = BTreeSet::new();
+        let mut resources = BTreeSet::new();
+        for workspace in &registry.workspaces {
+            if !crate::policy::canonical_uuid(&workspace.id)
+                || !workspaces.insert(&workspace.id)
+                || !display_name(&workspace.name)
+                || workspace.resources.len() > 256
+                || workspace.initial_clients.len() > 128
+            {
+                return Err(Status::invalid_argument("invalid registered workspace"));
+            }
+            let mut clients = BTreeSet::new();
+            for client in &workspace.initial_clients {
+                if !clients.insert(client)
+                    || !registry.by_id(client).is_some_and(|service| {
+                        service.roles.iter().any(|role| role == "relay.client")
+                    })
+                {
+                    return Err(Status::invalid_argument(
+                        "registered workspace client required",
+                    ));
+                }
+            }
+            for resource in &workspace.resources {
+                if !identifier(&resource.kind)
+                    || !resource.kind.contains('.')
+                    || resource.id.is_empty()
+                    || resource.id.len() > 256
+                    || !resource
+                        .id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/_|-=+".contains(&b))
+                    || !display_name(&resource.name)
+                    || !resources.insert((&resource.kind, &resource.id))
+                {
+                    return Err(Status::invalid_argument(
+                        "resource must belong to exactly one workspace",
+                    ));
+                }
+            }
+        }
         Ok(registry)
     }
 
@@ -178,6 +254,29 @@ impl Registry {
         self.services.iter().find(|service| service.id == id)
     }
 
+    pub fn workspace(&self, id: &str) -> Result<&WorkspaceRegistration, Status> {
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.id == id)
+            .ok_or_else(|| Status::not_found("workspace unavailable"))
+    }
+
+    pub fn resource_workspace(
+        &self,
+        kind: &str,
+        id: &str,
+    ) -> Result<&WorkspaceRegistration, Status> {
+        self.workspaces
+            .iter()
+            .find(|workspace| {
+                workspace
+                    .resources
+                    .iter()
+                    .any(|resource| resource.kind == kind && resource.id == id)
+            })
+            .ok_or_else(|| Status::permission_denied("resource is not registered to a workspace"))
+    }
+
     pub fn session_gateway(&self, peer: &str) -> Result<(&str, &SessionGateway), Status> {
         let service = self
             .service(peer)
@@ -194,6 +293,10 @@ impl Registry {
             .iter()
             .flat_map(|service| service.identities.iter().map(String::as_str))
     }
+}
+
+fn display_name(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
 }
 
 pub fn configured() -> Result<&'static Registry, Status> {

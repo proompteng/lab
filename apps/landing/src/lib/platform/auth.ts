@@ -133,6 +133,7 @@ export async function handlePlatformAuth(request: Request) {
           verifier,
           nonce,
           operationId: randomUUID(),
+          returnPath: request.headers.get('x-platform-return-path') || '/',
         })
         const authorize = new URL(`${env.issuer}/protocol/openid-connect/auth`)
         authorize.search = new URLSearchParams({
@@ -197,7 +198,7 @@ export async function handlePlatformAuth(request: Request) {
           setCookie(SESSION_COOKIE, session.credential, Number(session.expiresAtUnixMs - BigInt(Date.now())) / 1000),
         )
         responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, '', 0))
-        responseHeaders.set('Location', env.base.origin + '/')
+        responseHeaders.set('Location', env.base.origin + attempt.returnPath)
         return new Response(null, { status: 303, headers: responseHeaders })
       }
       case 'POST /api/auth/logout': {

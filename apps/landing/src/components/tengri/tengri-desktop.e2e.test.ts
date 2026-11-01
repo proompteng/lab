@@ -2,7 +2,6 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/connections'
-import { policyWriteSchema } from '@/lib/platform/policies'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
@@ -6347,61 +6346,6 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await expect(settings.getByRole('alert')).toHaveCount(0)
 })
 
-test('switches access tabs immediately and supports keyboard selection while loading', async ({ page }, testInfo) => {
-  await mockTengri(page)
-  const platformStarted = Promise.withResolvers<void>()
-  const releasePlatform = Promise.withResolvers<void>()
-  await page.route('**/api/tengri/access?**', async (route) => {
-    const view = new URL(route.request().url()).searchParams.get('view')
-    if (view === 'platform') {
-      platformStarted.resolve()
-      await releasePlatform.promise
-    }
-    await route.fulfill({
-      json:
-        view === 'audit'
-          ? { receipts: [] }
-          : {
-              version: '1',
-              entries: [
-                { subjectId: `${view}-identity`, displayName: `${view}-identity`, githubId: '123', role: 'viewer' },
-              ],
-            },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window' })
-  await openSettingsPane(settings, 'Privacy & Security')
-  const access = settings.getByRole('region', { name: 'Access administration' })
-  await expect(access.getByText('workspace-identity', { exact: true })).toBeVisible()
-  await access.getByText('Platform', { exact: true }).click()
-  await platformStarted.promise
-  await expect(access.getByRole('status', { name: 'Loading Platform access' })).toBeVisible()
-  await expect(access.getByText('workspace-identity', { exact: true })).toHaveCount(0)
-  releasePlatform.resolve()
-  const platform = access.getByRole('tab', { name: 'Platform', exact: true })
-  await expect(platform).toHaveAttribute('aria-selected', 'true')
-  await expect
-    .poll(async () => {
-      const backgrounds = await access
-        .getByRole('tab')
-        .evaluateAll((tabs) => tabs.map((tab) => getComputedStyle(tab).backgroundColor))
-      return backgrounds[0] !== backgrounds[1]
-    })
-    .toBe(true)
-  await expect(access.getByRole('tabpanel', { name: 'Platform', exact: true })).toContainText('platform-identity')
-  await page.screenshot({ path: testInfo.outputPath('access-tabs.png'), animations: 'disabled' })
-  await platform.press('ArrowRight')
-  const audit = access.getByRole('tab', { name: 'Audit', exact: true })
-  await expect(audit).toBeFocused()
-  await expect(audit).toHaveAttribute('aria-selected', 'true')
-  await expect(access.getByRole('tabpanel', { name: 'Audit', exact: true })).toContainText('No activity to show.')
-  await audit.press('Home')
-  await expect(access.getByRole('tab', { name: 'Workspace', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect(access.getByRole('tabpanel', { name: 'Workspace', exact: true })).toContainText('workspace-identity')
-})
-
 test('cancels an obsolete access refresh when another tab is selected', async ({ page }) => {
   await mockTengri(page)
   const refreshStarted = Promise.withResolvers<void>()
@@ -11193,292 +11137,6 @@ for (const { verificationStatus, failedStart } of [
   })
 }
 
-test('edits saved service permissions and preserves the exact pending command', async ({ page }) => {
-  await mockTengri(page)
-  const writes: Record<string, unknown>[] = []
-  let version = 20
-  let lostResponse = true
-  let requireVerification = false
-  let saved = ['can_inspect']
-  const workload = 'spiffe://proompteng.ai/ns/opencode/sa/opencode'
-  await page.route('**/api/tengri/access**', (route) =>
-    route.fulfill({
-      json: {
-        version: '20',
-        entries: [{ subjectId: 'fixture-person', githubId: '123', displayName: 'Alex', role: 'member' }],
-      },
-    }),
-  )
-  await page.route('**/api/platform/connectors', (route) =>
-    route.fulfill({
-      json: {
-        operations: [
-          {
-            connectorId: 'fixture',
-            name: 'inspect',
-            action: 'fixture.inspect',
-            description: 'Inspect a fixture resource',
-            readOnly: true,
-            targets: [{ name: 'Tenant A', resource: { kind: 'fixture.service', id: 'fixture/tenant-a' } }],
-          },
-        ],
-      },
-    }),
-  )
-  await page.route('**/api/platform/policies**', async (route) => {
-    if (route.request().method() === 'POST') {
-      const write = policyWriteSchema.parse(route.request().postDataJSON())
-      writes.push(write)
-      if (requireVerification) {
-        await route.fulfill({ status: 428, json: { error: 'Fresh verification required' } })
-        return
-      }
-      if (lostResponse) {
-        lostResponse = false
-        await route.fulfill({ status: 503, json: { error: 'The policy result could not be confirmed.' } })
-        return
-      }
-      for (const change of write.relationships)
-        saved = change.enabled
-          ? [...new Set([...saved, change.relation])]
-          : saved.filter((name) => name !== change.relation)
-      version += 1
-      await route.fulfill({
-        json: { decision: { allowed: true, auditReceiptId: '55555555-5555-4555-8555-555555555555' } },
-      })
-      return
-    }
-    const query = new URL(route.request().url()).searchParams
-    if (query.size) {
-      expect(query.get('subjectId')).toBe(workload)
-      expect(query.get('id')).toBe('fixture/tenant-a')
-      await route.fulfill({ json: { policyVersion: String(version), relations: saved } })
-      return
-    }
-    await route.fulfill({
-      json: {
-        policyVersion: String(version),
-        policyCatalogJson: JSON.stringify({
-          version: 1,
-          resources: [
-            {
-              kind: 'fixture.service',
-              relations: [
-                { name: 'can_inspect', subjects: ['human', 'workload'] },
-                { name: 'can_list', subjects: ['human', 'workload'] },
-              ],
-            },
-          ],
-        }),
-        relayClients: [{ id: 'opencode', identities: [workload] }],
-      },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
-  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
-  await expect(settings.getByRole('button', { name: /Verify (passkey|identity)/ })).toHaveCount(0)
-  await expect(policies.getByRole('heading', { name: 'Service access', exact: true })).toBeVisible()
-  await expect(policies.getByRole('combobox')).toHaveCount(0)
-  await policies.getByRole('button', { name: 'Manage OpenCode', exact: true }).click()
-  await expect(policies.getByRole('heading', { name: 'OpenCode', exact: true })).toBeFocused()
-  await expect(policies.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
-  const resource = policies.getByLabel('Resource', { exact: true })
-  await resource.press('ArrowDown')
-  await expect(page.getByRole('listbox')).toBeVisible()
-  const menuStyle = await page.getByRole('listbox').evaluate((element) => {
-    const style = getComputedStyle(element.closest('[data-slot="select-content"]') ?? element)
-    const context = document.createElement('canvas').getContext('2d')
-    if (!context) throw new Error('A canvas is required to normalize computed colors')
-    const rgb = (color: string) => {
-      context.fillStyle = color
-      context.fillRect(0, 0, 1, 1)
-      return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
-    }
-    return { background: rgb(style.backgroundColor), color: rgb(style.color), font: style.fontFamily }
-  })
-  expect(menuStyle.background).toEqual([24, 24, 27])
-  expect(menuStyle.color).toEqual([244, 244, 245])
-  expect(menuStyle.font).toMatch(/geist/i)
-  await page.getByRole('option', { name: 'Tenant A · fixture', exact: true }).click()
-  await expect(policies.getByRole('checkbox', { name: 'Can inspect', exact: true })).toBeChecked()
-  await expect(policies.getByRole('checkbox', { name: 'Can list', exact: true })).not.toBeChecked()
-  await policies.getByRole('checkbox', { name: 'Can list', exact: true }).check()
-  await policies.getByLabel('Reason for change', { exact: true }).fill('Allow the standalone client to list Tenant A')
-  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
-  await expect(policies.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled()
-  await settings.getByRole('tab', { name: 'Audit', exact: true }).click()
-  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
-  await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
-  await policies.getByRole('button', { name: 'Retry exact change', exact: true }).click()
-  await expect(policies.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible()
-  expect(writes).toHaveLength(2)
-  expect(writes[1]).toEqual(writes[0])
-  expect(writes[0]).toMatchObject({
-    expectedPolicyVersion: '20',
-    relationships: [
-      {
-        resource: { kind: 'fixture.service', id: 'fixture/tenant-a' },
-        relation: 'can_list',
-        subjectKind: 'workload',
-        subjectId: workload,
-        enabled: true,
-      },
-    ],
-  })
-  await expect(policies.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
-  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).uncheck()
-  await policies.getByLabel('Reason for change', { exact: true }).fill('Remove inspection while retaining list access')
-  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect.poll(() => writes.length).toBe(3)
-  expect(writes[2]).toMatchObject({
-    expectedPolicyVersion: '21',
-    relationships: [{ relation: 'can_inspect', enabled: false }],
-  })
-  await expect(policies.getByRole('checkbox', { name: 'Can list', exact: true })).toBeChecked()
-  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service access"]').analyze()
-  expect(accessibility.violations).toEqual([])
-  await settings.getByRole('button', { name: 'Maximize Settings', exact: true }).click()
-  await settings.screenshot({ path: test.info().outputPath('services-desktop.png') })
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect
-    .poll(() => policies.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
-    .toBeLessThanOrEqual(1)
-  await settings.screenshot({ path: test.info().outputPath('services-mobile.png') })
-  requireVerification = true
-  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).check()
-  await policies.getByLabel('Reason for change', { exact: true }).fill('Verify only when saving a privileged change')
-  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect(policies.getByRole('alert')).toHaveText('Verify your identity to save this change.')
-  await expect(policies.locator('form').getByRole('button', { name: 'Verify identity', exact: true })).toBeVisible()
-  expect(writes).toHaveLength(4)
-})
-
-test('access tabs present people, limits and recent activity before focused editors', async ({ page }) => {
-  await mockTengri(page)
-  const posts: Record<string, unknown>[] = []
-  await page.route('**/api/tengri/access**', async (route) => {
-    if (route.request().method() === 'POST') {
-      posts.push(route.request().postDataJSON())
-      await route.fulfill({
-        json: {
-          receipt: {
-            operationId: route.request().postDataJSON().operationId,
-            version: '21',
-            auditReceiptId: 'fixture-audit',
-          },
-        },
-      })
-      return
-    }
-    const view = new URL(route.request().url()).searchParams.get('view')
-    await route.fulfill({
-      json:
-        view === 'audit'
-          ? {
-              receipts: [
-                {
-                  id: 'receipt-id',
-                  sequence: '200',
-                  createdAtUnixMs: '1793484000000',
-                  action: 'ACTION_POLICY_COMMAND',
-                  allowed: true,
-                  platformAction: 'ofz.relationships.write',
-                  reason: 'Allow namespace reads',
-                  operationId: 'operation-id',
-                },
-              ],
-            }
-          : {
-              version: '20',
-              workspaceState: 'active',
-              entries: [
-                {
-                  subjectId: 'alex',
-                  githubId: '123',
-                  displayName: 'Alex Chen',
-                  role: view === 'platform' ? 'member' : 'viewer',
-                },
-                {
-                  subjectId: 'alex',
-                  githubId: '123',
-                  displayName: 'Alex Chen',
-                  role: view === 'platform' ? 'administrator' : 'developer',
-                },
-              ],
-              quotas: [
-                {
-                  humanId: 'alex',
-                  totalWorkspaces: 2,
-                  activeWorkspaces: 1,
-                  retainedBytes: '68719476736',
-                  usedWorkspaces: 1,
-                  usedActive: 1,
-                  usedBytes: '34359738368',
-                },
-              ],
-            },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  const access = settings.getByRole('region', { name: 'Access administration', exact: true })
-  await expect(access.getByRole('link', { name: 'Alex Chen', exact: true })).toHaveCount(1)
-  await expect(access.getByLabel('GitHub username', { exact: true })).toHaveCount(0)
-  await expect(access.getByText('Advanced access & recovery', { exact: true })).toBeVisible()
-  await expect(access.getByRole('button', { name: 'Create diagnostic grant', exact: true })).toBeHidden()
-  await access.getByRole('button', { name: 'Add collaborator', exact: true }).click()
-  await expect(access.getByRole('heading', { name: 'Collaborator access', exact: true })).toBeFocused()
-  await expect(access.getByLabel('GitHub username', { exact: true })).toBeVisible()
-  await access.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(access.getByRole('button', { name: 'Add collaborator', exact: true })).toBeFocused()
-  await settings.screenshot({ path: test.info().outputPath('workspace-desktop.png') })
-  await access.getByRole('tab', { name: 'Platform', exact: true }).click()
-  await expect(access.getByRole('link', { name: 'Alex Chen', exact: true })).toHaveCount(1)
-  await expect(access.getByRole('region', { name: 'Workspace limits', exact: true })).toContainText('Storage (GiB)')
-  await settings.screenshot({ path: test.info().outputPath('platform-desktop.png') })
-  await access.getByRole('button', { name: 'Adjust limits for GitHub #123', exact: true }).click()
-  await expect(access.getByLabel('GitHub username', { exact: true })).toHaveCount(0)
-  await access.getByLabel('Total workspaces', { exact: true }).fill('3')
-  await access.getByLabel('Reason', { exact: true }).fill('Adjust the existing member workspace allowance')
-  await access.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect.poll(() => posts.length).toBe(1)
-  expect(posts[0]).toMatchObject({
-    action: 'quota',
-    recipient: { kind: 'github-id', githubId: '123' },
-    total: 3,
-    active: 1,
-    retainedGiB: 64,
-  })
-  await access.getByRole('tab', { name: 'Audit', exact: true }).click()
-  await expect(access.getByText('Ofz relationships write', { exact: true })).toBeVisible()
-  await expect(access.getByText('receipt-id', { exact: true })).toBeHidden()
-  await access.getByText('Ofz relationships write', { exact: true }).click()
-  await expect(access.getByText('receipt-id', { exact: true })).toBeVisible()
-  await settings.screenshot({ path: test.info().outputPath('audit-desktop.png') })
-  for (const view of ['Workspace', 'Platform', 'Audit'] as const) {
-    await page.setViewportSize({ width: 390, height: 844 })
-    await access.getByRole('tab', { name: view, exact: true }).click()
-    await expect(access.getByRole('heading', { level: 2 })).toBeVisible()
-    await expect
-      .poll(() => access.evaluate((element) => element.scrollWidth - element.clientWidth))
-      .toBeLessThanOrEqual(1)
-    expect(
-      (await new AxeBuilder({ page }).include('[aria-label="Access administration"]').analyze()).violations,
-    ).toEqual([])
-    await settings.screenshot({ path: test.info().outputPath(view.toLowerCase() + '-mobile.png') })
-  }
-  await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeHidden()
-  await settings.getByText('Sign-in & passkeys', { exact: true }).click()
-  await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeVisible()
-})
-
 test('managing a Viewer preserves their exact saved scope and identifies diagnostic agents', async ({ page }) => {
   await mockTengri(page)
   const writes: Record<string, unknown>[] = []
@@ -11557,112 +11215,6 @@ test('managing a Viewer preserves their exact saved scope and identifies diagnos
   await expect(
     access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
   ).not.toBeChecked()
-})
-
-test('service resource permissions can be managed for a person on a later roster page', async ({ page }) => {
-  await mockTengri(page)
-  await page.route('**/api/tengri/access**', (route) => {
-    const later = new URL(route.request().url()).searchParams.get('cursor') === 'next-people'
-    return route.fulfill({
-      json: later
-        ? {
-            version: '20',
-            entries: [{ subjectId: 'later-person', githubId: '456', displayName: 'Later Member', role: 'member' }],
-          }
-        : {
-            version: '20',
-            entries: [{ subjectId: 'first-person', githubId: '123', displayName: 'First Member', role: 'member' }],
-            cursor: 'next-people',
-          },
-    })
-  })
-  await page.route('**/api/platform/connectors', (route) =>
-    route.fulfill({
-      json: {
-        operations: [
-          {
-            connectorId: 'fixture',
-            name: 'read',
-            description: 'Read a resource',
-            action: 'fixture.read',
-            readOnly: true,
-            targets: [{ name: 'Tenant A', resource: { kind: 'fixture.service', id: 'fixture/tenant-a' } }],
-          },
-        ],
-      },
-    }),
-  )
-  await page.route('**/api/platform/policies**', (route) => {
-    const query = new URL(route.request().url()).searchParams
-    if (query.size) {
-      expect(query.get('subjectId')).toBe('later-person')
-      expect(query.get('subjectKind')).toBe('human')
-      return route.fulfill({ json: { policyVersion: '20', relations: ['reader'] } })
-    }
-    return route.fulfill({
-      json: {
-        policyVersion: '20',
-        policyCatalogJson: JSON.stringify({
-          version: 1,
-          resources: [{ kind: 'fixture.service', relations: [{ name: 'reader', subjects: ['human'] }] }],
-        }),
-        relayClients: [],
-      },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
-  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
-  await policies.getByText('People’s resource permissions', { exact: true }).click()
-  await expect(policies.getByRole('button', { name: 'Later Member', exact: true })).toHaveCount(0)
-  await policies.getByRole('button', { name: 'More people', exact: true }).click()
-  await policies.getByRole('button', { name: 'Later Member', exact: true }).click()
-  await selectOption(page, policies.getByLabel('Resource', { exact: true }), 'Tenant A · fixture')
-  await expect(policies.getByRole('checkbox', { name: 'Reader', exact: true })).toBeChecked()
-})
-
-test('editing a platform role does not validate unrelated fractional GiB quota fields', async ({ page }) => {
-  await mockTengri(page)
-  const writes: Record<string, unknown>[] = []
-  await page.route('**/api/tengri/access**', (route) => {
-    if (route.request().method() === 'POST') {
-      writes.push(route.request().postDataJSON())
-      return route.fulfill({
-        json: {
-          receipt: {
-            operationId: route.request().postDataJSON().operationId,
-            version: '21',
-            auditReceiptId: 'fixture-audit',
-          },
-        },
-      })
-    }
-    return route.fulfill({
-      json: {
-        version: '20',
-        entries: [{ subjectId: 'member-person', githubId: '123', displayName: 'Alex Chen', role: 'member' }],
-        quotas: [{ humanId: 'member-person', totalWorkspaces: 2, activeWorkspaces: 1, retainedBytes: '536870912' }],
-      },
-    })
-  })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  await openSettingsPane(settings, 'Privacy & Security')
-  await settings.getByRole('tab', { name: 'Platform', exact: true }).click()
-  await settings.getByRole('button', { name: 'Manage Alex Chen member', exact: true }).click()
-  await settings.getByLabel('Reason', { exact: true }).fill('Confirm this role without changing storage limits')
-  await settings.getByRole('button', { name: 'Save changes', exact: true }).click()
-  await expect.poll(() => writes.length).toBe(1)
-  expect(writes[0]).toMatchObject({
-    action: 'membership',
-    recipient: { kind: 'github-id', githubId: '123' },
-    role: 'member',
-    enabled: true,
-  })
 })
 
 test('returns from phone layout without shrinking saved desktop windows', async ({ page }) => {
@@ -11953,3 +11505,29 @@ for (const mode of ['idle', 'current', 'other', 'closed'] as const) {
     else expect(reconciliations).toBe(baseline)
   })
 }
+
+test('keeps workspace sharing in Tengri and directs administration to its own portal', async ({ page }) => {
+  await mockTengri(page)
+  const reads: string[] = []
+  await page.route('**/api/tengri/access**', async (route) => {
+    reads.push(route.request().url())
+    await route.fulfill({ json: { version: '20', workspaceState: 'active', entries: [] } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const sharing = settings.getByRole('region', { name: 'Access administration', exact: true })
+  await expect(sharing.getByRole('heading', { name: 'Workspace access', exact: true })).toBeVisible()
+  await expect(sharing.getByRole('button', { name: 'Add collaborator', exact: true })).toBeVisible()
+  await expect(sharing.getByRole('tab')).toHaveCount(0)
+  await expect(sharing.getByRole('link', { name: 'Workspace administration', exact: true })).toHaveAttribute(
+    'href',
+    'https://admin.proompteng.ai/',
+  )
+  expect(reads.length).toBeGreaterThan(0)
+  for (const read of reads) {
+    expect(new URL(read).searchParams.get('view')).toBe('workspace')
+    expect(new URL(read).searchParams.get('workspace')).toBeTruthy()
+  }
+})

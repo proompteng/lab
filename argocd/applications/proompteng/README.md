@@ -13,3 +13,10 @@ TLS verification of `auth.proompteng.ai` and the exact issuer `https://auth.proo
 
 Keep the application release coordinated with the reviewed Ofz and controller configuration. Verify real GitHub broker
 sign-in, passkey enrollment and fresh workspace creation through `https://proompteng.ai/`; HTTP readiness is insufficient.
+
+The same Kargo image also runs two independent `platform-admin` replicas for `admin.proompteng.ai`. They use service
+account `platform-admin`, a separately enrolled SPIFFE identity and the `platform-admin` OIDC client. The namespace-local
+`platform-admin-oidc-client` Secret matches Keycloak's `keycloak-platform-admin` Secret. They contain one dedicated
+client credential; existing broker and Tengri client credentials are unchanged. The portal mounts no controller HMAC,
+Tengri endpoint, native key or database credential. Its network policy permits Ofz, identity/public HTTPS, DNS and existing
+observability paths. SPIRE registration and the realm/client bootstrap must reconcile before live portal qualification.

@@ -1,5 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
@@ -78,7 +78,9 @@ identityTest(
     const fixture = await createSpiffeFixture()
     cleanups.push(() => fixture.close())
     const ofz = fixture.certificate('ofz', 'spiffe://proompteng.ai/ns/ofz/sa/ofz-api')
-    fixture.include(ofz.svid, fixture.peer.svid)
+    const adminPeer = 'spiffe://proompteng.ai/ns/proompteng/sa/platform-admin'
+    const adminSvid = fixture.certificate('platform-admin', adminPeer)
+    fixture.include(ofz.svid, fixture.peer.svid, adminSvid.svid)
     const settings = { ...process.env }
     cleanups.push(() => {
       for (const key of Object.keys(process.env)) if (!(key in settings)) delete process.env[key]
@@ -280,7 +282,7 @@ identityTest(
       return response
     }
     await nativeCall('/v1/schema/write', { schema: readFileSync(path.join(root, 'services/ofz/schema.zed'), 'utf8') })
-    const humans = ['1', '2'].map((githubId) => ({
+    const humans = ['1', '2', '3'].map((githubId) => ({
       githubId,
       humanId: createHash('sha256').update(`github:${githubId}`).digest('hex'),
     }))
@@ -295,11 +297,12 @@ identityTest(
     })
     for (const human of humans) {
       await control.query('INSERT INTO ofz.humans VALUES($1,$2)', [human.humanId, human.githubId])
-      await control.query('INSERT INTO ofz.memberships(human_id,role) VALUES($1,1),($1,2)', [human.humanId])
-      updates.push(
-        relation('platform', 'lab', 'member', 'human', human.humanId),
-        relation('platform', 'lab', 'administrator', 'human', human.humanId),
-      )
+      await control.query('INSERT INTO ofz.memberships(human_id,role) VALUES($1,1)', [human.humanId])
+      updates.push(relation('platform', 'lab', 'member', 'human', human.humanId))
+      if (human.githubId !== '3') {
+        await control.query('INSERT INTO ofz.memberships(human_id,role) VALUES($1,2)', [human.humanId])
+        updates.push(relation('platform', 'lab', 'administrator', 'human', human.humanId))
+      }
     }
     for (const [role, id] of [
       ['bff', fixture.ownId],
@@ -470,9 +473,9 @@ identityTest(
     void mock.module('../platform/ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
     const { getPlatformIdentity } = await import('../platform/auth')
     const authRoute = await import('@/app/api/auth/[...all]/route')
-    const { verifyGithubIdentity } = await import('./github-identity')
+    const { verifyGithubIdentity } = await import('../platform/github-identity')
     let identityLookups = 0
-    void mock.module('./github-identity', () => ({
+    void mock.module('../platform/github-identity', () => ({
       resolveGithubIdentity: async (login: string) => {
         identityLookups++
         const id = z
@@ -492,9 +495,20 @@ identityTest(
     if (!bundle.success) throw new Error('Identity browser fixture bundle failed')
     const javascript = await bundle.outputs[0]?.text()
     // This functional fixture omits Tailwind; keep empty checkbox roots actionable when unchecked.
+    let adminCallback: URL | undefined
+    let adminCallbackCookies = ''
+    let expectedAdminCallbackOrigin: string | undefined
     const bff = httpsServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, async (request, response) => {
       try {
         const url = new URL(request.url || '/', process.env.PLATFORM_WEB_ORIGIN)
+        const addressed = new URL(request.url || '/', 'https://' + request.headers.host)
+        if (expectedAdminCallbackOrigin === addressed.origin && addressed.pathname === '/api/auth/callback') {
+          adminCallback = addressed
+          adminCallbackCookies = request.headers.cookie || ''
+          response.setHeader('Content-Type', 'text/html')
+          response.end('<p>Isolated admin callback</p>')
+          return
+        }
         if (url.pathname === '/') {
           response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
@@ -518,9 +532,12 @@ identityTest(
           ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
         })
         let outgoing: Response
-        if (url.pathname === '/fixture/session')
-          outgoing = new Response(null, { status: (await getPlatformIdentity(headers)) ? 204 : 401 })
-        else if (url.pathname.startsWith('/api/auth/')) {
+        if (url.pathname === '/fixture/session') {
+          const identity = await getPlatformIdentity(headers)
+          outgoing = Response.json(identity ? { githubId: identity.session.githubId } : {}, {
+            status: identity ? 200 : 401,
+          })
+        } else if (url.pathname.startsWith('/api/auth/')) {
           outgoing =
             request.method === 'GET'
               ? await authRoute.GET(incoming)
@@ -575,11 +592,16 @@ identityTest(
             .passthrough(),
         ),
       })
+      .passthrough()
       .parse(JSON.parse(readFileSync(path.join(root, 'services/ofz/platform/services.json'), 'utf8')))
     const gateway = gateways.services.find((service) => service.id === 'tengri-web')
     if (!gateway?.session_gateway) throw new Error('Browser fixture gateway registration missing')
     gateway.session_gateway.origin = base
     gateway.proof_audience = base + '/api/platform/relay/agent'
+    const adminOrigin = `https://admin.proompteng.ai:${bffAddress.port}`
+    const adminGateway = gateways.services.find((service) => service.id === 'platform-admin')
+    if (!adminGateway?.session_gateway) throw new Error('Admin gateway registration missing')
+    adminGateway.session_gateway.origin = adminOrigin
     const gatewayRegistryFile = secret('session-gateways.json', JSON.stringify(gateways))
     Object.assign(process.env, {
       PLATFORM_WEB_ORIGIN: base,
@@ -702,6 +724,7 @@ identityTest(
           GITHUB_CLIENT_ID: 'fixture-github',
           GITHUB_CLIENT_SECRET: providerSecret,
           TENGRI_OIDC_CLIENT_SECRET: clientSecret,
+          PLATFORM_ADMIN_OIDC_CLIENT_SECRET: 'fixture-platform-admin-oidc-secret-not-production',
         },
         stdio: 'pipe',
       })
@@ -757,7 +780,8 @@ identityTest(
       (execution) => execution.authenticator === 'identity-provider-redirector',
     )
     legacyAssurance.config['loa-max-age'] = '0'
-    legacyRealm.clients[0].secret = 'fixture-bff-secret-not-production-0000000'
+    legacyRealm.clients = legacyRealm.clients.filter((client) => client.clientId !== 'platform-admin')
+    legacyRealm.clients[0]!.secret = 'fixture-bff-secret-not-production-0000000'
     Object.assign(legacyRealm.identityProviders[0].config, { clientId: 'fixture-github', clientSecret: githubSecret })
     const seedToken = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
       method: 'POST',
@@ -914,7 +938,7 @@ identityTest(
     const browser = await chromium.launch({
       headless: true,
       args: [
-        '--host-resolver-rules=MAP proompteng.ai 127.0.0.1, MAP auth.proompteng.ai 127.0.0.1',
+        '--host-resolver-rules=MAP proompteng.ai 127.0.0.1, MAP auth.proompteng.ai 127.0.0.1, MAP admin.proompteng.ai 127.0.0.1',
         '--no-proxy-server',
       ],
     })
@@ -1164,7 +1188,7 @@ identityTest(
     expect(survivingIdentity.session.id).toBe(inspected.session.id)
     expect(Date.now() - failoverStarted).toBeLessThan(30_000)
     await page.reload()
-    await browserExpect(page.getByRole('button', { name: 'Add member', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
     console.log(
       'PASS: two real Ofz processes share SQL authority; unchanged client target recovers the same passkey session after SIGKILL of the serving replica',
     )
@@ -1248,26 +1272,12 @@ identityTest(
       )
     }
 
-    const administrationVersion = BigInt(
-      (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
-    )
     const applyChange = async (status: number) => {
       const result = page.waitForResponse(
         (response) => response.url() === base + '/api/tengri/access' && response.request().method() === 'POST',
       )
       await page.getByRole('button', { name: 'Save changes', exact: true }).click()
       expect((await result).status()).toBe(status)
-    }
-    const selectAccessOption = async (field: 'Change' | 'Role', label: string) => {
-      if (field === 'Change') {
-        if (label === 'Quota')
-          await page.getByRole('button', { name: 'Adjust limits for GitHub #1', exact: true }).click()
-        else await page.getByRole('button', { name: 'Add member', exact: true }).click()
-        return
-      }
-      await page.getByLabel(field, { exact: true }).click()
-      await page.getByRole('option', { name: label, exact: true }).click()
-      await browserExpect(page.getByRole('listbox')).toHaveCount(0)
     }
     const postAccess = (command: Record<string, unknown>) =>
       page.evaluate(async (input) => {
@@ -1278,51 +1288,21 @@ identityTest(
         })
         return { status: response.status, body: await response.json() }
       }, command)
-    await selectAccessOption('Change', 'Quota')
-    await page.getByLabel('Total workspaces', { exact: true }).fill('3')
-    await page.getByLabel('Running workspaces', { exact: true }).fill('2')
-    await page.getByLabel('Storage limit (GiB)', { exact: true }).fill('96')
-    await page.getByLabel('Reason', { exact: true }).fill('Isolated quota qualification')
-    await applyChange(200)
-    expect(identityLookups).toBe(0)
-    await browserExpect(
-      page.getByText(`Policy version ${administrationVersion + BigInt(1)}`, { exact: true }),
-    ).toHaveCount(1)
-    await page.getByText('Policy details', { exact: true }).click()
-    await browserExpect(
-      page.getByText(`Policy version ${administrationVersion + BigInt(1)}`, { exact: true }),
-    ).toBeVisible()
+    // Platform roles and quotas are no longer exposed through the product's access API.
     expect(
       (
-        await control.query(
-          'SELECT total_workspaces,active_workspaces,retained_bytes FROM ofz.quotas WHERE human_id=$1',
-          [humans[0]?.humanId],
-        )
-      ).rows[0],
-    ).toMatchObject({ total_workspaces: 3, active_workspaces: 2, retained_bytes: String(96 * 1_073_741_824) })
-
-    await selectAccessOption('Change', 'Membership')
-    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
-    await selectAccessOption('Role', 'Administrator')
-    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).uncheck()
-    await page.getByLabel('Reason', { exact: true }).fill('Attempt to remove required second administrator')
-    await applyChange(422)
-    await browserExpect(page.getByRole('alert').filter({ hasText: 'constraint' })).toBeVisible()
-    expect((await control.query('SELECT count(*) FROM ofz.memberships WHERE role=2')).rows[0]?.count).toBe('2')
-
-    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
-    await selectAccessOption('Role', 'Member')
-    await page.getByRole('checkbox', { name: 'Enable this access', exact: true }).check()
-    await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
-    await applyChange(200)
-    await browserExpect(
-      page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
-    ).toHaveCount(1)
-    await page.getByText('Policy details', { exact: true }).click()
-    await browserExpect(
-      page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
-    ).toBeVisible()
-    await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=3"]')).toBeVisible()
+        await postAccess({
+          action: 'membership',
+          operationId: randomUUID(),
+          expectedVersion: '1',
+          reason: 'Retired product administration',
+          recipient: { kind: 'github-login', login: 'fixture-3' },
+          role: 'member',
+          enabled: true,
+        })
+      ).status,
+    ).toBe(400)
+    expect(identityLookups).toBe(0)
 
     // Seed a stopped, enrolled workspace; creation and enrollment are exercised by the controller wire fixture above.
     const scopedWorkspace = randomUUID()
@@ -1537,11 +1517,12 @@ identityTest(
     console.log(
       'PASS: real Access UI and BFF preserve metadata-only Viewers, reject invalid scope inline before identity lookup, commit exact bounded scopes, require a new subject opt-in, narrow targets and remove content without starting the retained workspace',
     )
-    await page.goto(base)
-    await browserExpect(page.getByRole('button', { name: 'Add member', exact: true })).toBeVisible()
+    await page.goto(base + '/?workspace=' + scopedWorkspace)
+    await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
 
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])
-    await selectAccessOption('Change', 'Quota')
+    await page.getByRole('button', { name: 'Add collaborator', exact: true }).click()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
     await page.getByLabel('Reason', { exact: true }).fill('A stale passkey must not authorize this change')
     await applyChange(428)
     await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify your identity' })).toBeVisible()
@@ -1566,7 +1547,7 @@ identityTest(
     kc.server.kill('SIGKILL')
     await once(kc.server, 'exit')
     await page.locator('#authenticateWebAuthnButton').click()
-    await page.waitForURL(base + '/')
+    await page.waitForURL(base + '/?workspace=' + scopedWorkspace)
     await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     expect(await getPlatformIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     let replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
@@ -1614,6 +1595,94 @@ identityTest(
     )
 
     // A second numeric GitHub identity has the same verified email upstream.
+    // The separately enrolled admin client reuses verified issuer SSO, while Ofz issues an independent gateway-bound session.
+    const adminClients = z
+      .array(z.object({ id: z.string() }))
+      .parse(await (await adminCall('/clients?clientId=platform-admin')).json())
+    const adminClient = adminClients[0]
+    if (!adminClient) throw new Error('Onboarded admin OIDC client missing')
+    const configuredAdmin = await (await adminCall(`/clients/${adminClient.id}`)).json()
+    await adminCall(`/clients/${adminClient.id}`, 'PUT', {
+      ...configuredAdmin,
+      redirectUris: [adminOrigin + '/api/auth/callback'],
+      webOrigins: [adminOrigin],
+    })
+    const verifier = randomBytes(32).toString('base64url'),
+      nonce = randomBytes(32).toString('base64url'),
+      state = randomBytes(32).toString('base64url')
+    const adminAuthorize = new URL(issuer + '/protocol/openid-connect/auth')
+    adminAuthorize.search = new URLSearchParams({
+      client_id: 'platform-admin',
+      redirect_uri: adminOrigin + '/api/auth/callback',
+      response_type: 'code',
+      scope: 'openid profile email',
+      acr_values: '2',
+      max_age: '28800',
+      state,
+      nonce,
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+    }).toString()
+    expectedAdminCallbackOrigin = adminOrigin
+    const challengesBeforeAdmin = webAuthnRequests.length
+    await page.goto(adminAuthorize.href)
+    try {
+      await browserExpect.poll(() => adminCallback?.origin, { timeout: 5000 }).toBe(adminOrigin)
+    } catch {
+      await page.screenshot({ path: process.env.PLATFORM_SSO_SCREENSHOT || '/tmp/platform-admin-sso-fixture.png' })
+      throw new Error(
+        'Admin SSO stopped at ' +
+          new URL(page.url()).origin +
+          ': ' +
+          (await page.locator('h1,h2').allTextContents()).join(' / '),
+      )
+    }
+    expect(adminCallback?.searchParams.get('state')).toBe(state)
+    expect(webAuthnRequests).toHaveLength(challengesBeforeAdmin)
+    const tokenResponse = await fetch(adminBase + '/realms/tengri/protocol/openid-connect/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: 'platform-admin',
+        client_secret: 'fixture-platform-admin-oidc-secret-not-production',
+        redirect_uri: adminOrigin + '/api/auth/callback',
+        code: adminCallback?.searchParams.get('code') || '',
+        code_verifier: verifier,
+      }),
+    })
+    expect(tokenResponse.status).toBe(200)
+    const adminToken = z.object({ id_token: z.string() }).parse(await tokenResponse.json())
+    const adminCredential = randomBytes(32).toString('base64url')
+    process.env.SPIFFE_ID = adminPeer
+    try {
+      const established = await realOfzCall(PlatformAuthorizationService.method.establishSession, {
+        operationId: randomUUID(),
+        nonce,
+        identityToken: adminToken.id_token,
+        credential: adminCredential,
+      })
+      expect(established.session?.humanId).toBe(ssoIdentity?.session.humanId)
+      expect(established.session?.id).not.toBe(ssoIdentity?.session.id)
+      expect(established.session?.mfaAtUnixMs).toBe(ssoIdentity?.session.mfaAtUnixMs)
+      const inspectedAdmin = await realOfzCall(PlatformAuthorizationService.method.inspectSession, {
+        sessionId: adminCredential,
+      })
+      expect(inspectedAdmin.session?.id).toBe(established.session?.id)
+    } finally {
+      process.env.SPIFFE_ID = fixture.ownId
+    }
+    await expect(
+      realOfzCall(PlatformAuthorizationService.method.inspectSession, { sessionId: adminCredential }),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(adminCallbackCookies).not.toContain('__Host-tengri-session=')
+    expectedAdminCallbackOrigin = undefined
+    adminCallback = undefined
+    await page.goto(base)
+    console.log(
+      'PASS: independent admin OIDC client and SPIFFE gateway reuse verified passkey SSO without a new challenge; Ofz separates session authority and rejects product-gateway inspection',
+    )
+
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
     const platformWebAuthnRequests: unknown[] = []
     await secondContext.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
@@ -1696,22 +1765,26 @@ identityTest(
     await secondContext.clearCookies()
     await enroll('3')
     const lookupsBeforeDenial = identityLookups
-    const memberDenied = await secondPage.evaluate(async (operationId) => {
-      const response = await fetch('/api/tengri/access', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'membership',
-          operationId,
-          expectedVersion: '3',
-          reason: 'Member must not consume external identity lookups',
-          recipient: { kind: 'github-login', login: 'fixture-2' },
-          role: 'administrator',
-          enabled: true,
-        }),
-      })
-      return { status: response.status, body: await response.json() }
-    }, randomUUID())
+    const memberDenied = await secondPage.evaluate(
+      async ({ operationId, workspaceUid }) => {
+        const response = await fetch('/api/tengri/access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'collaborator',
+            operationId,
+            workspaceUid,
+            expectedVersion: '3',
+            reason: 'Member must not consume external identity lookups',
+            recipient: { kind: 'github-login', login: 'fixture-2' },
+            role: 'developer',
+            enabled: true,
+          }),
+        })
+        return { status: response.status, body: await response.json() }
+      },
+      { operationId: randomUUID(), workspaceUid: scopedWorkspace },
+    )
     expect(memberDenied.status).toBe(403)
     expect(identityLookups).toBe(lookupsBeforeDenial)
     expect(z.object({ auditReceiptId: z.uuid() }).parse(memberDenied.body).auditReceiptId).toBeTruthy()
@@ -1779,31 +1852,26 @@ identityTest(
     await page.goto(base)
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
 
-    const promote = await postAccess({
-      action: 'membership',
-      operationId: randomUUID(),
-      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
-      reason: 'Retain two administrators during self-demotion recovery',
-      recipient: { kind: 'github-login', login: 'fixture-3' },
-      role: 'administrator',
-      enabled: true,
-    })
-    expect(promote.status).toBe(200)
     const selfDemotion = {
-      action: 'membership',
+      action: 'collaborator',
       operationId: randomUUID(),
+      workspaceUid: scopedWorkspace,
       expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
-      reason: 'Recover a committed self-demotion after a lost response',
-      recipient: { kind: 'github-login', login: 'fixture-1' },
-      role: 'administrator',
-      enabled: false,
+      reason: 'Recover a committed access change after a lost response',
+      recipient: { kind: 'github-login', login: 'fixture-3' },
+      role: 'viewer',
+      enabled: true,
     }
     loseCommandReply = true
     expect((await postAccess(selfDemotion)).status).toBe(503)
     expect(
-      (await control.query('SELECT count(*) FROM ofz.memberships WHERE human_id=$1 AND role=2', [humans[0]?.humanId]))
-        .rows[0]?.count,
-    ).toBe('0')
+      (
+        await control.query('SELECT role FROM ofz.collaborators WHERE workspace_uid=$1 AND human_id=$2', [
+          scopedWorkspace,
+          humans[2]?.humanId,
+        ])
+      ).rows[0]?.role,
+    ).toBe(3)
     const lookupsAfterCommit = identityLookups
     const committed = await postAccess(selfDemotion)
     expect(committed.status).toBe(200)
@@ -1843,7 +1911,7 @@ identityTest(
           "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
         )
       ).rows[0]?.count,
-    ).toBe('6')
+    ).toBe('7')
     expect(webAuthnRequests.length).toBeGreaterThan(0)
     for (const request of webAuthnRequests)
       expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
@@ -1926,7 +1994,7 @@ identityTest(
       'PASS: existing USB credential authorizes a second platform passkey; fresh mobile-sized login succeeds with the USB authenticator removed',
     )
     console.log(
-      'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
+      'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, workspace sharing, retired product administration denial, shared sessions, atomic cookie replacement, committed-establishment and access-change lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )
     await page.goto(issuer + '/protocol/openid-connect/auth?client_id=invalid-theme-fixture&response_type=code')
     await browserExpect(page.getByRole('heading', { name: 'Unable to continue', exact: true })).toBeVisible()

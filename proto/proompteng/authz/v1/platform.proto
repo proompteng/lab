@@ -13,6 +13,9 @@ service PlatformAuthorizationService {
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
   rpc GetPlatformConfiguration(GetPlatformConfigurationRequest) returns (GetPlatformConfigurationResponse);
+  rpc ListPlatformWorkspaces(ListPlatformWorkspacesRequest) returns (ListPlatformWorkspacesResponse);
+  rpc GetPlatformWorkspace(GetPlatformWorkspaceRequest) returns (GetPlatformWorkspaceResponse);
+  rpc ReadWorkspaceActivity(ReadWorkspaceActivityRequest) returns (ReadWorkspaceActivityResponse);
   rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
   rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
@@ -32,6 +35,7 @@ message BeginSignInRequest {
   string verifier = 3;
   string nonce = 4;
   string operation_id = 5;
+  string return_path = 6;
 }
 message BeginSignInResponse {}
 message ConsumeSignInRequest {
@@ -42,6 +46,7 @@ message ConsumeSignInResponse {
   string verifier = 1;
   string nonce = 2;
   string operation_id = 3;
+  string return_path = 4;
 }
 
 message EstablishSessionRequest {
@@ -102,6 +107,58 @@ message GetPlatformConfigurationResponse {
 message RegisteredRelayClient {
   string id = 1;
   repeated string identities = 2;
+  string display_name = 3;
+}
+
+message RegisteredPlatformWorkspace {
+  string id = 1;
+  string name = 2;
+  repeated RegisteredWorkspaceResource resources = 3;
+}
+message RegisteredWorkspaceResource {
+  string name = 1;
+  PlatformResource resource = 2;
+}
+message ListPlatformWorkspacesRequest {
+  PlatformHumanSession administrator = 1;
+}
+message ListPlatformWorkspacesResponse {
+  repeated RegisteredPlatformWorkspace workspaces = 1;
+}
+message GetPlatformWorkspaceRequest {
+  PlatformHumanSession administrator = 1;
+  string workspace_id = 2;
+}
+enum PlatformWorkspaceRole {
+  PLATFORM_WORKSPACE_ROLE_UNSPECIFIED = 0;
+  PLATFORM_WORKSPACE_ROLE_MEMBER = 1;
+  PLATFORM_WORKSPACE_ROLE_ADMINISTRATOR = 2;
+}
+message PlatformWorkspaceMember {
+  string human_id = 1;
+  string github_id = 2;
+  string display_name = 3;
+  PlatformWorkspaceRole role = 4;
+  bool admitted = 5;
+}
+message PlatformWorkspaceClient {
+  RegisteredRelayClient client = 1;
+  bool enabled = 2;
+}
+message GetPlatformWorkspaceResponse {
+  RegisteredPlatformWorkspace workspace = 1;
+  repeated PlatformWorkspaceMember members = 2;
+  repeated PlatformWorkspaceClient clients = 3;
+  uint64 policy_version = 4;
+}
+message ReadWorkspaceActivityRequest {
+  PlatformHumanSession administrator = 1;
+  string workspace_id = 2;
+  string cursor = 3;
+}
+message ReadWorkspaceActivityResponse {
+  repeated AuditReceipt receipts = 1;
+  string cursor = 2;
 }
 
 message RecordPlatformExecutionRequest {
@@ -199,6 +256,7 @@ message ReadPolicyRelationshipsRequest {
   PlatformResource resource = 2;
   string subject_kind = 3;
   string subject_id = 4;
+  string workspace_id = 5;
 }
 message ReadPolicyRelationshipsResponse {
   uint64 policy_version = 1;
@@ -211,6 +269,7 @@ message WritePolicyRelationshipsRequest {
   uint64 expected_policy_version = 3;
   repeated PolicyRelationship relationships = 4;
   string reason = 5;
+  string workspace_id = 6;
 }
 
 message CreatePlatformDelegationRequest {
@@ -250,6 +309,7 @@ message PlatformConnection {
   bool credential_active = 13;
   uint64 credential_generation = 14;
   uint64 recovery_generation = 15;
+  string workspace_id = 16;
 }
 message ListPlatformConnectionsRequest {
   PlatformHumanSession issuer = 1;

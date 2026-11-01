@@ -12,6 +12,7 @@ use platform_client::{ExecutionLookup, ExecutionPayload, authz as sdk, relay as 
 use sha2::{Digest, Sha256};
 use tonic::{Code, Request};
 use uuid::Uuid;
+const ADMIN: &str = "spiffe://proompteng.ai/ns/proompteng/sa/platform-admin";
 const RELAY: &str = "spiffe://proompteng.ai/ns/relay/sa/relay";
 const OPENCODE: &str = "spiffe://proompteng.ai/ns/opencode/sa/opencode";
 const FIXTURE_FIRST: &str = "spiffe://proompteng.ai/ns/fixture/sa/first";
@@ -189,11 +190,375 @@ fn check(id: &str) -> p::CheckPlatformAccessRequest {
         ..Default::default()
     }
 }
+async fn workspace_administration(
+    owner: &crate::store::Database,
+    database: &crate::store::Database,
+    native: &crate::native::Native,
+    humans: &[(String, String)],
+) {
+    use super::workspaces;
+    let connection = owner.pool.get().await.unwrap();
+    let workspace = crate::registry::configured().unwrap().workspaces[0]
+        .id
+        .clone();
+    let other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let mut sessions = Vec::new();
+    for (index, human) in humans.iter().take(3).enumerate() {
+        let id = Uuid::new_v4();
+        crate::control_integration::seed_session(
+            &connection,
+            id,
+            &human.0,
+            &(index + 1).to_string(),
+        )
+        .await;
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET gateway_service='platform-admin' WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap();
+        sessions.push(p::PlatformHumanSession {
+            human_id: human.0.clone(),
+            session_id: id.to_string(),
+            origin: "https://admin.proompteng.ai".into(),
+        });
+    }
+    // Global platform administration does not override a workspace administrator's removal.
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            database.state().await.unwrap().version,
+            &[Update::delete(Relationship::new(
+                "platform_workspace",
+                other,
+                "administrator",
+                "human",
+                &humans[0].0,
+            ))],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    let list = workspaces::list(
+        database,
+        native,
+        ADMIN,
+        p::ListPlatformWorkspacesRequest {
+            administrator: Some(sessions[0].clone()),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        list.workspaces
+            .iter()
+            .map(|space| space.id.as_str())
+            .collect::<Vec<_>>(),
+        [&workspace]
+    );
+    assert_eq!(
+        workspaces::get(
+            database,
+            native,
+            ADMIN,
+            p::GetPlatformWorkspaceRequest {
+                administrator: Some(sessions[0].clone()),
+                workspace_id: other.into()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        workspaces::get(
+            database,
+            native,
+            ADMIN,
+            p::GetPlatformWorkspaceRequest {
+                administrator: Some(session(&humans[0])),
+                workspace_id: workspace.clone()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let mut grant = p::WritePolicyRelationshipsRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        administrator: Some(sessions[0].clone()),
+        expected_policy_version: database.state().await.unwrap().version,
+        workspace_id: workspace.clone(),
+        reason: "workspace administration without global administrator role".into(),
+        relationships: vec![p::PolicyRelationship {
+            resource: Some(p::PlatformResource {
+                kind: "platform.workspace".into(),
+                id: workspace.clone(),
+                target: String::new(),
+            }),
+            relation: "administrator".into(),
+            subject_kind: "human".into(),
+            subject_id: humans[2].0.clone(),
+            enabled: true,
+        }],
+    };
+    mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::Relationships(grant.clone()),
+    )
+    .await
+    .unwrap();
+    let detail = workspaces::get(
+        database,
+        native,
+        ADMIN,
+        p::GetPlatformWorkspaceRequest {
+            administrator: Some(sessions[2].clone()),
+            workspace_id: workspace.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        detail
+            .members
+            .iter()
+            .find(|member| member.human_id == humans[2].0)
+            .unwrap()
+            .role,
+        p::PlatformWorkspaceRole::Administrator as i32
+    );
+    grant.operation_id = Uuid::new_v4().to_string();
+    grant.administrator = Some(sessions[2].clone());
+    grant.expected_policy_version = database.state().await.unwrap().version;
+    grant.relationships = vec![p::PolicyRelationship {
+        resource: Some(resource("galactic/33333333-3333-4333-8333-333333333333")),
+        relation: "status_reader".into(),
+        subject_kind: "human".into(),
+        subject_id: humans[2].0.clone(),
+        enabled: true,
+    }];
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::Relationships(grant.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    grant.relationships = humans
+        .iter()
+        .take(3)
+        .map(|human| p::PolicyRelationship {
+            resource: Some(p::PlatformResource {
+                kind: "platform.workspace".into(),
+                id: workspace.clone(),
+                target: String::new(),
+            }),
+            relation: "administrator".into(),
+            subject_kind: "human".into(),
+            subject_id: human.0.clone(),
+            enabled: false,
+        })
+        .collect();
+    grant.operation_id = Uuid::new_v4().to_string();
+    assert_eq!(
+        mutations::execute(database, native, ADMIN, Command::Relationships(grant))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::FailedPrecondition
+    );
+    let activity = workspaces::activity(
+        database,
+        native,
+        ADMIN,
+        p::ReadWorkspaceActivityRequest {
+            administrator: Some(sessions[2].clone()),
+            workspace_id: workspace.clone(),
+            cursor: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!activity.receipts.is_empty());
+    assert!(
+        activity
+            .receipts
+            .iter()
+            .all(|receipt| receipt.platform_workspace_id == workspace)
+    );
+    assert_eq!(
+        workspaces::activity(
+            database,
+            native,
+            ADMIN,
+            p::ReadWorkspaceActivityRequest {
+                administrator: Some(sessions[2].clone()),
+                workspace_id: other.into(),
+                cursor: String::new()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        onboarding::execute(owner, native).await.unwrap(),
+        onboarding::execute(owner, native).await.unwrap()
+    );
+    assert!(
+        workspaces::manage(native, other, &humans[0].0)
+            .await
+            .is_err()
+    );
+    let demotion = p::WritePolicyRelationshipsRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        administrator: Some(sessions[2].clone()),
+        workspace_id: workspace.clone(),
+        expected_policy_version: database.state().await.unwrap().version,
+        reason: "recover a committed workspace self-demotion".into(),
+        relationships: ["member", "administrator"]
+            .into_iter()
+            .map(|relation| p::PolicyRelationship {
+                resource: Some(p::PlatformResource {
+                    kind: "platform.workspace".into(),
+                    id: workspace.clone(),
+                    target: String::new(),
+                }),
+                relation: relation.into(),
+                subject_kind: "human".into(),
+                subject_id: humans[2].0.clone(),
+                enabled: relation == "member",
+            })
+            .collect(),
+    };
+    let completed = mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::Relationships(demotion.clone()),
+    )
+    .await
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&sessions[2].session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    let recovered = mutations::execute(database, native, ADMIN, Command::Relationships(demotion))
+        .await
+        .unwrap();
+    assert_eq!(
+        completed.decision.audit_receipt_id,
+        recovered.decision.audit_receipt_id
+    );
+    assert!(
+        workspaces::manage(native, &workspace, &humans[2].0)
+            .await
+            .is_err()
+    );
+    let client_relationship = Relationship::new(
+        "platform_workspace",
+        &workspace,
+        "client",
+        "workload",
+        &policy::workload_object_id(OPENCODE),
+    );
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            database.state().await.unwrap().version,
+            &[Update::delete(client_relationship.clone())],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    assert!(
+        !authorization::check(
+            database,
+            native,
+            RELAY,
+            check("galactic/11111111-1111-4111-8111-111111111111")
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    onboarding::execute(owner, native).await.unwrap();
+    assert!(
+        !authorization::check(
+            database,
+            native,
+            RELAY,
+            check("galactic/11111111-1111-4111-8111-111111111111")
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            database.state().await.unwrap().version,
+            &[Update::touch(client_relationship)],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL, SpiceDB and TLS Kubernetes fixture from test-control.sh platform"]
 async fn platform_policy_and_both_clients_execute_through_relay() {
     let (admin, database, native, humans) = setup().await;
     let connection = admin.pool.get().await.unwrap();
+    let mut administrators = Vec::new();
+    for (index, human) in humans.iter().enumerate() {
+        let id = Uuid::new_v4();
+        crate::control_integration::seed_session(
+            &connection,
+            id,
+            &human.0,
+            &(index + 1).to_string(),
+        )
+        .await;
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET gateway_service='platform-admin' WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap();
+        administrators.push(p::PlatformHumanSession {
+            human_id: human.0.clone(),
+            session_id: id.to_string(),
+            origin: "https://admin.proompteng.ai".into(),
+        });
+    }
+
     native
         .write_schema(include_str!(
             "../../tests/fixtures/authorization-before-platform.zed"
@@ -236,6 +601,30 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=2", &[])
         .await
         .unwrap();
+    let historical_operation = Uuid::new_v4();
+    let historical_audit = Uuid::new_v4();
+    let historical_receipt = crate::store::encode(&p::AuditReceipt {
+        id: historical_audit.to_string(),
+        operation_id: historical_operation.to_string(),
+        allowed: true,
+        workload_id: RELAY.into(),
+        platform_client: "opencode".into(),
+        platform_action: "kubernetes.status.read".into(),
+        platform_resources: vec![
+            "kubernetes.namespace/galactic/11111111-1111-4111-8111-111111111111#".into(),
+        ],
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(historical_receipt.get("platform_workspace_id").is_none());
+    connection
+        .execute(
+            "INSERT INTO ofz.audit(id,receipt,target_hash) VALUES($1,$2,$3)",
+            &[&historical_audit, &historical_receipt, &vec![0u8; 32]],
+        )
+        .await
+        .unwrap();
+    connection.execute("INSERT INTO ofz.platform_executions(operation_id,authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id) VALUES($1,$2,'succeeded',200,$3,$2)", &[&historical_operation, &historical_audit, &vec![0u8;32]]).await.unwrap();
     // The old control fixture seeds the original bootstrap state explicitly; never a production operation.
     let base_hash = native.schema_hash().await.unwrap();
     connection.execute("INSERT INTO ofz.bootstrap(fingerprint,manifest,schema_hash,bootstrap_audit_id,activation_audit_id,phase,bootstrap_receipt,activation_receipt) VALUES($1,'{}',$2,$3,$4,'active','{}','{}')", &[&vec![0u8;32],&base_hash,&Uuid::new_v4(),&Uuid::new_v4()]).await.unwrap();
@@ -286,7 +675,30 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         base_hash
     );
     onboarding::verify(&database).await.unwrap();
-    let namespace = Uuid::new_v4().to_string();
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT workspace_id FROM ofz.platform_executions WHERE operation_id=$1",
+                &[&historical_operation]
+            )
+            .await
+            .unwrap()
+            .get::<_, Uuid>(0)
+            .to_string(),
+        crate::registry::configured().unwrap().workspaces[0].id
+    );
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT receipt FROM ofz.audit WHERE id=$1",
+                &[&historical_audit]
+            )
+            .await
+            .unwrap()
+            .get::<_, serde_json::Value>(0),
+        historical_receipt
+    );
+    let namespace = "11111111-1111-4111-8111-111111111111".to_string();
     let resource_id = format!("galactic/{namespace}");
     assert!(
         !authorization::check(&database, &native, RELAY, check(&resource_id))
@@ -327,24 +739,22 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         }
     }));
     let mut write = p::WritePolicyRelationshipsRequest {
+        workspace_id: crate::registry::configured().unwrap().workspaces[0]
+            .id
+            .clone(),
         operation_id: Uuid::new_v4().to_string(),
-        administrator: Some(session(&humans[0])),
+        administrator: Some(administrators[0].clone()),
         expected_policy_version: database.state().await.unwrap().version,
         relationships: assignments,
         reason: "isolated namespace policy onboarding".into(),
     };
     let mut forged = write.clone();
-    forged.administrator = Some(session(&humans[2]));
+    forged.administrator = Some(administrators[2].clone());
     assert_eq!(
-        mutations::execute(
-            &database,
-            &native,
-            policy::BFF_ID,
-            Command::Relationships(forged)
-        )
-        .await
-        .unwrap_err()
-        .code(),
+        mutations::execute(&database, &native, ADMIN, Command::Relationships(forged))
+            .await
+            .unwrap_err()
+            .code(),
         Code::PermissionDenied
     );
     let state = database.state().await.unwrap();
@@ -382,22 +792,17 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let applied = mutations::execute(
         &database,
         &native,
-        policy::BFF_ID,
+        ADMIN,
         Command::Relationships(write.clone()),
     )
     .await
     .unwrap();
     assert_eq!(
-        mutations::execute(
-            &database,
-            &native,
-            policy::BFF_ID,
-            Command::Relationships(write)
-        )
-        .await
-        .unwrap()
-        .decision
-        .audit_receipt_id,
+        mutations::execute(&database, &native, ADMIN, Command::Relationships(write))
+            .await
+            .unwrap()
+            .decision
+            .audit_receipt_id,
         applied.decision.audit_receipt_id
     );
     {
@@ -408,7 +813,10 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             crate::sessions::Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap(),
         );
         let query = p::ReadPolicyRelationshipsRequest {
-            administrator: Some(session(&humans[0])),
+            workspace_id: crate::registry::configured().unwrap().workspaces[0]
+                .id
+                .clone(),
+            administrator: Some(administrators[0].clone()),
             resource: Some(resource(&resource_id)),
             subject_kind: "workload".into(),
             subject_id: OPENCODE.into(),
@@ -431,7 +839,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .await
             .unwrap();
         let snapshot = service
-            .read_policy_relationships(rpc(query.clone(), policy::BFF_ID))
+            .read_policy_relationships(rpc(query.clone(), ADMIN))
             .await
             .unwrap()
             .into_inner();
@@ -448,10 +856,10 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             database.state().await.unwrap().version
         );
         let mut denied = query.clone();
-        denied.administrator = Some(session(&humans[2]));
+        denied.administrator = Some(administrators[2].clone());
         assert_eq!(
             service
-                .read_policy_relationships(rpc(denied, policy::BFF_ID))
+                .read_policy_relationships(rpc(denied, ADMIN))
                 .await
                 .unwrap_err()
                 .code(),
@@ -469,24 +877,26 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         unknown.subject_id = "spiffe://proompteng.ai/ns/unknown/sa/unknown".into();
         assert_eq!(
             service
-                .read_policy_relationships(rpc(unknown, policy::BFF_ID))
+                .read_policy_relationships(rpc(unknown, ADMIN))
                 .await
                 .unwrap_err()
                 .code(),
             Code::InvalidArgument
         );
     }
+    workspace_administration(&admin, &database, &native, &humans).await;
     assert!(
         authorization::check(&database, &native, RELAY, check(&resource_id))
             .await
             .unwrap()
             .allowed
     );
-    assert!(
-        !authorization::check(&database, &native, RELAY, check("galactic/other-namespace"))
+    assert_eq!(
+        authorization::check(&database, &native, RELAY, check("galactic/other-namespace"))
             .await
-            .unwrap()
-            .allowed
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
     );
     assert_eq!(
         authorization::check(&database, &native, policy::BFF_ID, check(&resource_id))
@@ -638,7 +1048,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=version+1", &[])
         .await
         .unwrap();
-    let automatic_target = format!("galactic/{}", Uuid::new_v4());
+    let automatic_target = "galactic/22222222-2222-4222-8222-222222222222".to_string();
     let automatic = p::PutPlatformConnectionRequest {
         operation_id: Uuid::new_v4().to_string(),
         issuer: Some(session(&humans[0])),
@@ -682,53 +1092,46 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
+    // Connecting cannot grant permissions, including for a global administrator.
+    assert_eq!(
+        mutations::execute(
+            &database,
+            &native,
+            policy::BFF_ID,
+            Command::PutConnection(automatic.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let workspace_id = crate::registry::configured().unwrap().workspaces[0]
+        .id
+        .clone();
+    mutations::execute(
+        &database,
+        &native,
+        ADMIN,
+        Command::Relationships(p::WritePolicyRelationshipsRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            administrator: Some(administrators[0].clone()),
+            expected_policy_version: database.state().await.unwrap().version,
+            workspace_id: workspace_id.clone(),
+            reason: "approve status for workspace members".into(),
+            relationships: vec![p::PolicyRelationship {
+                resource: Some(resource(&automatic_target)),
+                relation: "status_workspace".into(),
+                subject_kind: "workspace".into(),
+                subject_id: workspace_id.clone(),
+                enabled: true,
+            }],
+        }),
+    )
+    .await
+    .unwrap();
     connection
         .execute(
             "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
-            &[&Uuid::parse_str(&humans[0].1).unwrap()],
-        )
-        .await
-        .unwrap();
-    let needs_verification = mutations::execute(
-        &database,
-        &native,
-        policy::BFF_ID,
-        Command::PutConnection(automatic.clone()),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(needs_verification.code(), Code::PermissionDenied);
-    assert_eq!(
-        needs_verification.message(),
-        "fresh multifactor authentication required"
-    );
-    assert_eq!(
-        connection
-            .query_one(
-                "SELECT count(*) FROM ofz.platform_connections WHERE id=$1",
-                &[&Uuid::parse_str(&automatic.connection_id).unwrap()]
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        0
-    );
-    assert!(
-        !native
-            .check(&[crate::native::Check::new(
-                "kubernetes_namespace",
-                &automatic_target,
-                "read_status",
-                "human",
-                &humans[0].0
-            )])
-            .await
-            .unwrap()
-            .0
-    );
-    connection
-        .execute(
-            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
             &[&Uuid::parse_str(&humans[0].1).unwrap()],
         )
         .await
@@ -768,12 +1171,6 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
-    assert!(
-        !authorization::check(&database, &native, RELAY, check(&automatic_target))
-            .await
-            .unwrap()
-            .allowed
-    );
     let repeated = mutations::execute(
         &database,
         &native,
@@ -786,7 +1183,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         repeated.decision.audit_receipt_id,
         automatic_saved.decision.audit_receipt_id
     );
-    let automatic_receipt: serde_json::Value = connection
+    let receipt: serde_json::Value = connection
         .query_one(
             "SELECT receipt FROM ofz.audit WHERE id=$1",
             &[&Uuid::parse_str(&automatic_saved.decision.audit_receipt_id).unwrap()],
@@ -794,14 +1191,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .await
         .unwrap()
         .get(0);
-    assert!(
-        automatic_receipt["platform_resources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .any(|entry| entry.contains("status_reader") && entry.contains(&automatic_target))
-    );
+    assert_eq!(receipt["platform_workspace_id"], workspace_id);
     let version = database.state().await.unwrap().version;
     native
         .apply(
@@ -810,9 +1200,9 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             &[Update::delete(Relationship::new(
                 "kubernetes_namespace",
                 &automatic_target,
-                "status_reader",
-                "human",
-                &humans[0].0,
+                "status_workspace",
+                "platform_workspace",
+                &workspace_id,
             ))],
         )
         .await
@@ -821,25 +1211,6 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=version+1", &[])
         .await
         .unwrap();
-    let gateway = crate::registry::configured()
-        .unwrap()
-        .service(policy::BFF_ID)
-        .unwrap();
-    assert_eq!(
-        connections::scope_authority(
-            &database,
-            &native,
-            gateway,
-            &automatic.actions,
-            &automatic.resources,
-            automatic.binding.as_ref(),
-            &humans[0].0
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::PermissionDenied
-    );
     assert_eq!(
         mutations::execute(
             &database,
@@ -865,6 +1236,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     // A workspace owner can delegate approved reads without being a platform administrator.
     let version = database.state().await.unwrap().version;
     native
@@ -1837,10 +2215,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     mutations::execute(
         &database,
         &native,
-        policy::BFF_ID,
+        ADMIN,
         Command::Relationships(p::WritePolicyRelationshipsRequest {
+            workspace_id: crate::registry::configured().unwrap().workspaces[0]
+                .id
+                .clone(),
             operation_id: Uuid::new_v4().to_string(),
-            administrator: Some(session(&humans[1])),
+            administrator: Some(administrators[1].clone()),
             expected_policy_version: database.state().await.unwrap().version,
             relationships: ["status_reader", "log_reader"]
                 .into_iter()

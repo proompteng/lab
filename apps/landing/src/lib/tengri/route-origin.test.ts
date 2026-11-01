@@ -52,7 +52,7 @@ describe('Tengri BFF GET origin enforcement', () => {
     )
 
     expect(response.status).toBe(403)
-    expect(await response.json()).toEqual({ error: 'Cross-origin Tengri actions are not allowed' })
+    expect(await response.json()).toEqual({ error: 'Cross-origin actions are not allowed' })
     expect(identityLookups).toBe(0)
   })
 

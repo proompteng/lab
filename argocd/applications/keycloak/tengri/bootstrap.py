@@ -48,9 +48,17 @@ def bootstrap():
         clientId=required("GITHUB_CLIENT_ID"),
         clientSecret=required("GITHUB_CLIENT_SECRET"),
     )
-    realm["clients"][0]["secret"] = required("TENGRI_OIDC_CLIENT_SECRET")
-    if len(realm["clients"][0]["secret"]) < 32:
-        raise RuntimeError("OIDC client secret must have at least 32 characters")
+    client_secrets = {
+        "tengri-bff": required("TENGRI_OIDC_CLIENT_SECRET"),
+        "platform-admin": required("PLATFORM_ADMIN_OIDC_CLIENT_SECRET"),
+    }
+    for client in realm["clients"]:
+        if client["clientId"] in client_secrets:
+            client["secret"] = client_secrets[client["clientId"]]
+            if len(client["secret"]) < 32:
+                raise RuntimeError(
+                    "OIDC client secret must have at least 32 characters"
+                )
     base = required("KEYCLOAK_ADMIN_URL").rstrip("/")
     parsed = urllib.parse.urlsplit(base)
     if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
@@ -163,6 +171,9 @@ def bootstrap():
     for expected_client in realm["clients"]:
         query = urllib.parse.urlencode({"clientId": expected_client["clientId"]})
         clients = request("GET", path + "/clients?" + query, token)
+        if not clients and "secret" in expected_client:
+            request("POST", path + "/clients", token, expected_client, expected=(201,))
+            clients = request("GET", path + "/clients?" + query, token)
         wanted = copy.deepcopy(expected_client)
         wanted.pop("secret", None)
         if len(clients) != 1 or not contains(clients[0], wanted):
