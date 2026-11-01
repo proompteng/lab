@@ -44,14 +44,14 @@ async fn main() -> anyhow::Result<()> {
                 id,
                 endpoint,
                 ca_file,
-                bearer_token_file,
+                authentication,
                 operations,
             } => {
                 adapters.push(Box::new(relay::http::Http::new(
                     id.clone(),
                     endpoint,
                     ca_file.as_deref(),
-                    bearer_token_file.clone(),
+                    authentication.clone(),
                     operations.clone(),
                 )?));
             }
@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-    let service = Service::new(enrollment.relay_clients, adapters, channel)?;
+    let service = Service::new(enrollment, adapters, channel)?;
     let tls = identity.server_config(service.peer_authorizer())?;
     let enrolled = service.clone();
     tokio::spawn(async move {

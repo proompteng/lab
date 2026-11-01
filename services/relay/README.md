@@ -83,9 +83,10 @@ namespace identities are operator configuration. Tokens are read for every invoc
 An HTTP registration fixes an HTTPS origin and each operation's path and `GET` or `POST` method. GET arguments become
 encoded scalar query values; POST arguments become JSON. Redirects, environment proxies and automatic request retries
 are disabled. The deadline is ten seconds and responses are limited to 256 KiB, including streamed bodies. Optional
-`ca_file` and `bearer_token_file` are absolute mounted paths; omitting the CA uses the platform trust store. Provider
-authentication failures remain distinct from Ofz denials. Shared provider OAuth account management is not implemented
-by this file credential option.
+`ca_file` is an optional absolute mounted path; omitting it uses the platform trust store. Required `authentication`
+is `{ "type": "none" }`, `{ "type": "bearer_file", "path": "/mounted/token" }`, or
+`{ "type": "oauth2", "profile": "inventory" }`. Provider authentication failures remain distinct from Ofz denials.
+OAuth profiles and destinations must match Ofz registrations at startup and every enrollment refresh.
 
 For example, after enrolling `inventory.account` and `inventory.items.read` in Ofz:
 
@@ -96,7 +97,7 @@ For example, after enrolling `inventory.account` and `inventory.items.read` in O
     "type": "http",
     "id": "inventory",
     "endpoint": "https://inventory.example.com/",
-    "bearer_token_file": "/var/run/inventory/token",
+    "authentication": { "type": "bearer_file", "path": "/var/run/inventory/token" },
     "operations": [{
       "operation": {
         "name": "items",
@@ -129,8 +130,8 @@ image. Credentials are reread for every invocation.
 An upstream MCP connector uses `type: "mcp"`, an `id`, a `transport` and `operations`. Each operation maps the reviewed
 `operation` definition to its fixed upstream `tool` name. It does not expose arbitrary discovered tools.
 
-- HTTP transport uses `{ "type": "http", "endpoint": "https://provider.example.com/mcp" }`, with optional `ca_file`
-  and `bearer_token_file` absolute paths. It supports JSON and SSE responses with verified TLS and bounded bodies.
+- HTTP transport uses `{ "type": "http", "endpoint": "https://provider.example.com/mcp", "authentication": { "type": "none" } }`,
+  with optional `ca_file` and the same required authentication choices as HTTP connectors. It supports JSON and SSE responses with verified TLS and bounded bodies.
 - Stdio transport uses `{ "type": "stdio", "process": { ... } }`, with the same fixed process profile, cleared
   environment, projected credentials and process-group lifetime as CLI operations. Provider stderr is discarded.
 
@@ -141,7 +142,8 @@ requires reviewing the registration; provider descriptions and instructions cann
 remains a failed execution. The complete invocation has a ten-second deadline, and JSON messages, HTTP bodies and
 SSE streams have a 256 KiB limit. Automatic session reinitialization, SSE reconnection, redirects and HTTP retries
 are disabled. A lost reply or expired provider session cannot repeat a tool call. Provider credentials are reread
-for each invocation. Provider OAuth lifecycle and account onboarding remain separate from this file credential option.
+for each invocation. OAuth credentials come from Ofz after an authorized execution starts, and never enter the client
+configuration or tool arguments. See [Ofz provider onboarding](../ofz/README.md#provider-accounts) for account lifecycle.
 
 Input schemas must describe an object with `additionalProperties: false`. External network and filesystem schema
 retrievers are disabled. Discovery omits each unapproved operation and its resource name and schema.

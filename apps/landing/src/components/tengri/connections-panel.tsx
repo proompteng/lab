@@ -37,6 +37,9 @@ import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
 import { startSignIn } from '@/lib/platform/auth-client'
 import { MemberAccessRequests } from '@/components/platform/member-access-requests'
+import { ProviderAccount } from '@/components/platform/provider-accounts'
+import { connectProvider, consumeProviderReturn } from '@/lib/platform/provider-client'
+import { providerResultMessage } from '@/lib/platform/provider-connections'
 import {
   completePendingConnection,
   connectionConnector,
@@ -50,6 +53,9 @@ import {
 } from '@/lib/tengri/connections'
 import {
   ListPlatformConnectionsResponseSchema,
+  ListProviderConnectionsResponseSchema,
+  ProviderConnectionState,
+  type ProviderConnection,
   type ListPlatformConnectionsResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 import type { TengriAgent } from '@/lib/tengri/types'
@@ -102,6 +108,7 @@ export function ConnectionsPanel({
 }) {
   const [catalog, setCatalog] = useState<ConnectorCatalog>()
   const [snapshot, setSnapshot] = useState<ListPlatformConnectionsResponse>()
+  const [providers, setProviders] = useState<ProviderConnection[]>()
   const [editor, setEditor] = useState<string>()
   const [customizing, setCustomizing] = useState(false)
   const [error, setError] = useState('')
@@ -123,17 +130,19 @@ export function ConnectionsPanel({
   const reset = form.reset
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      const [connections, available] = await Promise.all([
+      const [connections, available, accounts] = await Promise.all([
         fetch('/api/tengri/connections?agentId=' + encodeURIComponent(agent.id), { cache: 'no-store', signal }).then(
           responseJson,
         ),
         fetch('/api/platform/connectors', { cache: 'no-store', signal }).then(responseJson),
+        fetch('/api/platform/provider-connections', { cache: 'no-store', signal }).then(responseJson),
       ])
       if (signal?.aborted) return
       const next = fromJson(ListPlatformConnectionsResponseSchema, connections)
       for (const connection of next.connections) connectionConnector(connection, agent.uid)
       setSnapshot(next)
       setCatalog(connectorCatalogSchema.parse(available))
+      setProviders(fromJson(ListProviderConnectionsResponseSchema, accounts).connections)
     },
     [agent.id, agent.uid],
   )
@@ -184,6 +193,13 @@ export function ConnectionsPanel({
       try {
         retainPendingConnection(sessionStorage, pendingKey, request, false)
         setPending(request)
+        const provider = providers?.find((profile) => profile.connectorId === request.connectorId)
+        if (provider && provider.state !== ProviderConnectionState.READY) {
+          if (provider.workspaceManaged) throw new Error('Your workspace admin needs to reconnect this account.')
+          retainPendingConnection(sessionStorage, pendingKey, request, true)
+          await connectProvider(principalId, provider.profileId, window.location.pathname + window.location.search)
+          return
+        }
         const response = await fetch('/api/tengri/connections', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -226,14 +242,22 @@ export function ConnectionsPanel({
         setBusy(false)
       }
     },
-    [agent.runtimeEpoch, load, pendingKey, reset],
+    [agent.runtimeEpoch, load, pendingKey, principalId, providers, reset],
   )
 
   useEffect(() => {
-    if (!active || !catalog || !snapshot || restored.current === pendingKey) return
+    if (!active || !catalog || !snapshot || !providers || restored.current === pendingKey) return
     restored.current = pendingKey
     try {
+      const returned = consumeProviderReturn(principalId)
       const retained = readPendingConnection(sessionStorage, pendingKey)
+      if (returned) {
+        setNotice(providerResultMessage[returned.result])
+        if (retained && returned.result !== 'connected') {
+          retainPendingConnection(sessionStorage, pendingKey, retained.request, false)
+          retained.resumeAfterSignIn = false
+        }
+      }
       if (!retained) return
       if (retained.request.agentId !== agent.id) throw new Error('This setup belongs to another workspace.')
       setPending(retained.request)
@@ -241,11 +265,11 @@ export function ConnectionsPanel({
       lastEditor.current = retained.request.connectorId
       reset({ operations: retained.request.operations, targets: retained.request.targets.map(resourceKey) })
       if (retained.resumeAfterSignIn) void save(retained.request, true)
-      else setNotice('Your choices are saved. Try again to finish connecting.')
+      else if (!returned) setNotice('Your choices are saved. Try again to finish connecting.')
     } catch {
       setError('Your previous setup could not be restored. Refresh Connections before continuing.')
     }
-  }, [active, agent.id, catalog, pendingKey, reset, save, snapshot])
+  }, [active, agent.id, catalog, pendingKey, principalId, providers, reset, save, snapshot])
 
   const available = catalog?.operations.filter((operation) => operation.readOnly) ?? []
   const serviceIds = [
@@ -274,6 +298,7 @@ export function ConnectionsPanel({
     return Boolean(
       connection &&
       snapshot &&
+      !providers?.some((profile) => profile.connectorId === id && profile.state !== ProviderConnectionState.READY) &&
       credentialMatchesRuntime(connection, agent.runtimeEpoch ?? '', snapshot.recoveryGeneration, Date.now()),
     )
   }
@@ -369,7 +394,12 @@ export function ConnectionsPanel({
         return
       }
       const existing = savedConnection(editor)
-      if (!pending && existing?.enabled && !form.formState.isDirty) {
+      if (
+        !pending &&
+        existing?.enabled &&
+        !form.formState.isDirty &&
+        !providers?.some((profile) => profile.connectorId === editor && profile.state !== ProviderConnectionState.READY)
+      ) {
         await reconnect()
         return
       }
@@ -464,6 +494,7 @@ export function ConnectionsPanel({
   ]
   const selected = editor ? savedConnection(editor) : undefined
   const selectedConnected = editor ? isConnected(editor) : false
+  const selectedProvider = providers?.find((profile) => profile.connectorId === editor)
   const blocked = disabled || busy || Boolean(pending) || Boolean(pendingDisconnect)
   const { errors } = form.formState
   return (
@@ -478,7 +509,7 @@ export function ConnectionsPanel({
           {notice}
         </p>
       ) : null}
-      {!catalog || !snapshot ? (
+      {!catalog || !snapshot || !providers ? (
         <div role="status" aria-label="Loading connections" className="space-y-3">
           <Skeleton className="h-4 w-3/4" />
           <Skeleton className="h-24 w-full" />
@@ -500,6 +531,22 @@ export function ConnectionsPanel({
             </h2>
             <FieldDescription>{editor} · Read access for this agent. You can disconnect at any time.</FieldDescription>
           </div>
+          {selectedProvider ? (
+            selectedProvider.workspaceManaged ? (
+              <FieldDescription>
+                {selectedProvider.state === ProviderConnectionState.READY
+                  ? 'Uses your connected workspace account.'
+                  : 'Your workspace admin needs to connect this account before you can continue.'}
+              </FieldDescription>
+            ) : (
+              <ProviderAccount
+                profile={selectedProvider}
+                principalId={principalId}
+                disabled={disabled || busy}
+                onChanged={load}
+              />
+            )
+          ) : null}
           <Card size="sm">
             <form noValidate onSubmit={submit}>
               <CardContent className="space-y-5">
@@ -650,6 +697,9 @@ export function ConnectionsPanel({
                     disabled ||
                     busy ||
                     Boolean(pendingDisconnect) ||
+                    Boolean(
+                      selectedProvider?.workspaceManaged && selectedProvider.state !== ProviderConnectionState.READY,
+                    ) ||
                     agent.phase !== 'ready' ||
                     Boolean(selected?.enabled && selectedConnected && !form.formState.isDirty && !pending)
                   }

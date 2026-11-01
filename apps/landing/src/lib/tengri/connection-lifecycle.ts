@@ -1,9 +1,10 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
-import type { PlatformIdentity } from '../platform/auth'
+import { platformSession, type PlatformIdentity } from '../platform/auth'
 import { humanContext } from './authorization'
 import {
   connectionReference,
+  connectionConnector,
   credentialMatchesRuntime,
   installationMatches,
   relayAcknowledgementSchema,
@@ -14,7 +15,11 @@ import {
   type SaveConnection,
   type RelayIdentity,
 } from './connections'
-import { PlatformAuthorizationService, type PlatformConnection } from './generated/proompteng/authz/v1/platform_pb'
+import {
+  PlatformAuthorizationService,
+  ProviderConnectionState,
+  type PlatformConnection,
+} from './generated/proompteng/authz/v1/platform_pb'
 import { RelayService, type ConnectorOperation } from './generated/proompteng/relay/v1/relay_pb'
 import { connectorAgent, getAgent, TengriUnavailableError } from './grpc'
 import { ofzCall, OfzError } from '../platform/ofz'
@@ -34,12 +39,35 @@ async function authority(identity: PlatformIdentity, agentId: string, signal?: A
 }
 type Authority = Awaited<ReturnType<typeof authority>>
 
-function list(context: Authority) {
+function providerConnections(identity: PlatformIdentity, signal?: AbortSignal) {
   return ofzCall(
-    PlatformAuthorizationService.method.listPlatformConnections,
-    { issuer: context.issuer, clientService: 'tengri-web', binding: context.binding },
-    context.signal,
+    PlatformAuthorizationService.method.listProviderConnections,
+    { human: platformSession(identity) },
+    signal,
   )
+}
+
+async function list(context: Authority) {
+  const [snapshot, directory] = await Promise.all([
+    ofzCall(
+      PlatformAuthorizationService.method.listPlatformConnections,
+      { issuer: context.issuer, clientService: 'tengri-web', binding: context.binding },
+      context.signal,
+    ),
+    providerConnections(context.identity, context.signal),
+  ])
+  return {
+    ...snapshot,
+    connections: snapshot.connections.map((connection) =>
+      directory.connections.some(
+        (profile) =>
+          profile.connectorId === connectionConnector(connection, context.agent.uid) &&
+          profile.state !== ProviderConnectionState.READY,
+      )
+        ? { ...connection, credentialActive: false }
+        : connection,
+    ),
+  }
 }
 
 export async function listConnections(identity: PlatformIdentity, agentId: string, signal?: AbortSignal) {
@@ -65,6 +93,17 @@ export async function saveConnection(identity: PlatformIdentity, request: SaveCo
     )
   }
   try {
+    const directory = await providerConnections(identity, signal)
+    if (
+      directory.connections.some(
+        (profile) => profile.connectorId === request.connectorId && profile.state !== ProviderConnectionState.READY,
+      )
+    )
+      throw new TengriUnavailableError(
+        'Reconnect the provider account before connecting your agent.',
+        409,
+        'provider_reconnect_required',
+      )
     await ofzCall(
       PlatformAuthorizationService.method.putPlatformConnection,
       {
@@ -109,6 +148,13 @@ function requireReady(context: Authority) {
 
 async function reconcile(context: Authority) {
   const snapshot = await list(context)
+  const directory = await providerConnections(context.identity, context.signal)
+  const providerReady = (connection: PlatformConnection) =>
+    !directory.connections.some(
+      (profile) =>
+        profile.connectorId === connectionConnector(connection, context.agent.uid) &&
+        profile.state !== ProviderConnectionState.READY,
+    )
   if (snapshot.connections.length === 0 || context.agent.phase !== 'ready') return snapshot
   requireReady(context)
   const guestReply = relayIdentitySchema.safeParse(await connectorAgent(context.identity, context.agent.id, 'identity'))
@@ -118,6 +164,7 @@ async function reconcile(context: Authority) {
   const renew = snapshot.connections.filter(
     (connection) =>
       connection.enabled &&
+      providerReady(connection) &&
       (!credentialMatchesRuntime(connection, context.binding.generation, snapshot.recoveryGeneration, Date.now()) ||
         !installationMatches(connection, guest)),
   )

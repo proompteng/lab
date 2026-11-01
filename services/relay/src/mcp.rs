@@ -1,5 +1,6 @@
 use crate::{
     connector::{Connector, Failure, Normalized, Output},
+    credentials::Authentication,
     process::Profile,
     registered::{Operation, Prepared, RegisteredOperation},
 };
@@ -38,16 +39,25 @@ fn provider_error(error: &(dyn std::error::Error + 'static), message: &'static s
             .downcast_ref::<StreamableHttpError<std::io::Error>>()
         {
             Some(StreamableHttpError::HttpStatus(http)) if http.status == 401 => {
-                return Status::failed_precondition(
-                    "MCP provider credentials require reconnecting",
+                let mut status =
+                    Status::failed_precondition("MCP provider credentials require reconnecting");
+                status.metadata_mut().insert(
+                    "x-relay-upstream-status",
+                    "401".parse().expect("static metadata"),
                 );
+                return status;
             }
             Some(StreamableHttpError::HttpStatus(http)) if http.status == 403 => {
-                return Status::permission_denied("MCP provider denied this operation");
+                let mut status = Status::permission_denied("MCP provider denied this operation");
+                status.metadata_mut().insert(
+                    "x-relay-upstream-status",
+                    "403".parse().expect("static metadata"),
+                );
+                return status;
             }
             Some(StreamableHttpError::SessionExpired) => {
                 return Status::failed_precondition(
-                    "MCP provider session expired; reconnect this account",
+                    "MCP provider session expired; the call was not repeated. Check its outcome before retrying",
                 );
             }
             _ => {}
@@ -65,7 +75,7 @@ pub enum Transport {
     Http {
         endpoint: String,
         ca_file: Option<String>,
-        bearer_token_file: Option<String>,
+        authentication: Authentication,
     },
 }
 
@@ -88,7 +98,7 @@ pub(crate) fn validate(transport: &Transport, operations: &[McpOperation]) -> an
         Transport::Http {
             endpoint,
             ca_file,
-            bearer_token_file,
+            authentication,
         } => {
             let url = reqwest::Url::parse(endpoint)?;
             anyhow::ensure!(
@@ -100,12 +110,10 @@ pub(crate) fn validate(transport: &Transport, operations: &[McpOperation]) -> an
                     && url.fragment().is_none()
                     && ca_file
                         .as_ref()
-                        .is_none_or(|path| std::path::Path::new(path).is_absolute())
-                    && bearer_token_file
-                        .as_ref()
                         .is_none_or(|path| std::path::Path::new(path).is_absolute()),
                 "invalid upstream MCP endpoint"
             );
+            authentication.validate()?;
         }
     }
     anyhow::ensure!(
@@ -230,7 +238,7 @@ impl Mcp {
         })
     }
 
-    async fn run(&self, prepared: Prepared) -> Result<Output, Status> {
+    async fn run(&self, prepared: Prepared, bearer: Option<&str>) -> Result<Output, Status> {
         let mut process = None;
         let service = match &self.transport {
             Transport::Stdio { process: profile } => {
@@ -248,7 +256,7 @@ impl Mcp {
             Transport::Http {
                 endpoint,
                 ca_file,
-                bearer_token_file,
+                authentication,
             } => {
                 let client = crate::mcp_http::Client::new(ca_file.as_deref())?;
                 let mut config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(endpoint.clone())
@@ -256,8 +264,8 @@ impl Mcp {
                 config.retry_config = std::sync::Arc::new(
                     rmcp::transport::common::client_side_sse::NeverRetry::default(),
                 );
-                let config = if let Some(path) = bearer_token_file {
-                    config.auth_header(crate::credentials::read_file(path).await?)
+                let config = if let Some(token) = authentication.bearer(bearer).await? {
+                    config.auth_header(token)
                 } else {
                     config
                 };
@@ -281,6 +289,16 @@ impl Connector for Mcp {
     fn id(&self) -> &str {
         &self.id
     }
+    fn provider(&self) -> Option<crate::credentials::Provider<'_>> {
+        match &self.transport {
+            Transport::Http {
+                endpoint,
+                authentication,
+                ..
+            } => authentication.provider(endpoint),
+            Transport::Stdio { .. } => None,
+        }
+    }
     fn operations(&self, access: Option<&[PlatformConnectionScope]>) -> Vec<ConnectorOperation> {
         self.operations
             .values()
@@ -294,20 +312,17 @@ impl Connector for Mcp {
             .0
             .normalize(arguments)
     }
-    async fn execute(&self, request: &Normalized) -> Result<Output, Failure> {
+    async fn execute(&self, request: &Normalized, bearer: Option<&str>) -> Result<Output, Failure> {
         let prepared = serde_json::from_slice(&request.prepared_request).map_err(|_| Failure {
             status: Status::internal("invalid normalized MCP request"),
             upstream_status: 0,
         })?;
-        tokio::time::timeout(Duration::from_secs(10), self.run(prepared))
+        tokio::time::timeout(Duration::from_secs(10), self.run(prepared, bearer))
             .await
             .map_err(|_| Failure {
                 status: Status::deadline_exceeded("upstream MCP operation timed out"),
                 upstream_status: 0,
             })?
-            .map_err(|status| Failure {
-                status,
-                upstream_status: 0,
-            })
+            .map_err(Failure::from)
     }
 }
