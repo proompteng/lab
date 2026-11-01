@@ -14,7 +14,7 @@ push_jobs="${ATTIC_PUSH_JOBS:-1}"
 push_no_closure="${ATTIC_PUSH_NO_CLOSURE:-false}"
 
 if [[ "$#" -eq 0 ]]; then
-  echo "Usage: cache-push <store-path> [<store-path> ...]" >&2
+  echo "Usage: cache-push --build <installable> | <store-path> [<store-path> ...]" >&2
   exit 2
 fi
 
@@ -26,6 +26,30 @@ fi
 if ! [[ "${push_jobs}" =~ ^[1-9][0-9]*$ ]]; then
   echo "ATTIC_PUSH_JOBS must be a positive integer, got: ${push_jobs}" >&2
   exit 2
+fi
+
+if [[ "$1" == --build ]]; then
+  if [[ "$#" -ne 2 ]]; then
+    echo "Usage: cache-push --build <installable>" >&2
+    exit 2
+  fi
+  paths_file="$(mktemp)"
+  trap 'rm -f "${paths_file}"' EXIT
+  derivation="$(nix path-info --derivation "$2")"
+  # An image archive has no references to its build-time dependencies.
+  nix-store --query --requisites --include-outputs "${derivation}" > "${paths_file}"
+  build_paths=()
+  while IFS= read -r store_path; do
+    if [[ "${store_path}" != *.drv ]]; then
+      build_paths+=("${store_path}")
+    fi
+  done < "${paths_file}"
+  if [[ "${#build_paths[@]}" -eq 0 ]]; then
+    echo "No built store paths found for $2." >&2
+    exit 1
+  fi
+  set -- "${build_paths[@]}"
+  push_no_closure=true
 fi
 
 case "${push_no_closure}" in
