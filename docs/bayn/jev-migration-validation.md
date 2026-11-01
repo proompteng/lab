@@ -44,15 +44,22 @@ the native decision binding remain unfinished.
 
 ## Economic acceptance
 
-The active policy is `bayn.jev-acceptance-policy.v3` in
-[`acceptance.ts`](../../services/bayn/src/jev/acceptance.ts). It evaluates any nonempty calendar registered before
-its first open. The candidate and every matched control must cover that exact calendar. There is no fixed waiting
-period or session count. Existing profit, activity, risk, execution-stress, cost, and uncertainty targets remain.
+The active policy is `bayn.jev-acceptance-policy.v4` in
+[`acceptance.ts`](../../services/bayn/src/jev/acceptance.ts). It evaluates the exact nonempty calendar registered
+before its first open, with the candidate and at least one prospectively selected matched control.
 
-[Acceptance v1](jev-migration-acceptance.json) and [v2](jev-migration-acceptance-v2.json) are retained historical
-research contracts. Their twenty-session requirement does not govern new assessments. Original records, failed
-attempts, and content hashes remain intact; the prospective attempt index continues across the policy change.
-A numerical result grants no trading authority and does not establish future returns.
+Current numerical acceptance requires positive fully costed net profit, a strictly positive lower bound for mean
+net profit, strictly positive paired net-edge lower bounds against every selected control, and compliance with the
+source-approved risk policy. There is no fixed session count, trade quota, turnover quota, dollar profit target,
+control-profit multiple, or dollar edge hurdle. Removing the best session, adding ten basis points per filled leg,
+and replaying p95 latency are diagnostics rather than admission requirements. Unknown diagnostic results stay null.
+Actual execution costs and observed failures remain in the base economics.
+
+[Acceptance v1](jev-migration-acceptance.json), [v2](jev-migration-acceptance-v2.json), and the
+[retained v3 policy](../../services/bayn/src/jev/retained-acceptance-policy.ts) preserve their historical terms.
+Their records and content hashes remain intact. Stored assessments are verified under their recorded policy;
+new registrations use the current policy and continue the existing attempt index. No numerical result grants
+trading authority or establishes future returns.
 
 ## Run the numerical checker
 
@@ -63,72 +70,64 @@ bun tools/jev-acceptance.ts --protocol
 bun tools/jev-acceptance.ts --input /absolute/path/to/session-summaries.json
 ```
 
-The first command returns the canonical JSON hash of the active TypeScript policy. This binds the evaluation
-procedure and thresholds. The second reads `bayn.jev-acceptance-input.v1` and emits one JSON report to stdout. Errors go to
-stderr. It exits successfully only for `NUMERICAL_TARGETS_PASSED`. That verdict covers numerical checks only and grants
-no trading authority. A missing target returns `TARGETS_MISSED`; incomplete observations return `INCONCLUSIVE`.
-Malformed input fails before a report is issued.
+The first command returns the active policy and its canonical hash. The second reads
+`bayn.jev-acceptance-input.v1` and emits one JSON report. It exits successfully only for
+`NUMERICAL_TARGETS_PASSED`; complete failures return `TARGETS_MISSED`, missing evidence or an uninformative
+whole-window bootstrap block returns `INCONCLUSIVE`. Malformed or mismatched input fails before a report is issued.
 
-The input contract is defined by `JevAcceptanceInputSchema` in `services/bayn/src/jev/acceptance.ts`. It requires a
-preregistration made before the first registered open, a nonempty ordered calendar with opening and closing
-times, and exactly four policy series:
+The input contract requires a prospective lock, an ordered calendar, registered analysis terms, and distinct series
+for `JEV` plus one or more selected controls: `DEPLOYED_BAYN`, `REPEATED_MOMENTUM`, or `JEV_ABLATION`. Selecting the
+deployed control still binds its original lifecycle and six frozen commitments. Source, policy, prompt, continuation,
+execution, cost, account, and calendar identities are verified by the system assessment, not by summary arithmetic.
 
-- `JEV`, the candidate.
-- `DEPLOYED_BAYN`, the deployed strategy and its original lifecycle.
-- `REPEATED_MOMENTUM`, the deterministic control with the candidate's execution and position management.
-- `JEV_ABLATION`, the candidate with Jev outputs removed under rules fixed on development data.
+Analysis terms bind the allocation, approved loss and drawdown limits, mark cadence, bootstrap block length,
+replicate budget, and seed. Production derives these terms from the registered allocation, source-approved risk
+material, decision interval, and bootstrap plan. Registration cannot expand execution authority. The actual market
+calendar evidence must cover the claim. The implemented broker calendar remains US regular sessions;
+continuous-market evidence is a separate requirement, not supplied by this cleanup.
 
-Every series must contain the same registered dates in the registered order, including zero-trade and blocked sessions.
-Each complete session records actual completed episodes, filled buy-plus-sell notional, net P&L, opening and closing
-equity, marked equity extrema, intraday drawdown, maximum mark gap and a separate p95 batch-latency stress result.
-Session equity must continue from the $100,000 allocation and each previous close. Missing base, latency-stress or
-minute-mark coverage prevents a numerical pass. An unresolved session must remain an explicit unresolved row.
+Every policy series retains every registered session in order, including blocked, losing, and zero-trade sessions.
+Complete sessions record actual episodes, filled buy-plus-sell notional, net P&L, continuous opening/closing equity,
+marked extrema, drawdown, and mark coverage. Missing base economics or required marks prevents a pass. The optional
+p95 stress has a separate status; supplied replay evidence must still reproduce its provenance and terms.
 
-The v1 money fields accept finite JSON numbers in the range -$1 billion to $1 billion, with no fixed decimal-place
-limit. Notional, equity and drawdown fields also require nonnegative values. Arithmetic interprets each decoded number's canonical decimal spelling exactly. It does not round to cents
-or micro-dollars. JSON decoding has already discarded any extra precision in the original numeric text.
-Money sums, ratio comparisons, stress deductions and bootstrap weighted sums use exact integer coefficients at a
-shared decimal scale. Only displayed report values convert back to JavaScript numbers. The displayed value can
-round to a threshold even when the exact comparison differs. Signed zero has the same meaning as zero.
+Money fields accept finite JSON numbers between -$1 billion and $1 billion. Nonnegative fields retain their domain
+constraints. Arithmetic interprets each decoded number's canonical decimal spelling exactly, using shared integer
+coefficients for sums, comparisons, stress deductions, and bootstrap sums. Only displayed values convert back to
+JavaScript numbers. JSON decoding has already discarded precision beyond the decoded number. The one-micro-dollar
+equity-consistency tolerance does not relax acceptance comparisons.
 
-The arithmetic correction preserves the input and report schemas, protocol hash, resampling and thresholds.
-An unchanged input retains its input hash. Corrected metrics or verdicts can change its report hash relative to an
-earlier checker revision. Preserve original receipts and record the checker source revision when comparing results.
-The existing one-micro-dollar equity-consistency tolerance is unchanged and does not apply to acceptance thresholds.
-
-The checker uses summaries, not raw fills or market events. Independently reproduce each summary from its referenced
-evidence. Confirm exact flat reconciliation, complete fills and fees, executable-bid marks at least every minute,
-and model and allocated data costs. Spread and slippage already reflected in execution prices must not be deducted
-again. The additional ten-basis-point stress is deducted once from each filled dollar, including both sides.
-
-The registration's plan hash must identify the exact candidate and control definitions, code, parameters, questions,
-input representations, calendar, source data rules, universe, risk policy, execution and cost models, and selection
-procedure. Verify those bytes and their registration time independently. The checker validates identifiers and
-aligned numerical inputs; it cannot establish that supplied hashes name authentic evidence or that the calendar
-contains every required market session. It also cannot independently establish matched exposure, quote-size units,
-source arrival times, liquidity, accounting correctness or deployment identity.
+The checker consumes summaries. Independently reproduce them from complete fills, fees, cost basis, cash movements,
+settlement, valuations, and operating expenses. Spread and slippage in actual fill prices are deducted once. Additional
+ten-basis-point charges appear only in the diagnostic counterfactual. Current qualification uses actual invoiced
+consumption; the retained greater-of-tariff-or-invoice premium is reported separately and does not replace actual
+profit. Unknown required costs remain unknown, including during zero-trade and failed-operation sessions.
 
 ## Statistical comparison
 
-The checker draws 10,000 shared resamples of two-session circular blocks. Each resample contains exactly the
-registered number of observations. For an odd window, only the final sampled block is truncated. Each block start
-is the exact integer floor of the unsigned PRNG state times the registered count, divided by 2^32.
-The candidate and all controls use the same sampled session indices, retaining paired comparisons. The protocol fixes
-the PRNG, seed and empirical percentile rule. Absolute positive profit retains the original one-sided 95% lower-bound
-check. The additional comparison uses an error allowance of `0.05 / (attempt * (attempt + 1))`, divided across the
-three controls, and requires each resulting paired lower bound to exceed $50 per session.
+Before the first open, register circular block length `L`, replicate count `R`, and a nonzero UInt32 xorshift seed.
+Each resample has exactly `N` registered sessions, truncating only its final block when necessary. Candidate and
+controls share sampled indices. The block start is the exact integer floor of unsigned PRNG state times `N`, divided
+by `2^32`. Blocks longer than the calendar are invalid. A whole-window block gives no resampling variation and
+cannot establish edge; this is reported as inconclusive rather than a fictitious precise estimate.
 
-Attempt numbers belong to an immutable migration-wide registry. Preserve every failed or inconclusive attempt and
-never reset that number to obtain a larger allowance. This checker rejects attempts whose tail probability is below
-the resolution of its frozen 10,000 draws. Changing that procedure requires a new protocol and untouched window.
-Block resampling assumes that the selected block length captures enough dependence. A passing
-bootstrap result does not guarantee future returns; retain the full daily series and assess this assumption during
-independent research review.
+Let `m` be the number of selected controls and `k` the immutable attempt index. The one-sided tail allowance for
+each of the `m + 1` claims (absolute mean net profit and each paired mean net edge) is:
 
-The regression suite includes a synthetic counterexample. A candidate earns $300 every session while its control
-alternates five-session blocks of +$900 and -$420. The candidate's $6,000 total passes the old $5,000 target and equals
-1.25 times the control's $4,800. Its paired lower bound is negative, so v2 rejects it. These are test inputs, not
-recorded trading results.
+```text
+alpha = 0.05 / ((m + 1) * k * (k + 1))
+```
+
+This spends the familywise error allowance across both claims and attempts. Registration requires
+`R >= 20 * (m + 1) * k * (k + 1)`. The percentile rank is computed with exact integer division as
+`floor((R - 1) / (20 * (m + 1) * k * (k + 1)))`. The lower bound is the selected sorted resampled total divided by
+`N`. Both absolute and paired bounds must be strictly positive. A losing control cannot replace absolute profit.
+
+There is no fixed twelve-attempt ceiling: later attempts must prospectively reserve adequate finite work. Preserve
+all failed and inconclusive attempts; do not reset the index or increase the bootstrap budget after seeing results.
+The method assumes the selected block length adequately captures dependence and the prospective sample supports
+the claimed distribution. These assumptions remain explicit in the assessment. A passing estimate does not prove
+future returns or authenticate source evidence.
 
 ## Score response consistency
 
@@ -148,7 +147,7 @@ probability on the lowest level.
 From the repository root:
 
 ```sh
-bun test services/bayn/src/jev/contract.test.ts services/bayn/src/jev/acceptance.test.ts
+bun test services/bayn/src/jev/contract.test.ts services/bayn/src/jev/acceptance.test.ts services/bayn/src/jev/acceptance-current.test.ts
 ```
 
 The broader Bayn component checks remain required. Successful unit tests, a numerical pass on synthetic fixtures and

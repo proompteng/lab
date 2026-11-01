@@ -19,45 +19,42 @@ theorem block_start_in_range (sessions : Nat) (positive : 0 < sessions) (state :
   unfold blockStart
   omega
 
-def sampleBlocks (sessions : Nat) : Nat → UInt32 → UInt32 × List Nat
-  | 0, state => (state, [])
-  | n + 1, state =>
-    let state := nextRandom state
-    let start := blockStart sessions state
-    let (finalState, rest) := sampleBlocks sessions n state
-    (finalState, start :: (start + 1) % sessions :: rest)
+def sampleWindow (sessions blockLength : Nat) : Nat → Nat → UInt32 → Nat → UInt32 × List Nat
+  | 0, _, state, _ => (state, [])
+  | n + 1, offset, state, start =>
+    let next := if offset % blockLength == 0 then nextRandom state else state
+    let start := if offset % blockLength == 0 then blockStart sessions next else start
+    let (finalState, rest) := sampleWindow sessions blockLength n (offset + 1) next start
+    (finalState, (start + offset % blockLength) % sessions :: rest)
 
-theorem sample_count (sessions blocks : Nat) (state : UInt32) :
-    (sampleBlocks sessions blocks state).2.length = 2 * blocks := by
-  induction blocks generalizing state with
-  | zero => simp [sampleBlocks]
-  | succ n ih => simp [sampleBlocks, ih]; omega
+theorem sample_count (sessions blockLength count offset start : Nat) (state : UInt32) :
+    (sampleWindow sessions blockLength count offset state start).2.length = count := by
+  induction count generalizing offset state start with
+  | zero => simp [sampleWindow]
+  | succ n ih => simp [sampleWindow, ih]
 
-theorem sampled_indices_in_range (sessions : Nat) (positive : 0 < sessions) (blocks : Nat) (state : UInt32) :
-    ∀ i ∈ (sampleBlocks sessions blocks state).2, i < sessions := by
-  induction blocks generalizing state with
-  | zero => simp [sampleBlocks]
+theorem sampled_indices_in_range (sessions blockLength : Nat) (positive : 0 < sessions)
+    (count offset start : Nat) (state : UInt32) :
+    ∀ i ∈ (sampleWindow sessions blockLength count offset state start).2, i < sessions := by
+  induction count generalizing offset state start with
+  | zero => simp [sampleWindow]
   | succ n ih =>
-    simp only [sampleBlocks, List.mem_cons]
+    simp only [sampleWindow, List.mem_cons]
     intro i h
-    rcases h with h | h | h
-    · subst i; exact block_start_in_range sessions positive _
+    rcases h with h | h
     · subst i; exact Nat.mod_lt _ positive
-    · exact ih _ i h
+    · exact ih _ _ _ i h
 
-def sampleSessions (sessions : Nat) (state : UInt32) : UInt32 × List Nat :=
-  let (next, indices) := sampleBlocks sessions ((sessions + 1) / 2) state
-  (next, indices.take sessions)
+def sampleSessions (sessions blockLength : Nat) (state : UInt32) : UInt32 × List Nat :=
+  sampleWindow sessions blockLength sessions 0 state 0
 
-theorem sample_has_registered_length (sessions : Nat) (state : UInt32) :
-    (sampleSessions sessions state).2.length = sessions := by
-  simp [sampleSessions, sample_count]
-  omega
+theorem sample_has_registered_length (sessions blockLength : Nat) (state : UInt32) :
+    (sampleSessions sessions blockLength state).2.length = sessions := by
+  exact sample_count _ _ _ _ _ _
 
-theorem session_sample_indices_in_range (sessions : Nat) (positive : 0 < sessions) (state : UInt32) :
-    ∀ i ∈ (sampleSessions sessions state).2, i < sessions := by
-  intro i member
-  exact sampled_indices_in_range sessions positive _ state i (List.mem_of_mem_take member)
+theorem session_sample_indices_in_range (sessions blockLength : Nat) (positive : 0 < sessions) (state : UInt32) :
+    ∀ i ∈ (sampleSessions sessions blockLength state).2, i < sessions := by
+  exact sampled_indices_in_range _ _ positive _ _ _ _
 
 def sampledTotal (pnl : Array Int) (indices : List Nat) : Int :=
   (indices.map fun i => pnl[i]!).sum
@@ -79,29 +76,34 @@ structure BootstrapResult where
   lowerIncrementalTotals : Array Int
   deriving Repr
 
-def frozenBootstrap (candidate : Array Int) (controls : Array (Array Int)) (attempt : Nat) : BootstrapResult := Id.run do
-  let mut state : UInt32 := 20260921
+def registeredBootstrap (candidate : Array Int) (controls : Array (Array Int)) (attempt blockLength replicates seed : Nat) : BootstrapResult := Id.run do
+  let mut state : UInt32 := UInt32.ofNat seed
   let mut totals : Array Int := #[]
   let mut differences : Array (Array Int) := controls.map fun _ => #[]
-  for _ in [:10000] do
-    let (next, indices) := sampleSessions candidate.size state
+  for _ in [:replicates] do
+    let (next, indices) := sampleSessions candidate.size blockLength state
     state := next
     let total := sampledTotal candidate indices
     totals := totals.push total
     differences := differences.mapIdx fun i values => values.push (total - sampledTotal controls[i]! indices)
   let sorted := totals.qsort (· < ·)
-  let comparisonIndex := 9999 / (60 * attempt * (attempt + 1))
-  let lowerProfitTotal := sorted[499]!
+  let comparisonIndex := (replicates - 1) / (20 * (controls.size + 1) * attempt * (attempt + 1))
+  let lowerProfitTotal := sorted[comparisonIndex]!
   let lowerIncrementalTotals := differences.map fun values => (values.qsort (· < ·))[comparisonIndex]!
   return { lowerProfitTotal, lowerIncrementalTotals }
 
-def tailResolutionSupported (attempt : Nat) : Prop := 0 < attempt ∧ 60 * attempt * (attempt + 1) ≤ 10000
+def tailResolutionSupported (attempt controls replicates : Nat) : Prop :=
+  0 < attempt ∧ 0 < controls ∧ 20 * (controls + 1) * attempt * (attempt + 1) ≤ replicates
 
-instance (attempt : Nat) : Decidable (tailResolutionSupported attempt) := by
+instance (attempt controls replicates : Nat) : Decidable (tailResolutionSupported attempt controls replicates) := by
   unfold tailResolutionSupported; infer_instance
 
+theorem later_attempts_can_reserve_adequate_resolution : tailResolutionSupported 13 3 20000 := by decide
+
+theorem inadequate_budget_is_not_supported : ¬ tailResolutionSupported 13 3 10000 := by decide
+
 theorem odd_window_has_exactly_registered_sessions :
-    (sampleSessions 3 20260921).2.length = 3 ∧ (sampleSessions 21 20260921).2.length = 21 := by
-  constructor <;> exact sample_has_registered_length _ _
+    (sampleSessions 3 2 20260921).2.length = 3 ∧ (sampleSessions 21 3 20260921).2.length = 21 := by
+  constructor <;> exact sample_has_registered_length _ _ _
 
 end Bayn
