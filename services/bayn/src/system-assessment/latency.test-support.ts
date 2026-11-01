@@ -85,7 +85,7 @@ export const fullBatchLatencyFixture = (
     (s) => s.date === native.snapshot.manifest.sessionDate,
   )
   if (session === undefined) throw new Error('Missing native session')
-  const base = registrationFixture()
+  const base = registrationFixture(undefined, sessions?.length ?? 20)
   const registration = withRegistrationCommitments({
     ...base,
     registeredAt: '2026-01-01T00:00:00.000Z',
@@ -327,6 +327,7 @@ export const nativeLatencyBacktestFixture = (
       f.registration.obligations.configuration.protocol,
       selected.riskPolicy.accountId,
       policy,
+      selected.riskPolicy,
     ),
   )
   const inferenceTariff = replayRateCardFixture({

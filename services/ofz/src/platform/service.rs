@@ -114,6 +114,7 @@ impl PlatformAuthorizationService for Service {
                 &operation,
                 "resource permissions require a platform administrator",
             );
+            denied.recovery_generation = state.recovery_generation;
             denied.platform_action = "ofz.relationships.read".into();
             denied.revision = revision;
             self.database
@@ -182,6 +183,7 @@ impl PlatformAuthorizationService for Service {
             &operation,
             "read resource permissions",
         );
+        receipt.recovery_generation = state.recovery_generation;
         receipt.revision = revision;
         receipt.platform_action = "ofz.relationships.read".into();
         receipt.platform_resources = vec![format!("{}/{}", resource.kind, resource.id)];

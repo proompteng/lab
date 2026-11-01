@@ -151,7 +151,8 @@ export const assessAndPersistSystem = (
       ),
     )
     const bound = yield* Effect.fromResult(bindSystemSourceCut(decoded, cut, verifiedSources, timings, stress))
-    const assessment = yield* Effect.fromResult(evaluateSystemAssessment(bound.input, bound.verifiedSources))
+    const { version } = yield* Effect.fromResult(verifyStoredSystemRegistration(bound.input.registration))
+    const assessment = yield* Effect.fromResult(evaluateSystemAssessment(bound.input, bound.verifiedSources, version))
     yield* readSystemRegistration(assessment.registrationHash)
     const { assessmentHash, ...material } = assessment
     const text = yield* Effect.fromResult(canonicalJsonV1Result(material))

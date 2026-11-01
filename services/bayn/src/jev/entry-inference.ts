@@ -141,8 +141,8 @@ export const prepareClaimedEntry = (claim: EntryInferenceClaim) =>
       protocol: prepared.input.protocol,
       funding: prepared.input.funding,
     })
-    const feasible = yield* hasFeasibleEntrySource(prepared.input, chart)
-    const visualClaim = feasible
+    const sourceFeasibility = yield* evaluateEntrySourceFeasibility(prepared.input, chart)
+    const visualClaim = sourceFeasibility.feasible
       ? yield* makeStagedDispatchClaim({
           schemaVersion: 'bayn.staged-dispatch-claim.v1',
           stage: 'CHART',
@@ -154,7 +154,7 @@ export const prepareClaimedEntry = (claim: EntryInferenceClaim) =>
           expiresAt: claim.expiresAt,
         })
       : null
-    return { claim, prepared, chart, visualRequest, visualClaim }
+    return { claim, prepared, chart, visualRequest, visualClaim, sourceFeasibility }
   })
 
 export class EntryInferenceError extends Data.TaggedError('EntryInferenceError')<{
@@ -180,7 +180,21 @@ export type EntryInferenceCompletion = {
     | { readonly status: 'OMITTED_BY_POLICY' }
 }
 
-export const hasFeasibleEntrySource = (
+export enum EntrySourceFeasibilityReason {
+  Feasible = 'FEASIBLE',
+  NoExecutableQuantity = 'NO_EXECUTABLE_QUANTITY',
+  NoFundedSourceStructure = 'NO_FUNDED_SOURCE_STRUCTURE',
+}
+
+export interface EntrySourceFeasibility {
+  readonly feasible: boolean
+  readonly reason: EntrySourceFeasibilityReason
+  readonly supportBarCount: number
+  readonly resistanceBarCount: number
+  readonly baseWindowCount: number
+}
+
+export const evaluateEntrySourceFeasibility = (
   input: Pick<EntryInferenceMaterial, 'protocol' | 'funding'>,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
 ) =>
@@ -193,18 +207,36 @@ export const hasFeasibleEntrySource = (
       capitalMicros: input.funding.capitalMicros,
       cryptoFeeTier: input.funding.cryptoFeeTier,
     })
-    if (economics === null) return false
+    if (economics === null)
+      return {
+        feasible: false,
+        reason: EntrySourceFeasibilityReason.NoExecutableQuantity,
+        supportBarCount: 0,
+        resistanceBarCount: 0,
+        baseWindowCount: 0,
+      } satisfies EntrySourceFeasibility
     const candidates = yield* makeEntrySourceCandidates({
       chart,
       economics,
       protocol: input.protocol,
       bidMicros: BigInt(input.funding.bidMicros),
     })
-    return (
+    const feasible =
       candidates.baseWindows.length > 0 ||
       (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0)
-    )
+    return {
+      feasible,
+      reason: feasible ? EntrySourceFeasibilityReason.Feasible : EntrySourceFeasibilityReason.NoFundedSourceStructure,
+      supportBarCount: candidates.supportBarIds.length,
+      resistanceBarCount: candidates.resistanceBarIds.length,
+      baseWindowCount: candidates.baseWindows.length,
+    } satisfies EntrySourceFeasibility
   })
+
+export const hasFeasibleEntrySource = (
+  input: Pick<EntryInferenceMaterial, 'protocol' | 'funding'>,
+  chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
+) => evaluateEntrySourceFeasibility(input, chart).pipe(Result.map((result) => result.feasible))
 
 export const deriveEntryHandoffDisposition = (
   input: EntryInferenceInput,

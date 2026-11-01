@@ -44,8 +44,26 @@ const ReceiptMaterialSchema = Schema.Struct({
 export const JevEvaluationReceiptSchema = Schema.Struct({ ...ReceiptMaterialSchema.fields, receiptHash: Sha256Schema })
 export type JevEvaluationReceipt = typeof JevEvaluationReceiptSchema.Type
 
-export class JevEvidenceError extends Data.TaggedError('JevEvidenceError')<{ readonly message: string }> {}
-const invalid = (message: string) => Result.fail(new JevEvidenceError({ message }))
+// Diagnostic-only categories; never persisted into evidence or used to authorize entry.
+export enum JevAvailabilityReason {
+  InvalidEvidence = 'INVALID_EVIDENCE',
+  PolicyMismatch = 'POLICY_MISMATCH',
+  OutsideValidityWindow = 'OUTSIDE_VALIDITY_WINDOW',
+  IncompleteBatch = 'INCOMPLETE_BATCH',
+  InferenceIncomplete = 'INFERENCE_INCOMPLETE',
+  InferenceFailed = 'INFERENCE_FAILED',
+  NoUsableCandidates = 'NO_USABLE_CANDIDATES',
+  NotCommitted = 'NOT_COMMITTED',
+}
+export class JevEvidenceError extends Data.TaggedError('JevEvidenceError')<{
+  readonly message: string
+  readonly availabilityReason?: JevAvailabilityReason
+}> {}
+const invalid = (message: string, availabilityReason?: JevAvailabilityReason) =>
+  Result.fail(new JevEvidenceError({ message, ...(availabilityReason === undefined ? {} : { availabilityReason }) }))
+
+// Only a closed category is exposed: decoder messages may contain untrusted evidence.
+export const jevAvailabilityMessage = (reason: JevAvailabilityReason) => `Jev batch unavailable: ${reason}`
 const entrySource = (request: JevEvaluationRequest) => ({
   requestId: request.requestId,
   input: request.request,
@@ -132,11 +150,17 @@ export const entryInferenceAvailableAt = (
   expectedInputVersion: EntryInferenceInput['schemaVersion'],
 ) => {
   if (request.request.schemaVersion !== expectedInputVersion)
-    return invalid('Entry inference belongs to a different selection policy')
+    return invalid('Entry inference belongs to a different selection policy', JevAvailabilityReason.PolicyMismatch)
   if (!Number.isSafeInteger(now) || now < Date.parse(receipt.completedAt) || now >= Date.parse(request.expiresAt))
-    return invalid('Entry receipt is unavailable or outside its original validity window')
+    return invalid(
+      'Entry receipt is unavailable or outside its original validity window',
+      JevAvailabilityReason.OutsideValidityWindow,
+    )
   if (receipt.outcome.status !== JevOutcome.Completed)
-    return invalid('Entry inference did not complete and cannot authorize an order')
+    return invalid(
+      'Entry inference did not complete and cannot authorize an order',
+      JevAvailabilityReason.InferenceIncomplete,
+    )
   const completion = receipt.outcome.completion
   if (
     completion.handoff.disposition.status === 'VISUAL_FAILED' ||
@@ -145,6 +169,6 @@ export const entryInferenceAvailableAt = (
     completion.jev.status === 'NOT_DISPATCHED' ||
     (completion.jev.status === 'OMITTED_BY_POLICY' && expectedInputVersion !== 'bayn.entry-ablation-input.v1')
   )
-    return invalid('Entry inference failed and cannot authorize an order')
+    return invalid('Entry inference failed and cannot authorize an order', JevAvailabilityReason.InferenceFailed)
   return Result.succeed(completion)
 }

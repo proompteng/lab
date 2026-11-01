@@ -1,3 +1,4 @@
+import { JevAcceptanceVersion } from '../jev/acceptance'
 import { OrderStatus, OrderSchema } from '../execution/contracts'
 import type { SystemSourceCut } from './source-cut'
 import { bracketEvidenceFixture } from './bracket-evidence.test-support'
@@ -586,13 +587,6 @@ formal('pinned Lean executable conformance', () => {
               schemaVersion: 'bayn.inference-cost-account.v1',
               accountId: policy.riskPolicy.accountId,
             }),
-            limits: {
-              order: policy.riskPolicy.maxOrderNotionalMicros,
-              symbol: policy.riskPolicy.maxSymbolExposureMicros,
-              gross: policy.riskPolicy.maxGrossExposureMicros,
-              net: policy.riskPolicy.maxNetExposureMicros,
-              turnover: policy.riskPolicy.maxDailyTradedNotionalMicros,
-            },
             approvedPolicyHashes: [BrokerEnvironment.Live, BrokerEnvironment.Sandbox].map((environment) =>
               testHash(
                 Result.getOrThrow(
@@ -613,7 +607,7 @@ formal('pinned Lean executable conformance', () => {
           )
         }
       }
-    expect(actual.filter(Boolean)).toHaveLength(4)
+    expect(actual.filter(Boolean)).toHaveLength(8)
     expect(model(inputs)).toEqual(actual)
   })
   test('a deployed control cannot change any of its six frozen commitments', () => {
@@ -2312,8 +2306,10 @@ formal('pinned Lean executable conformance', () => {
     expect(model(inputs)).toEqual(actual)
   })
   test('prospective tariff admission preserves the frozen contract cost floor', () => {
+    const validateRetainedTariff = (input: unknown) =>
+      validateSystemRegistration(input, JevAcceptanceVersion.RetainedV3)
     const floor = Result.getOrThrow(jevAcceptanceInferenceRateFloor())
-    const registration = registrationFixture()
+    const registration = registrationFixture(undefined, 20, JevAcceptanceVersion.RetainedV3)
     const samples = [
       { inputRate: 41999n, outputRate: 0n },
       { inputRate: 42000n, outputRate: 0n },
@@ -2339,7 +2335,7 @@ formal('pinned Lean executable conformance', () => {
     ).toEqual(
       samples.map((sample) =>
         Result.isSuccess(
-          validateSystemRegistration({
+          validateRetainedTariff({
             ...registration,
             policies: registration.policies.map((definition) => ({
               ...definition,
@@ -2935,24 +2931,26 @@ formal('pinned Lean executable conformance', () => {
       reports.map((report) => {
         const numerical = report.numerical
         if (numerical === null || !('metrics' in numerical)) throw new Error('Expected complete numerical fixture')
+        const terms = numerical.registration.analysis
+        if (terms === undefined) throw new Error('Missing registered analysis terms')
         return {
           operation: 'qualification',
+          controlCount: String(numerical.confidence.paired.length),
+          blockLengthSessions: String(terms.bootstrap.blockLengthSessions),
+          replicates: String(terms.bootstrap.replicates),
+          attemptIndex: String(numerical.registration.attemptIndex),
           sessionCount: String(report.policies[0]?.sessions.length),
           netProfit: micros(numerical.metrics.netPnlUsd),
-          bestControlProfit: micros(Math.max(...numerical.metrics.controlNetPnlUsd.map((c) => c.netPnlUsd))),
           profitLowerBoundTotal: micros(
             numerical.confidence.meanNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length),
           ),
           pairedLowerBoundTotals: numerical.confidence.paired.map((p) =>
             micros(p.meanIncrementalNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length)),
           ),
-          profitWithoutBest: micros(numerical.metrics.netAfterDroppingBestSessionUsd),
-          additionalCostProfit: micros(numerical.metrics.netAfterAdditionalCostUsd),
-          latencyStressProfit: micros(numerical.metrics.p95LatencyStressNetPnlUsd),
           maximumSessionLoss: micros(numerical.metrics.maximumSessionLossUsd),
           maximumDrawdown: micros(numerical.metrics.maximumDrawdownUsd),
-          completedEpisodes: String(numerical.metrics.completedEpisodes),
-          filledNotional: micros(numerical.metrics.filledNotionalUsd),
+          maximumSessionLossLimit: micros(terms.maximumSessionLossUsd),
+          maximumDrawdownLimit: micros(terms.maximumDrawdownUsd),
           reliability: report.reliability.classes.map((c) => ({ good: c.correctOnTime, scheduled: c.scheduled })),
           safetyViolations: String(report.safety.violations.length),
           completeEvidence: report.evidenceComplete,
@@ -2961,7 +2959,7 @@ formal('pinned Lean executable conformance', () => {
       }),
     )
     expect(lean).toEqual(reports.map((report) => report.verdict === 'QUALIFIED_PAPER'))
-    expect(lean).toEqual([true, false, false, false, false, true])
+    expect(lean).toEqual([true, false, false, false, true, true])
   })
   test('integer economics, reliability error budgets, and negative expectancy agree across languages', () => {
     const cash = fc
@@ -3072,83 +3070,105 @@ formal('pinned Lean executable conformance', () => {
   })
 
   test.each([
-    [1, 1],
-    [3, 2],
-    [7, 5],
-    [19, 12],
-    [20, 1],
-    [20, 2],
-    [20, 5],
-    [20, 12],
-    [21, 1],
-    [25, 2],
-  ])('the paired bootstrap matches Lean for %i registered sessions and attempt %i', (sessionCount, attemptIndex) => {
-    const { input } = assessmentFixture(registrationFixture(undefined, sessionCount))
-    const series = [0, 1, 2, 3].map((policy) =>
-      Array.from(
-        { length: sessionCount },
-        (_, day) => BigInt(250 + (day % 5) * 17 - policy * 100 - (day % 7 === 0 ? 450 : 0)) * 1_000_000n,
-      ),
-    )
-    const acceptance = Schema.decodeUnknownSync(JevAcceptanceInputSchema)({
-      schemaVersion: 'bayn.jev-acceptance-input.v1',
-      protocolHash: input.registration.acceptanceProtocolHash,
-      registration: {
-        planHash: testHash(input.registration),
-        lockedAt: input.registration.registeredAt,
-        attemptIndex,
-        sessions: input.registration.calendar.sessions,
-      },
-      policies: input.registration.policies.map((p, index) => {
-        let equity = 100000
-        return {
-          policy: p.policy,
-          definitionHash: testHash(p),
-          sessions: input.registration.calendar.sessions.map((s, day) => {
-            const pnl = Number(series[index]?.[day]) / 1_000_000
-            const opening = equity
-            equity += pnl
-            return {
-              status: 'COMPLETE',
-              sessionDate: s.sessionDate,
-              evidenceHash: testHash({ index, day }),
-              completedEpisodes: 10,
-              filledNotionalUsd: 100000,
-              netPnlUsd: pnl,
-              openingEquityUsd: opening,
-              closingEquityUsd: equity,
-              minimumEquityUsd: Math.min(opening, equity),
-              maximumEquityUsd: Math.max(opening, equity),
-              maximumDrawdownUsd: Math.max(0, -pnl),
-              maximumMarkGapMs: 60000,
-              p95LatencyStress: { status: 'COMPLETE', netPnlUsd: pnl, evidenceHash: testHash({ day, stress: true }) },
-            }
-          }),
-        }
-      }),
-    })
-    const ts = Result.getOrThrow(evaluateJevAcceptance(acceptance))
-    expect(ts.verdict).not.toBe(JevNumericalVerdict.Inconclusive)
-    if (!('confidence' in ts)) throw new Error('Missing numerical result')
-    const [output] = model([
-      {
-        operation: 'bootstrap',
-        candidate: series[0]?.map(String),
-        controls: series.slice(1).map((s) => s.map(String)),
-        attemptIndex: String(attemptIndex),
-      },
-    ])
-    const lean = Schema.decodeUnknownSync(
-      Schema.Struct({
-        lowerProfitTotalMicros: Schema.String,
-        lowerIncrementalTotalsMicros: Schema.Array(Schema.String),
-      }),
-    )(output)
-    expect(ts.confidence.meanNetPnlUsdLowerBound).toBe(Number(lean.lowerProfitTotalMicros) / (sessionCount * 1_000_000))
-    expect(ts.confidence.paired.map((p) => p.meanIncrementalNetPnlUsdLowerBound)).toEqual(
-      lean.lowerIncrementalTotalsMicros.map((n) => Number(n) / (sessionCount * 1_000_000)),
-    )
-  })
+    [1, 1, 1],
+    [3, 2, 2],
+    [7, 5, 3],
+    [19, 12, 4],
+    [20, 1, 2],
+    [20, 2, 3],
+    [20, 5, 4],
+    [20, 12, 2],
+    [21, 1, 4],
+    [25, 2, 5],
+    [20, 13, 3],
+  ])(
+    'paired bootstrap: %i sessions, attempt %i, block length %i',
+    (sessionCount, attemptIndex, blockLengthSessions) => {
+      const { input } = assessmentFixture(registrationFixture(undefined, sessionCount))
+      const controlCount = (blockLengthSessions % 3) + 1
+      const seed = (attemptIndex * 20260921) >>> 0
+      const series = Array.from({ length: controlCount + 1 }, (_, i) => i).map((policy) =>
+        Array.from(
+          { length: sessionCount },
+          (_, day) => BigInt(250 + (day % 5) * 17 - policy * 100 - (day % 7 === 0 ? 450 : 0)) * 1_000_000n,
+        ),
+      )
+      const acceptance = Schema.decodeUnknownSync(JevAcceptanceInputSchema)({
+        schemaVersion: 'bayn.jev-acceptance-input.v1',
+        protocolHash: input.registration.acceptanceProtocolHash,
+        registration: {
+          planHash: testHash(input.registration),
+          lockedAt: input.registration.registeredAt,
+          attemptIndex,
+          sessions: input.registration.calendar.sessions,
+          analysis: {
+            allocationUsd: 100000,
+            maximumSessionLossUsd: 5000,
+            maximumDrawdownUsd: 5000,
+            maximumMarkGapMs: input.registration.obligations.decisionIntervalMs,
+            bootstrap: { blockLengthSessions, replicates: attemptIndex >= 12 ? 20000 : 10000, seed },
+          },
+        },
+        policies: input.registration.policies.slice(0, controlCount + 1).map((p, index) => {
+          let equity = 100000
+          return {
+            policy: p.policy,
+            definitionHash: testHash(p),
+            sessions: input.registration.calendar.sessions.map((s, day) => {
+              const pnl = Number(series[index]?.[day]) / 1_000_000
+              const opening = equity
+              equity += pnl
+              return {
+                status: 'COMPLETE',
+                sessionDate: s.sessionDate,
+                evidenceHash: testHash({ index, day }),
+                completedEpisodes: 10,
+                filledNotionalUsd: 100000,
+                netPnlUsd: pnl,
+                openingEquityUsd: opening,
+                closingEquityUsd: equity,
+                minimumEquityUsd: Math.min(opening, equity),
+                maximumEquityUsd: Math.max(opening, equity),
+                maximumDrawdownUsd: Math.max(0, -pnl),
+                maximumMarkGapMs: 60000,
+                p95LatencyStress: { status: 'COMPLETE', netPnlUsd: pnl, evidenceHash: testHash({ day, stress: true }) },
+              }
+            }),
+          }
+        }),
+      })
+      const ts = Result.getOrThrow(evaluateJevAcceptance(acceptance))
+      if (sessionCount === 1) {
+        expect(ts.verdict).toBe(JevNumericalVerdict.Inconclusive)
+        return
+      }
+      expect(ts.verdict).not.toBe(JevNumericalVerdict.Inconclusive)
+      if (!('confidence' in ts)) throw new Error('Missing numerical result')
+      const [output] = model([
+        {
+          operation: 'bootstrap',
+          candidate: series[0]?.map(String),
+          controls: series.slice(1).map((s) => s.map(String)),
+          attemptIndex: String(attemptIndex),
+          blockLengthSessions: String(blockLengthSessions),
+          replicates: String(attemptIndex >= 12 ? 20000 : 10000),
+          seed: String(seed),
+        },
+      ])
+      const lean = Schema.decodeUnknownSync(
+        Schema.Struct({
+          lowerProfitTotalMicros: Schema.String,
+          lowerIncrementalTotalsMicros: Schema.Array(Schema.String),
+        }),
+      )(output)
+      expect(ts.confidence.meanNetPnlUsdLowerBound).toBe(
+        Number(lean.lowerProfitTotalMicros) / (sessionCount * 1_000_000),
+      )
+      expect(ts.confidence.paired.map((p) => p.meanIncrementalNetPnlUsdLowerBound)).toEqual(
+        lean.lowerIncrementalTotalsMicros.map((n) => Number(n) / (sessionCount * 1_000_000)),
+      )
+    },
+  )
 })
 
 formal('native protection order conformance', () => {

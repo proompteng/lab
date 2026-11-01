@@ -51,10 +51,13 @@ export const accountMarkValue = (mark: typeof AccountMarkSchema.Type) => {
   }
 }
 
-export const requiredValuationTimes = (sessions: readonly { readonly openAt: string; readonly closeAt: string }[]) => {
+export const requiredValuationTimes = (
+  sessions: readonly { readonly openAt: string; readonly closeAt: string }[],
+  intervalMs: number,
+) => {
   const times: string[] = []
   for (const session of sessions) {
-    for (let at = Date.parse(session.openAt); at < Date.parse(session.closeAt); at += 60_000)
+    for (let at = Date.parse(session.openAt); at < Date.parse(session.closeAt); at += intervalMs)
       times.push(new Date(at).toISOString())
     times.push(session.closeAt)
   }

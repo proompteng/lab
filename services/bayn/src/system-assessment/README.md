@@ -26,7 +26,9 @@ propagates through `advanceQualificationEquity` instead of becoming zero.
 999/1000. A successful obligation has a correct durable completion no later than its original deadline. Scheduled
 work that never starts stays in the denominator. The failure allowance is `floor(scheduled / 1000)`.
 
-Empty classes and unfinished observation windows remain `UNDETERMINED`. Duplicate evidence, orphan completions, and
+An empty recovery class is `NOT_APPLICABLE` when the source-bound schedule has no recovery obligations; it is not
+100% measured recovery. Empty required decision, reconciliation, or mutation classes and unfinished observation
+windows remain `UNDETERMINED`. Retained policy versions keep their original empty-class behavior. Duplicate evidence, orphan completions, and
 impossible timestamps fail validation. Safe failures and late recoveries count as missed service. Safety violations
 are evaluated separately by the combined assessment and have no error budget.
 
@@ -44,11 +46,14 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` binds a nonempty prospectively registered calendar, candidate and three controls, source/image/prompt
-identities, operating-cost weights, inference tariffs, risk policy, original deadlines, and statistical assumptions.
-The deployed control retains its frozen identity. The ablation and momentum definitions derive from their native
-runtime policies. Expanded risk limits, substituted control identities, overlapping calendars, and reduced Jev tariffs
-cannot become valid registrations.
+`validateSystemRegistration` admits `bayn.system-registration.v3`: a nonempty prospective calendar, candidate and at
+least one selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original
+deadlines, statistical assumptions, allocation, and a bootstrap plan. Block length, replicate budget, and seed are
+immutable before the first open. The allocation must fit every bound source-approved risk policy. Both existing
+PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
+Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
+from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
+Contracted inference discounts are permitted; all costs still require evidence.
 
 The candidate requires continuous Jev and OpenAI model tariff coverage from the first open through the final close.
 The chart ablation requires OpenAI coverage. The frozen deterministic deployed control and repeated momentum do not
@@ -120,15 +125,29 @@ before dispatch; recovery must reconcile again before closing. The runtime regre
 close to that exact observed conflict and verifies no broker order, duplicate fill, or accounting effect.
 
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
-reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,
-and observed intraminute marks retain losses across sessions. Unknown valuations or request clocks prevent a
+reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, marks
+at least as frequent as the registered decision interval, and observed intrainterval marks retain losses across sessions. Unknown valuations or request clocks prevent a
 complete marked-risk assessment. Failed inference remains chargeable even when its provider start is unknown.
 
-`evaluateSystemAssessment` keeps actual net profit, conservative qualification profit, statistical edge, reliability,
-realism, and safety separate. Numerical qualification uses the active TypeScript acceptance policy and every registered
-session. There is no fixed session count. Candidate, controls, costs, and replay evidence must cover exactly the
-registered calendar; an empty, shortened, extended, reordered, or substituted series is rejected. The result exposes assumptions, missing evidence, and contradictions. Only the conjunction of all gates can
-produce `QUALIFIED_PAPER`; a complete rejected window and an incomplete window retain distinct outcomes.
+`evaluateSystemAssessment` keeps actual net profit, the policy-bound qualification basis, statistical edge,
+reliability, realism, and safety separate. Current qualification and marked risk use actual fully attributed costs;
+the operating-cost report retains the tariff premium as a diagnostic. Retained versions reproduce their original
+conservative deductions. Unknown costs, missing usage clocks, unresolved settlement, or missing valuations do not
+become zero.
+
+Current numerical requirements are positive total net profit, positive lower bounds for mean profit and every
+selected paired net edge, and compliance with the registered source-approved loss and drawdown limits. Trade counts,
+turnover, control-profit ratios, best-session removal, ten-basis-point stress, and p95 latency are diagnostics.
+Missing stress evidence leaves that diagnostic unresolved; supplied contradictory evidence still rejects binding.
+There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
+including losses, downtime, blocked decisions, and zero-trade costs. The bootstrap preregisters its dependence block,
+seed, and finite work budget; its error allowance covers absolute profit and selected comparisons across all attempts.
+See the [statistical procedure](../../../../docs/bayn/jev-migration-validation.md#statistical-comparison).
+
+Only complete economic, statistical, operational, safety, and realistic evidence can produce `QUALIFIED_PAPER`.
+A complete failed window and an incomplete window retain distinct outcomes. Source calendar evidence must support
+the market and hours claimed. The supported reference calendar remains broker-observed US regular sessions;
+that scope does not establish continuous-market performance.
 
 Latency stress replays the selected native policy with recorded response occurrences and the registered execution
 model. CHART, BASE_START, and Jev retain separate costs and clocks. Replay image verification binds the immutable
@@ -172,7 +191,9 @@ its prospectively registered operation timeout; the CLI does not replace it with
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
 assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
-New registrations require the current policy. Retained v2 records keep their original terms and policy identities;
+Migration 169 admits only current v3 registrations, preserves ordered attempts and append-only financial history,
+and supports selected controls and preregistered bootstrap terms. New registrations require the current policy.
+Retained v2/v3 acceptance records keep their original terms and policy identities;
 they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
