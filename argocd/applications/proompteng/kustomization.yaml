@@ -5,11 +5,14 @@ resources:
 - service-account.yaml
 - network-policy.yaml
 - deployment.yaml
+- admin-deployment.yaml
+- admin-service.yaml
+- admin-network-policy.yaml
+- admin-oidc-sealedsecret.yaml
 - service.yaml
 - ingressroute.yaml
 - ofz-credentials-sealedsecret.yaml
-- database-ca.yaml
 - pod-disruption-budget.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/proompteng
-  digest: sha256:51f73dc114bfbeed38fecbad6433690190230fd014ba7f789f84c8bcb04f6e65
+  digest: sha256:17837c276bc6cdfd9163ace5a513d163b9d2cda0fa295665c68d13f97308dc00

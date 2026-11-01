@@ -12,7 +12,7 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 - RuntimeClass: `nvidia`
 - Server: `vllm/vllm-openai:v0.29.0-cu129`
 - Image digest: `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2`
-- Model: `Qwen/Qwen3.8-27B-FP8`
+- Model: `nvidia/Qwen3.8-27B-NVFP4`
 - Served model name: `qwen38-flamingo`
 - Internal URL: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Tailnet URL: `http://flamingo.ide-newton.ts.net/v1`
@@ -23,7 +23,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 ## Current Launch Profile
 
 ```text
---model Qwen/Qwen3.8-27B-FP8
+--model nvidia/Qwen3.8-27B-NVFP4
 --served-model-name qwen38-flamingo
 --trust-remote-code
 --dtype bfloat16
@@ -47,7 +47,8 @@ that Turin's GPU-to-NUMA topology was not detected automatically and exited with
 automatically`. Test NUMA only with explicit `--numa-bind-nodes` values after a
 separate topology readback.
 
-The model weights and KV cache use FP8. An earlier rollout proved that
+NVIDIA's checkpoint uses NVFP4 for the MLP and language head, and FP8 for
+attention. The KV cache remains FP8. An earlier rollout proved that
 `--kv-cache-dtype nvfp4` fails on this Blackwell Max-Q card with
 `requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
 combination changes and is proven in a separate smoke.
@@ -72,7 +73,7 @@ limits of `8` cores and `48Gi`. These values do not reserve GPU VRAM;
 `nvidia.com/gpu: 1` and `--gpu-memory-utilization` govern the GPU allocation and
 vLLM's VRAM target. The production `--max-model-len 262144` profile is an
 invariant. The host-memory budget adds 8 GiB to the previous profile for the
-larger FP8 checkpoint and must pass cold-load validation.
+previous FP8 checkpoint. Keep this host-memory budget through NVFP4 cold-load validation.
 
 The measurements below describe the retired Qwen3.6 NVFP4 model and its
 previous `32Gi` request and `40Gi` limit. They do not size Qwen3.8.
@@ -148,7 +149,7 @@ Expected:
 - `flamingo` and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
 - `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
   separate embeddings path.
-- The model-cache PVC has enough free space for the 30.9 GB Qwen3.8 FP8 checkpoint.
+- The model-cache PVC has enough free space for the 21.9 GB NVIDIA NVFP4 checkpoint.
 
 Render before sync:
 
@@ -295,8 +296,8 @@ accepting the rollout. The results below remain historical Qwen3.6 evidence.
 
 ## Qwen3.8 hard migration
 
-The active checkpoint is `Qwen/Qwen3.8-27B-FP8`, pinned to
-`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`. The only served alias is
+The active checkpoint is `nvidia/Qwen3.8-27B-NVFP4`, pinned to
+`482ca0f3832238542f8f5295dde86b5f22711d80`. The only served alias is
 `qwen38-flamingo`. Update every caller together. Bayn rejects new registrations
 for the retired checkpoint while retaining immutable research-receipt verification.
 
@@ -480,13 +481,13 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 
 ## References
 
-- [Qwen3.8-27B-FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8)
+- [NVIDIA Qwen3.8-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4)
 - [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/)
 - [vLLM optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
 
 ## Serving identity and availability
 
-Model and tokenizer revisions are pinned to `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`.
+Model and tokenizer revisions are pinned to `482ca0f3832238542f8f5295dde86b5f22711d80`.
 The ASGI middleware emits `x-model-serving-identity` from loaded vLLM configuration and checks the loaded commit,
 tokenizer revision and chat-template source. Response bodies pass through without buffering. This metadata allows
 research clients to verify the shared model before accepting generated instructions.

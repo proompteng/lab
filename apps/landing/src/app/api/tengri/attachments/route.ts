@@ -1,7 +1,7 @@
 import { observeRequest } from '@/lib/observability/server'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
 import { readWorkspaceImage } from '@/lib/tengri/grpc'
-import { noStoreHeaders, requireSameOriginGet, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
+import { noStoreHeaders, requireSameOriginGet, requirePlatformIdentity, platformRouteError } from '@/lib/platform/http'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   return observeRequest(request, 'tengri/attachments.get', async () => {
     try {
       requireSameOriginGet(request)
-      const identity = await requireTengriIdentity(request)
+      const identity = await requirePlatformIdentity(request)
       const url = new URL(request.url)
       const agentId = url.searchParams.get('agentId') ?? ''
       const path = url.searchParams.get('path') ?? ''
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
         },
       })
     } catch (error) {
-      return tengriRouteError(error)
+      return platformRouteError(error)
     }
   })
 }
