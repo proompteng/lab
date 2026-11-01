@@ -4,6 +4,7 @@ import { chromium, expect as browserExpect, type Browser } from '@playwright/tes
 import tailwind from '@tailwindcss/postcss'
 import { createRequire } from 'node:module'
 import { policyWriteSchema, type PolicyWrite } from '@/lib/platform/policies'
+import { accessRequestMutationSchema, type AccessRequestMutation } from '@/lib/platform/access-requests'
 
 // This fixture exercises the UI against the public JSON contracts. The real Ofz platform fixture separately proves
 // gateway/session isolation, policy writes, permission revocation and both Relay consumers.
@@ -20,6 +21,11 @@ let loseReply = true
 let requireMfa = false
 let directoryFailures = 0
 let loginStarts = 0
+let requestPending = false
+let requestLoseReply = false
+let requestMfa = false
+const requestWrites: AccessRequestMutation[] = []
+const requestOutcomes = new Map<string, string>()
 const outcomes = new Map<string, string>()
 const grants = new Map<string, string[]>([
   [identities[0]!, ['status_reader']],
@@ -95,6 +101,43 @@ beforeAll(async () => {
       if (url.pathname === '/api/auth/login') {
         loginStarts++
         return Response.json({ url: url.origin + '/signed-in' })
+      }
+      if (url.pathname === '/api/platform/access-requests') {
+        if (request.method === 'GET')
+          return Response.json({
+            requests: requestPending
+              ? [
+                  {
+                    id: '44444444-4444-4444-8444-444444444444',
+                    requesterHumanId: human,
+                    clientService: 'fixture',
+                    scope: {
+                      workspaceId: workspace,
+                      workspaceName: 'Lab',
+                      resourceName: 'Tengri',
+                      resource: metadata.resources[0]!.resource,
+                      actions: ['kubernetes.logs.read'],
+                    },
+                    reason: 'Investigate an application crash',
+                    state: 'PLATFORM_ACCESS_REQUEST_STATE_PENDING',
+                    createdAtUnixMs: '1793510000000',
+                    updatedAtUnixMs: '1793510000000',
+                  },
+                ]
+              : [],
+          })
+        const write = accessRequestMutationSchema.parse(await request.json())
+        requestWrites.push(write)
+        if (requestMfa) return Response.json({ error: 'Verify with your passkey before continuing.' }, { status: 428 })
+        if (!requestOutcomes.has(write.operationId)) {
+          requestOutcomes.set(write.operationId, crypto.randomUUID())
+          requestPending = false
+          if (requestLoseReply) {
+            requestLoseReply = false
+            return Response.json({ error: 'The approval response was lost.' }, { status: 503 })
+          }
+        }
+        return Response.json({ decision: { allowed: true, auditReceiptId: requestOutcomes.get(write.operationId) } })
       }
       if (url.pathname === `/api/platform/workspaces/${workspace}`) return Response.json(detail)
       if (url.pathname.startsWith(`/api/platform/workspaces/${other}`))
@@ -176,6 +219,44 @@ afterAll(async () => {
   await browser?.close()
   server?.stop(true)
 })
+
+test('reviews a member request on a phone and retries the original approval after verification and a lost response', async () => {
+  requestPending = true
+  requestMfa = true
+  requestLoseReply = true
+  requestWrites.length = 0
+  requestOutcomes.clear()
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(`${base}/workspaces/${workspace}/integrations`)
+    const panel = page.getByRole('region', { name: 'Access requests', exact: true })
+    await browserExpect(panel.getByText('Investigate an application crash', { exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Review', exact: true }).click()
+    if (process.env.PLATFORM_UI_SCREENSHOT_DIR)
+      await page.screenshot({
+        path: process.env.PLATFORM_UI_SCREENSHOT_DIR + '/request-review-phone.png',
+        fullPage: true,
+        animations: 'disabled',
+      })
+    await panel.getByRole('button', { name: 'Approve access', exact: true }).click()
+    await browserExpect(panel.getByRole('button', { name: 'Verify & continue', exact: true })).toBeVisible()
+    const original = structuredClone(requestWrites[0])
+    requestMfa = false
+    await page.reload()
+    await panel.getByRole('button', { name: 'Retry saved request', exact: true }).click()
+    await browserExpect(panel.getByText('The approval response was lost.', { exact: true })).toBeVisible()
+    await page.reload()
+    await panel.getByRole('button', { name: 'Retry saved request', exact: true }).click()
+    await browserExpect(panel.getByText('No pending access requests.', { exact: true })).toBeVisible()
+    expect(requestWrites).toEqual([original, original, original])
+    expect(requestOutcomes.size).toBe(1)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  } finally {
+    requestPending = false
+    requestMfa = false
+    await page.close()
+  }
+}, 30_000)
 
 test('changes only selected permissions and recovers the exact pending operation after reload', async () => {
   const page = await browser.newPage()

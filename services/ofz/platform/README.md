@@ -13,6 +13,18 @@ access. Qualification checks both against the installed native schema. Connectin
 permissions; it never assigns relationships. Saving and reconnecting an approved scope reuse the current verified
 session. Policy changes require a workspace administrator and fresh MFA through the independent admin gateway.
 
+Members can request named resource capabilities from their enrolled client. Requests are limited to the workspace's
+registered resource ceiling and writable human grants. Submitting or cancelling a request assigns no permissions.
+The admin portal lists pending requests for the selected workspace. Approval checks current membership and client
+enrollment, assigns only missing permissions, and requires fresh MFA when it adds relationships. Decline and cancellation
+do not require step-up. Request state, relationship changes and audit receipts use the existing durable command journal.
+Retries retain the original operation ID across sign-in and return the original receipt. Replaying an approval after
+revocation does not restore access. Tengri refreshes current eligibility when returning from the admin portal.
+
+The access-request migration is `0008_access_requests.sql`, platform ledger version 7. Complete pending commands before
+upgrading Ofz; its migration hook runs before the coordinated gateway rollout. Requests retain their administrative
+workspace and requesting client. The queue is bounded to eight pending requests per person and 128 per workspace.
+
 `workspaces` in the service registry assign each external resource to one administrative workspace. SpiceDB owns
 workspace membership, administrators and enrolled clients. Resource authorization checks both the operation permission
 and current workspace use in one fully consistent bulk request. A global platform administrator cannot bypass a
