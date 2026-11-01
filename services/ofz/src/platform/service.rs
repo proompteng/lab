@@ -1,5 +1,5 @@
 use super::{
-    authorization, catalog, executions,
+    authorization, catalog, connections, executions,
     mutations::{self, Command},
     onboarding,
 };
@@ -43,7 +43,7 @@ impl PlatformAuthorizationService for Service {
         if registry::configured()?.service(&peer).is_none() {
             return Err(Status::permission_denied("registered service required"));
         }
-        onboarding::verify(&self.database).await?;
+        onboarding::verify_configuration(&self.database).await?;
         Ok(Response::new(proto::GetPlatformConfigurationResponse {
             policy_version: self.database.state().await?.version,
             relay_clients: registry::configured()?
@@ -57,6 +57,165 @@ impl PlatformAuthorizationService for Service {
                 .collect(),
             policy_catalog_json: serde_json::to_string(catalog::configured()?)
                 .map_err(|_| Status::internal("encode policy catalog"))?,
+        }))
+    }
+    async fn read_policy_relationships(
+        &self,
+        request: Request<proto::ReadPolicyRelationshipsRequest>,
+    ) -> Result<Response<proto::ReadPolicyRelationshipsResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let input = request.into_inner();
+        let session = input
+            .administrator
+            .as_ref()
+            .ok_or_else(|| Status::unauthenticated("human session required"))?;
+        let registration = registry::configured()?
+            .service(&peer)
+            .ok_or_else(|| Status::permission_denied("registered service required"))?;
+        if !registration
+            .roles
+            .iter()
+            .any(|role| role == "platform.administration")
+            || !registration
+                .roles
+                .iter()
+                .any(|role| role == "platform.human-session")
+            || !registration.origins.contains(&session.origin)
+        {
+            return Err(Status::permission_denied(
+                "service cannot read policy relationships",
+            ));
+        }
+        let operation = uuid::Uuid::new_v4().to_string();
+        let (context, state, _) =
+            authorization::human_context(&self.database, session, &operation, false).await?;
+        onboarding::verify(&self.database).await?;
+        let (allowed, revision) = self
+            .native
+            .check(&[crate::native::Check::new(
+                "platform",
+                "lab",
+                "manage_targets",
+                "human",
+                &session.human_id,
+            )])
+            .await?;
+        if !allowed {
+            let mut denied = crate::store::receipt(
+                &context,
+                &peer,
+                crate::policy::platform(),
+                proto::Action::PolicyRead,
+                false,
+                &operation,
+                "resource permissions require a platform administrator",
+            );
+            denied.recovery_generation = state.recovery_generation;
+            denied.platform_action = "ofz.relationships.read".into();
+            denied.revision = revision;
+            self.database
+                .audit(&denied, "ofz.relationships.read")
+                .await?;
+            return Err(Status::permission_denied(
+                "platform policy administrator required",
+            ));
+        }
+        let resource = input
+            .resource
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("resource required"))?;
+        if resource.id.is_empty()
+            || resource.id.len() > 256
+            || !resource.target.is_empty()
+            || !resource
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/_|-=+".contains(&b))
+        {
+            return Err(Status::invalid_argument("invalid policy resource"));
+        }
+        let definition = catalog::configured()?.resource(&resource.kind)?;
+        let subject = match input.subject_kind.as_str() {
+            "human" => {
+                proto::Actor {
+                    identity: Some(proto::actor::Identity::HumanId(input.subject_id.clone())),
+                }
+                .subject()?;
+                input.subject_id.clone()
+            }
+            "workload" if registry::configured()?.service(&input.subject_id).is_some() => {
+                crate::policy::workload_object_id(&input.subject_id)
+            }
+            _ => {
+                return Err(Status::invalid_argument(
+                    "registered policy recipient required",
+                ));
+            }
+        };
+        let relations = self
+            .native
+            .policy_relations(
+                &definition.native_type,
+                &resource.id,
+                &input.subject_kind,
+                &subject,
+            )
+            .await?;
+        if relations.iter().any(|name| {
+            !definition.relations.iter().any(|relation| {
+                relation.name == *name && relation.subjects.contains(&input.subject_kind)
+            })
+        }) {
+            return Err(Status::failed_precondition(
+                "relationship is not in the onboarded policy",
+            ));
+        }
+        let mut receipt = crate::store::receipt(
+            &context,
+            &peer,
+            crate::policy::platform(),
+            proto::Action::PolicyRead,
+            true,
+            &operation,
+            "read resource permissions",
+        );
+        receipt.recovery_generation = state.recovery_generation;
+        receipt.revision = revision;
+        receipt.platform_action = "ofz.relationships.read".into();
+        receipt.platform_resources = vec![format!("{}/{}", resource.kind, resource.id)];
+        self.database
+            .audit(&receipt, "ofz.relationships.read")
+            .await?;
+        let (_, current, _) = authorization::human_context(
+            &self.database,
+            session,
+            &uuid::Uuid::new_v4().to_string(),
+            false,
+        )
+        .await?;
+        if current.version != state.version
+            || current.recovery_generation != state.recovery_generation
+            || !self
+                .native
+                .check(&[crate::native::Check::new(
+                    "platform",
+                    "lab",
+                    "manage_targets",
+                    "human",
+                    &session.human_id,
+                )])
+                .await?
+                .0
+        {
+            return Err(Status::aborted("platform policy changed during read"));
+        }
+        Ok(Response::new(proto::ReadPolicyRelationshipsResponse {
+            policy_version: state.version,
+            relations,
         }))
     }
     async fn check_platform_access(
@@ -73,6 +232,72 @@ impl PlatformAuthorizationService for Service {
                 authorization::check(&self.database, &self.native, &peer, request.into_inner())
                     .await?,
             ),
+        }))
+    }
+    async fn list_platform_connections(
+        &self,
+        request: Request<proto::ListPlatformConnectionsRequest>,
+    ) -> Result<Response<proto::ListPlatformConnectionsResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
+        connections::list(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn put_platform_connection(
+        &self,
+        request: Request<proto::PutPlatformConnectionRequest>,
+    ) -> Result<Response<proto::PutPlatformConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
+        let input = request.into_inner();
+        let connection_id = input.connection_id.clone();
+        let version = input
+            .expected_version
+            .checked_add(1)
+            .ok_or_else(|| Status::invalid_argument("connection version overflow"))?;
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::PutConnection(input),
+        )
+        .await?;
+        Ok(Response::new(proto::PutPlatformConnectionResponse {
+            connection_id,
+            version,
+            credential_generation: outcome.version,
+            decision: Some(outcome.decision),
+        }))
+    }
+    async fn revoke_platform_connection(
+        &self,
+        request: Request<proto::RevokePlatformConnectionRequest>,
+    ) -> Result<Response<proto::RevokePlatformConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
+        let input = request.into_inner();
+        let connection_id = input.connection_id.clone();
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::RevokeConnection(input),
+        )
+        .await?;
+        Ok(Response::new(proto::RevokePlatformConnectionResponse {
+            connection_id,
+            credential_generation: outcome.version,
+            decision: Some(outcome.decision),
         }))
     }
     async fn record_platform_execution(
@@ -143,6 +368,7 @@ impl PlatformAuthorizationService for Service {
             delegation_id: outcome.delegation_id,
             credential: outcome.credential,
             decision: Some(outcome.decision),
+            credential_generation: outcome.version,
         }))
     }
     async fn activate_platform_delegation(

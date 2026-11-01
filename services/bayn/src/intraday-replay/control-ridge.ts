@@ -1,4 +1,5 @@
-import { ControlPolicy, controlExitDefinition } from './control-portfolio'
+import { ControlPolicy } from './control-portfolio'
+import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { brokerCalendarResponseHash } from '../market-hours'
@@ -83,7 +84,7 @@ export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, al
   },
   exits: {
     maximumHoldingMinutes: context.protocol.maximumHoldingMinutes,
-    protectiveStopBps: controlExitDefinition.protectiveStopBps,
+    protectiveStopBps: momentumExitDefinition.protectiveStopBps,
     sessionCloseMinutesBeforeClose: context.protocol.entryCutoffMinutesBeforeClose,
     lifecycle: 'One position, persistent partial-exit retries, consumed quote liquidity, and serial current cash.',
   },
@@ -128,7 +129,7 @@ export const prepareBoundRidge = (
       context.source.transport !== 'original-capture' ||
       context.source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       (yield* canonicalHashV1Result(context.source)) !== input.evaluationSourceManifestHash ||
-      context.protocol.lookbackMinutes !== 30 ||
+      context.protocol.lookbackMinutes.equity !== 30 ||
       context.protocol.decisionDelaySeconds !== 2 ||
       'SPY' !== sixBarResearchDefinition.benchmarkSymbol ||
       !Number.isSafeInteger(context.pollIntervalMs) ||

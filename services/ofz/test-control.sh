@@ -114,6 +114,7 @@ policies['actions'].append({
     'id': 'fixture.status.read',
     'resourceKind': 'kubernetes.namespace',
     'permission': 'read_status',
+    'grantRelation': 'status_reader',
 })
 (directory / 'services.json').write_text(json.dumps(services))
 (directory / 'policies.json').write_text(json.dumps(policies))

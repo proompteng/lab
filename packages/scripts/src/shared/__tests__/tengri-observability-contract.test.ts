@@ -38,7 +38,11 @@ test('cluster Alloy collects bounded Tengri control-plane and supervisor metrics
   )
 
   expect(alloy).toContain('prometheus.scrape "tengri"')
-  expect(alloy).toContain('tengri-gateway.tengri.svc.cluster.local:8080')
+  expect(alloy).not.toContain('tengri-gateway.tengri.svc.cluster.local:8080')
+  expect(alloy).toContain('discovery.kubernetes "tengri_controllers"')
+  expect(alloy).toContain('targets  = discovery.relabel.tengri_controllers.output')
+  expect(alloy).toContain('app.kubernetes.io/name=tengri,app.kubernetes.io/component=control-plane')
+  expect(alloy).toContain('regex         = "tengri;gateway"')
   expect(alloy).toContain('job_name = "tengri"')
   expect(alloy).toContain('discovery.kubernetes "tengri_slots"')
   expect(alloy).toContain('app.kubernetes.io/name=tengri-slot')
@@ -92,6 +96,7 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
     'TengriGuestFailureBurst',
     'TengriBootLatencyHigh',
     'TengriResumeLatencyHigh',
+    'TengriInventoryStale',
     'TengriTerminalHeartbeatLatencyHigh',
     'TengriGuestConnectLatencyHigh',
     'TengriQuotaRejections',
@@ -110,6 +115,9 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
   expect(expressions.TengriGuestFailureBurst).toContain('tengri_guest_failures_total')
   expect(expressions.TengriBootLatencyHigh).toContain('tengri_agent_boot_latency_seconds_count')
   expect(expressions.TengriResumeLatencyHigh).toContain('tengri_agent_resume_latency_seconds_count')
+  expect(expressions.TengriBootLatencyHigh).toContain('histogram_quantile(0.95')
+  expect(expressions.TengriResumeLatencyHigh).toContain('histogram_quantile(0.95')
+  expect(expressions.TengriInventoryStale).toContain('tengri_inventory_last_success_timestamp_seconds')
   expect(expressions.TengriTerminalHeartbeatLatencyHigh).toContain('tengri_terminal_heartbeat_seconds_bucket')
   expect(expressions.TengriGuestConnectLatencyHigh).toContain('tengri_guest_connect_seconds_bucket')
   expect(expressions.TengriQuotaRejections).toContain('tengri_quota_rejections_total')

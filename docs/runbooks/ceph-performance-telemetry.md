@@ -45,6 +45,36 @@ errors. `NodeStorageMetricsMissing` compares ingestion against Kubernetes' node 
 also detects a successful HTTP scrape whose underlying collector failed. `CephOsdPerformanceMetricsMissing` compares
 performance counters against the manager's inventory of up OSDs.
 
+## Storage NIC hardware counters
+
+The host collector refreshes ethtool hardware statistics every 30 seconds for Altra's `enp1s0f1np1`
+and Turin's `ens1f1np1`. It retains aggregate physical packets/bytes, discards, receive-buffer starvation,
+PAUSE frames, CRC/symbol errors, and queue error/recovery counters. Per-queue series are excluded.
+The existing non-root collector needs no additional capabilities or permissions. On other nodes the
+interface filter matches nothing; require actual series for both storage NICs as well as collector success.
+
+mlx5's generic `node_network_receive_drop_total` can include stale cached physical-discard counts.
+A hardware-statistics read refreshes that cache, so the initial refresh can produce a large generic-counter
+jump. Establish a new baseline before using rates. Use the fresh hardware series to time physical loss;
+do not interpret an initial generic-counter jump as a new loss burst. The exporter normalizes `rx` to
+`received` and `tx` to `transmitted`; PHY counters retain their driver names without a `_total` suffix.
+
+```promql
+node_ethtool_info{job="node-storage"}
+node_scrape_collector_success{job="node-storage",collector="ethtool"}
+time() - timestamp(node_ethtool_received_discards_phy{job="node-storage"})
+rate(node_ethtool_received_discards_phy{job="node-storage"}[5m])
+rate(node_ethtool_received_out_of_buffer{job="node-storage"}[5m])
+rate(node_ethtool_transmitted_pause_ctrl_phy{job="node-storage"}[5m])
+```
+
+Verify fresh timestamps and advancing PHY packet/byte counters for both interfaces in Mimir. Compare
+bounded native GET-only ethtool snapshots against the exported counters, accounting for scrape timestamps.
+Physical discards, out-of-buffer events and PAUSE frames measure different events; do not add them into
+one packet-loss total. Check collector and remote-write errors after the content-hashed ConfigMap rollout.
+If collection fails or needs broader permissions, revert the collector configuration through GitOps.
+This telemetry change does not repair PCIe training or establish a client-latency improvement.
+
 ## Diagnose the bottleneck
 
 The objectstore gateways use Beast with `tcp_nodelay=1` through `gateway.rgwCommandFlags.rgw_frontends` in
@@ -83,9 +113,14 @@ not clamped to one or rendered as zero. Network directions are separate because 
 or negative link speeds produce no utilization ratio. Weighted disk I/O time estimates average outstanding work;
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
-`CephOsdReadLatencyHigh` pages through the existing critical email route when an OSD's five-minute mean
-client read latency stays above 500 ms for five minutes. `CephOsdQueueWaitHigh` warns when estimated mean
-queue wait stays above 100 ms for ten minutes. Both retain bounded node/OSD identity. Missing or idle reads
+`CephHostReadLatencyHigh` fires when the highest OSD five-minute mean client read latency on a host stays above
+500 ms for five minutes. One incident per node survives OSD rotation, and the annotation lists the currently slow
+OSDs and their means. Per-OSD recording metrics retain diagnostic detail. The incident holds recovery for ten
+minutes; a relapse during that hold continues the same incident. Its dedicated email route sends the first message
+after ten seconds, batches group updates every fifteen minutes, and repeats unchanged incidents every four hours.
+`CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` retain their general critical route.
+`CephOsdQueueWaitHigh` warns when estimated mean queue wait stays above 100 ms for ten minutes and retains
+node/OSD identity. Missing or idle reads
 produce no latency estimate; use the existing exporter and OSD performance missing-data alerts for telemetry loss.
 Compare reads and processing time with scrub work, mapped RBD activity, and host queues. A low commit-latency
 gauge does not rule out delayed reads. These alerts do not authorize workload throttling or changing scrub policy.

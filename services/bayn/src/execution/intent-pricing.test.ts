@@ -60,6 +60,61 @@ test.each(['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'])(
   },
 )
 
+test.each([
+  ['AAPL', 349_730_000n, 349_740_000n, 53_000_000_000n],
+  ['QQQ', 712_760_000n, 712_780_000n, 26_000_000_000n],
+] as const)('%s keeps a funded DAY buy limit below a refreshed ask', (symbol, cap, ask, quantity) => {
+  const pricing = Result.getOrThrow(
+    deriveExecutionIntentPricing({
+      symbol,
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      referencePriceMicros: ask,
+      quantityAtoms: quantity,
+      limitSlippageBps: 0n,
+      maximumBuyPriceMicros: cap,
+    }),
+  )
+  expect(pricing.expectedExecutionPriceMicros).toBe(cap)
+  expect(pricing.notionalLimitMicros).toBe((quantity * cap) / 1_000_000_000n)
+  const simulate = (priceMicros: bigint) =>
+    Result.getOrThrow(
+      simulateIntradayReplayExecution({
+        instrument: {
+          symbol,
+          market: instrumentMarket(symbol),
+          minimumQuantityAtoms: 1_000_000_000n,
+          quantityIncrementAtoms: 1_000_000_000n,
+          priceIncrementAtoms: 100_000n,
+        },
+        order: { side: OrderSide.Buy, quantityAtoms: quantity, limitPriceMicros: pricing.expectedExecutionPriceMicros },
+        quote: { priceMicros, displayedQuantityAtoms: quantity },
+        executionModel: intradayMomentumExecutionModel,
+        assumptions: { slippageBps: 0, availableLiquidityPpm: 1_000_000 },
+      }),
+    )
+  expect(simulate(ask)).toMatchObject({ status: 'unfilled', filledQuantityAtoms: 0n })
+  expect(simulate(cap)).toMatchObject({ status: 'filled', filledQuantityAtoms: quantity, fillPriceMicros: cap })
+})
+
+test('a buy ceiling cannot be nonpositive or attached to a sell', () => {
+  for (const maximumBuyPriceMicros of [0n, -1n])
+    expect(
+      Result.isFailure(deriveExecutionIntentPricing({ ...input, orderType: OrderType.Limit, maximumBuyPriceMicros })),
+    ).toBe(true)
+  expect(
+    Result.isFailure(
+      deriveExecutionIntentPricing({
+        ...input,
+        side: OrderSide.Sell,
+        orderType: OrderType.Limit,
+        maximumBuyPriceMicros: 100_000_000n,
+      }),
+    ),
+  ).toBe(true)
+})
+
 test('a sell floor cannot be nonpositive or attached to a buy', () => {
   for (const minimumSellPriceMicros of [0n, -1n])
     expect(

@@ -15,6 +15,9 @@ import {
 } from 'react'
 
 import { signOutTengri } from '@/lib/tengri/auth-client'
+import { reportBrowserFailure } from '@/lib/observability/client'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
   APP_TITLES,
@@ -251,10 +254,44 @@ export function ReadyDesktop({
   user: TengriUser
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
-  const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
+  const desktopRef = useRef<HTMLElement | null>(null)
+  const desktopViewportRef = useRef<Bounds>({ x: 0, y: 0, width: 1_280, height: 760 })
+  const [windowState, dispatch] = useReducer(windowReducer, desktopViewportRef.current, (viewport) =>
     initialWindowState(viewport, ['finder', 'tengri']),
   )
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
+  useEffect(() => {
+    if (busyAction !== null) return
+    const controller = new AbortController()
+    let pending = true
+    void renewWorkspaceConnections(agent.id, controller.signal).finally(() => {
+      pending = false
+    })
+    const renewActive = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId: agent.id },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        if (activeRuns.some((run) => run.agentId !== agent.id))
+          throw new Error('Active run belongs to another workspace')
+        if (activeRuns.some((run) => run.state.phase === 'running' || run.state.phase === 'recovering'))
+          await renewWorkspaceConnections(agent.id, controller.signal)
+      } catch {
+        if (!controller.signal.aborted) reportBrowserFailure('tengri.connection-renewal')
+      } finally {
+        pending = false
+      }
+    }
+    const timer = window.setInterval(() => void renewActive(), 60_000)
+    return () => {
+      controller.abort()
+      window.clearInterval(timer)
+    }
+  }, [agent.id, agent.runtimeEpoch, busyAction])
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
@@ -307,13 +344,16 @@ export function ReadyDesktop({
   )
 
   const viewport = useCallback((): Bounds => {
+    if (window.matchMedia('(max-width:767px), (pointer:coarse)').matches) return desktopViewportRef.current
     const rect = stageRef.current?.getBoundingClientRect()
-    return {
+    const measured = {
       x: 0,
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
       height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
     }
+    if (measured.width > 0 && measured.height > 0) desktopViewportRef.current = measured
+    return desktopViewportRef.current
   }, [])
 
   const requireWindowCapacity = useCallback((requiresNewWindow: boolean) => {
@@ -434,15 +474,48 @@ export function ReadyDesktop({
 
   useEffect(() => {
     let frame = 0
-    const clampWindows = () => {
+    let previousWidth = -1
+    let previousHeight = -1
+    const mobileViewport = window.matchMedia('(max-width:767px), (pointer:coarse)')
+    const clampWindows = (event?: Event) => {
+      const mobile = mobileViewport.matches
+      if (!mobile && event?.currentTarget === window.visualViewport) return
       window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => dispatch({ type: 'viewport', viewport: viewport() }))
+      frame = window.requestAnimationFrame(() => {
+        const visual = window.visualViewport
+        if (mobile && visual && (visual.width <= 0 || visual.height <= 0)) return
+        desktopRef.current?.style.setProperty(
+          '--tengri-dock-space',
+          `${Math.max(0, 88 - (visual?.scale === 1 ? Math.max(0, window.innerHeight - visual.height) : 0))}px`,
+        )
+        if (mobile && visual?.scale === 1) {
+          desktopRef.current?.style.setProperty('--tengri-viewport-height', `${visual.height}px`)
+          desktopRef.current?.style.setProperty('--tengri-viewport-offset', `${visual.offsetTop}px`)
+        } else {
+          desktopRef.current?.style.removeProperty('--tengri-viewport-height')
+          desktopRef.current?.style.removeProperty('--tengri-viewport-offset')
+        }
+        if (mobile) return
+        const next = viewport()
+        if (next.width <= 0 || next.height <= 0) return
+        if (next.width !== previousWidth || next.height !== previousHeight) {
+          previousWidth = next.width
+          previousHeight = next.height
+          dispatch({ type: 'viewport', viewport: next })
+        }
+      })
     }
     clampWindows()
+    mobileViewport.addEventListener('change', clampWindows)
     window.addEventListener('resize', clampWindows)
+    window.visualViewport?.addEventListener('resize', clampWindows)
+    window.visualViewport?.addEventListener('scroll', clampWindows)
     return () => {
       window.cancelAnimationFrame(frame)
+      mobileViewport.removeEventListener('change', clampWindows)
       window.removeEventListener('resize', clampWindows)
+      window.visualViewport?.removeEventListener('resize', clampWindows)
+      window.visualViewport?.removeEventListener('scroll', clampWindows)
     }
   }, [viewport])
 
@@ -742,7 +815,11 @@ export function ReadyDesktop({
 
   if (!layoutReady) {
     return (
-      <main className="font-geist relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
+      <main
+        ref={desktopRef}
+        data-tengri-desktop
+        className="font-geist relative h-[var(--tengri-viewport-height,100dvh)] min-h-0 w-screen overflow-hidden bg-[#142849] text-white"
+      >
         <DesktopWallpaper />
         <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
           <p className="flex items-center gap-2 text-sm text-white/62" role="status">
@@ -757,9 +834,11 @@ export function ReadyDesktop({
   return (
     <>
       <main
+        ref={desktopRef}
+        data-tengri-desktop
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
+        className="tengri-theme font-geist relative isolate h-[var(--tengri-viewport-height,100dvh)] min-h-0 w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
@@ -807,6 +886,7 @@ export function ReadyDesktop({
               key={desktopWindow.id}
               onCloseRequest={() => closeWindow(desktopWindow)}
               stageRef={stageRef}
+              viewport={viewport}
               window={desktopWindow}
             >
               {desktopWindow.app === 'finder' ? (
@@ -867,6 +947,7 @@ export function ReadyDesktop({
           ))}
         </div>
         <div
+          data-tengri-dock-container
           className={`pointer-events-none group/dock absolute inset-x-0 bottom-0 z-[1500] flex justify-center ${
             activeWindow?.mode === 'maximized' ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
           }`}

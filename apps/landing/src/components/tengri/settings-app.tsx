@@ -1,15 +1,29 @@
 'use client'
 
-import { Bot, ChevronLeft, ChevronRight, Info, LogOut, Moon, Search, Settings, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  LogOut,
+  Moon,
+  Plug,
+  Search,
+  Settings,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/types'
+import { pendingConnectionKey } from '@/lib/tengri/connections'
 
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
 import { PowerSettingsForm } from './power-settings-form'
 import { PasskeyRegistration } from './passkey-registration'
 import { AccessPanel } from './access-panel'
+import { ConnectionsPanel } from './connections-panel'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
 type BusyAction = 'delete' | 'sign-out' | 'sleep' | null
@@ -23,6 +37,7 @@ const settingsNavigation = [
   { id: 'general', label: 'General', icon: Settings, color: 'bg-zinc-500' },
   { id: 'power', label: 'Power & Sleep', icon: Moon, color: 'bg-indigo-500' },
   { id: 'codex', label: 'Codex', icon: Bot, color: 'bg-emerald-600' },
+  { id: 'connections', label: 'Connections', icon: Plug, color: 'bg-cyan-600' },
   { id: 'access', label: 'Privacy & Security', icon: ShieldCheck, color: 'bg-blue-500' },
   { id: 'about', label: 'About', icon: Info, color: 'bg-zinc-500' },
 ] as const
@@ -69,6 +84,16 @@ export function SettingsApp({
     setSelectedSection(section)
     if (contentRef.current) contentRef.current.scrollTop = 0
   }
+
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem(pendingConnectionKey(user.id, agent.uid))) return
+    } catch {
+      return
+    }
+    setVisitedSections((visited) => (visited.includes('connections') ? visited : [...visited, 'connections']))
+    setSelectedSection('connections')
+  }, [agent.uid, user.id])
 
   useEffect(() => {
     setNow(Date.now())
@@ -152,7 +177,7 @@ export function SettingsApp({
   const headingId = `${instanceId}-settings-heading`
 
   return (
-    <div className="@container/settings relative flex h-full min-h-0 bg-[#252527] text-[13px] text-zinc-100">
+    <div className="@container/settings relative flex h-full min-h-0 bg-[#252527] text-[13px] text-zinc-100 [--primary:var(--color-blue-600)] [--primary-foreground:var(--color-white)] [--ring:var(--color-blue-400)]">
       <div
         data-window-drag-region
         className="absolute top-0 left-0 h-[52px] w-[218px] touch-none select-none @max-[560px]/settings:hidden"
@@ -310,19 +335,35 @@ export function SettingsApp({
                 ) : null}
               </>
             ) : null}
+            {visitedSections.includes('connections') ? (
+              <div hidden={selectedSection !== 'connections'}>
+                <ConnectionsPanel
+                  key={JSON.stringify([user.id, agent.uid])}
+                  agent={agent}
+                  principalId={user.id}
+                  active={active && selectedSection === 'connections'}
+                  disabled={lifecycleBusy}
+                />
+              </div>
+            ) : null}
             {visitedSections.includes('access') ? (
               <div hidden={selectedSection !== 'access'} className="space-y-5">
-                <section aria-label="Passkeys" className={groupClass + ' p-3'}>
-                  <PasskeyRegistration />
-                </section>
-                <div className={groupClass + ' flex items-center justify-between gap-4 px-3 py-3'}>
-                  <span>GitHub account</span>
-                  <button type="button" disabled={lifecycleBlocked} className={secondaryButton} onClick={onSignOut}>
-                    <LogOut aria-hidden="true" className="size-3.5" />
-                    Sign Out
-                  </button>
-                </div>
                 <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
+                <details className={groupClass}>
+                  <summary className="cursor-pointer px-3 py-3 text-xs font-medium">Sign-in & passkeys</summary>
+                  <div className="space-y-4 border-t border-zinc-700/60 p-3">
+                    <section aria-label="Passkeys">
+                      <PasskeyRegistration />
+                    </section>
+                    <div className="flex items-center justify-between gap-4">
+                      <span>GitHub account</span>
+                      <button type="button" disabled={lifecycleBlocked} className={secondaryButton} onClick={onSignOut}>
+                        <LogOut aria-hidden="true" className="size-3.5" />
+                        Sign Out
+                      </button>
+                    </div>
+                  </div>
+                </details>
               </div>
             ) : null}
             {selectedSection === 'about' ? (

@@ -171,6 +171,11 @@ test('host storage collector reads host counters without a public listener or Ku
     'node_disk_io_time_weighted_seconds_total',
     'node_network_speed_bytes',
     'node_network_receive_drop_total',
+    'node_ethtool_info',
+    'node_ethtool_received_discards_phy',
+    'node_ethtool_received_out_of_buffer',
+    'node_ethtool_transmitted_pause_ctrl_phy',
+    'node_ethtool_received_crc_errors_phy',
     'node_pressure_io_stalled_seconds_total',
     'node_scrape_collector_success',
   ])
@@ -210,7 +215,7 @@ test('critical Ceph alerts opt into the configured email route', () => {
   expect(criticalRules.map((rule) => rule.alert)).toEqual([
     'CephClusterHealthError',
     'CephSlowOps',
-    'CephOsdReadLatencyHigh',
+    'CephHostReadLatencyHigh',
     'CephOsdCommitLatencyCritical',
   ])
 
@@ -219,7 +224,7 @@ test('critical Ceph alerts opt into the configured email route', () => {
   )
   const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
   const emailRoute = alertmanager.route.routes.find(
-    (route: { receiver: string }) => route.receiver === 'critical-email',
+    (route: { matchers: string[] }) => route.matchers.length === 2 && route.matchers.includes('severity = "critical"'),
   )
   expect(emailRoute.matchers).toEqual(['severity = "critical"', 'notify = "email"'])
   const emailReceiver = alertmanager.receivers.find(
@@ -227,6 +232,28 @@ test('critical Ceph alerts opt into the configured email route', () => {
   )
   expect(emailReceiver.email_configs).toHaveLength(1)
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
+})
+
+test('Ceph host read latency uses its host-grouped route before the general critical route', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const config = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  expect(config.route.routes[0]).toEqual({
+    receiver: 'critical-email',
+    matchers: ['alertname = "CephHostReadLatencyHigh"', 'severity = "critical"', 'notify = "email"'],
+    group_by: ['alertname', 'service', 'node'],
+    group_wait: '10s',
+    group_interval: '15m',
+    repeat_interval: '4h',
+    continue: false,
+  })
+  expect(config.route.routes[1]).toMatchObject({
+    matchers: ['severity = "critical"', 'notify = "email"'],
+    group_wait: '10s',
+    group_interval: '5m',
+    repeat_interval: '1h',
+  })
 })
 
 test('warnings require explicit email opt-in and use the existing receiver with a four-hour repeat', () => {
@@ -241,7 +268,7 @@ test('warnings require explicit email opt-in and use the existing receiver with 
     receiver: 'critical-email',
     matchers: ['severity = "warning"', 'notify = "email"'],
     group_wait: '10s',
-    group_interval: '2m',
+    group_interval: '15m',
     repeat_interval: '4h',
     continue: false,
   })
@@ -250,6 +277,25 @@ test('warnings require explicit email opt-in and use the existing receiver with 
     'default-receiver',
     'critical-email',
   ])
+})
+
+test('Mimir tenant limits use the Helm chart runtime configuration rather than ignored server values', () => {
+  const values = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
+  expect(values.mimir.runtimeConfig).toBeUndefined()
+  expect(values.runtimeConfig.overrides.anonymous).toEqual({
+    ingestion_rate: 20_000,
+    ingestion_burst_size: 400_000,
+    max_global_series_per_user: 300_000,
+  })
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const allow = metricAllowlist(config, 'mimir_ingester_metrics')
+  for (const metric of [
+    'cortex_ingester_memory_series',
+    'cortex_ingester_local_limits',
+    'cortex_discarded_samples_total',
+  ])
+    expect(allow.test(metric)).toBe(true)
+  expect(allow.test('unrelated_metric')).toBe(false)
 })
 
 test('Mimir email UI links select its provisioned Grafana Alertmanager without redirecting API paths', () => {
@@ -300,22 +346,18 @@ test('alert email uses Brevo SMTP credentials from the existing secret store', (
   expect(externalSecret.spec.secretStoreRef).toEqual({ kind: 'ClusterSecretStore', name: 'onepassword-infra' })
   expect(alertmanager.global).toMatchObject({
     smtp_smarthost: 'smtp-relay.brevo.com:587',
-    smtp_auth_username: '{{ .smtp_username }}',
-    smtp_auth_password: '{{ .smtp_password }}',
+    smtp_auth_username: '{{ .username }}',
+    smtp_auth_password: '{{ .password }}',
     smtp_require_tls: true,
   })
-  expect(template['smtp-username']).toBe('{{ .smtp_username }}')
-  expect(
-    externalSecret.spec.data.map((entry: { secretKey: string; remoteRef: { key: string } }) => [
-      entry.secretKey,
-      entry.remoteRef.key,
-    ]),
-  ).toEqual([
-    ['smtp_username', 'brevo/username'],
-    ['smtp_password', 'brevo/password'],
-    ['smtp_from', 'brevo/from'],
-    ['email_to', 'brevo/to'],
-  ])
+  expect(template['smtp-username']).toBe('{{ .username }}')
+  expect(template['smtp-password']).toBe('{{ .password }}')
+  expect(template['smtp-from']).toBe('{{ .from }}')
+  expect(template['email-to']).toBe('{{ .to }}')
+  expect(externalSecret.spec.refreshInterval).toBe('24h')
+  expect(externalSecret.spec.target.template.mergePolicy).toBe('Replace')
+  expect(externalSecret.spec.data).toBeUndefined()
+  expect(externalSecret.spec.dataFrom).toEqual([{ extract: { key: 'brevo' } }])
 })
 
 test('Ceph catch-up scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {

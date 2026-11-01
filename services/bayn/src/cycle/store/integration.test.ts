@@ -9,6 +9,7 @@ import type { Statement } from 'effect/sql/Statement'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
 import { discoverAutonomousCyclePass } from '../runner/program'
+import { selectCycleRecovery } from '../runner/recovery-selection'
 
 import { CycleState, CycleTerminalReason, type CycleDraft } from '../model'
 import {
@@ -21,6 +22,7 @@ import {
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
+import { WriterFence, WriterFenceLive } from '../../execution/writer-fence'
 import {
   executionActivationExpiredRestrictionReason,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -33,14 +35,19 @@ import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore } from './model'
-import { CycleStoreLive } from './postgres'
+import { CycleStoreLive, withWriterFenceCycleStore } from './postgres'
 import { makeCycleQueries } from './queries'
 import { DecisionEvidenceMismatch } from './model'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { databaseUtcInstant } from '../../db/clock'
 import { decideJevEntry } from '../../jev/decision'
-import { nativeJevDecisionEvidence } from '../../jev/native.test-support'
+import { nativeJevDecisionEvidence, nativeJevFixture, nativeJevBatchResult } from '../../jev/native.test-support'
+import { decideEntryAblation } from '../../jev/entry-ablation'
+import { JevBatchPlanVersion } from '../../jev/batch'
+import { makeJevTradingSignalBatch } from '../../jev/trading-signals'
+import { decideRepeatedMomentumEntry } from '../../strategy/repeated-momentum/decision'
+import { makeRepeatedMomentumPolicy } from '../../strategy/repeated-momentum/policy'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -107,16 +114,52 @@ const resetDatabase = Effect.gen(function* () {
   yield* postgresMigrations
 })
 
+const sourceTargetsFixture = () => {
+  const source = nativeJevFixture()
+  const observation = source.observation.payload
+  const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
+  const batchPlan = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation,
+      expiresAt: new Date(Date.parse(observation.observedAt) + source.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.Ablation,
+    }),
+  )
+  return {
+    candidate: Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence())),
+    ablation: Result.getOrThrow(
+      decideEntryAblation({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
+        decidedAt,
+      }),
+    ),
+    momentum: Result.getOrThrow(
+      decideRepeatedMomentumEntry(
+        {
+          schemaVersion: 'bayn.repeated-momentum-evidence.v1',
+          observation,
+          decidedAt,
+        },
+        makeRepeatedMomentumPolicy(source.protocol),
+      ),
+    ),
+  }
+}
+
 describePostgres('PostgreSQL intraday cycle store', () => {
   let runtime: ReturnType<typeof makeRuntime>
+  let sourceTargets: ReturnType<typeof sourceTargetsFixture>
 
   beforeAll(() => {
     const parsed = new URL(testUrl)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
       throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
     }
+    sourceTargets = sourceTargetsFixture()
     runtime = makeRuntime()
-  })
+  }, 30_000)
 
   beforeEach(async () => {
     await runtime.runPromise(resetDatabase)
@@ -186,12 +229,90 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
   })
 
+  test('commits an immediately admissible cycle active and converges concurrent retries', async () => {
+    const candidate = draft()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const receipts = yield* Effect.all(
+          [store.acquire(candidate, activatedAt), store.acquire(candidate, activatedAt)],
+          { concurrency: 'unbounded' },
+        )
+        return { receipts, stored: yield* store.read(candidate.identity.cycleId) }
+      }),
+    )
+
+    expect(result.receipts.filter(({ created }) => created)).toHaveLength(1)
+    expect(result.receipts.map(({ cycle }) => cycle)).toEqual([
+      expect.objectContaining({ state: CycleState.Active, stateVersion: 2, bindings: {} }),
+      expect.objectContaining({ state: CycleState.Active, stateVersion: 2, bindings: {} }),
+    ])
+    expect(Option.getOrThrow(result.stored)).toEqual(result.receipts[0]?.cycle)
+  })
+
+  test('rolls back new acquisition when its immediate activation fails', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE FUNCTION reject_test_cycle_activation() RETURNS trigger AS $$
+          BEGIN RAISE EXCEPTION 'activation failed'; END;
+          $$ LANGUAGE plpgsql`
+        yield* sql`CREATE TRIGGER reject_test_cycle_activation BEFORE UPDATE OF state ON autonomous_cycles
+          FOR EACH ROW WHEN (NEW.state = 'ACTIVE') EXECUTE FUNCTION reject_test_cycle_activation()`
+        const candidate = draft()
+        const acquired = yield* store.acquire(candidate, activatedAt).pipe(Effect.result)
+        expect(Result.isFailure(acquired)).toBe(true)
+        expect(Option.isNone(yield* store.read(candidate.identity.cycleId))).toBe(true)
+      }),
+    )
+  })
+
+  test('inserts and activates immediate admission in one real writer-fenced transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = withWriterFenceCycleStore(yield* CycleStore, yield* WriterFence, {
+          commit: () => Effect.die('cycle acquisition cannot commit an intent'),
+        })
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE TABLE test_cycle_admission_transactions (
+          ordinal bigint GENERATED ALWAYS AS IDENTITY, operation text, transaction_id xid8
+        )`
+        yield* sql`CREATE FUNCTION record_test_cycle_admission_transaction() RETURNS trigger AS $$
+          BEGIN
+            INSERT INTO test_cycle_admission_transactions (operation, transaction_id)
+            VALUES (TG_OP, pg_current_xact_id());
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql`
+        yield* sql`CREATE TRIGGER record_test_cycle_admission_transaction
+          AFTER INSERT OR UPDATE OF state ON autonomous_cycles
+          FOR EACH ROW EXECUTE FUNCTION record_test_cycle_admission_transaction()`
+        const receipt = yield* store.acquire(draft(), activatedAt)
+        const transactions = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              operation: Schema.Literals(['INSERT', 'UPDATE']),
+              transaction_id: Schema.NonEmptyString,
+            }),
+          ),
+        )(
+          yield* sql`SELECT operation, transaction_id::text
+          FROM test_cycle_admission_transactions ORDER BY ordinal`,
+        )
+        expect(receipt.cycle.state).toBe(CycleState.Active)
+        expect(transactions.map((row) => row.operation)).toEqual(['INSERT', 'UPDATE'])
+        expect(new Set(transactions.map((row) => row.transaction_id)).size).toBe(1)
+      }).pipe(Effect.provide(WriterFenceLive)),
+    )
+  })
+
   test('activation at the equity cutoff persists unused expiry without binding evidence', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
         const candidate = draft()
-        const acquiredAt = '2026-08-28T19:54:59.000Z'
+        const acquiredAt = candidate.window.submissionCutoffAt
         yield* store.acquire(candidate, acquiredAt)
         const receipt = yield* store.activate(candidate.identity.cycleId, candidate.window.submissionCutoffAt)
         expect(receipt.cycle).toMatchObject({
@@ -204,6 +325,30 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         expect(Option.getOrThrow(yield* store.read(candidate.identity.cycleId))).toEqual(receipt.cycle)
       }),
     )
+  })
+
+  test('an immediately activated entry still expires at its original cutoff before decision construction', async () => {
+    const candidate = draft()
+    const receipt = await runtime.runPromise(
+      Effect.flatMap(CycleStore, (store) => store.acquire(candidate, '2026-08-28T19:54:59.999Z')),
+    )
+    expect(receipt.cycle.state).toBe(CycleState.Active)
+    expect(
+      Result.getOrThrow(
+        selectCycleRecovery({
+          cycleBindingId: qualificationRunId,
+          accountId,
+          strategyProtocolHash: candidate.identity.strategyProtocolHash,
+          observedAt: candidate.window.submissionCutoffAt,
+          cycle: receipt.cycle,
+        }),
+      ),
+    ).toEqual({
+      action: 'BLOCK',
+      cycleId: candidate.identity.cycleId,
+      observedAt: candidate.window.submissionCutoffAt,
+      reason: CycleTerminalReason.UnusedEntryExpired,
+    })
   })
 
   test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
@@ -319,7 +464,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const current = Option.getOrThrow(result.current)
     expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
     expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
-    expect(current.state).toBe(CycleState.Pending)
+    expect(current).toMatchObject({ state: CycleState.Active, stateVersion: 2 })
     expect(current.bindings).toEqual({})
     expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
     expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
@@ -557,7 +702,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
             'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.jev.protocol.v24', ${'7'.repeat(64)}, ${accountId},
+            'bayn.jev.protocol.v36', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}
@@ -777,7 +922,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         })
         const missingJev = yield* queries.decisionEvidenceMismatch({
           ...document,
-          strategyDecision: Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence())),
+          strategyDecision: sourceTargets.candidate,
+        })
+        const missingAblation = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          strategyDecision: sourceTargets.ablation,
+        })
+        const missingMomentum = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          strategyDecision: sourceTargets.momentum,
         })
         const unverifiedStreamReference = yield* queries.decisionEvidenceMismatch({
           ...document,
@@ -832,6 +985,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           prematureDecision,
           missingPricing,
           missingJev,
+          missingAblation,
+          missingMomentum,
           unverifiedStreamReference,
           forgedAuthority,
           forgedEquity,
@@ -851,6 +1006,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       prematureDecision: DecisionEvidenceMismatch.Reconciliation,
       missingPricing: DecisionEvidenceMismatch.ExecutionMarketData,
       missingJev: DecisionEvidenceMismatch.Jev,
+      missingAblation: DecisionEvidenceMismatch.Jev,
+      missingMomentum: DecisionEvidenceMismatch.Jev,
       unverifiedStreamReference: DecisionEvidenceMismatch.DecisionMarketData,
       forgedAuthority: DecisionEvidenceMismatch.RiskContext,
       forgedEquity: DecisionEvidenceMismatch.RiskContext,
@@ -1261,9 +1418,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,
               qualification_run_id text, research_plan_hash text, strategy_protocol_hash text,
-              broker_environment text DEFAULT 'sandbox'
+              broker_environment text DEFAULT 'sandbox',
+              previous_generation_hash text, proof_plan_hash text, authority_version bigint, activated_at timestamptz,
+              broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
+              broker_identity_hash text DEFAULT 'identity', broker_provider text DEFAULT 'alpaca'
             ) ON COMMIT DROP`
-            yield* sql`INSERT INTO authority_generations VALUES (
+            yield* sql`INSERT INTO authority_generations (
+              generation_hash,account_id,maximum,activation_schema_version,
+              qualification_run_id,research_plan_hash,strategy_protocol_hash,broker_environment
+            ) VALUES (
               ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
               NULL, ${researchPlanHash}, 'protocol', 'sandbox'
             )`
@@ -1321,19 +1484,40 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE fills SET quantity_atoms = 500000`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE fills SET quantity_atoms = 1000000`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:03:40Z'`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
+              VALUES ('flat-after-idle-timeout', 'account', 0, '2026-09-08T17:03:45Z')`
+            yield* sql`INSERT INTO reconciliations VALUES (
+              'account', 'EXACT', 'state', 'state', '[]'::jsonb, '2026-09-08T17:03:50Z'
+            )`
+            expect(yield* settle, 'a fully evidenced trade before an idle timeout remains recoverable').toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: generationHash,
+              terminalIntentCount: 1,
+            })
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id,decision_hash,document) VALUES (
+              'incomplete-cycle', 'incomplete-decision',
+              ${sql.json({ bindings: { authorityGenerationHash: generationHash } })}
+            )`
+            expect(yield* settle, 'one completed trade cannot hide another incomplete decision').toEqual({
+              _tag: 'NoTerminalGeneration',
+            })
+            yield* sql`DELETE FROM autonomous_cycle_shadow_decisions WHERE cycle_id = 'incomplete-cycle'`
+            yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = false WHERE snapshot_id = 'flat-after-idle-timeout'`
+            expect(yield* settle, 'an untrusted later position cannot authorize idle recovery').toEqual({
+              _tag: 'NoTerminalGeneration',
+            })
+            yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = true WHERE snapshot_id = 'flat-after-idle-timeout'`
+            expect(yield* settle).toMatchObject({ _tag: 'TerminalGenerationSettled' })
+            yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
+            expect(yield* settle, 'an active cycle still owns recovery').toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE autonomous_cycles SET state = 'COMPLETED'`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:01:30Z'`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
             expect(authority).toEqual([{ effective: 'OBSERVE', kill_state: 'ACTIVE' }])
 
-            yield* sql`ALTER TABLE authority_generations
-              ADD previous_generation_hash text,
-              ADD proof_plan_hash text,
-              ADD authority_version bigint,
-              ADD activated_at timestamptz,
-              ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
-              ADD broker_identity_hash text DEFAULT 'identity',
-              ADD broker_provider text DEFAULT 'alpaca'`
             yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
             yield* sql`INSERT INTO authority_generations (
               generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id
