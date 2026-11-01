@@ -563,7 +563,10 @@ Committed receipts return the original result across retries
 and supervisor replacement. A lost turn response is reconciled by bounded native history reads matching the exact
 `clientId` to a single turn. Zero or ambiguous matches keep the operation uncertain and block a fresh submission;
 they never resend the model request. Observation uses bounded metadata pages and the accepting Codex process identity.
-An unfinished turn from a dead process requires reconciliation. Pending approval snapshots and exact submitted
+An unfinished turn from a dead process fails once Nanoagent proves that the accepting generation's commands stopped.
+The proof is a durable generation cleanup receipt or its recorded kernel boot ID differing from the current boot.
+Process absence, idle thread history, and snapshot resume alone do not release a conversation. Missing proof keeps
+reconciliation pending. Stop cannot target the replacement process. Pending approval snapshots and exact submitted
 controls live in Restate. One workflow per control ID records the exact pending approval scope before delivering
 the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
 Native approval IDs additionally bind a random process identity, thread, and turn.
@@ -585,7 +588,11 @@ The sleep fence contains a set of active run IDs. Terminal cleanup removes only 
 using MicroVM UID and resource-version preconditions.
 
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
-terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
+terminal outcome, confirmed generation cleanup, or permanent removal receipt. The run, control, and workspace services
+publish the SDK's maximum retry count instead of inheriting Restate's finite pause budget. Worker outages retain the
+existing backoff and cannot exhaust the default 70 attempts while a conversation claim or Stop remains outstanding.
+Authentication, request expiry, and native dispatch checks still apply on recovery. Restate retains completed run and
+control workflows for seven days.
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
 Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
 the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.

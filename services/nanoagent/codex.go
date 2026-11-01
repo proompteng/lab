@@ -113,6 +113,7 @@ type codexSupervisor struct {
 	relayRoot       string
 	operationMu     sync.Mutex
 	responseTimeout time.Duration
+	processes       sync.WaitGroup
 
 	mu              sync.Mutex
 	command         *exec.Cmd
@@ -174,7 +175,11 @@ func approvalKey(generation *codexProcessGeneration, id json.RawMessage) string 
 }
 
 func (supervisor *codexSupervisor) start() {
-	go supervisor.run()
+	supervisor.processes.Add(1)
+	go func() {
+		defer supervisor.processes.Done()
+		supervisor.run()
+	}()
 }
 
 func (supervisor *codexSupervisor) isReady() bool {
@@ -241,7 +246,13 @@ func (supervisor *codexSupervisor) runProcess() error {
 		)
 	}
 	arguments = append(arguments, "app-server")
-	command := exec.Command(supervisor.binary, arguments...)
+	supervisor.mu.Lock()
+	generation := supervisor.generation
+	supervisor.mu.Unlock()
+	command, err := codexProcessCommand(supervisor.binary, arguments, supervisor.cwd, generation.id)
+	if err != nil {
+		return err
+	}
 	command.Dir = supervisor.cwd
 	command.Env = childEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -260,7 +271,6 @@ func (supervisor *codexSupervisor) runProcess() error {
 	supervisor.mu.Lock()
 	supervisor.command = command
 	supervisor.stdin = stdin
-	generation := supervisor.generation
 	supervisor.mu.Unlock()
 	go supervisor.readMessages(command, generation, stdout)
 
@@ -281,12 +291,12 @@ func (supervisor *codexSupervisor) runProcess() error {
 	}
 	cancel()
 	if err != nil {
-		killProcessGroup(command)
+		stopCodexProcess(command)
 		_ = command.Wait()
 		return fmt.Errorf("initialize Codex app-server: %w", err)
 	}
 	if err := supervisor.writeMessage(map[string]any{"method": "initialized"}); err != nil {
-		killProcessGroup(command)
+		stopCodexProcess(command)
 		_ = command.Wait()
 		return fmt.Errorf("acknowledge Codex app-server initialization: %w", err)
 	}
@@ -327,8 +337,9 @@ func (supervisor *codexSupervisor) close() {
 		response <- codexPendingResult{localErr: shutdownError}
 	}
 	if command != nil && command.Process != nil {
-		killProcessGroup(command)
+		stopCodexProcess(command)
 	}
+	supervisor.processes.Wait()
 }
 
 func killProcessGroup(command *exec.Cmd) {
@@ -373,7 +384,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
 		supervisor.mu.Unlock()
 		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
-		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
+		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal, "processesStopped": !alive && supervisor.generationProcessesStopped(op.Generation)})
 		return codexCallResult{result: raw}, err
 	}
 	if method == "tengri/reconcileOperation" {
@@ -524,6 +535,16 @@ func (supervisor *codexSupervisor) request(
 		supervisor.mu.Unlock()
 		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
 	}
+	if method == "turn/interrupt" {
+		var target struct {
+			Thread string `json:"threadId"`
+			Turn   string `json:"turnId"`
+		}
+		if json.Unmarshal(params, &target) != nil || target.Thread == "" || target.Turn == "" || supervisor.activeTurns[target.Thread] != target.Turn {
+			supervisor.mu.Unlock()
+			return codexCallResult{}, errCodexOperationUnknown
+		}
+	}
 	if method == "turn/start" || method == "turn/steer" {
 		supervisor.workRequests[key] = struct{}{}
 		supervisor.workChangedAt = time.Now()
@@ -625,7 +646,7 @@ func (supervisor *codexSupervisor) readMessagesWithLimit(
 			break
 		}
 	}
-	killProcessGroup(command)
+	stopCodexProcess(command)
 }
 
 func readBoundedCodexLine(reader *bufio.Reader, limit int) ([]byte, int, bool, error) {
@@ -1342,7 +1363,7 @@ func (supervisor *codexSupervisor) abortProcessWrite(
 		command = supervisor.command
 	}
 	supervisor.mu.Unlock()
-	killProcessGroup(command)
+	stopCodexProcess(command)
 }
 
 func (supervisor *codexSupervisor) publish(method, approvalID string, value any) {
