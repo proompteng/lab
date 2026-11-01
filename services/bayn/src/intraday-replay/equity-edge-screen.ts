@@ -384,6 +384,7 @@ export const runEquityEdgeScreen = (
           intradayExecutionModel,
           micros,
           cryptoMaximumTakerFeeBps,
+          day.date,
         ).pipe(Result.map((value) => value.cashMicros - sessionFees))
       let position: {
         symbol: string

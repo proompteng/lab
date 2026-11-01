@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises'
 
 export const requiredTerms = [
-  'unsloth/Qwen3.6-35B-A3B-NVFP4',
-  'qwen36-flamingo',
+  'nvidia/Qwen3.8-27B-NVFP4',
+  'qwen38-flamingo',
+  '482ca0f3832238542f8f5295dde86b5f22711d80',
   'qwen3',
   'qwen3_coder',
   '262144',
@@ -18,10 +19,15 @@ export const requiredTerms = [
 ]
 
 export const forbiddenTerms = [
+  'Qwen/Qwen3.8-27B-FP8',
+  '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a',
+  'unsloth/Qwen3.6-35B-A3B-NVFP4',
+  'qwen36-flamingo',
+  '739af1e7aac320af1682ed1e0cce369af4c5265d',
   'Qwen/Qwen3-Coder-Next-FP8',
   'Qwen/Qwen3-Coder-30B-A3B-Instruct',
   'qwen3-coder-flamingo',
-  'hermes',
+  '--tool-call-parser hermes',
   'qwen3_xml',
 ]
 
@@ -32,6 +38,12 @@ export const targetFiles = [
   'argocd/applications/agents/anypi-agentprovider.yaml',
   'argocd/applications/agents/anypi-eval-agentprovider.yaml',
   'argocd/applications/jangar/openwebui-values.yaml',
+  'argocd/applications/jangar/deployment.yaml',
+  'argocd/applications/bumba/deployment.yaml',
+  'argocd/applications/bayn/research-worker.yaml',
+  'argocd/applications/opencode/opencode.json',
+  'argocd/applications/hermes/config.yaml',
+  'argocd/applications/hermes/bootstrap/TOOLS.md',
   'docs/agents/anypi.md',
   'docs/jangar/pi-agent-flamingo-host-configuration.md',
   'docs/jangar/saigak-to-flamingo-gpu-pod-migration.md',
@@ -39,6 +51,8 @@ export const targetFiles = [
   'scripts/jangar/validate-pi-flamingo-compaction.ts',
   'services/anypi/src/config.ts',
   'services/anypi/src/config.test.ts',
+  'services/bumba/src/activities/index.ts',
+  'services/bumba/src/event-consumer.ts',
 ]
 
 export const activeSaigakMigrationFiles = [

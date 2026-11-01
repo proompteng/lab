@@ -400,6 +400,78 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .audit_receipt_id,
         applied.decision.audit_receipt_id
     );
+    {
+        use p::platform_authorization_service_server::PlatformAuthorizationService;
+        let service = super::service::Service::new(database.clone(), native.clone());
+        let query = p::ReadPolicyRelationshipsRequest {
+            administrator: Some(session(&humans[0])),
+            resource: Some(resource(&resource_id)),
+            subject_kind: "workload".into(),
+            subject_id: OPENCODE.into(),
+        };
+        let rpc = |value: p::ReadPolicyRelationshipsRequest, peer: &str| {
+            let mut request = Request::new(value);
+            request
+                .metadata_mut()
+                .insert("x-ofz-contract-version", "1".parse().unwrap());
+            request
+                .extensions_mut()
+                .insert(crate::transport::Peer(peer.into()));
+            request
+        };
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE human_id=$1",
+                &[&humans[0].0],
+            )
+            .await
+            .unwrap();
+        let snapshot = service
+            .read_policy_relationships(rpc(query.clone(), policy::BFF_ID))
+            .await
+            .unwrap()
+            .into_inner();
+        connection
+            .execute(
+                "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE human_id=$1",
+                &[&humans[0].0],
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.relations, vec!["status_reader"]);
+        assert_eq!(
+            snapshot.policy_version,
+            database.state().await.unwrap().version
+        );
+        let mut denied = query.clone();
+        denied.administrator = Some(session(&humans[2]));
+        assert_eq!(
+            service
+                .read_policy_relationships(rpc(denied, policy::BFF_ID))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::PermissionDenied
+        );
+        assert_eq!(
+            service
+                .read_policy_relationships(rpc(query.clone(), OPENCODE))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::PermissionDenied
+        );
+        let mut unknown = query;
+        unknown.subject_id = "spiffe://proompteng.ai/ns/unknown/sa/unknown".into();
+        assert_eq!(
+            service
+                .read_policy_relationships(rpc(unknown, policy::BFF_ID))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::InvalidArgument
+        );
+    }
     assert!(
         authorization::check(&database, &native, RELAY, check(&resource_id))
             .await

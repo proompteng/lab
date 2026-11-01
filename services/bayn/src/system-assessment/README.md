@@ -1,7 +1,7 @@
 # System assessment
 
-These modules evaluate a registered PAPER policy against its economic, matched-control, reliability, safety, and
-realism requirements. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
+These modules report a registered PAPER policy against its economic, matched-control, reliability, safety, and
+realism requirements. Current bootstrap outputs are research diagnostics, not a coverage certificate. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
 immutable source records. An assessment never admits an order or grants capital authority.
 
 ## Economics
@@ -26,7 +26,9 @@ propagates through `advanceQualificationEquity` instead of becoming zero.
 999/1000. A successful obligation has a correct durable completion no later than its original deadline. Scheduled
 work that never starts stays in the denominator. The failure allowance is `floor(scheduled / 1000)`.
 
-Empty classes and unfinished observation windows remain `UNDETERMINED`. Duplicate evidence, orphan completions, and
+An empty recovery class is `NOT_APPLICABLE` when the source-bound schedule has no recovery obligations; it is not
+100% measured recovery. Empty required decision, reconciliation, or mutation classes and unfinished observation
+windows remain `UNDETERMINED`. Retained policy versions keep their original empty-class behavior. Duplicate evidence, orphan completions, and
 impossible timestamps fail validation. Safe failures and late recoveries count as missed service. Safety violations
 are evaluated separately by the combined assessment and have no error budget.
 
@@ -44,11 +46,14 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` binds the twenty-session calendar, candidate and three controls, source/image/prompt
-identities, operating-cost weights, inference tariffs, risk policy, original deadlines, and statistical assumptions.
-The deployed control retains its frozen identity. The ablation and momentum definitions derive from their native
-runtime policies. Expanded risk limits, substituted control identities, overlapping calendars, and reduced Jev tariffs
-cannot become valid registrations.
+`validateSystemRegistration` admits `bayn.system-registration.v3`: a nonempty prospective calendar, candidate and at
+least one selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original
+deadlines, statistical assumptions, allocation, and a bootstrap plan. Block length, replicate budget, and seed are
+immutable before the first open. The allocation must fit every bound source-approved risk policy. Both existing
+PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
+Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
+from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
+Contracted inference discounts are permitted; all costs still require evidence.
 
 The candidate requires continuous Jev and OpenAI model tariff coverage from the first open through the final close.
 The chart ablation requires OpenAI coverage. The frozen deterministic deployed control and repeated momentum do not
@@ -120,14 +125,32 @@ before dispatch; recovery must reconcile again before closing. The runtime regre
 close to that exact observed conflict and verifies no broker order, duplicate fill, or accounting effect.
 
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
-reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,
-and observed intraminute marks retain losses across sessions. Unknown valuations or request clocks prevent a
+reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, marks
+at least as frequent as the registered decision interval, and observed intrainterval marks retain losses across sessions. Unknown valuations or request clocks prevent a
 complete marked-risk assessment. Failed inference remains chargeable even when its provider start is unknown.
 
-`evaluateSystemAssessment` keeps actual net profit, conservative qualification profit, statistical edge, reliability,
-realism, and safety separate. Numerical qualification uses the frozen acceptance implementation and every registered
-session. The result exposes assumptions, missing evidence, and contradictions. Only the conjunction of all gates can
-produce `QUALIFIED_PAPER`; a complete rejected window and an incomplete window retain distinct outcomes.
+`evaluateSystemAssessment` keeps actual net profit, the policy-bound qualification basis, statistical edge,
+reliability, realism, and safety separate. Current qualification and marked risk use actual fully attributed costs;
+the operating-cost report retains the tariff premium as a diagnostic. Retained versions reproduce their original
+conservative deductions. Unknown costs, missing usage clocks, unresolved settlement, or missing valuations do not
+become zero.
+
+Current numerical requirements are positive total net profit, positive lower bounds for mean profit and every
+selected paired net edge, and compliance with the registered source-approved loss and drawdown limits. Trade counts,
+turnover, control-profit ratios, best-session removal, ten-basis-point stress, and p95 latency are diagnostics.
+Missing stress evidence leaves that diagnostic unresolved; supplied contradictory evidence still rejects binding.
+There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
+including losses, downtime, blocked decisions, and zero-trade costs. The bootstrap preregisters its dependence block,
+seed, and finite work budget. Its nominal error allocation covers absolute profit and selected comparisons across attempts only if the constituent bounds have valid coverage.
+See the [statistical procedure](../../../../docs/bayn/jev-migration-validation.md#statistical-comparison).
+
+Current assessments include `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, retain observed profit and bootstrap diagnostics,
+and cannot emit established edge or `QUALIFIED_PAPER`. Known violations still reject; otherwise the result is
+inconclusive. No fixed calendar length or activity quota repairs the missing coverage argument. A future inferential
+method requires its own justified assumptions and versioned policy before it can establish qualification.
+A complete failed window and an incomplete window retain distinct outcomes. Source calendar evidence must support
+the market and hours claimed. The supported reference calendar remains broker-observed US regular sessions;
+that scope does not establish continuous-market performance.
 
 Latency stress replays the selected native policy with recorded response occurrences and the registered execution
 model. CHART, BASE_START, and Jev retain separate costs and clocks. Replay image verification binds the immutable
@@ -142,7 +165,7 @@ carry this executable. The original three policy identities, execution model, em
 remain frozen at both application and PostgreSQL admission. The image verifier reads the dedicated executable and
 compiler receipt, and the execution observer requires that exact offline command.
 
-`bayn.frozen-control-replay.v1` binds the complete original protocol, captured-arrival bytes, all twenty registered
+`bayn.frozen-control-replay.v1` binds the complete original protocol, captured-arrival bytes, every registered
 sessions, common instrument terms and execution assumptions, original operation deadlines, and the measured candidate
 calibration. Its replica derives from this complete scope, preventing a different stress from reusing a broker account.
 The adapter releases each original committed entry or closing document after both its actual completion and the
@@ -170,7 +193,11 @@ its prospectively registered operation timeout; the CLI does not replace it with
 
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
-assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing
+assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
+Migrations 169 and 170 admit only current v3 registrations under the research-only qualification policy, preserve ordered attempts and append-only financial history,
+and support selected controls and preregistered bootstrap terms. New registrations require the current policy.
+Retained v2/v3/v4 acceptance records keep their original terms and policy identities;
+they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
 Source inserts enqueue pending witnesses in the same PostgreSQL transaction. Controller observations consume only
@@ -225,3 +252,8 @@ The tests include arithmetic properties, positive trading profit consumed by cos
 missing cost evidence, absent scheduled work, independent class targets, future inputs, unsupported liquidity,
 partial fills, timing contradictions, source substitution, invoice reuse, late settlement, retained replay stages,
 immutable assessment receipts, and rejection of a transaction that commits after its first market open.
+
+Historical runtime decoding accepts the exact retained v28 through v35 protocol contracts and original control
+prompt identities. New registration and replay execution require the current protocol. Historical policy selection
+uses both acceptance and qualification identities before reproducing an immutable receipt. Original bytes, hashes,
+failed attempts, and financial records are never upgraded to current semantics.

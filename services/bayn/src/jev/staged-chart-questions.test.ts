@@ -42,6 +42,7 @@ const candidatesFor = (chart: Result.Result.Success<ReturnType<typeof makeNative
   const { protocol, funding } = fundedSource(chart)
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol,
       symbol: chart.symbol,
       ...funding,

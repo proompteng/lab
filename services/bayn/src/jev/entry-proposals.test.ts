@@ -47,6 +47,7 @@ const fixture = (input = source) => {
   }
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: chart.symbol,
       bidMicros: 104_000_000n,

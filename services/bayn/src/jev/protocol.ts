@@ -10,6 +10,7 @@ import { maximumIntradayObservationLagMs } from '../market-data/intraday/verific
 import { PositiveIntegerSchema, SymbolSchema, UnitIntervalSchema, strictParseOptions } from '../schemas'
 import {
   intradayExecutionModel,
+  retainedIntradayExecutionModel,
   intradayLookbackMinutes,
   intradayDecisionDelaySeconds,
 } from '../strategy/intraday-market'
@@ -63,7 +64,7 @@ const protocolFields = (entryQuestionPolicyHash: string) => ({
 const CurrentProtocol = Schema.Struct({
   ...protocolFields(entryQuestionPolicyHash),
   inputDefinition: Schema.Literal('bayn.jev-entry-state.v23'),
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v35'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v36'),
   lookbackMinutes: Schema.Struct({
     equity: Schema.Literal(marketHistoryMinutes[MarketKind.Equity]),
     crypto: Schema.Literal(marketHistoryMinutes[MarketKind.Crypto]),
@@ -75,6 +76,7 @@ const validateProtocol = (
   protocol: ProtocolFields,
   shortestLookbackMinutes: number,
   evidencePolicy?: IntradayCandidateEvidencePolicy,
+  currentFees = false,
 ) => {
   const issues: Schema.FilterIssue[] = []
   if (
@@ -108,7 +110,7 @@ const validateProtocol = (
       path: ['horizonMinutes'],
       issue: 'must equal the holding horizon and fit its completed source window',
     })
-  const expectedModel = canonicalHashV1Result(intradayExecutionModel)
+  const expectedModel = canonicalHashV1Result(currentFees ? intradayExecutionModel : retainedIntradayExecutionModel)
   const actualModel = canonicalHashV1Result(protocol.executionModel)
   if (Result.isFailure(expectedModel) || Result.isFailure(actualModel) || expectedModel.success !== actualModel.success)
     issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed session-limit execution contract' })
@@ -149,6 +151,7 @@ export const JevProtocolSchema = CurrentProtocol.check(
       protocol,
       Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
       IntradayCandidateEvidencePolicy.MarketQuotesV2,
+      true,
     ),
   ),
 )
@@ -227,7 +230,38 @@ export const RetainedJevProtocolV34Schema = Schema.Struct({
   ),
 )
 
+export const RetainedJevProtocolV35Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v35'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+    ),
+  ),
+)
+
 export type JevProtocol = typeof JevProtocolSchema.Type
+// Historical registration started at v28. This reader never admits a protocol for execution.
+export const HistoricalJevProtocolSchema = Schema.Union([
+  JevProtocolSchema,
+  RetainedJevProtocolV35Schema,
+  jevProtocolSchemaForQuestionPolicy(
+    'abf1e97da2d6a9bdef380aa224cde4245aa332c2686976bb9d755ad9a1a60910',
+    'bayn.jev.protocol.v28',
+  ),
+  jevProtocolSchemaForQuestionPolicy(
+    'abf1e97da2d6a9bdef380aa224cde4245aa332c2686976bb9d755ad9a1a60910',
+    'bayn.jev.protocol.v29',
+  ),
+  RetainedJevProtocolV30Schema,
+  RetainedJevProtocolV31Schema,
+  RetainedJevProtocolV32Schema,
+  RetainedJevProtocolV33Schema,
+  RetainedJevProtocolV34Schema,
+])
 export type JevProtocolMaterial =
   | JevProtocol
   | typeof RetainedJevProtocolV30Schema.Type
@@ -235,6 +269,7 @@ export type JevProtocolMaterial =
   | typeof RetainedJevProtocolV32Schema.Type
   | typeof RetainedJevProtocolV33Schema.Type
   | typeof RetainedJevProtocolV34Schema.Type
+  | typeof RetainedJevProtocolV35Schema.Type
   | (Omit<JevProtocol, 'schemaVersion' | 'lookbackMinutes' | 'inputDefinition'> & {
       readonly inputDefinition: 'bayn.jev-entry-state.v22'
       readonly lookbackMinutes: 30
@@ -248,7 +283,7 @@ export type JevProtocolMaterial =
     })
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v35',
+  schemaVersion: 'bayn.jev.protocol.v36',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',

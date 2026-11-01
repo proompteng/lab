@@ -222,7 +222,11 @@ fixture ports local. These checks exercise control behavior, not the yet-unmigra
 The Landing BFF now uses a schema-generated Ofz client with exact SPIFFE peer verification. Its dedicated Keycloak
 realm requires GitHub brokerage and verified passkeys. Ofz verifies issuer, audience, nonce, immutable numeric GitHub
 identity, authentication time and assurance level before issuing a hash-only opaque SQL session. Reauthentication
-revokes the previous browser credential in the same transaction. Failed establishment records an immutable denial
+rotates the previous browser credential in the same transaction, preserving the authority ID only for the same
+verified broker identity while the original session remains active. Credential history preserves establishment retry
+bindings; the replaced cookie cannot inspect or revoke the renewed session. Explicit logout still revokes the entire
+session authority, including existing runs. Expired, revoked or recovery-fenced authority is never revived by rotation.
+Failed establishment records an immutable denial
 without storing the ID token. Platform membership remains necessary after successful identity-provider authentication.
 
 A workspace Viewer has metadata access by default. Content requires an explicit Owner-approved observation scope

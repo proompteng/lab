@@ -8,23 +8,27 @@ import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
   entryAblationQuestionPolicyHash,
+  historicalAblationQuestionPolicyHash,
 } from '../jev/entry-ablation-policy'
 
 import { canonicalHashV1Result } from '../hash'
-import { BrokerEnvironment } from '../broker/identity'
 import { jevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
+import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
 import { InferenceRateCardSchema, inferenceRatesCoverWindow, prepareInferenceRateCard } from '../inference-costs'
 import { MarketKind } from '../instruments'
+import { JevProtocolSchema } from '../jev/protocol'
 import {
   JevAcceptanceInputSchema,
+  JevAcceptanceVersion,
+  usesLegacyAcceptance,
   JevResearchPolicy,
   jevAcceptanceProtocolHash,
   jevAcceptanceInferenceRateFloor,
   jevAcceptanceExecutionRiskLimits,
 } from '../jev/acceptance'
+import { BootstrapPlanSchema, validateBootstrapPlan, type NumericalAssessmentTerms } from '../jev/bootstrap-plan'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
 import { QualificationRuntimeSchema, qualificationDeadlines } from './configuration'
@@ -39,16 +43,18 @@ import {
 } from './frozen-control-identity'
 
 export const systemQualificationPolicy = {
-  schemaVersion: 'bayn.system-qualification-policy.v1',
+  schemaVersion: 'bayn.system-qualification-policy.v4',
+  statisticalQualificationRule: 'BOOTSTRAP_RESEARCH_ONLY_COVERAGE_UNESTABLISHED',
+  evaluationWindowRule: 'PROSPECTIVE_NONEMPTY_REGISTERED_CALENDAR',
   program: 'BAYN_SYSTEM_QUALIFICATION',
   environment: 'PAPER',
-  allocationMicros: '100000000000',
+  allocationRule: 'PROSPECTIVELY_REGISTERED_WITHIN_APPROVED_RISK_SCOPE',
   reliabilityNumerator: 999,
   reliabilityDenominator: 1000,
   maximumSafetyViolations: 0,
   operatingCostCategories: ['INFERENCE', 'DATA', 'INFRASTRUCTURE', 'RESEARCH'],
-  maximumMarkGapMs: 60_000,
-  inferenceQualificationRule: 'MAX_INVOICE_TARIFF',
+  markCoverageRule: 'REGISTERED_DECISION_INTERVAL',
+  inferenceQualificationRule: 'ACTUAL_VERIFIED_COSTS_WITH_SEPARATE_TARIFF_STRESS',
   decisionPersistenceRule: 'COMMITTED_SOURCE_AT_INDEPENDENT_MUTATION_ADMISSION_BEFORE_ROUTING',
   executionOrderRule:
     'SEALED_ENTRY_AND_INDEPENDENT_APPROVED_PROTECTION_WITH_PER_ORDER_FILLS_AND_SHARED_ENTRY_INVENTORY',
@@ -79,8 +85,7 @@ export const PolicyDefinitionSchema = Schema.Struct({
   executionModelHash: Sha256Schema,
 })
 
-export const SystemRegistrationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.system-registration.v2'),
+const registrationFields = {
   program: Schema.Literal('BAYN_SYSTEM_QUALIFICATION'),
   environment: Schema.Literal('PAPER'),
   policyHash: Sha256Schema,
@@ -99,7 +104,7 @@ export const SystemRegistrationSchema = Schema.Struct({
     sourceHash: Sha256Schema,
     sessions: JevAcceptanceInputSchema.fields.registration.fields.sessions,
   }),
-  policies: Schema.Array(PolicyDefinitionSchema).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
+  policies: Schema.Array(PolicyDefinitionSchema).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
   costAllocationPlans: Schema.Array(CostAllocationPlanSchema).check(Schema.isMaxLength(20000)),
   obligations: Schema.Struct({
     configuration: QualificationRuntimeSchema,
@@ -116,19 +121,41 @@ export const SystemRegistrationSchema = Schema.Struct({
   latencyStressProtocolHash: Sha256Schema,
   latencyReplayExecutionModelHash: Sha256Schema,
   statisticalAssumptions: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isMinLength(1)),
+}
+
+const RetainedSystemRegistrationSchema = Schema.Struct({
+  ...registrationFields,
+  schemaVersion: Schema.Literal('bayn.system-registration.v2'),
 })
+const CurrentSystemRegistrationSchema = Schema.Struct({
+  ...registrationFields,
+  schemaVersion: Schema.Literal('bayn.system-registration.v3'),
+  allocationMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
+  bootstrap: BootstrapPlanSchema,
+})
+export const SystemRegistrationSchema = Schema.Union([
+  CurrentSystemRegistrationSchema,
+  RetainedSystemRegistrationSchema,
+])
 
 export type SystemRegistration = typeof SystemRegistrationSchema.Type
 
-export const systemQualificationPolicyHash = () =>
+export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
+    // Exact pre-window policy identity for immutable historical evidence. New admission always uses Current.
+    if (version === JevAcceptanceVersion.RetainedV4)
+      return '7013c86f0b60da5ccc98cc82e4c9b077c8ab7a5c242f846a598bb77058782635'
+    if (version === JevAcceptanceVersion.RetainedV3)
+      return '81379af13f662669fc056164502d1e04c38e80e003f1c88f1b8a41a6552608fd'
+    if (version === JevAcceptanceVersion.RetainedV2)
+      return '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b'
     return yield* canonicalHashV1Result({
       ...systemQualificationPolicy,
-      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(),
+      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(version),
     })
   })
 
-export const validateSystemRegistration = (input: unknown) =>
+export const validateSystemRegistration = (input: unknown, version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
     const registration = yield* Schema.decodeUnknownResult(
       SystemRegistrationSchema,
@@ -136,14 +163,32 @@ export const validateSystemRegistration = (input: unknown) =>
     )(input).pipe(
       Result.mapError((cause) => new SystemAssessmentError({ message: 'System registration is malformed', cause })),
     )
+    const candidatePolicy = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+    const legacy = usesLegacyAcceptance(version)
     const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
     if (
-      registration.policyHash !== (yield* systemQualificationPolicyHash()) ||
-      registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash()) ||
+      version === JevAcceptanceVersion.Current &&
+      !Schema.is(JevProtocolSchema)(registration.obligations.configuration.protocol)
+    )
+      return yield* invalid('New registration requires the current execution protocol')
+    if (
+      registration.policyHash !== (yield* systemQualificationPolicyHash(version)) ||
+      registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash(version)) ||
       registration.latencyStressProtocolHash !== (yield* systemLatencyStressProtocolHash())
     )
-      return yield* invalid('Registration must bind the current system policy and frozen acceptance contract')
-    if (new Set(registration.policies.map((p) => p.policy)).size !== Object.values(JevResearchPolicy).length)
+      return yield* invalid('Registration must bind the current system and acceptance policies')
+    if (version === JevAcceptanceVersion.RetainedV2 && registration.calendar.sessions.length !== 20)
+      return yield* invalid('Retained v2 evidence must retain its original calendar length')
+    if (
+      (legacy && registration.schemaVersion !== 'bayn.system-registration.v2') ||
+      (!legacy && registration.schemaVersion !== 'bayn.system-registration.v3')
+    )
+      return yield* invalid('Registration schema must match its recorded policy version')
+    if (
+      new Set(registration.policies.map((p) => p.policy)).size !== registration.policies.length ||
+      candidatePolicy === undefined ||
+      (legacy && registration.policies.length !== Object.values(JevResearchPolicy).length)
+    )
       return yield* invalid('Registration requires the candidate and each distinct matched control')
     if (new Set(registration.policies.map((p) => p.accountBindingHash)).size !== registration.policies.length)
       return yield* invalid('Each policy requires its own economic account scope and cost allocation')
@@ -158,14 +203,33 @@ export const validateSystemRegistration = (input: unknown) =>
       markets.some((market) => !registration.calendar.tradingMarkets.includes(market))
     )
       return yield* invalid('Registered trading markets must include the complete native policy')
+    const ablationQuestionHash =
+      version === JevAcceptanceVersion.Current
+        ? entryAblationQuestionPolicyHash
+        : yield* historicalAblationQuestionPolicyHash(registration.obligations.configuration.protocol)
     const ablationIdentity = yield* entryAblationStrategyIdentity(
-      makeEntryAblationPolicy(registration.obligations.configuration.protocol),
+      makeEntryAblationPolicy(registration.obligations.configuration.protocol, ablationQuestionHash),
     )
     const momentumIdentity = yield* repeatedMomentumStrategyIdentity(
       makeRepeatedMomentumPolicy(registration.obligations.configuration.protocol),
     )
-    const tariffFloor = yield* jevAcceptanceInferenceRateFloor()
-    const riskCeilings = jevAcceptanceExecutionRiskLimits()
+    if (registration.schemaVersion === 'bayn.system-registration.v3') {
+      const bootstrap = validateBootstrapPlan(
+        registration.bootstrap,
+        registration.calendar.sessions.length,
+        registration.attemptIndex,
+        registration.policies.length - 1,
+      )
+      if (Result.isFailure(bootstrap)) return yield* invalid(bootstrap.failure)
+      if (
+        registration.policies.some(
+          (p) => BigInt(registration.allocationMicros) > BigInt(p.riskPolicy.maxGrossExposureMicros),
+        )
+      )
+        return yield* invalid('Registered allocation exceeds an approved exposure limit')
+    }
+    const tariffFloor = yield* jevAcceptanceInferenceRateFloor(version)
+    const riskCeilings = jevAcceptanceExecutionRiskLimits(version)
     for (const policy of registration.policies) {
       if (
         policy.riskPolicyHash !== (yield* canonicalHashV1Result(policy.riskPolicy)) ||
@@ -176,13 +240,9 @@ export const validateSystemRegistration = (input: unknown) =>
           }))
       )
         return yield* invalid('Registered risk policy must bind its exact material and economic account')
-      const approvedHashes = yield* Result.all(
-        [BrokerEnvironment.Live, BrokerEnvironment.Sandbox].map((environment) =>
-          Result.flatMap(
-            makeExecutionRiskPolicy(policy.riskPolicy.accountId, policy.riskPolicy.allowedSymbols, environment),
-            canonicalHashV1Result,
-          ),
-        ),
+      const approvedHashes = yield* approvedExecutionRiskPolicyHashes(
+        policy.riskPolicy.accountId,
+        policy.riskPolicy.allowedSymbols,
       )
       if (!approvedHashes.includes(policy.riskPolicyHash))
         return yield* invalid('Registered risk limits must preserve an existing source-approved execution policy')
@@ -193,7 +253,7 @@ export const validateSystemRegistration = (input: unknown) =>
         'maxNetExposureMicros',
         'maxDailyTradedNotionalMicros',
       ] as const)
-        if (BigInt(policy.riskPolicy[key]) > riskCeilings[key])
+        if (legacy && BigInt(policy.riskPolicy[key]) > riskCeilings[key])
           return yield* invalid('Registered risk limits cannot expand the frozen qualification ceilings')
       if (
         policy.policy === JevResearchPolicy.Deployed &&
@@ -210,7 +270,7 @@ export const validateSystemRegistration = (input: unknown) =>
         (policy.strategyHash !== ablationIdentity.strategy.behaviorHash ||
           policy.parametersHash !== ablationIdentity.strategy.parameterHash ||
           policy.protocolHash !== ablationIdentity.protocolHash ||
-          policy.promptsHash !== entryAblationQuestionPolicyHash ||
+          policy.promptsHash !== ablationQuestionHash ||
           policy.executionModelHash !==
             (yield* canonicalHashV1Result(registration.obligations.configuration.protocol.executionModel)))
       )
@@ -261,6 +321,7 @@ export const validateSystemRegistration = (input: unknown) =>
       }
       for (const { rate } of rates)
         if (
+          legacy &&
           rate.provider === 'typesafe' &&
           registration.calendar.sessions.some(
             (session) => rate.effectiveFrom <= session.closeAt && rate.effectiveUntil > session.openAt,
@@ -299,5 +360,58 @@ export const validateSystemRegistration = (input: unknown) =>
       previousClose = Date.parse(session.closeAt)
       previousDate = session.sessionDate
     }
-    return { registration, registrationHash: yield* canonicalHashV1Result(registration) }
+    return { registration, registrationHash: yield* canonicalHashV1Result(registration), candidatePolicy }
   })
+
+export const verifyStoredSystemRegistration = (input: unknown) =>
+  Result.gen(function* () {
+    const decoded = yield* Schema.decodeUnknownResult(
+      SystemRegistrationSchema,
+      strictParseOptions,
+    )(input).pipe(
+      Result.mapError((cause) => new SystemAssessmentError({ message: 'Stored registration is malformed', cause })),
+    )
+    const versions = Object.values(JevAcceptanceVersion)
+    const identities = yield* Result.all(
+      versions.map((version) =>
+        Result.gen(function* () {
+          return {
+            version,
+            hash: yield* jevAcceptanceProtocolHash(version),
+            policyHash: yield* systemQualificationPolicyHash(version),
+          }
+        }),
+      ),
+    )
+    const selected = identities.find(
+      (identity) => identity.hash === decoded.acceptanceProtocolHash && identity.policyHash === decoded.policyHash,
+    )
+    if (selected === undefined)
+      return yield* Result.fail(
+        new SystemAssessmentError({ message: 'Stored registration has an unknown acceptance policy' }),
+      )
+    const version = selected.version
+    return { ...(yield* validateSystemRegistration(decoded, version)), version }
+  })
+
+export const registeredAllocationMicros = (registration: SystemRegistration): string =>
+  registration.schemaVersion === 'bayn.system-registration.v3' ? registration.allocationMicros : '100000000000'
+
+export const registeredMarkIntervalMs = (registration: SystemRegistration): number =>
+  registration.schemaVersion === 'bayn.system-registration.v3' ? registration.obligations.decisionIntervalMs : 60_000
+
+export const registeredAssessmentTerms = (
+  registration: SystemRegistration,
+  riskPolicy: typeof PolicySchema.Type,
+): NumericalAssessmentTerms => {
+  return {
+    allocationUsd: Number(BigInt(registeredAllocationMicros(registration))) / 1_000_000,
+    maximumSessionLossUsd: Number(BigInt(riskPolicy.maxDailyLossMicros)) / 1_000_000,
+    maximumDrawdownUsd: Number(BigInt(riskPolicy.maxDrawdownMicros)) / 1_000_000,
+    maximumMarkGapMs: registeredMarkIntervalMs(registration),
+    bootstrap:
+      registration.schemaVersion === 'bayn.system-registration.v3'
+        ? registration.bootstrap
+        : { blockLengthSessions: 2, replicates: 10000, seed: 20260921 },
+  }
+}

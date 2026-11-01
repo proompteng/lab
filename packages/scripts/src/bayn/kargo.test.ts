@@ -94,8 +94,17 @@ test('binds PAPER authority to the sealed strategy and lineage, or requires expl
   const secret = read('argocd/applications/bayn/alpaca-sealedsecret.yaml')
   const encodedIdentity = secret.metadata.annotations?.['proompteng.ai/bayn.mandate-identity']
   const request = secret.spec.encryptedData['capital-activation-request']
-  if (request === undefined) {
-    expect(encodedIdentity).toBeUndefined()
+  if (request !== undefined) {
+    expect(typeof encodedIdentity).toBe('string')
+    expect(JSON.parse(encodedIdentity).ciphertextHash).toBe(createHash('sha256').update(request).digest('hex'))
+  } else expect(encodedIdentity).toBeUndefined()
+  const bound = ['deployment', 'execution-controller', 'execution-activation'].some((file) =>
+    read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env.some(
+      (entry: { name: string }) => entry.name === 'BAYN_CAPITAL_ACTIVATION_REQUEST',
+    ),
+  )
+  // A retained sealed request is history; only an explicit runtime binding can activate it.
+  if (!bound) {
     expect(steps.some((step: { uses: string; as?: string }) => step.uses === 'yaml-parse' && step.as === 'bayn')).toBe(
       false,
     )
@@ -278,11 +287,11 @@ test('writes source, digest, and research lineage into the correct field in ever
       expect(assignments.has('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toBe(false)
     }
   }
-  const hasMandate =
-    read('argocd/applications/bayn/alpaca-sealedsecret.yaml').spec.encryptedData['capital-activation-request'] !==
-    undefined
-  expect(lineageValues).toHaveLength(hasMandate ? 3 : 0)
-  expect(new Set(lineageValues).size).toBe(hasMandate ? 1 : 0)
+  const hasLineage = read('argocd/applications/bayn/deployment.yaml').spec.template.spec.containers[0].env.some(
+    (entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+  )
+  expect(lineageValues).toHaveLength(hasLineage ? 3 : 0)
+  expect(new Set(lineageValues).size).toBe(hasLineage ? 1 : 0)
 })
 
 test('OBSERVE-only source skips mandate lookup and updates while retaining all image bindings', () => {
