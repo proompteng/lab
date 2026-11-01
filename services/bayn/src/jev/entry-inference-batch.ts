@@ -293,38 +293,55 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
               : { terminal: entry.terminal, successor: { kind: 'HANDOFF', handoff: entry.handoff } },
         ),
       )
-      const bases = yield* parallel(
-        charts.filter((entry) => entry.kind === 'BASE_START'),
-        (entry) =>
-          Effect.gen(function* () {
-            const terminal = yield* visual(entry.work, entry.claim, entry.request)
-            return { work: entry.work, terminal, handoff: yield* handoff(entry.work, entry.terminal, terminal.outcome) }
-          }),
-      )
-      yield* commit(
-        bases.map((entry) => ({
-          terminal: entry.terminal,
-          successor: { kind: 'HANDOFF' as const, handoff: entry.handoff },
-        })),
-      )
-      const handoffs = new Map([
-        ...charts.flatMap((entry) =>
-          entry.kind === 'HANDOFF' ? [[entry.work.claim.requestId, entry.handoff] as const] : [],
-        ),
-        ...bases.map((entry) => [entry.work.claim.requestId, entry.handoff] as const),
-      ])
-      return yield* parallel(work, (entry) =>
+      const complete = (entry: Work, committed: EntryHandoff) =>
         Effect.gen(function* () {
-          const committed = handoffs.get(entry.claim.requestId)
-          if (committed === undefined)
-            return yield* new EntryInferenceError({
-              category: 'INPUT',
-              message: 'Committed handoffs do not cover the admitted batch',
-            })
           const completion = yield* evaluateHandedOffEntry(entry.claim, committed)
           entry.completion = completion
           return completion
-        }),
+        })
+      // A ready handoff from the first commit need not wait for an unrelated
+      // candidate's base provider and second commit. These disjoint groups keep
+      // total provider concurrency bounded by the admitted candidate count.
+      // Settle both groups before failure cleanup so every paid response survives.
+      yield* parallel(
+        [
+          parallel(
+            charts.filter((entry) => entry.kind === 'HANDOFF'),
+            (entry) => complete(entry.work, entry.handoff),
+          ),
+          Effect.gen(function* () {
+            const bases = yield* parallel(
+              charts.filter((entry) => entry.kind === 'BASE_START'),
+              (entry) =>
+                Effect.gen(function* () {
+                  const terminal = yield* visual(entry.work, entry.claim, entry.request)
+                  return {
+                    work: entry.work,
+                    terminal,
+                    handoff: yield* handoff(entry.work, entry.terminal, terminal.outcome),
+                  }
+                }),
+            )
+            yield* commit(
+              bases.map((entry) => ({
+                terminal: entry.terminal,
+                successor: { kind: 'HANDOFF' as const, handoff: entry.handoff },
+              })),
+            )
+            return yield* parallel(bases, (entry) => complete(entry.work, entry.handoff))
+          }),
+        ],
+        (group) => group,
+      )
+      return yield* Effect.forEach(work, (entry) =>
+        entry.completion === null
+          ? Effect.fail(
+              new EntryInferenceError({
+                category: 'INPUT',
+                message: 'Committed handoffs do not cover the admitted batch',
+              }),
+            )
+          : Effect.succeed(entry.completion),
       )
     }).pipe(
       Effect.onExit((exit) => {
