@@ -5,23 +5,34 @@ import { readFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'
 import { isIP } from 'node:net'
 import { z } from 'zod'
-import type { TengriUser } from './types'
-import { controlDatabase, hashOpaque } from './control-db'
-import { TengriAuthorizationService, type Session } from './generated/proompteng/authz/v1/authz_pb'
+import { PlatformAuthorizationService, type Session } from '../tengri/generated/proompteng/authz/v1/platform_pb'
 import { isOfzConfigured, OfzError, ofzCall } from './ofz'
 import { reportServerError } from '../observability/server'
 
+// Stable host-only names preserve active browser authority during the gateway migration.
 const SESSION_COOKIE = '__Host-tengri-session'
 const OAUTH_COOKIE = '__Host-tengri-oauth'
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
-const attemptSchema = z.object({ verifier: opaque, nonce: opaque, operation_id: z.uuid() })
 const tokensSchema = z.object({ id_token: z.string().min(1).max(16384) })
-export type TengriIdentity = { subject: string; user: TengriUser; session: Session }
+export type PlatformIdentity = {
+  subject: string
+  user: { id: string; name: string; email: string; image: string | null }
+  session: Session
+}
+
+export function platformSession(identity: PlatformIdentity) {
+  return {
+    humanId: identity.session.humanId,
+    sessionId: identity.session.id,
+    origin: new URL(process.env.PLATFORM_WEB_ORIGIN || '').origin,
+  }
+}
 
 function environment() {
-  const base = new URL(process.env.TENGRI_DESKTOP_ORIGIN?.trim() || 'https://proompteng.ai')
-  const issuer = new URL(process.env.TENGRI_OIDC_ISSUER?.trim() || 'https://auth.proompteng.ai/realms/tengri')
-  const secretFile = process.env.TENGRI_OIDC_CLIENT_SECRET_FILE?.trim()
+  const base = new URL(process.env.PLATFORM_WEB_ORIGIN?.trim() || '')
+  const issuer = new URL(process.env.PLATFORM_OIDC_ISSUER?.trim() || 'https://auth.proompteng.ai/realms/tengri')
+  const secretFile = process.env.PLATFORM_OIDC_CLIENT_SECRET_FILE?.trim()
+  const clientId = process.env.PLATFORM_OIDC_CLIENT_ID?.trim()
   if (
     base.protocol !== 'https:' ||
     base.username ||
@@ -35,6 +46,9 @@ function environment() {
     issuer.search ||
     issuer.hash ||
     !secretFile ||
+    !clientId ||
+    clientId.length > 256 ||
+    /\s/.test(clientId) ||
     !isOfzConfigured()
   )
     throw new OfzError(503)
@@ -44,29 +58,25 @@ function environment() {
     base,
     issuer: issuer.href.replace(/\/$/, ''),
     secret,
-    clientId: 'tengri-bff',
+    clientId,
     callback: `${base.origin}/api/auth/callback`,
   }
 }
 
-export function isTengriAuthConfigured() {
+export function isPlatformAuthConfigured() {
   try {
     environment()
-    return Boolean(
-      process.env.TENGRI_DATABASE_DSN &&
-      process.env.TENGRI_DATABASE_PASSWORD_FILE &&
-      process.env.TENGRI_DATABASE_CA_FILE,
-    )
+    return true
   } catch {
     return false
   }
 }
 
-export async function getTengriIdentity(headers: Headers): Promise<TengriIdentity | null> {
+export async function getPlatformIdentity(headers: Headers): Promise<PlatformIdentity | null> {
   const credential = cookie(headers, SESSION_COOKIE)
   if (!credential) return null
   try {
-    const response = await ofzCall(TengriAuthorizationService.method.inspectSession, { sessionId: credential })
+    const response = await ofzCall(PlatformAuthorizationService.method.inspectSession, { sessionId: credential })
     const session = response.session
     if (
       !session ||
@@ -110,7 +120,7 @@ function sameOrigin(request: Request, origin: string) {
     throw new OfzError(403)
 }
 
-export async function handleTengriAuth(request: Request) {
+export async function handlePlatformAuth(request: Request) {
   const responseHeaders = headers()
   try {
     const env = environment()
@@ -125,15 +135,14 @@ export async function handleTengriAuth(request: Request) {
         const binding = randomBytes(32).toString('base64url')
         const verifier = randomBytes(32).toString('base64url')
         const nonce = randomBytes(32).toString('base64url')
-        const database = await controlDatabase()
-        // Database time and the single delete/return below work across BFF replicas.
-        await database.query('SELECT tengri.begin_oauth($1,$2,$3,$4,$5)', [
-          hashOpaque(state),
-          hashOpaque(binding),
+        await ofzCall(PlatformAuthorizationService.method.beginSignIn, {
+          state,
+          binding,
           verifier,
           nonce,
-          randomUUID(),
-        ])
+          operationId: randomUUID(),
+          returnPath: request.headers.get('x-platform-return-path') || '/',
+        })
         const authorize = new URL(`${env.issuer}/protocol/openid-connect/auth`)
         authorize.search = new URLSearchParams({
           client_id: env.clientId,
@@ -146,9 +155,12 @@ export async function handleTengriAuth(request: Request) {
           code_challenge_method: 'S256',
           kc_idp_hint: 'github',
           acr_values: '2',
-          prompt: 'login',
-          max_age: '0',
+          max_age: '28800',
         }).toString()
+        if (url.pathname !== '/api/auth/login') {
+          authorize.searchParams.set('prompt', 'login')
+          authorize.searchParams.set('max_age', '0')
+        }
         if (url.pathname === '/api/auth/add-passkey') authorize.searchParams.set('kc_action', 'webauthn-register')
         responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, binding, 300))
         return Response.json({ url: authorize.href }, { headers: responseHeaders })
@@ -162,14 +174,7 @@ export async function handleTengriAuth(request: Request) {
         const code = z.string().min(1).max(4096).parse(url.searchParams.get('code'))
         const binding = cookie(request.headers, OAUTH_COOKIE)
         if (!binding) throw new OfzError(401)
-        const result = await (
-          await controlDatabase()
-        ).query<{ verifier: unknown; nonce: unknown; operation_id: unknown }>(
-          'DELETE FROM tengri.oauth_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at_ms>tengri.now_ms() RETURNING verifier,nonce,operation_id',
-          [hashOpaque(state), hashOpaque(binding)],
-        )
-        if (result.rowCount !== 1) throw new OfzError(401)
-        const attempt = attemptSchema.parse(result.rows[0])
+        const attempt = await ofzCall(PlatformAuthorizationService.method.consumeSignIn, { state, binding })
         const tokens = await exchangeCode(
           env,
           new URLSearchParams({
@@ -184,14 +189,14 @@ export async function handleTengriAuth(request: Request) {
         const establishment = {
           identityToken: tokens.id_token,
           nonce: attempt.nonce,
-          operationId: attempt.operation_id,
+          operationId: attempt.operationId,
           previousCredential: cookie(request.headers, SESSION_COOKIE) || '',
           credential: randomBytes(32).toString('base64url'),
         }
-        const established = await ofzCall(TengriAuthorizationService.method.establishSession, establishment).catch(
+        const established = await ofzCall(PlatformAuthorizationService.method.establishSession, establishment).catch(
           (error) => {
             if (!(error instanceof OfzError) || error.status !== 503) throw error
-            return ofzCall(TengriAuthorizationService.method.establishSession, establishment)
+            return ofzCall(PlatformAuthorizationService.method.establishSession, establishment)
           },
         )
         const session = established.session
@@ -201,15 +206,15 @@ export async function handleTengriAuth(request: Request) {
           setCookie(SESSION_COOKIE, session.credential, Number(session.expiresAtUnixMs - BigInt(Date.now())) / 1000),
         )
         responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, '', 0))
-        responseHeaders.set('Location', env.base.origin + '/')
+        responseHeaders.set('Location', env.base.origin + attempt.returnPath)
         return new Response(null, { status: 303, headers: responseHeaders })
       }
       case 'POST /api/auth/logout': {
         sameOrigin(request, env.base.origin)
         const credential = cookie(request.headers, SESSION_COOKIE)
-        const operationId = z.uuid().parse(request.headers.get('x-tengri-operation-id'))
+        const operationId = z.uuid().parse(request.headers.get('x-platform-operation-id'))
         if (credential)
-          await ofzCall(TengriAuthorizationService.method.revokeSession, {
+          await ofzCall(PlatformAuthorizationService.method.revokeSession, {
             credential,
             operationId,
             origin: env.base.origin,
@@ -228,7 +233,7 @@ export async function handleTengriAuth(request: Request) {
         : error instanceof z.ZodError
           ? new OfzError(400)
           : new OfzError(exhausted.success ? 429 : 503)
-    if (failure.status >= 500) reportServerError(error, 'tengri.auth', failure.status)
+    if (failure.status >= 500) reportServerError(error, 'platform.auth', failure.status)
     return Response.json(
       {
         error:
@@ -244,9 +249,9 @@ export async function handleTengriAuth(request: Request) {
 
 async function exchangeCode(env: ReturnType<typeof environment>, body: URLSearchParams) {
   const endpoint = new URL(`${env.issuer}/protocol/openid-connect/token`)
-  const pinned = process.env.TENGRI_OIDC_CONNECT_IP?.trim()
+  const pinned = process.env.PLATFORM_OIDC_CONNECT_IP?.trim()
   if (pinned && !isIP(pinned)) throw new OfzError(503)
-  const caFile = process.env.TENGRI_OIDC_CA_FILE?.trim()
+  const caFile = process.env.PLATFORM_OIDC_CA_FILE?.trim()
   const bytes = await new Promise<Buffer>((resolve, reject) => {
     const encoded = body.toString()
     const call = httpsRequest(

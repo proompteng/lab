@@ -1,10 +1,10 @@
 use crate::{
     config::Namespace,
-    connector::{Connector, Failure, Normalized, Output},
+    connector::{Connector, Failure, Normalized, Output, allows_operation},
 };
 use futures::StreamExt;
 use platform_client::{
-    authz::PlatformResource,
+    authz::{PlatformConnectionScope, PlatformResource},
     relay::{ConnectorOperation, ConnectorTarget},
 };
 use serde::{Deserialize, Serialize};
@@ -137,7 +137,7 @@ impl Connector for Kubernetes {
     fn id(&self) -> &str {
         &self.id
     }
-    fn operations(&self) -> Vec<ConnectorOperation> {
+    fn operations(&self, access: Option<&[PlatformConnectionScope]>) -> Vec<ConnectorOperation> {
         let definitions = [
             (
                 "status",
@@ -151,8 +151,20 @@ impl Connector for Kubernetes {
                 "kubernetes.events.read",
             ),
         ];
-        definitions.into_iter().map(|(name, description, action)| {
-            let mut properties = serde_json::json!({"namespace":{"type":"string","enum":self.namespaces.iter().map(|n|&n.name).collect::<Vec<_>>()}});
+        definitions.into_iter().filter_map(|(name, description, action)| {
+            let targets: Vec<_> = self.namespaces.iter().filter_map(|namespace| {
+                let resource = PlatformResource {
+                    kind: "kubernetes.namespace".into(),
+                    id: format!("{}/{}", self.id, namespace.uid),
+                    target: String::new(),
+                };
+                allows_operation(access, action, &resource).then(|| ConnectorTarget {
+                    name: namespace.name.clone(),
+                    resource: Some(resource),
+                })
+            }).collect();
+            if targets.is_empty() { return None; }
+            let mut properties = serde_json::json!({"namespace":{"type":"string","enum":targets.iter().map(|target|&target.name).collect::<Vec<_>>()}});
             let mut required = vec!["namespace"];
             if name == "logs" {
                 properties["pod"] = serde_json::json!({"type":"string"});
@@ -160,16 +172,8 @@ impl Connector for Kubernetes {
                 properties["tail_lines"] = serde_json::json!({"type":"integer","minimum":1,"maximum":500});
                 required.push("pod");
             }
-            let targets = self.namespaces.iter().map(|namespace| ConnectorTarget {
-                name: namespace.name.clone(),
-                resource: Some(PlatformResource {
-                    kind: "kubernetes.namespace".into(),
-                    id: format!("{}/{}", self.id, namespace.uid),
-                    target: String::new(),
-                }),
-            }).collect();
             let schema = serde_json::json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
-            ConnectorOperation {
+            Some(ConnectorOperation {
                 connector_id: self.id.clone(),
                 name: name.into(),
                 description: description.into(),
@@ -177,7 +181,7 @@ impl Connector for Kubernetes {
                 input_schema_json: serde_json::to_vec(&schema).expect("static Kubernetes tool schema"),
                 targets,
                 read_only: true,
-            }
+            })
         }).collect()
     }
     fn normalize(&self, operation: &str, arguments: &[u8]) -> Result<Normalized, Status> {
@@ -394,6 +398,36 @@ mod tests {
             }],
             client: reqwest::Client::new(),
         }
+    }
+    #[test]
+    fn discovery_excludes_unapproved_actions_targets_and_schema_values() {
+        let mut connector = connector();
+        connector.namespaces.push(Namespace {
+            name: "private-workspace".into(),
+            uid: "22222222-2222-4222-8222-222222222222".into(),
+        });
+        let scopes = [PlatformConnectionScope {
+            resource: Some(PlatformResource {
+                kind: "kubernetes.namespace".into(),
+                id: "galactic/11111111-1111-4111-8111-111111111111".into(),
+                target: String::new(),
+            }),
+            actions: vec!["kubernetes.status.read".into()],
+            ..Default::default()
+        }];
+        let operations = connector.operations(Some(&scopes));
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].name, "status");
+        assert_eq!(operations[0].targets.len(), 1);
+        assert_eq!(operations[0].targets[0].name, "ofz");
+        let schema: serde_json::Value =
+            serde_json::from_slice(&operations[0].input_schema_json).unwrap();
+        assert_eq!(
+            schema["properties"]["namespace"]["enum"],
+            serde_json::json!(["ofz"])
+        );
+        assert!(connector.operations(Some(&[])).is_empty());
+        assert_eq!(connector.operations(None).len(), 3);
     }
     #[test]
     fn logs_bind_the_exact_namespace_pod_container_and_limits() {

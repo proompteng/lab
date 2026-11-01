@@ -152,7 +152,7 @@ impl Service {
             .get(&payload.connector_id)
             .ok_or_else(|| Status::not_found("connector not registered"))?;
         let operation = connector
-            .operations()
+            .operations(None)
             .into_iter()
             .find(|operation| operation.name == payload.operation)
             .ok_or_else(|| Status::unimplemented("connector operation is not onboarded"))?;
@@ -418,14 +418,29 @@ impl RelayService for Service {
         input: Request<relay::ListOperationsRequest>,
     ) -> Result<Response<relay::ListOperationsResponse>, Status> {
         let peer = tls::peer(&input)?;
-        self.client(&peer, &input.get_ref().client_service)?;
-        Ok(Response::new(relay::ListOperationsResponse {
-            operations: self
-                .connectors
-                .values()
-                .flat_map(|c| c.operations())
-                .collect(),
-        }))
+        let subject = input
+            .into_inner()
+            .subject
+            .ok_or_else(|| Status::unauthenticated("discovery subject required"))?;
+        self.client_subject(&peer, &subject, &subject.client_service, None)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("Relay is busy"))?;
+        let access = self
+            .ofz
+            .clone()
+            .discover_platform_access(request(authz::DiscoverPlatformAccessRequest {
+                subject: Some(subject),
+            }))
+            .await?
+            .into_inner();
+        let operations = self
+            .connectors
+            .values()
+            .flat_map(|connector| connector.operations(Some(&access.scopes)))
+            .collect();
+        Ok(Response::new(relay::ListOperationsResponse { operations }))
     }
     async fn execute(
         &self,
@@ -474,6 +489,7 @@ mod tests {
             vec![authz::RegisteredRelayClient {
                 id: "example".into(),
                 identities: vec![first.into(), second.into()],
+                display_name: "Example".into(),
             }],
             Vec::new(),
             tonic::transport::Endpoint::from_static("http://localhost:1").connect_lazy(),
@@ -495,6 +511,14 @@ mod tests {
             }),
             body: serde_json::to_vec(&payload).unwrap(),
         };
+        let mut discovery = request(relay::ListOperationsRequest {
+            subject: input.subject.clone(),
+        });
+        discovery.extensions_mut().insert(tls::Peer(first.into()));
+        assert_eq!(
+            service.list_operations(discovery).await.unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
         let lookup = relay::GetExecutionRequest {
             subject: input.subject.clone(),
             body: serde_json::to_vec(&platform_client::ExecutionLookup {

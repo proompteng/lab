@@ -3,7 +3,6 @@
 import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Badge,
   Button,
   Checkbox,
   Input,
@@ -14,10 +13,6 @@ import {
   ItemGroup,
   ItemTitle,
   Skeleton,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
 } from '@proompteng/design/ui'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
@@ -30,43 +25,34 @@ import {
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
-import { PasskeyRequiredError, startTengriSignIn } from '@/lib/tengri/auth-client'
+import { PasskeyRequiredError, startSignIn } from '@/lib/platform/auth-client'
 import {
   Action,
   ExecuteCommandResponseSchema,
   ListAccessResponseSchema,
-  ReadAuditResponseSchema,
   type AccessEntry,
   type ListAccessResponse,
-  type ReadAuditResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
-import { ServicePolicyPanel } from './service-policy-panel'
-import { SettingsSelect } from './settings-select'
+import { SettingsSelect } from '@/components/platform/settings-select'
 
-type AccessView = 'workspace' | 'platform' | 'audit'
-type View = AccessView | 'policies'
 type ViewState =
-  | { view: AccessView; kind: 'loading' }
-  | { view: AccessView; kind: 'error'; message: string }
-  | { view: 'workspace' | 'platform'; kind: 'roster'; roster: ListAccessResponse }
-  | { view: 'audit'; kind: 'audit'; audit: ReadAuditResponse }
-const actions = ['membership', 'collaborator', 'quota', 'grant', 'revoke', 'transfer', 'emergency'] as const
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | { kind: 'roster'; roster: ListAccessResponse }
+const actions = ['collaborator', 'grant', 'revoke', 'transfer'] as const
 const lines = (value: string) => value.split('\n').filter(Boolean)
 const formSchema = z
   .object({
     action: z.enum(actions),
     login: z.string(),
     githubId: z.string(),
-    role: z.enum(['member', 'administrator', 'auditor', 'operator', 'developer', 'viewer']),
+    role: z.enum(['developer', 'viewer']),
     enabled: z.boolean(),
     reason: z
       .string()
       .min(3)
       .max(500)
       .regex(/^[^\p{Cc}]+$/u),
-    total: z.number().int().min(0).max(6),
-    active: z.number().int().min(0).max(6),
-    retainedGiB: z.number().int().min(0).max(192),
     permissions: z.array(z.enum(diagnosticActions)).min(1),
     agentId: z.string(),
     grantId: z.string(),
@@ -79,18 +65,14 @@ const formSchema = z
     viewerContent: z.boolean(),
     maxBytes: z.number().int().min(1).max(1_048_576),
     maxItems: z.number().int().min(1).max(200),
-    incidentId: z.string(),
-    approvalId: z.string(),
   })
   .superRefine((value, context) => {
     if (
-      ['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(value.action) &&
+      ['collaborator', 'transfer'].includes(value.action) &&
       !value.githubId &&
       !githubLoginSchema.safeParse(value.login).success
     )
       context.addIssue({ code: 'custom', path: ['login'], message: 'Enter a GitHub username' })
-    if (value.action === 'quota' && value.active > value.total)
-      context.addIssue({ code: 'custom', path: ['active'], message: 'Active quota cannot exceed total quota' })
     if (
       value.action === 'grant' ||
       (value.action === 'collaborator' && value.enabled && value.role === 'viewer' && value.viewerContent)
@@ -120,7 +102,7 @@ const formSchema = z
     if (value.action === 'revoke' && !workspaceUidSchema.safeParse(value.grantId).success)
       context.addIssue({ code: 'custom', path: ['grantId'], message: 'Enter the grant UUID' })
     if (
-      ['grant', 'emergency'].includes(value.action) &&
+      ['grant'].includes(value.action) &&
       (!z.iso.datetime().safeParse(value.expiresAt).success || Date.parse(value.expiresAt) <= Date.now())
     )
       context.addIssue({
@@ -131,15 +113,12 @@ const formSchema = z
   })
 type Form = z.infer<typeof formSchema>
 const defaultAccessForm: Form = {
-  action: 'membership',
+  action: 'collaborator',
   login: '',
   githubId: '',
-  role: 'member',
+  role: 'viewer',
   enabled: true,
   reason: '',
-  total: 2,
-  active: 1,
-  retainedGiB: 64,
   permissions: ['metadata'],
   agentId: '',
   grantId: '',
@@ -152,25 +131,20 @@ const defaultAccessForm: Form = {
   viewerContent: false,
   maxBytes: 65536,
   maxItems: 100,
-  incidentId: '',
-  approvalId: '',
 }
 
-export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: string; active?: boolean }) {
-  const [view, setView] = useState<View>(workspaceUid ? 'workspace' : 'platform')
+export function AccessPanel({ workspaceUid, active = true }: { workspaceUid: string; active?: boolean }) {
   const [data, setData] = useState<ViewState>()
   const loadController = useRef<AbortController | null>(null)
-  const accessView = view === 'policies' ? 'platform' : view
-  const current = data?.view === view ? data : undefined
+  const current = data
   const roster = current?.kind === 'roster' ? current.roster : undefined
-  const audit = current?.kind === 'audit' ? current.audit : undefined
   const entriesBySubject = new Map<string, AccessEntry[]>()
   for (const entry of roster?.entries ?? [])
     entriesBySubject.set(entry.subjectId, [...(entriesBySubject.get(entry.subjectId) ?? []), entry])
   const peopleCount = [...entriesBySubject.values()].filter((entries) => entries.some((entry) => entry.githubId)).length
   const readError = current?.kind === 'error' ? current.message : ''
-  const loading = active && view !== 'policies' && (!current || current.kind === 'loading')
-  const viewTitle = view === 'audit' ? 'Audit log' : view === 'platform' ? 'Platform access' : 'Workspace access'
+  const loading = active && (!current || current.kind === 'loading')
+  const viewTitle = 'Workspace access'
   const [error, setError] = useState<Error>()
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<AccessCommand>()
@@ -186,8 +160,8 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     resolver: zodResolver(formSchema),
     defaultValues: {
       ...defaultAccessForm,
-      action: workspaceUid ? 'collaborator' : 'membership',
-      role: workspaceUid ? 'viewer' : 'member',
+      action: 'collaborator',
+      role: 'viewer',
     },
   })
   const action = form.watch('action')
@@ -196,39 +170,36 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const boundedViewer = role === 'viewer' && enabled && form.watch('viewerContent')
   const load = useCallback(
     async (cursor = '') => {
-      if (view === 'policies') return
       loadController.current?.abort()
       const controller = new AbortController()
       loadController.current = controller
-      setData({ view, kind: 'loading' })
-      const query = new URLSearchParams({ view })
+      setData({ kind: 'loading' })
+      const query = new URLSearchParams({ view: 'workspace', workspace: workspaceUid })
       if (cursor) query.set('cursor', cursor)
-      if (view === 'workspace' && workspaceUid) query.set('workspace', workspaceUid)
       setError(undefined)
       try {
         const response = await fetch(`/api/tengri/access?${query}`, { cache: 'no-store', signal: controller.signal })
         const json = z.json().parse(await response.json())
         if (!response.ok) throw new Error(errorMessage(json))
         if (controller.signal.aborted) return
-        if (view === 'audit') setData({ view, kind: 'audit', audit: fromJson(ReadAuditResponseSchema, json) })
-        else setData({ view, kind: 'roster', roster: fromJson(ListAccessResponseSchema, json) })
+        setData({ kind: 'roster', roster: fromJson(ListAccessResponseSchema, json) })
       } catch (cause) {
         if (!controller.signal.aborted)
-          setData({ view, kind: 'error', message: cause instanceof Error ? cause.message : 'Access is unavailable' })
+          setData({ kind: 'error', message: cause instanceof Error ? cause.message : 'Access is unavailable' })
       }
     },
-    [view, workspaceUid],
+    [workspaceUid],
   )
   const setValue = form.setValue
 
   useEffect(() => {
-    setValue('action', view === 'workspace' ? 'collaborator' : 'membership')
-    setValue('role', view === 'workspace' ? 'viewer' : 'member')
+    setValue('action', 'collaborator')
+    setValue('role', 'viewer')
     setCredential('')
     setEditing(false)
     setValue('githubId', '')
     setValue('viewerContent', false)
-  }, [view, workspaceUid, setValue])
+  }, [workspaceUid, setValue])
   useEffect(() => {
     setData(undefined)
     if (!active) return
@@ -243,21 +214,11 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     setError(undefined)
     setPersonName(entry ? entry.displayName || `GitHub #${entry.githubId}` : '')
     const scope = entry?.scope
-    const quota = next === 'quota' ? roster?.quotas.find((value) => value.humanId === entry?.subjectId) : undefined
     form.reset({
       ...defaultAccessForm,
       action: next,
       githubId: entry?.githubId || '',
-      role:
-        entry?.role === 'administrator' ||
-        entry?.role === 'auditor' ||
-        entry?.role === 'operator' ||
-        entry?.role === 'developer' ||
-        entry?.role === 'viewer'
-          ? entry.role
-          : next === 'collaborator'
-            ? 'viewer'
-            : 'member',
+      role: entry?.role === 'developer' ? 'developer' : 'viewer',
       viewerContent: next === 'collaborator' && entry?.role === 'viewer' && Boolean(scope),
       fileRoots: scope ? scope.fileRoots.join('\n') : defaultAccessForm.fileRoots,
       threadIds: scope ? scope.threadIds.join('\n') : '',
@@ -265,11 +226,8 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       browserScreenshot: scope?.browserScreenshot ?? false,
       maxBytes: scope?.maxBytes ?? defaultAccessForm.maxBytes,
       maxItems: scope?.maxItems ?? defaultAccessForm.maxItems,
-      total: quota?.totalWorkspaces ?? defaultAccessForm.total,
-      active: quota?.activeWorkspaces ?? defaultAccessForm.active,
-      retainedGiB: quota ? Number(quota.retainedBytes) / 1_073_741_824 : defaultAccessForm.retainedGiB,
       grantId: next === 'revoke' ? entry?.grantId || '' : '',
-      expiresAt: ['grant', 'emergency'].includes(next) ? new Date(Date.now() + 15 * 60_000).toISOString() : '',
+      expiresAt: ['grant'].includes(next) ? new Date(Date.now() + 15 * 60_000).toISOString() : '',
     })
   }
 
@@ -322,9 +280,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       : { kind: 'github-login', login: value.login }
     let draft: unknown
     switch (value.action) {
-      case 'membership':
-        draft = { ...common, action: value.action, recipient, role: value.role, enabled: value.enabled }
-        break
       case 'collaborator':
         draft = {
           ...common,
@@ -334,16 +289,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           role: value.role,
           enabled: value.enabled,
           ...(value.role === 'viewer' && value.enabled && value.viewerContent ? { scope } : {}),
-        }
-        break
-      case 'quota':
-        draft = {
-          ...common,
-          action: value.action,
-          recipient,
-          total: value.total,
-          active: value.active,
-          retainedGiB: value.retainedGiB,
         }
         break
       case 'grant':
@@ -366,17 +311,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       case 'transfer':
         draft = { ...common, action: value.action, workspaceUid, recipient }
         break
-      case 'emergency':
-        draft = {
-          ...common,
-          action: value.action,
-          workspaceUid,
-          recipient,
-          incidentId: value.incidentId,
-          approvalId: value.approvalId,
-          expiresAt: value.expiresAt,
-        }
-        break
     }
     const parsed = accessCommandSchema.safeParse(draft)
     if (!parsed.success) {
@@ -386,7 +320,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     await execute(parsed.data)
   })
   const field = (
-    name: 'login' | 'reason' | 'agentId' | 'grantId' | 'proofKeyThumbprint' | 'expiresAt' | 'incidentId' | 'approvalId',
+    name: 'login' | 'reason' | 'agentId' | 'grantId' | 'proofKeyThumbprint' | 'expiresAt',
     label: string,
     help?: string,
   ) => (
@@ -432,39 +366,23 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     </div>
   )
   const textareaClass =
-    'rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-100 focus-visible:outline-2 focus-visible:outline-zinc-400'
+    'rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-base sm:text-xs text-zinc-100 focus-visible:outline-2 focus-visible:outline-zinc-400'
   return (
-    <Tabs
-      value={view}
-      onValueChange={(value) => {
-        if (value === 'workspace' || value === 'platform' || value === 'audit' || value === 'policies') setView(value)
-      }}
-      render={<section aria-label="Access administration" />}
-      className="@container/access min-w-0 gap-4 text-zinc-200"
-    >
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 bg-zinc-800 py-1">
-        <TabsList activateOnFocus aria-label="Access view" className="max-w-full justify-start overflow-x-auto">
-          {(['workspace', 'platform', 'audit', 'policies'] as const)
-            .filter((item) => item !== 'workspace' || workspaceUid)
-            .map((item) => (
-              <TabsTrigger key={item} value={item} className="shrink-0 px-2.5">
-                {item === 'workspace'
-                  ? 'Workspace'
-                  : item === 'platform'
-                    ? 'Platform'
-                    : item === 'policies'
-                      ? 'Service access'
-                      : 'Audit'}
-              </TabsTrigger>
-            ))}
-        </TabsList>
-        {view !== 'policies' ? (
-          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
-            Refresh
-          </Button>
-        ) : null}
+    <section aria-label="Access administration" className="@container/access min-w-0 space-y-4 text-zinc-200">
+      <div className="flex items-center justify-between gap-2">
+        <a
+          href="https://admin.proompteng.ai/"
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-zinc-400 underline underline-offset-4"
+        >
+          Workspace administration
+        </a>
+        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
+          Refresh
+        </Button>
       </div>
-      <TabsContent key={accessView} value={accessView} className="space-y-4" aria-busy={loading}>
+      <div className="space-y-4" aria-busy={loading}>
         <div className="space-y-1">
           <h2 className="text-sm font-medium">{viewTitle}</h2>
           {loading ? (
@@ -477,13 +395,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
               </div>
             </div>
           ) : null}
-          <p className="text-xs leading-5 text-zinc-400">
-            {view === 'workspace'
-              ? 'Choose who can view or develop in this workspace.'
-              : view === 'platform'
-                ? 'Manage platform roles and workspace limits. These roles do not grant access to workspace content.'
-                : 'Recent authorization decisions and policy changes, newest first.'}
-          </p>
+          <p className="text-xs leading-5 text-zinc-400">Choose who can view or develop in this workspace.</p>
         </div>
         {error || readError ? (
           <p role="alert" className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-200">
@@ -525,7 +437,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-zinc-400">
                 {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
-                {view === 'workspace' && roster.workspaceState ? ` · Workspace ${roster.workspaceState}` : ''}
+                {roster.workspaceState ? ` · Workspace ${roster.workspaceState}` : ''}
               </p>
               <Button
                 ref={addButton}
@@ -533,9 +445,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 size="sm"
                 variant="outline"
                 disabled={busy || Boolean(pending)}
-                onClick={() => begin(view === 'workspace' ? 'collaborator' : 'membership')}
+                onClick={() => begin('collaborator')}
               >
-                {view === 'workspace' ? 'Add collaborator' : 'Add member'}
+                {'Add collaborator'}
               </Button>
             </div>
             <ItemGroup className="gap-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-900/30">
@@ -626,9 +538,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     </ItemContent>
                     <ItemActions className="flex-wrap">
                       {entries
-                        .filter(
-                          (entry) => view === 'platform' || ['viewer', 'developer', 'diagnostic'].includes(entry.role),
-                        )
+                        .filter((entry) => ['viewer', 'developer', 'diagnostic'].includes(entry.role))
                         .map((entry) => (
                           <Button
                             key={entry.role + entry.grantId}
@@ -637,12 +547,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                             variant="outline"
                             disabled={busy || Boolean(pending)}
                             aria-label={`Manage ${name} ${entry.role}${entry.githubId ? '' : ` ${entry.subjectId}`}`}
-                            onClick={() =>
-                              begin(
-                                entry.grantId ? 'revoke' : view === 'workspace' ? 'collaborator' : 'membership',
-                                entry,
-                              )
-                            }
+                            onClick={() => begin(entry.grantId ? 'revoke' : 'collaborator', entry)}
                           >
                             {entry.grantId ? 'Revoke grant' : entries.length > 1 ? `Edit ${entry.role}` : 'Manage'}
                           </Button>
@@ -657,54 +562,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 </p>
               ) : null}
             </ItemGroup>
-            {view === 'platform' && roster.quotas.length ? (
-              <section aria-label="Workspace limits" className="space-y-2">
-                <h3 className="text-xs font-medium">Workspace limits</h3>
-                <div className="divide-y divide-zinc-700/60 overflow-hidden rounded-lg border border-zinc-700/70">
-                  {roster.quotas.map((quota) => {
-                    const entry = entriesBySubject.get(quota.humanId)?.[0]
-                    return (
-                      <div key={quota.humanId} className="space-y-3 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-medium">
-                            {entry?.displayName || (entry?.githubId ? `GitHub #${entry.githubId}` : 'Platform member')}
-                          </p>
-                          {entry ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={busy || Boolean(pending)}
-                              aria-label={`Adjust limits for GitHub #${entry.githubId}`}
-                              onClick={() => begin('quota', entry)}
-                            >
-                              Adjust limits
-                            </Button>
-                          ) : null}
-                        </div>
-                        <dl className="grid grid-cols-3 gap-3 text-xs">
-                          {[
-                            { label: 'Workspaces', used: quota.usedWorkspaces, limit: quota.totalWorkspaces },
-                            { label: 'Running', used: quota.usedActive, limit: quota.activeWorkspaces },
-                            {
-                              label: 'Storage (GiB)',
-                              used: Math.round(Number(quota.usedBytes) / 1_073_741_824),
-                              limit: Math.round(Number(quota.retainedBytes) / 1_073_741_824),
-                            },
-                          ].map((item) => (
-                            <div key={item.label}>
-                              <dt className="text-zinc-400">{item.label}</dt>
-                              <dd className="mt-1 tabular-nums">
-                                {item.used} <span className="text-zinc-400">/ {item.limit}</span>
-                              </dd>
-                            </div>
-                          ))}
-                        </dl>
-                      </div>
-                    )
-                  })}
-                </div>
-              </section>
-            ) : null}
             {roster.cursor ? (
               <Button
                 type="button"
@@ -716,12 +573,12 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 Next access page
               </Button>
             ) : null}
-            {!editing && view === 'workspace' ? (
+            {!editing ? (
               <details className="rounded-lg border border-zinc-700/70">
                 <summary className="cursor-pointer p-3 text-xs font-medium">Advanced access & recovery</summary>
                 <div className="space-y-2 border-t border-zinc-700/60 p-3">
                   <p className="text-xs leading-5 text-zinc-400">
-                    Time-limited diagnostic access, ownership transfer and emergency recovery.
+                    Time-limited diagnostic access and ownership transfer.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {(
@@ -729,7 +586,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                         { action: 'grant', label: 'Create diagnostic grant' },
                         { action: 'revoke', label: 'Revoke diagnostic grant' },
                         { action: 'transfer', label: 'Transfer ownership' },
-                        { action: 'emergency', label: 'Emergency recovery' },
                       ] as const
                     ).map((item) => (
                       <Button
@@ -761,19 +617,13 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                   <legend className="sr-only">Change access</legend>
                   <div className="flex items-center justify-between gap-2">
                     <h3 ref={editorHeading} tabIndex={-1} className="text-sm font-medium outline-none">
-                      {action === 'quota'
-                        ? 'Adjust workspace limits'
-                        : action === 'collaborator'
-                          ? 'Collaborator access'
-                          : action === 'membership'
-                            ? 'Platform role'
-                            : action === 'transfer'
-                              ? 'Transfer ownership'
-                              : action === 'emergency'
-                                ? 'Emergency recovery'
-                                : action === 'grant'
-                                  ? 'Create diagnostic grant'
-                                  : 'Revoke diagnostic grant'}
+                      {action === 'collaborator'
+                        ? 'Collaborator access'
+                        : action === 'transfer'
+                          ? 'Transfer ownership'
+                          : action === 'grant'
+                            ? 'Create diagnostic grant'
+                            : 'Revoke diagnostic grant'}
                     </h3>
                     <Button
                       size="sm"
@@ -788,7 +638,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                       Cancel
                     </Button>
                   </div>
-                  {['grant', 'revoke', 'transfer', 'emergency'].includes(action) ? (
+                  {['grant', 'revoke', 'transfer'].includes(action) ? (
                     <label className="flex items-center gap-2 text-xs">
                       Action
                       <Controller
@@ -803,14 +653,14 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                               const next = z.enum(actions).parse(value)
                               field.onChange(next)
                               form.setValue('viewerContent', false)
-                              form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
-                              if (['grant', 'emergency'].includes(next))
+                              form.setValue('role', 'viewer')
+                              if (['grant'].includes(next))
                                 form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
                             }}
-                            options={(view === 'workspace'
-                              ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
-                              : ['membership', 'quota']
-                            ).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))}
+                            options={['collaborator', 'grant', 'revoke', 'transfer'].map((value) => ({
+                              value,
+                              label: value.charAt(0).toUpperCase() + value.slice(1),
+                            }))}
                           />
                         )}
                       />
@@ -821,14 +671,14 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                       <p className="font-medium">{personName}</p>
                       <p className="text-zinc-400">GitHub #{form.watch('githubId')}</p>
                     </div>
-                  ) : ['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(action) ? (
+                  ) : ['collaborator', 'transfer'].includes(action) ? (
                     field(
                       'login',
                       'GitHub username',
                       'The server verifies its numeric GitHub ID before changing policy.',
                     )
                   ) : null}
-                  {['membership', 'collaborator'].includes(action) ? (
+                  {['collaborator'].includes(action) ? (
                     <label className="flex items-center gap-2 text-xs">
                       Role
                       <Controller
@@ -843,16 +693,16 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                               field.onChange(value)
                               form.setValue('viewerContent', false)
                             }}
-                            options={(action === 'membership'
-                              ? ['member', 'administrator', 'auditor', 'operator']
-                              : ['developer', 'viewer']
-                            ).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))}
+                            options={['developer', 'viewer'].map((value) => ({
+                              value,
+                              label: value.charAt(0).toUpperCase() + value.slice(1),
+                            }))}
                           />
                         )}
                       />
                     </label>
                   ) : null}
-                  {['membership', 'collaborator'].includes(action) ? checkbox('enabled', 'Enable this access') : null}
+                  {['collaborator'].includes(action) ? checkbox('enabled', 'Enable this access') : null}
                   {action === 'collaborator' && form.watch('role') === 'viewer' && form.watch('enabled')
                     ? checkbox('viewerContent', 'Approve bounded Viewer content access')
                     : null}
@@ -862,31 +712,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                       and the guest are recovered. Viewers see metadata unless you explicitly allow bounded content
                       access.
                     </p>
-                  ) : null}
-                  {action === 'quota' ? (
-                    <div className="grid gap-3 @min-[420px]/access:grid-cols-3">
-                      {(['total', 'active', 'retainedGiB'] as const).map((name) => (
-                        <label key={name} className="space-y-1 text-xs">
-                          {
-                            {
-                              total: 'Total workspaces',
-                              active: 'Running workspaces',
-                              retainedGiB: 'Storage limit (GiB)',
-                            }[name]
-                          }
-                          <Input
-                            type="number"
-                            {...form.register(name, { valueAsNumber: true })}
-                            aria-invalid={Boolean(form.formState.errors[name])}
-                          />
-                          {form.formState.errors[name] ? (
-                            <span role="alert" className="text-red-300">
-                              {form.formState.errors[name]?.message}
-                            </span>
-                          ) : null}
-                        </label>
-                      ))}
-                    </div>
                   ) : null}
                   {action === 'grant' ? (
                     <>
@@ -984,25 +809,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     </fieldset>
                   ) : null}
                   {action === 'revoke' ? field('grantId', 'Grant UUID') : null}
-                  {['grant', 'emergency'].includes(action)
-                    ? field(
-                        'expiresAt',
-                        'Expiry in UTC',
-                        action === 'grant'
-                          ? 'Maximum one hour. Default fifteen minutes.'
-                          : 'Maximum thirty minutes. Both custodians must approve the same exact expiry.',
-                      )
+                  {['grant'].includes(action)
+                    ? field('expiresAt', 'Expiry in UTC', 'Maximum one hour. Default fifteen minutes.')
                     : null}
-                  {action === 'emergency' ? (
-                    <>
-                      {field('incidentId', 'Incident reference')}
-                      {field(
-                        'approvalId',
-                        'First custodian operation UUID',
-                        'Leave empty for the first approval. A different custodian completes the second approval.',
-                      )}
-                    </>
-                  ) : null}
+
                   {action === 'transfer' ? (
                     <p className="text-xs text-amber-200">
                       Transfer revokes existing diagnostic grants and quarantines the retained guest. Recovery must
@@ -1026,7 +836,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     onClick={
                       needsVerification
                         ? () =>
-                            void startTengriSignIn('step-up').catch(() =>
+                            void startSignIn('step-up').catch(() =>
                               setError(new PasskeyRequiredError('Verification could not start. Try again.')),
                             )
                         : undefined
@@ -1039,74 +849,8 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
             ) : null}
           </>
         ) : null}
-        {audit ? (
-          <div className="space-y-3 text-xs">
-            {!audit.receipts.length ? (
-              <p className="rounded-lg border border-dashed border-zinc-700 p-4 text-zinc-400">No activity to show.</p>
-            ) : (
-              <div className="divide-y divide-zinc-700/60 overflow-hidden rounded-lg border border-zinc-700/70">
-                {audit.receipts.map((entry) => (
-                  <details key={entry.id} className="group">
-                    <summary className="flex cursor-pointer list-none items-start gap-3 px-3 py-3 hover:bg-zinc-700/20">
-                      <Badge
-                        variant="outline"
-                        className={entry.allowed ? 'border-zinc-600 text-zinc-300' : 'border-red-800/70 text-red-300'}
-                      >
-                        {entry.allowed ? 'Allowed' : 'Denied'}
-                      </Badge>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium">
-                          {(entry.platformAction || Action[entry.action] || 'Authorization decision')
-                            .replace(/[._]/g, ' ')
-                            .toLowerCase()
-                            .replace(/^./, (letter) => letter.toUpperCase())}
-                        </p>
-                        <p className="mt-1 break-words text-zinc-400">{entry.reason || 'Authorization decision'}</p>
-                      </div>
-                      <time
-                        className="shrink-0 text-[11px] text-zinc-400"
-                        dateTime={new Date(Number(entry.createdAtUnixMs)).toISOString()}
-                      >
-                        {new Date(Number(entry.createdAtUnixMs)).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                      </time>
-                    </summary>
-                    <dl className="space-y-2 border-t border-zinc-700/60 bg-zinc-900/30 px-3 py-3 text-zinc-400">
-                      {[
-                        { label: 'Receipt', value: entry.id },
-                        { label: 'Operation', value: entry.operationId },
-                        { label: 'Client', value: entry.platformClient || entry.workloadId },
-                        { label: 'Workspace', value: entry.workspaceUid },
-                        { label: 'Sequence', value: entry.sequence.toString() },
-                      ]
-                        .filter((item) => item.value)
-                        .map((item) => (
-                          <div key={item.label}>
-                            <dt className="text-zinc-300">{item.label}</dt>
-                            <dd className="break-all font-mono text-[11px]">{item.value}</dd>
-                          </div>
-                        ))}
-                    </dl>
-                  </details>
-                ))}
-              </div>
-            )}
-            {audit.cursor ? (
-              <Button type="button" size="sm" variant="outline" onClick={() => void load(audit.cursor)}>
-                Older activity
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </TabsContent>
-      <TabsContent value="policies" keepMounted>
-        <ServicePolicyPanel active={active && view === 'policies'} />
-      </TabsContent>
-    </Tabs>
+      </div>
+    </section>
   )
 }
 

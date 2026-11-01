@@ -1,13 +1,12 @@
 import 'server-only'
 
-import { getTengriIdentity } from '@/lib/tengri/auth'
-import { TengriUnavailableError } from '@/lib/tengri/grpc'
-import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
-import { OfzError } from './ofz'
+import { getPlatformIdentity } from '@/lib/platform/auth'
+
+import { OfzError } from '../platform/ofz'
 import { reportServerError } from '@/lib/observability/server'
 
 type RateWindow = { count: number; resetsAt: number }
-export type ReadTengriJsonBodyOptions = Readonly<{
+export type ReadPlatformJsonBodyOptions = Readonly<{
   subject?: string
   totalTimeoutMs?: number
   inactivityTimeoutMs?: number
@@ -17,15 +16,26 @@ export type ReadTengriJsonBodyOptions = Readonly<{
 const RATE_WINDOW_MS = 60_000
 const SUBJECT_LIMIT = 120
 const RATE_WINDOW_CAP = 20_000
-export const MAX_TENGRI_ACTION_BODY_BYTES = MAX_EDITABLE_FILE_BYTES * 6 + 64 * 1024
-export const MAX_CONCURRENT_TENGRI_ACTION_BODIES = 4
-export const MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT = 2
-export const TENGRI_BODY_TOTAL_TIMEOUT_MS = 15_000
-export const TENGRI_BODY_INACTIVITY_TIMEOUT_MS = 5_000
+export const MAX_ACTION_BODY_BYTES = 24 * 1024 * 1024 + 64 * 1024
+export const MAX_CONCURRENT_ACTION_BODIES = 4
+export const MAX_CONCURRENT_ACTION_BODIES_PER_SUBJECT = 2
+export const BODY_TOTAL_TIMEOUT_MS = 15_000
+export const BODY_INACTIVITY_TIMEOUT_MS = 5_000
 
-export async function requireTengriIdentity(request: Request) {
-  const identity = await getRateLimitedTengriIdentity(request)
-  if (!identity) throw new TengriUnavailableError('GitHub sign-in is required', 401)
+export class PlatformRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status = 503,
+    readonly code?: string,
+  ) {
+    super(message)
+    this.name = 'PlatformRequestError'
+  }
+}
+
+export async function requirePlatformIdentity(request: Request) {
+  const identity = await getRateLimitedPlatformIdentity(request)
+  if (!identity) throw new PlatformRequestError('GitHub sign-in is required', 401)
   return identity
 }
 
@@ -33,7 +43,7 @@ export function requireSameOrigin(request: Request) {
   const expectedOrigin = configuredAuthOrigin()
   const requestOrigin = request.headers.get('origin')
   if (request.headers.get('sec-fetch-site') === 'cross-site' || requestOrigin !== expectedOrigin) {
-    throw new TengriUnavailableError('Cross-origin Tengri actions are not allowed', 403)
+    throw new PlatformRequestError('Cross-origin actions are not allowed', 403)
   }
 }
 
@@ -49,35 +59,35 @@ export function requireSameOriginGet(request: Request) {
     (fetchSite !== null && !sameOriginMetadata) ||
     (requestOrigin !== null && !matchingOrigin)
   ) {
-    throw new TengriUnavailableError('Cross-origin Tengri actions are not allowed', 403)
+    throw new PlatformRequestError('Cross-origin actions are not allowed', 403)
   }
 }
 
-export async function getRateLimitedTengriIdentity(request: Request) {
-  const identity = await getTengriIdentity(request.headers)
+export async function getRateLimitedPlatformIdentity(request: Request) {
+  const identity = await getPlatformIdentity(request.headers)
   if (!identity) return null
-  const blocked = isTengriRateLimited(identity.subject)
-  if (blocked) throw new TengriUnavailableError('Request rate limit exceeded', 429)
+  const blocked = isPlatformRateLimited(identity.subject)
+  if (blocked) throw new PlatformRequestError('Request rate limit exceeded', 429)
   return identity
 }
 
-export function tengriRouteError(error: unknown) {
+export function platformRouteError(error: unknown) {
   const status =
-    error instanceof OfzError || error instanceof TengriUnavailableError
+    error instanceof OfzError || error instanceof PlatformRequestError
       ? error.status
       : error instanceof SyntaxError
         ? 400
         : error instanceof Error && error.name === 'AbortError'
           ? 499
           : 500
-  if (status >= 500) reportServerError(error, 'tengri.request', status)
+  if (status >= 500) reportServerError(error, 'platform.request', status)
   if (error instanceof OfzError) {
     return Response.json(
       { error: error.message, auditReceiptId: error.auditReceiptId },
       { status: error.status, headers: noStoreHeaders() },
     )
   }
-  if (error instanceof TengriUnavailableError) {
+  if (error instanceof PlatformRequestError) {
     return Response.json(
       { error: error.message, code: error.code },
       { status: error.status, headers: noStoreHeaders() },
@@ -89,26 +99,29 @@ export function tengriRouteError(error: unknown) {
   if (error instanceof Error && error.name === 'AbortError') {
     return Response.json({ error: error.message }, { status: 499, headers: noStoreHeaders() })
   }
-  return Response.json({ error: 'Tengri request failed unexpectedly' }, { status: 500, headers: noStoreHeaders() })
+  return Response.json({ error: 'Request failed unexpectedly' }, { status: 500, headers: noStoreHeaders() })
 }
 
-export async function readTengriJsonBody(request: Request, options: ReadTengriJsonBodyOptions = {}): Promise<unknown> {
+export async function readPlatformJsonBody(
+  request: Request,
+  options: ReadPlatformJsonBodyOptions = {},
+): Promise<unknown> {
   if (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1)) {
-    throw new TengriUnavailableError('Invalid request size configuration')
+    throw new PlatformRequestError('Invalid request size configuration')
   }
   const maxBytes =
     options.maxBytes === undefined
-      ? MAX_TENGRI_ACTION_BODY_BYTES
-      : Math.min(MAX_TENGRI_ACTION_BODY_BYTES, Math.max(1, options.maxBytes))
+      ? MAX_ACTION_BODY_BYTES
+      : Math.min(MAX_ACTION_BODY_BYTES, Math.max(1, options.maxBytes))
   const contentType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'application/json') {
-    throw new TengriUnavailableError('Tengri actions require application/json', 415)
+    throw new PlatformRequestError('Actions require application/json', 415)
   }
   const contentLength = request.headers.get('content-length')
   if (contentLength) {
     const declaredBytes = Number(contentLength)
     if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
-      throw new TengriUnavailableError('Tengri action body is too large', 413)
+      throw new PlatformRequestError('Request body is too large', 413)
     }
   }
 
@@ -117,9 +130,9 @@ export async function readTengriJsonBody(request: Request, options: ReadTengriJs
   const signal = request.signal
   if (signal?.aborted) throw abortedRequestError()
 
-  const inactivityTimeoutMs = resolveBodyTimeout(options.inactivityTimeoutMs, TENGRI_BODY_INACTIVITY_TIMEOUT_MS)
-  const totalTimeoutMs = resolveBodyTimeout(options.totalTimeoutMs, TENGRI_BODY_TOTAL_TIMEOUT_MS)
-  const releaseBodySlot = acquireTengriActionBodySlot(options.subject)
+  const inactivityTimeoutMs = resolveBodyTimeout(options.inactivityTimeoutMs, BODY_INACTIVITY_TIMEOUT_MS)
+  const totalTimeoutMs = resolveBodyTimeout(options.totalTimeoutMs, BODY_TOTAL_TIMEOUT_MS)
+  const releaseBodySlot = acquireActionBodySlot(options.subject)
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   let cancelRequested = false
   let finished = false
@@ -141,7 +154,7 @@ export async function readTengriJsonBody(request: Request, options: ReadTengriJs
 
   const failForTimeout = () => {
     if (finished) return
-    const error = new TengriUnavailableError('Tengri action body timed out', 408)
+    const error = new PlatformRequestError('Request body timed out', 408)
     terminationError = error
     finished = true
     cancelReader(error.message)
@@ -203,8 +216,8 @@ export async function readTengriJsonBody(request: Request, options: ReadTengriJs
       if (done) break
       totalBytes += value.byteLength
       if (totalBytes > maxBytes) {
-        cancelReader('Tengri action body is too large')
-        throw new TengriUnavailableError('Tengri action body is too large', 413)
+        cancelReader('Request body is too large')
+        throw new PlatformRequestError('Request body is too large', 413)
       }
       try {
         text += decoder.decode(value, { stream: true })
@@ -223,7 +236,7 @@ export async function readTengriJsonBody(request: Request, options: ReadTengriJs
     completed = true
     return JSON.parse(text)
   } catch (error) {
-    if (!completed) cancelReader(error instanceof Error ? error.message : 'Tengri action body read failed')
+    if (!completed) cancelReader(error instanceof Error ? error.message : 'Request body read failed')
     throw error
   } finally {
     finished = true
@@ -252,27 +265,27 @@ function resolveBodyTimeout(value: number | undefined, fallback: number) {
 }
 
 function abortedRequestError() {
-  const error = new Error('Tengri request was canceled')
+  const error = new Error('Request was canceled')
   error.name = 'AbortError'
   return error
 }
 
-function acquireTengriActionBodySlot(subject?: string) {
+function acquireActionBodySlot(subject?: string) {
   const state = globalThis as typeof globalThis & {
-    tengriActiveActionBodies?: number
-    tengriActiveActionBodiesBySubject?: Map<string, number>
+    platformActiveActionBodies?: number
+    platformActiveActionBodiesBySubject?: Map<string, number>
   }
-  const activeBodies = state.tengriActiveActionBodies ?? 0
-  if (activeBodies >= MAX_CONCURRENT_TENGRI_ACTION_BODIES) {
-    throw new TengriUnavailableError('Too many concurrent Tengri action bodies', 429)
+  const activeBodies = state.platformActiveActionBodies ?? 0
+  if (activeBodies >= MAX_CONCURRENT_ACTION_BODIES) {
+    throw new PlatformRequestError('Too many concurrent request bodies', 429)
   }
-  const subjectActiveBodies = subject ? (state.tengriActiveActionBodiesBySubject?.get(subject) ?? 0) : 0
-  if (subject && subjectActiveBodies >= MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT) {
-    throw new TengriUnavailableError('Too many concurrent Tengri action bodies for this subject', 429)
+  const subjectActiveBodies = subject ? (state.platformActiveActionBodiesBySubject?.get(subject) ?? 0) : 0
+  if (subject && subjectActiveBodies >= MAX_CONCURRENT_ACTION_BODIES_PER_SUBJECT) {
+    throw new PlatformRequestError('Too many concurrent request bodies for this subject', 429)
   }
-  state.tengriActiveActionBodies = activeBodies + 1
+  state.platformActiveActionBodies = activeBodies + 1
   if (subject) {
-    const activeBySubject = (state.tengriActiveActionBodiesBySubject ??= new Map())
+    const activeBySubject = (state.platformActiveActionBodiesBySubject ??= new Map())
     activeBySubject.set(subject, subjectActiveBodies + 1)
   }
 
@@ -280,15 +293,15 @@ function acquireTengriActionBodySlot(subject?: string) {
   return () => {
     if (released) return
     released = true
-    const remaining = (state.tengriActiveActionBodies ?? 1) - 1
-    if (remaining <= 0) delete state.tengriActiveActionBodies
-    else state.tengriActiveActionBodies = remaining
+    const remaining = (state.platformActiveActionBodies ?? 1) - 1
+    if (remaining <= 0) delete state.platformActiveActionBodies
+    else state.platformActiveActionBodies = remaining
     if (subject) {
-      const activeBySubject = state.tengriActiveActionBodiesBySubject
+      const activeBySubject = state.platformActiveActionBodiesBySubject
       const subjectRemaining = (activeBySubject?.get(subject) ?? 1) - 1
       if (activeBySubject && subjectRemaining > 0) activeBySubject.set(subject, subjectRemaining)
       else activeBySubject?.delete(subject)
-      if (activeBySubject?.size === 0) delete state.tengriActiveActionBodiesBySubject
+      if (activeBySubject?.size === 0) delete state.platformActiveActionBodiesBySubject
     }
   }
 }
@@ -301,18 +314,18 @@ export function noStoreHeaders(): Record<string, string> {
   }
 }
 
-export function isTengriRateLimited(subject: string) {
+export function isPlatformRateLimited(subject: string) {
   const state = globalThis as typeof globalThis & {
-    tengriRateSweepAt?: number
-    tengriRateWindows?: Map<string, RateWindow>
+    platformRateSweepAt?: number
+    platformRateWindows?: Map<string, RateWindow>
   }
-  const windows = (state.tengriRateWindows ??= new Map())
+  const windows = (state.platformRateWindows ??= new Map())
   const now = Date.now()
-  if (!state.tengriRateSweepAt || state.tengriRateSweepAt <= now) {
+  if (!state.platformRateSweepAt || state.platformRateSweepAt <= now) {
     for (const [key, window] of windows) {
       if (window.resetsAt <= now) windows.delete(key)
     }
-    state.tengriRateSweepAt = now + RATE_WINDOW_MS
+    state.platformRateSweepAt = now + RATE_WINDOW_MS
   }
   return exceeds(windows, `subject:${subject}`, SUBJECT_LIMIT, now)
 }
@@ -329,13 +342,13 @@ function exceeds(windows: Map<string, RateWindow>, key: string, limit: number, n
 }
 
 function configuredAuthOrigin() {
-  const configuredUrl = process.env.TENGRI_DESKTOP_ORIGIN?.trim() || 'https://proompteng.ai'
+  const configuredUrl = process.env.PLATFORM_WEB_ORIGIN?.trim() || 'https://proompteng.ai'
   try {
     const url = new URL(configuredUrl)
     if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
       throw new Error('Invalid HTTPS desktop origin')
     return url.origin
   } catch {
-    throw new TengriUnavailableError('Tengri authentication origin is not configured')
+    throw new PlatformRequestError('Authentication origin is not configured')
   }
 }
