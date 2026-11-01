@@ -48,7 +48,7 @@ tests:
   - name: cache metadata probe failure fires and recovery clears it
     interval: 1m
     input_series:
-      - series: probe_success{job="attic-cache"}
+      - series: probe_success{job="integrations/blackbox/attic-cache"}
         values: 0+0x4 1+0x8
     promql_expr_test:
       - expr: count(ALERTS{alertname="AtticCacheUnavailable",alertstate="firing"}) or vector(0)

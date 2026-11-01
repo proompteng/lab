@@ -694,7 +694,7 @@ data:
       - name: ci-build-performance.rules
         rules:
           - alert: AtticCacheUnavailable
-            expr: absent(probe_success{job="attic-cache"}) or probe_success{job="attic-cache"} == 0
+            expr: absent(probe_success{job="integrations/blackbox/attic-cache"}) or probe_success{job="integrations/blackbox/attic-cache"} == 0
             for: 3m
             labels:
               severity: warning
