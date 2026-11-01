@@ -159,6 +159,7 @@ export function DesktopWindowFrame({
   return (
     <motion.div
       data-tengri-window-frame
+      data-window-mode={window.mode}
       ref={elementRef}
       className="absolute overflow-visible"
       initial={false}

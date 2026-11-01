@@ -278,6 +278,9 @@
     width: calc(100% + 24px) !important;
     height: calc(100% + 24px - var(--tengri-dock-space, 88px)) !important;
   }
+  [data-tengri-window-frame][data-window-mode='maximized'] {
+    height: calc(100% + 24px) !important;
+  }
   [data-tengri-dock-container] {
     height: var(--tengri-dock-space, 88px);
     overflow: hidden;

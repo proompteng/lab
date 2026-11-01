@@ -7048,8 +7048,18 @@ for (const width of [1440, 390]) {
     await expect(prompt).toHaveValue('')
     await openSidebar()
     await sidebar.getByRole('button', { name: 'Archived chats', exact: true }).click()
-    await sidebar.getByRole('button', { name: 'Alpha', exact: true }).locator('..').hover()
-    await sidebar.getByRole('button', { name: 'Restore Alpha', exact: true }).click()
+    const restore = sidebar.getByRole('button', { name: 'Restore Alpha', exact: true })
+    if (width === 1440) {
+      await page.mouse.move(0, 0)
+      await sidebar.getByRole('button', { name: 'Back to chats', exact: true }).focus()
+      await page.keyboard.press('Shift+Tab')
+      await expect(restore).toBeFocused()
+      await expect(restore).toHaveCSS('opacity', '1')
+      await restore.press('Enter')
+    } else {
+      await sidebar.getByRole('button', { name: 'Alpha', exact: true }).locator('..').hover()
+      await restore.click()
+    }
     await expect.poll(() => store.threads.find((thread) => thread.id === 'thread-alpha')?.archived).toBe(false)
     await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
     await expect(prompt).toHaveValue('Keep this unsent Alpha draft.')
@@ -11203,7 +11213,7 @@ test('edits saved service permissions and preserves the exact pending command', 
   await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
   await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
   await policies.getByRole('button', { name: 'Retry exact change', exact: true }).click()
-  await expect(policies.getByRole('status')).toContainText('Access updated.')
+  await expect(policies.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible()
   expect(writes).toHaveLength(2)
   expect(writes[1]).toEqual(writes[0])
   expect(writes[0]).toMatchObject({

@@ -194,7 +194,7 @@ export function AgentSessionList({
                   }
                   disabled={changing.has(thread.id) || (!index.archived && (busy || unavailable || !canSelect))}
                   onClick={() => void setArchived(thread.id, !index.archived)}
-                  className="absolute right-1 size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11 [@media(hover:hover)]:invisible [@media(hover:hover)]:group-hover:visible [@media(hover:hover)]:group-focus-within:visible"
+                  className="absolute right-1 size-6 text-zinc-400 hover:text-zinc-100 [@media(pointer:coarse)]:size-11 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
                 >
                   {changing.has(thread.id) ? (
                     <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
