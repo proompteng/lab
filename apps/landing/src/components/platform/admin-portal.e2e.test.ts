@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
+import tailwind from '@tailwindcss/postcss'
+import { createRequire } from 'node:module'
 import { policyWriteSchema, type PolicyWrite } from '@/lib/platform/policies'
 
 // This fixture exercises the UI against the public JSON contracts. The real Ofz platform fixture separately proves
@@ -60,7 +62,14 @@ beforeAll(async () => {
   })
   if (!bundle.success) throw new AggregateError(bundle.logs, 'Portal fixture bundle failed')
   const script = await bundle.outputs[0]!.text()
-  const stylesheet = process.env.PLATFORM_UI_STYLESHEET ? await Bun.file(process.env.PLATFORM_UI_STYLESHEET).text() : ''
+  const source = new URL('../../app/globals.css', import.meta.url)
+  const postcss = createRequire(import.meta.resolve('@tailwindcss/postcss'))('postcss')
+  const stylesheet = (
+    await postcss([tailwind({ base: new URL('../../../', import.meta.url).pathname })]).process(
+      await Bun.file(source).text(),
+      { from: source.pathname },
+    )
+  ).css
   server = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
@@ -245,10 +254,9 @@ test('keeps portal navigation and member controls usable on desktop and phones',
     const dialog = page.getByRole('dialog')
     const username = dialog.getByLabel('GitHub username', { exact: true })
     await username.fill('example-member')
-    if (process.env.PLATFORM_UI_STYLESHEET)
-      expect(
-        await username.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
-      ).toBeGreaterThanOrEqual(16)
+    expect(
+      await username.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+    ).toBeGreaterThanOrEqual(16)
     await page.setViewportSize({ width: 390, height: 500 })
     await browserExpect(username).toHaveValue('example-member')
     if (process.env.PLATFORM_UI_SCREENSHOT_DIR)
