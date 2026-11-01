@@ -1,7 +1,7 @@
 use super::{
     authorization, catalog, connections, executions,
     mutations::{self, Command},
-    onboarding, workspaces,
+    onboarding, requests, workspaces,
 };
 use crate::{
     native::Native,
@@ -363,6 +363,82 @@ impl PlatformAuthorizationService for Service {
             .try_acquire()
             .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
         connections::list(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn create_platform_access_request(
+        &self,
+        request: Request<proto::CreatePlatformAccessRequestRequest>,
+    ) -> Result<Response<proto::CreatePlatformAccessRequestResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform access requests are busy"))?;
+        let input = request.into_inner();
+        let request_id = input.operation_id.clone();
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::RequestAccess(input),
+        )
+        .await?;
+        Ok(Response::new(proto::CreatePlatformAccessRequestResponse {
+            request_id,
+            decision: Some(outcome.decision),
+        }))
+    }
+    async fn review_platform_access_request(
+        &self,
+        request: Request<proto::ReviewPlatformAccessRequestRequest>,
+    ) -> Result<Response<proto::ReviewPlatformAccessRequestResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform access requests are busy"))?;
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::ReviewAccess(request.into_inner()),
+        )
+        .await?;
+        Ok(Response::new(proto::ReviewPlatformAccessRequestResponse {
+            decision: Some(outcome.decision),
+        }))
+    }
+    async fn cancel_platform_access_request(
+        &self,
+        request: Request<proto::CancelPlatformAccessRequestRequest>,
+    ) -> Result<Response<proto::CancelPlatformAccessRequestResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform access requests are busy"))?;
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::CancelAccess(request.into_inner()),
+        )
+        .await?;
+        Ok(Response::new(proto::CancelPlatformAccessRequestResponse {
+            decision: Some(outcome.decision),
+        }))
+    }
+    async fn list_platform_access_requests(
+        &self,
+        request: Request<proto::ListPlatformAccessRequestsRequest>,
+    ) -> Result<Response<proto::ListPlatformAccessRequestsResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform access requests are busy"))?;
+        requests::list(&self.database, &self.native, &peer, request.into_inner())
             .await
             .map(Response::new)
     }
