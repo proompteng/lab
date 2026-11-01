@@ -1,3 +1,4 @@
+import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -27,6 +28,7 @@ const retained = (
     schemaVersion,
     protocol: {
       ...current.request.protocol,
+      executionModel: retainedIntradayExecutionModel,
       schemaVersion: 'bayn.jev.protocol.v24' as const,
       lookbackMinutes: 30 as const,
       candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,

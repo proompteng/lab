@@ -44,57 +44,67 @@ export const intradaySourceTopics = Object.freeze({
   trades: 'torghut.trades.v1',
 } as const)
 
-export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }> =
-  Object.freeze({
-    schemaVersion: 'bayn.execution-model.v6',
-    venue: 'alpaca-cash-spot',
-    assetClass: 'cash-spot',
-    order: Object.freeze({
-      type: 'limit',
-      timeInForce: 'asset-session',
-      extendedHours: 'equity-data-session',
-      planAfter: 'verified-intraday-window',
-      submitAfter: 'plan-committed',
-      submitBefore: 'intraday-entry-cutoff',
-      planningPriceReference: 'verified-adverse-top-of-book',
-      planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
-      fillPriceReference: 'limit-or-better',
-      buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
-      warmupAfterOpenMs: 0,
-      submissionCutoffBeforeCloseMs: 300000,
-    }),
-    precision: Object.freeze({
-      quantityIncrementAtoms: '1',
-      priceIncrementMicros: '100',
-      minimumBuyNotionalMicros: '1000000',
-    }),
-    priceImpact: {
-      halfSpreadBps: 2.5,
-      slippageBps: 2.5,
-    },
-    fees: {
-      scheduleVersion: 'alpaca-brokerage-2026-07-01',
-      commissionBps: 0,
-      secSellBps: 0.206,
-      tafSellPerShareMicros: '195',
-      tafMaximumPerOrderMicros: '9790000',
-      catPerShareMicros: '3',
-      aggregation: 'session-by-fee-type',
-      roundingIncrementMicros: '10000',
-    },
-    cash: {
-      annualYieldBps: 0,
-      dayCount: 'actual-365',
-      accrual: 'session-open',
-    },
-    partialFills: {
-      policy: 'deterministic-hash',
-      probabilityPpm: 100000,
-      filledFractionPpm: 500000,
-      remainder: 'cancel',
-    },
-    doubleCostMultiplier: 2,
-  } satisfies Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }>)
+export const retainedIntradayExecutionModel: Extract<
+  ExecutionModel,
+  { readonly schemaVersion: 'bayn.execution-model.v6' }
+> = Object.freeze({
+  schemaVersion: 'bayn.execution-model.v6',
+  venue: 'alpaca-cash-spot',
+  assetClass: 'cash-spot',
+  order: Object.freeze({
+    type: 'limit',
+    timeInForce: 'asset-session',
+    extendedHours: 'equity-data-session',
+    planAfter: 'verified-intraday-window',
+    submitAfter: 'plan-committed',
+    submitBefore: 'intraday-entry-cutoff',
+    planningPriceReference: 'verified-adverse-top-of-book',
+    planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
+    fillPriceReference: 'limit-or-better',
+    buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
+    warmupAfterOpenMs: 0,
+    submissionCutoffBeforeCloseMs: 300000,
+  }),
+  precision: Object.freeze({
+    quantityIncrementAtoms: '1',
+    priceIncrementMicros: '100',
+    minimumBuyNotionalMicros: '1000000',
+  }),
+  priceImpact: {
+    halfSpreadBps: 2.5,
+    slippageBps: 2.5,
+  },
+  fees: {
+    scheduleVersion: 'alpaca-brokerage-2026-07-01',
+    commissionBps: 0,
+    secSellBps: 0.206,
+    tafSellPerShareMicros: '195',
+    tafMaximumPerOrderMicros: '9790000',
+    catPerShareMicros: '3',
+    aggregation: 'session-by-fee-type',
+    roundingIncrementMicros: '10000',
+  },
+  cash: {
+    annualYieldBps: 0,
+    dayCount: 'actual-365',
+    accrual: 'session-open',
+  },
+  partialFills: {
+    policy: 'deterministic-hash',
+    probabilityPpm: 100000,
+    filledFractionPpm: 500000,
+    remainder: 'cancel',
+  },
+  doubleCostMultiplier: 2,
+} satisfies Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }>)
+
+export const intradayExecutionModel = Object.freeze({
+  ...retainedIntradayExecutionModel,
+  fees: {
+    ...retainedIntradayExecutionModel.fees,
+    scheduleVersion: 'alpaca-brokerage-effective-dated-2026-10-12' as const,
+  },
+})
 
 export const intradayFeatureTopic = 'torghut.market-features.v1' as const
 export const intradayStreamingContract = Object.freeze({
