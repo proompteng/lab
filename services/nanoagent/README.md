@@ -56,6 +56,12 @@ The Chrome display reconnects a dropped VNC transport against the same authentic
 backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
 failures stop immediately; closing the viewer cancels any retry without reporting an application error.
 
+The browser's stdio and authenticated HTTP MCP transports share one `computer` implementation and exclusive agent
+driver. Human takeover blocks screenshots and input and invalidates requests still awaiting browser startup.
+[Private ChatGPT connection](../../docs/tengri/browser.md#private-chatgpt-connection) documents the owner-approved
+connection download, bounded preview grant and local OpenAI tunnel helper. Run its validation with
+`python3 -m unittest discover -s services/nanoagent -p browser_mcp_tunnel_test.py` from the repository root.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared

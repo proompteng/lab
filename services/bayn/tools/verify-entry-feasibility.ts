@@ -72,6 +72,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     const protocol = {
       ...input.protocol,
       schemaVersion: defaultJevProtocolDocument.schemaVersion,
+      executionModel: defaultJevProtocolDocument.executionModel,
       inputDefinition: defaultJevProtocolDocument.inputDefinition,
       lookbackMinutes: defaultJevProtocolDocument.lookbackMinutes,
       candidateEvidencePolicy: defaultJevProtocolDocument.candidateEvidencePolicy,
@@ -84,6 +85,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     }
     const economics = yield* Effect.fromResult(
       jevEntryEconomics({
+        feeAt: input.chartSource.windowEndAt,
         protocol,
         symbol: input.chartSource.symbol,
         bidMicros: BigInt(funding.bidMicros),

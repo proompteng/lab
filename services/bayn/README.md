@@ -126,9 +126,9 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 167 admits only v35 execution requests and dispatch while retaining original financial readers and history.
+Migration 167 introduced v35 requests and dispatch; migration 171 replaces that execution path with v36 while retaining original financial readers and history.
 
-The current source uses `jev` protocol v35, verified numerical input v23, batch v8 and entry inference input v8. It retains the
+The current source uses `jev` protocol v36, verified numerical input v23, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -139,7 +139,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v35 and its exact question-policy hash.
+current execution and database guards accept v36 and its exact question-policy hash.
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
 preflight still prevents provider calls when neither proposal template can fund an entry. Once a source is feasible,
@@ -2312,3 +2312,16 @@ reconciliation before activating a new same-account v18 PAPER mandate against it
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
+
+Current equity fee modeling uses the registered effective-dated schedule and an explicit New York execution date.
+The documented TAF pause applies from October 1 through December 31, 2026. The dated schedule currently covers
+July 2026 through December 2028, including the published January 2027 resumption; unsupported equity dates fail with an explicit missing-schedule error. Crypto fees
+remain independent of this equity schedule. Actual broker expense evidence is separate from modeled planning costs.
+Retained fixed schedules reproduce original financial evidence without applying the new override retroactively.
+Protocol v36 commits this model change. Migration 171 admits new requests and provider dispatch only under v36,
+preserves existing generations and limits, and permits already-paid v35 outcomes to be retained.
+The sources are [Alpaca's October 12 fee schedule](https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf)
+and [SEC release 34-106409](https://www.sec.gov/files/rules/sro/finra/2026/34-106409.pdf).
+
+The [published resumption and 2027–2028 rates](https://www.sec.gov/files/rules/sro/finra/2026/34-106409-ex5.pdf)
+restore $0.000195 per share with a $9.79 cap. The dated model withholds the changed-rate period beginning in 2029.

@@ -1211,6 +1211,38 @@ describe('CodexAppServerClient v2 notifications', () => {
     })
 
     writeLine(child, {
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'imageGeneration',
+          id: 'img-2',
+          status: 'completed',
+          revisedPrompt: null,
+          fileId: 'file-image-2',
+          savedPath: '/workspace/cat.png',
+          failure: null,
+          generationId: 'generation-2',
+        },
+      },
+    })
+    expect((await stream.next()).value).toEqual({
+      type: 'tool',
+      toolKind: 'imageGeneration',
+      id: 'img-2',
+      status: 'completed',
+      title: 'image generation',
+      detail: 'file-image-2',
+      data: {
+        status: 'completed',
+        revisedPrompt: null,
+        fileId: 'file-image-2',
+        savedPath: '/workspace/cat.png',
+      },
+    })
+
+    writeLine(child, {
       method: 'turn/completed',
       params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
     })

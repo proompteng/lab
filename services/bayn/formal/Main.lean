@@ -783,6 +783,12 @@ def evaluate (json : Json) : Except String Json := do
     return toJson (toString (cashInventoryProfit (← readInteger json "openingEquityMicros")
       (← readInteger json "closingEquityMicros") (← readInteger json "netExternalFlowsMicros")
       (← readInteger json "passiveCashYieldMicros") (← readNatural json "operatingCostsPaidFromAccountMicros")))
+  | "datedEquityTafRate" =>
+    let rate := datedEquityTafRate (← json.getObjValAs? Bool "retained")
+      (← readNatural json "sessionDate") (← readNatural json "baseRate")
+    return match rate with
+      | some value => toJson (toString value)
+      | none => Json.null
   | "qualification" =>
     let reliability ← (← (← json.getObjVal? "reliability").getArr?).mapM fun row => do
       return (← readNatural row "good", ← readNatural row "scheduled")

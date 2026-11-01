@@ -26,6 +26,7 @@ import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 test('crypto funding binds the inference ask instead of spending the adverse-price allowance', () => {
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: 'BTC/USD',
       bidMicros: 80_000_000_000n,
@@ -49,6 +50,7 @@ test('crypto funding binds the inference ask instead of spending the adverse-pri
 test('the equity inference-ask ceiling uses the same broker tick as its funded buy limit', () => {
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: 'NVDA',
       bidMicros: 10_199_000n,
@@ -67,6 +69,7 @@ test('the equity inference-ask ceiling uses the same broker tick as its funded b
 test('retained v26 funding reproduces its original entry allowance and broker fee tier', () => {
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       cryptoFeeTier: 4,
 
       protocol: {
@@ -105,6 +108,7 @@ test('the capped crypto order funds a source target that the former buy allowanc
   const candidates = (protocol: Parameters<typeof jevEntryEconomics>[0]['protocol']) => {
     const economics = Result.getOrThrow(
       jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
         protocol,
         symbol: chart.symbol,
         bidMicros: 99_990_000n,
@@ -142,6 +146,7 @@ test('an equity buy capped at its inference ask funds the observed target withou
   const candidates = (protocol: Parameters<typeof jevEntryEconomics>[0]['protocol']) => {
     const economics = Result.getOrThrow(
       jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
         protocol,
         symbol: chart.symbol,
         bidMicros: 99_990_000n,
@@ -203,6 +208,7 @@ test('funding values a native take-profit at its submitted minimum sell price', 
   const protocol = defaultJevProtocolDocument
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       cryptoFeeTier: null,
 
       protocol,
@@ -250,6 +256,7 @@ test('funding values a native take-profit at its submitted minimum sell price', 
       protocol.executionModel,
       1_000_000n,
       cryptoMaximumTakerFeeBps,
+      '2026-09-04T14:15:00.000Z',
     ),
   )
   expect(proceeds - fees.cashMicros).toBeGreaterThan(BigInt(economics.acquisitionCostMicros))
@@ -322,6 +329,7 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
         const protocol = defaultJevProtocolDocument
         const economics = Result.getOrThrow(
           jevEntryEconomics({
+            feeAt: '2026-09-04T14:15:00.000Z',
             cryptoFeeTier: null,
 
             protocol,
@@ -358,6 +366,7 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
 test('a cheaper refreshed crypto ask preserves the funded cap used by durable reproduction', () => {
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       cryptoFeeTier: null,
 
       protocol: defaultJevProtocolDocument,

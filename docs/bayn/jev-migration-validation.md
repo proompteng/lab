@@ -105,6 +105,17 @@ profit. Unknown required costs remain unknown, including during zero-trade and f
 
 ## Statistical comparison
 
+The registered circular-block bootstrap is a research diagnostic. It does not establish coverage for every
+permitted finite sample. Current assessments retain the calculations but report
+`STATISTICAL_COVERAGE_NOT_ESTABLISHED`, withhold established edge and qualification, and preserve measured profit.
+Retained policies reproduce their original results and hashes; they cannot admit a new registration.
+
+A concrete counterexample has independent net session payoffs +$1 or -$3 with equal probability and a control
+return of -$1. True mean profit is -$1 and true mean paired edge is zero. Two wins occur with probability 25%,
+yet every resample has positive profit and edge. The permitted two-session, one-session-block, first-attempt,
+one-control configuration with 80 replicates therefore fails its nominal 2.5% first-attempt family allowance.
+More replicates do not add market evidence. A new fixed session or trade quota does not supply a coverage argument.
+
 Before the first open, register circular block length `L`, replicate count `R`, and a nonzero UInt32 xorshift seed.
 Each resample has exactly `N` registered sessions, truncating only its final block when necessary. Candidate and
 controls share sampled indices. The block start is the exact integer floor of unsigned PRNG state times `N`, divided
@@ -118,16 +129,16 @@ each of the `m + 1` claims (absolute mean net profit and each paired mean net ed
 alpha = 0.05 / ((m + 1) * k * (k + 1))
 ```
 
-This spends the familywise error allowance across both claims and attempts. Registration requires
+This nominal allocation sums to at most 5% across claims and attempts only if each constituent bound is valid. Registration requires
 `R >= 20 * (m + 1) * k * (k + 1)`. The percentile rank is computed with exact integer division as
 `floor((R - 1) / (20 * (m + 1) * k * (k + 1)))`. The lower bound is the selected sorted resampled total divided by
-`N`. Both absolute and paired bounds must be strictly positive. A losing control cannot replace absolute profit.
+`N`. These positivity checks remain numerical diagnostics. A losing control cannot replace absolute observed profit.
 
 There is no fixed twelve-attempt ceiling: later attempts must prospectively reserve adequate finite work. Preserve
 all failed and inconclusive attempts; do not reset the index or increase the bootstrap budget after seeing results.
 The method assumes the selected block length adequately captures dependence and the prospective sample supports
-the claimed distribution. These assumptions remain explicit in the assessment. A passing estimate does not prove
-future returns or authenticate source evidence.
+the claimed distribution. These assumptions remain explicit in the assessment. A passing research estimate does not establish calibrated finite-sample inference,
+future returns, or authentic source evidence.
 
 ## Score response consistency
 

@@ -26,6 +26,7 @@ import {
   RetainedJevProtocolV32Schema,
   RetainedJevProtocolV33Schema,
   RetainedJevProtocolV34Schema,
+  RetainedJevProtocolV35Schema,
 } from './protocol'
 import * as retainedChartStages from './retained-filtered-staged-chart-questions'
 import * as currentChartStages from './staged-chart-questions'
@@ -58,6 +59,7 @@ const RetainedMarketProtocol = Schema.Union([
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: Schema.Union([
+    Schema.Struct({ ...CandidateEntryInferenceInputSchema.fields, protocol: RetainedJevProtocolV35Schema }),
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
       schemaVersion: Schema.Literal('bayn.entry-inference-input.v7'),
@@ -83,7 +85,7 @@ const RetainedRequest = Schema.Struct({
     }),
     Schema.Struct({
       ...AblationEntryInferenceInputSchema.fields,
-      protocol: Schema.Union([RetainedMarketProtocol, RetainedJevProtocolV34Schema]),
+      protocol: Schema.Union([RetainedMarketProtocol, RetainedJevProtocolV34Schema, RetainedJevProtocolV35Schema]),
     }),
   ]),
 })
@@ -179,11 +181,13 @@ export const readStagedInferenceCostEvidence = (row: {
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v31' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35'
     const retainedQuestions =
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35'
         ? makeEntryJudgmentRequest
         : identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
           ? makeRetainedFundedEntryJudgmentRequest
@@ -193,7 +197,7 @@ export const readStagedInferenceCostEvidence = (row: {
       : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
     const request = decoded.request
     const stages =
-      decoded._tag === 'Current'
+      decoded._tag === 'Current' || request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35'
         ? currentChartStages
         : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
             request.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'

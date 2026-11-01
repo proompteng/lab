@@ -3,7 +3,7 @@ import { Effect, Exit, Layer, Logger, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { operationalError } from '../errors'
 import { JevClient } from './client'
-import { DecisionsClient } from './decisions'
+import { DecisionsClient, type DecisionsError } from './decisions'
 import {
   EntryInferenceJournal,
   EntrySourceFeasibilityReason,
@@ -13,7 +13,8 @@ import {
 } from './entry-inference'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { evaluateClaimedEntryInferences } from './entry-inference-batch'
-import { entryHandoffDiagnostic } from './entry-inference-diagnostics'
+import { entryHandoffDiagnostic, logCommittedEntryHandoff } from './entry-inference-diagnostics'
+import type { EntryHandoff } from './entry-inference'
 import { entryCompletionFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevEvaluationStore, makeJevDispatch } from './evaluation'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
@@ -91,25 +92,25 @@ test.each([
     fixture: entryEvaluationRequestFixture,
     feasible: true,
     reason: EntrySourceFeasibilityReason.Feasible,
-    requestHash: 'be19f5d58f4b86cd7939f762abbce434e211afc0bb8a01b4f9574a088eab8ee6',
-    claimHash: 'a044472ea9dea0e0115d61cc2c08ea60be4dc4db1399adc774170f5775a53768',
+    requestHash: 'b6188bbdb158b08d553c5bef2903b7420278e08b2dadd7aed94f5bb1c86182e6',
+    claimHash: '1a8d6e3a0a55dfa33b12488df0346c0f35f2e1328675e4e1107170175fe09dcb',
   },
   {
     fixture: noQuantityRequest,
     feasible: false,
     reason: EntrySourceFeasibilityReason.NoExecutableQuantity,
-    requestHash: 'ccb33549552054b35da7e18c2102059fb3c0ee7ce7e340556e308c4363cd7fd8',
+    requestHash: '9985d975030c45ef7644f47661bcf84cf9504379be82a38ec5ee62ae8474d870',
     claimHash: null,
   },
   {
     fixture: quietCryptoRequest,
     feasible: false,
     reason: EntrySourceFeasibilityReason.NoFundedSourceStructure,
-    requestHash: '5beadcb12b1bfc032dbde19e33532658a5f638abbe67841d04bec302cc5f15f6',
+    requestHash: 'bceb7e8aee80eb1098ba113580dcf5aeaca6a8167dd07a4de013314b6cb1a397',
     claimHash: null,
   },
 ])(
-  'retains pre-change boolean and immutable identity oracles for $reason',
+  'pins current v36 feasibility and identity oracles for $reason',
   ({ fixture, feasible, reason, requestHash, claimHash }) => {
     const request = fixture()
     const prepared = prepare(request)
@@ -141,11 +142,55 @@ test('feasibility diagnostic preserves invalid economics as failure rather than 
   }
 })
 
+test.each(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE'] as const)(
+  'projects only the closed visual failure category %s',
+  async (category: DecisionsError['category']) => {
+    const request = entryEvaluationRequestFixture()
+    const handoff: EntryHandoff = {
+      ...entryCompletionFixture(request).handoff,
+      disposition: {
+        status: 'VISUAL_FAILED',
+        failure: {
+          category,
+          httpStatus: 429,
+          responseHash: 'f'.repeat(64),
+          usage: {
+            input_tokens: 100,
+            input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+            output_tokens: 20,
+            total_tokens: 120,
+          },
+        },
+      },
+    }
+    const before = JSON.stringify(handoff)
+    const feasibility = prepare(request).sourceFeasibility
+    const diagnostic = entryHandoffDiagnostic(request.cycleId, handoff, feasibility)
+    expect(diagnostic).toMatchObject({ disposition: 'VISUAL_FAILED', visualFailureCategory: category })
+    expect(JSON.stringify(handoff)).toBe(before)
+    for (const forbidden of ['httpStatus', 'responseHash', 'usage', 'input_tokens', '429', 'f'.repeat(64)])
+      expect(JSON.stringify(diagnostic)).not.toContain(forbidden)
+    const exit = await Effect.runPromiseExit(
+      logCommittedEntryHandoff(request.cycleId, handoff, feasibility).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              throw new Error('diagnostic sink unavailable')
+            }),
+          ]),
+        ),
+      ),
+    )
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(JSON.stringify(handoff)).toBe(before)
+  },
+)
+
 test('projects authentic ready and unfunded derivations without provider or financial material', () => {
   const request = entryEvaluationRequestFixture()
   const ready = entryCompletionFixture(request).handoff
   expect(ready.disposition.status).toBe('READY')
-  expect(ready.handoffHash).toBe('df3b19ef518e023c26f92593d2e4d521229f6272d99bf61ce25517ecb94f46b9')
+  expect(ready.handoffHash).toBe('cfffd396c57e72ac3ae35a3c4ff224340a7682a093ecda7c503aee5e2438d71a')
   const diagnostic = entryHandoffDiagnostic(request.cycleId, ready, prepare(request).sourceFeasibility)
   expect(diagnostic.disposition).toBe('READY')
   expect(diagnostic.proposalCount).toBeGreaterThan(0)
@@ -160,6 +205,24 @@ test('projects authentic ready and unfunded derivations without provider or fina
     'sourceFeasibility',
   ])
   const unfunded = entryCompletionFixture(noQuantityRequest()).handoff
+  if (ready.disposition.status !== 'READY') throw new Error('Expected a ready fixture')
+  const otherHandoffs: readonly EntryHandoff[] = [
+    ready,
+    unfunded,
+    { ...ready, disposition: { status: 'SOURCE_INFEASIBLE' } },
+    {
+      ...ready,
+      disposition: {
+        status: 'PREPARATION_FAILED',
+        visual: ready.disposition.visual,
+        reason: 'DERIVATION_CONTRACT',
+      },
+    },
+  ]
+  for (const handoff of otherHandoffs)
+    expect(entryHandoffDiagnostic(request.cycleId, handoff, prepare(request).sourceFeasibility)).not.toHaveProperty(
+      'visualFailureCategory',
+    )
   expect(
     entryHandoffDiagnostic(request.cycleId, unfunded, prepare(noQuantityRequest()).sourceFeasibility),
   ).toMatchObject({

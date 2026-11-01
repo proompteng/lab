@@ -170,7 +170,7 @@ test('foreign images, changed commands, incomplete exits, writable code and inje
 test('qualification requires independently retained execution receipts and exposes the observer trust assumptions', () => {
   const { input, verifiedSources } = supportedAssessmentFixture()
   const original = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
-  expect(original.verdict).toBe(QualificationVerdict.Qualified)
+  expect(original.verdict).toBe(QualificationVerdict.Inconclusive)
   expect(original.executionProvenance.assumptions).toHaveLength(3)
   const missing = new Set(verifiedSources)
   for (const hash of original.executionProvenance.receiptHashes) missing.delete(hash)
