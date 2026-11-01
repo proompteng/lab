@@ -1181,6 +1181,12 @@
   },
   {
     "surface": "ofz_platform",
+    "operation": "ReadPolicyRelationships",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Registered platform administrator service, active human administrator session, fully consistent resource relationships and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "WritePolicyRelationships",
     "action": "ACTION_POLICY_COMMAND",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"

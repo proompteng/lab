@@ -12,7 +12,7 @@ function Fixture() {
     void fetch('/fixture/session').then((response) => setAuthenticated(response.ok))
   }, [])
   return (
-    <main>
+    <main className="tengri-theme font-geist min-h-screen bg-zinc-950 p-6 text-zinc-100">
       <h1>Isolated Tengri identity fixture</h1>
       {authenticated ? (
         <>

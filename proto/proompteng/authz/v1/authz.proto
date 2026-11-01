@@ -365,6 +365,7 @@ message AccessEntry {
   string github_id = 6;
   ObservationScope scope = 7;
   Resource resource = 8;
+  string display_name = 9;
 }
 
 message QuotaRecord {

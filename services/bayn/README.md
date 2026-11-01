@@ -447,12 +447,14 @@ error-reporting failures cannot replace the pass result. The manual GlitchTip sm
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
-Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
-sessions. The working target remains the frozen
-[`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
-20 consecutive registered sessions on the existing $100,000 PAPER allocation, maximum session loss $1,000, and
-maximum marked drawdown $2,500. Its paired-control, uncertainty, execution-stress, activity, and evidence requirements
-all remain in force. Activity targets never require an otherwise unjustified order.
+Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
+untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) evaluates the exact
+nonempty calendar registered before its first open. There is no fixed session count or waiting period. Targets remain
+at least $5,000 net over that registered window on the existing $100,000 PAPER allocation, maximum session loss $1,000,
+and maximum marked drawdown $2,500. Paired-control, uncertainty, execution-stress, activity, and complete-evidence
+requirements remain in force. Activity targets never require an otherwise unjustified order. The historical
+[v1](../../docs/bayn/jev-migration-acceptance.json) and [v2](../../docs/bayn/jev-migration-acceptance-v2.json) contracts
+retain their original terms and records; their twenty-session rule does not govern new assessments.
 
 The immediate priorities are reliable recovery and complete cost accounting, then the existing
 [`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,

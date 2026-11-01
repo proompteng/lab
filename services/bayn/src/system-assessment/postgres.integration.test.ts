@@ -27,7 +27,7 @@ import {
   registerSystemQualification,
 } from './postgres'
 import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
-import { QualificationVerdict } from './assessment'
+import { QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
   readRegisteredFinancialIdentity,
   readSystemCashObservations,
@@ -46,7 +46,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
@@ -57,6 +57,7 @@ import {
 } from './replay-execution'
 
 import { validateSystemRegistration } from './policy'
+import { emptySourceCutFixture } from './source-cut.test-support'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const role = 'bayn_assessment_test_app'
@@ -90,10 +91,10 @@ const makeRuntime = (url: string) =>
 postgres('PostgreSQL prospective system qualification', () => {
   let runtime: ReturnType<typeof makeRuntime>
   let databaseObservedAt: string | undefined
-  const registration = () => {
+  const registration = (sessionCount = 20) => {
     if (databaseObservedAt === undefined) throw new Error('Database clock must precede fixture construction')
     return {
-      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString()),
+      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString(), sessionCount),
       priorAttemptHash: testHash(history),
     }
   }
@@ -143,6 +144,120 @@ postgres('PostgreSQL prospective system qualification', () => {
         }),
       )
     })
+
+  test.each([1, 3, 21])('persists a %i-session registration with its actual closing boundary', async (sessionCount) => {
+    const first = registration(sessionCount)
+    const saved = await runtime.runPromise(asApplication(registerFixture(first)))
+    expect(await runtime.runPromise(readSystemRegistration(saved.registrationHash))).toEqual(first)
+    const next = withRegistrationCommitments({ ...first, attemptIndex: 2, priorAttemptHash: saved.registrationHash })
+    const payload = Result.getOrThrow(canonicalJsonV1Result(next))
+    const opening = next.calendar.sessions[0]
+    const closing = next.calendar.sessions.at(-1)
+    if (opening === undefined || closing === undefined) throw Error('Missing registered boundaries')
+    const rejected = await runtime.runPromiseExit(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO system_qualification_registrations
+        (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+        VALUES (${testHash(next)}, ${next.program}, ${next.attemptIndex}, ${next.priorAttemptHash}, ${next.registeredAt},
+          ${opening.openAt}, ${new Date(Date.parse(closing.closeAt) + 1).toISOString()}, ${payload})`
+        }),
+      ),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
+    const accepted = await runtime.runPromise(asApplication(registerFixture(next)))
+    expect(accepted.registration.attemptIndex).toBe(2)
+    expect(accepted.registration.calendar.sessions).toHaveLength(sessionCount)
+  })
+
+  test('the window migration preserves existing registration bytes, hashes and attempt order', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 167))),
+          table: 'schema_migrations',
+        })
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
+      }),
+    )
+    const retained = withRegistrationCommitments({
+      ...registration(),
+      policyHash: '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b',
+      acceptanceProtocolHash: '33be41cdb552c926fdf003dd9320d570db4cd0012ae15227bc8338fd5f571375',
+    })
+    const retainedHash = testHash(retained)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const payload = Result.getOrThrow(canonicalJsonV1Result(retained))
+        yield* sql`INSERT INTO system_qualification_registrations
+        (registration_hash, program, attempt_index, prior_attempt_hash, registered_at, first_open_at, last_close_at, payload_text)
+        VALUES (${retainedHash}, ${retained.program}, ${retained.attemptIndex}, ${retained.priorAttemptHash}, ${retained.registeredAt},
+          ${retained.calendar.sessions[0]?.openAt}, ${retained.calendar.sessions.at(-1)?.closeAt}, ${payload})`
+      }),
+    )
+    const original = { registrationHash: retainedHash, registration: retained }
+    expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const before = yield* sql`SELECT registration_hash, payload_text, attempt_index, prior_attempt_hash, created_at
+        FROM system_qualification_registrations`
+        yield* postgresMigrations
+        expect(
+          yield* sql`SELECT registration_hash, payload_text, attempt_index, prior_attempt_hash, created_at
+        FROM system_qualification_registrations`,
+        ).toEqual(before)
+      }),
+    )
+    const next = withRegistrationCommitments({
+      ...registration(3),
+      attemptIndex: 2,
+      priorAttemptHash: original.registrationHash,
+    })
+    const saved = await runtime.runPromise(registerFixture(next))
+    expect(saved.registration.attemptIndex).toBe(2)
+    expect(saved.registration.calendar.sessions).toHaveLength(3)
+    expect(await runtime.runPromise(readSystemRegistration(original.registrationHash))).toEqual(original.registration)
+    const { input, verifiedSources } = assessmentFixture(retained)
+    const asOf = await runtime.runPromise(databaseNow)
+    const template = emptySourceCutFixture().cut
+    const cut = {
+      ...template,
+      registrationHash: retainedHash,
+      asOf,
+      runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
+    }
+    const savedCut = await runtime.runPromise(persistSystemSourceCut(cut))
+    verifiedSources.add(savedCut.sourceCutHash)
+    const historicalInput = {
+      ...input,
+      asOf,
+      sourceCutHash: savedCut.sourceCutHash,
+      reliability: { ...input.reliability, asOf, completions: [] },
+      safety: { ...input.safety, asOf },
+    }
+    const historical = Result.getOrThrow(
+      evaluateSystemAssessment(historicalInput, verifiedSources, JevAcceptanceVersion.RetainedV2),
+    )
+    expect(historical.verdict).not.toBe(QualificationVerdict.Qualified)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const { assessmentHash, ...material } = historical
+        yield* sql`INSERT INTO system_assessment_receipts
+        (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+        VALUES (${assessmentHash}, ${retainedHash}, ${savedCut.sourceCutHash}, ${asOf}, ${historical.verdict},
+          ${Result.getOrThrow(canonicalJsonV1Result(historicalInput))}, ${Result.getOrThrow(canonicalJsonV1Result(material))})`
+      }),
+    )
+    expect(await runtime.runPromise(readPersistedSystemAssessment(historical.assessmentHash))).toEqual(historical)
+  })
 
   test('registers and replays exact content, while preserving failed attempts and rejecting resets', async () => {
     const first = registration()

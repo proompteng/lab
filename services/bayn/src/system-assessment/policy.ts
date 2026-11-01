@@ -20,6 +20,7 @@ import { InferenceRateCardSchema, inferenceRatesCoverWindow, prepareInferenceRat
 import { MarketKind } from '../instruments'
 import {
   JevAcceptanceInputSchema,
+  JevAcceptanceVersion,
   JevResearchPolicy,
   jevAcceptanceProtocolHash,
   jevAcceptanceInferenceRateFloor,
@@ -39,7 +40,8 @@ import {
 } from './frozen-control-identity'
 
 export const systemQualificationPolicy = {
-  schemaVersion: 'bayn.system-qualification-policy.v1',
+  schemaVersion: 'bayn.system-qualification-policy.v2',
+  evaluationWindowRule: 'PROSPECTIVE_NONEMPTY_REGISTERED_CALENDAR',
   program: 'BAYN_SYSTEM_QUALIFICATION',
   environment: 'PAPER',
   allocationMicros: '100000000000',
@@ -120,15 +122,18 @@ export const SystemRegistrationSchema = Schema.Struct({
 
 export type SystemRegistration = typeof SystemRegistrationSchema.Type
 
-export const systemQualificationPolicyHash = () =>
+export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
+    // Exact pre-window policy identity for immutable historical evidence. New admission always uses Current.
+    if (version === JevAcceptanceVersion.RetainedV2)
+      return '7e465b71f52ae99a7f5a5254f04fde8b6432091f63ff51ef42bd1de02f92f90b'
     return yield* canonicalHashV1Result({
       ...systemQualificationPolicy,
-      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(),
+      acceptanceProtocolHash: yield* jevAcceptanceProtocolHash(version),
     })
   })
 
-export const validateSystemRegistration = (input: unknown) =>
+export const validateSystemRegistration = (input: unknown, version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
     const registration = yield* Schema.decodeUnknownResult(
       SystemRegistrationSchema,
@@ -138,11 +143,13 @@ export const validateSystemRegistration = (input: unknown) =>
     )
     const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
     if (
-      registration.policyHash !== (yield* systemQualificationPolicyHash()) ||
-      registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash()) ||
+      registration.policyHash !== (yield* systemQualificationPolicyHash(version)) ||
+      registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash(version)) ||
       registration.latencyStressProtocolHash !== (yield* systemLatencyStressProtocolHash())
     )
-      return yield* invalid('Registration must bind the current system policy and frozen acceptance contract')
+      return yield* invalid('Registration must bind the current system and acceptance policies')
+    if (version === JevAcceptanceVersion.RetainedV2 && registration.calendar.sessions.length !== 20)
+      return yield* invalid('Retained v2 evidence must retain its original calendar length')
     if (new Set(registration.policies.map((p) => p.policy)).size !== Object.values(JevResearchPolicy).length)
       return yield* invalid('Registration requires the candidate and each distinct matched control')
     if (new Set(registration.policies.map((p) => p.accountBindingHash)).size !== registration.policies.length)
@@ -164,8 +171,8 @@ export const validateSystemRegistration = (input: unknown) =>
     const momentumIdentity = yield* repeatedMomentumStrategyIdentity(
       makeRepeatedMomentumPolicy(registration.obligations.configuration.protocol),
     )
-    const tariffFloor = yield* jevAcceptanceInferenceRateFloor()
-    const riskCeilings = jevAcceptanceExecutionRiskLimits()
+    const tariffFloor = yield* jevAcceptanceInferenceRateFloor(version)
+    const riskCeilings = jevAcceptanceExecutionRiskLimits(version)
     for (const policy of registration.policies) {
       if (
         policy.riskPolicyHash !== (yield* canonicalHashV1Result(policy.riskPolicy)) ||
@@ -300,4 +307,23 @@ export const validateSystemRegistration = (input: unknown) =>
       previousDate = session.sessionDate
     }
     return { registration, registrationHash: yield* canonicalHashV1Result(registration) }
+  })
+
+export const verifyStoredSystemRegistration = (input: unknown) =>
+  Result.gen(function* () {
+    const decoded = yield* Schema.decodeUnknownResult(
+      SystemRegistrationSchema,
+      strictParseOptions,
+    )(input).pipe(
+      Result.mapError((cause) => new SystemAssessmentError({ message: 'Stored registration is malformed', cause })),
+    )
+    const current = yield* jevAcceptanceProtocolHash()
+    const retained = yield* jevAcceptanceProtocolHash(JevAcceptanceVersion.RetainedV2)
+    if (decoded.acceptanceProtocolHash !== current && decoded.acceptanceProtocolHash !== retained)
+      return yield* Result.fail(
+        new SystemAssessmentError({ message: 'Stored registration has an unknown acceptance policy' }),
+      )
+    const version =
+      decoded.acceptanceProtocolHash === current ? JevAcceptanceVersion.Current : JevAcceptanceVersion.RetainedV2
+    return { ...(yield* validateSystemRegistration(decoded, version)), version }
   })
