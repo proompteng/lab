@@ -22,7 +22,7 @@ concurrency change was applied. `osd_max_scrubs=3` remains the fixed constraint 
 ## Evidence identity and access
 
 - Cluster FSID: `5ade350d-92fe-49df-829e-37c1fbaf6c50`; context `galactic-tailscale`, namespace `rook-ceph`.
-- Ceph 20.2.4, Talos 1.14.0, Linux `6.18.48-talos`; both NICs are ConnectX-5 Ex, PCI ID `15b3:1019`,
+- Pre-upgrade samples used Ceph 20.2.4, Talos 1.14.0 and Linux `6.18.48-talos`; both NICs are ConnectX-5 Ex, PCI ID `15b3:1019`,
   firmware `16.35.1012`, PSID `MT_0000000013`, using `mlx5_core`.
 - Switch: CRS504-4XQ revision r3, RouterOS 7.23.8 long-term, RouterBOARD firmware 7.23.8.
   The sampled control-plane CPU load was 2%; both storage bridge ports had the actual `H` hardware-offload flag.
@@ -143,8 +143,9 @@ No persistent Gen2 cap was installed. Persistence across reboot is untested. The
 not support that setting difference as the cause. The tests established failure to train above Gen2 on
 this path, without isolating the defective component. Other Altra high-speed endpoints already negotiated Gen3.
 
-Gen2 did not eliminate receive loss. Sampled standard AER counters were zero, which does not exclude a
-link-training or electrical problem. NIC temperatures were 94–97 C during the earlier investigation, with
+Gen2 did not eliminate receive loss. An earlier pre-test AER read was zero; later timed parent-port samples
+show advancing corrected receiver errors, BadTLP indications and endpoint replay timeouts. Do not generalize
+the earlier zero read or NIC endpoint counters to the entire PCIe path. NIC temperatures were 94–97 C during the earlier investigation, with
 an undated recorded peak of 109 C. Heat remains a hypothesis. NVIDIA's warning and firmware-shutdown
 thresholds are 105 C and 115 C respectively; exceeding a historical warning threshold does not prove causality.
 
@@ -230,6 +231,95 @@ and the existing retained daemon-crash warning. No PG scrub-completion timestamp
 `08:42:56` and final PG snapshots. This bounded interval does not establish a stalled scrub or a throughput
 change. A native trial read still showed Altra PCIe Gen2 ×16 at 97 C, versus Turin Gen4 ×16 at 88 C.
 
+## Post-upgrade verification
+
+The [Talos 1.14.5 rollout](../../devices/galactic/releases/talos-v1.14.5-acceptance.md) completed on all three
+nodes. This read-only check on November 1 confirmed Linux `6.18.58-talos` and unchanged NIC firmware
+`16.35.1012`. It used the existing Mimir tenant and CSI node Pods, without reconnecting switch management,
+clearing counters, retraining links or changing settings. Native hardware probes ran as UID 473 with zero
+effective capabilities. Twenty Mimir hardware values fell within their corresponding native before/after bounds.
+The comparison windows had advancing counters, no counter resets and no scrape gaps of 90 seconds or more.
+
+These are actual first/last counter deltas from nominal 15-minute queries. Times below are UTC. Altra windows
+span 870 seconds each; the latest Turin window spans 840 seconds. Discards per million use received PHY packets
+as their denominator. Out-of-buffer events remain a separate measure.
+
+| Altra sample window       | Discards per million received packets | Physical discards | Mean RX traffic | Out-of-buffer events/s |
+| ------------------------- | ------------------------------------: | ----------------: | --------------: | ---------------------: |
+| Before, 08:25:42–08:40:12 |                                 2,398 |            40,559 |      194.8 Mb/s |                   2.54 |
+| Before, 09:30:12–09:44:42 |                                 2,252 |            89,162 |      497.4 Mb/s |                  15.90 |
+| After, 14:15:12–14:29:42  |                                 1,074 |            14,095 |      141.8 Mb/s |                   1.28 |
+| After, 16:45:12–16:59:42  |                                   660 |             7,740 |      126.7 Mb/s |                   1.16 |
+| After, 19:52:12–20:06:42  |                                   991 |            12,060 |      128.2 Mb/s |                   1.52 |
+
+The latest Turin window recorded 68 discards, or 4.29 per million received packets, at 194.7 Mb/s.
+Altra's normalized loss was lower in all three selected post-upgrade windows, but remained substantial.
+Traffic, bursts, database roles and other workload activity changed, so this observation does not isolate a
+kernel-fix effect or establish repaired receive behavior.
+
+Native samples from 20:05:44 to 20:07:39 confirmed continued loss and PCIe errors. Altra added 3,428 physical
+discards over 3,268,200 received packets in 115.33 seconds, or 1,049 discards per million. Its root port
+`0000:00:01.0` added 1,081,037 corrected `RxErr`, 2,378 `BadTLP`, five `BadDLLP` and one timeout. The NIC endpoint
+added 42 corrected timeouts. Fatal and nonfatal AER counters did not increase. PCIe corrected errors and
+Ethernet discards have different units and must not be added or treated as a corruption count.
+
+Altra still negotiated Gen2 ×16, with its inspected root port advertising Gen3; the NIC advertises Gen4.
+Turin still negotiated Gen4 ×16, and its NIC endpoint AER counters remained zero. Turin's upstream port did
+not expose the same AER files, so endpoint zeros do not prove its entire PCIe path error-free. Sampled NIC
+temperatures were 97 C on Altra and 89 C on Turin. The upgrade did not repair Altra's PCIe training/error problem.
+
+The latest operation-weighted OSD mean write latency was 279 ms on Altra and 297 ms on Turin. These are
+counter means, not p95/p99 or database transaction latency. Altra's `sda` averaged a queue depth of 48 and
+90% busy time in the same window. All 601 PGs were clean, six OSDs were up/in and three monitors were in quorum.
+Ceph still warned about two OSDs with BlueStore slow operations, 19 overdue deep scrubs and one recent crash.
+All six effective `osd_max_scrubs` values remained 3, with `high_client_ops`, recovery concurrency and backfill
+concurrency unchanged.
+
+Bayn's primary was now `bayn-db-1` on Altra, with `bayn-db-2` a Turin standby. Its WAL fsync counters and the
+verified current RBD devices did not advance during the latest window, so no current WAL/RBD latency mean
+can be calculated. Native SQL corroborated the WAL counters; `fsync` and `synchronous_commit` remained on,
+with `wal_buffers=16MB`. This does not prove a database-latency improvement. Both Bayn Valkey exporters were
+up without scrape errors, and the replica's master link was up. Those availability metrics do not measure
+command or persistence latency.
+
+The remaining network investigation is the NIC/riser/slot/root-port path. Lower sampled receive loss does not
+justify declaring the incident fixed, changing scrub concurrency or attributing client latency to one component.
+
+## Independent post-upgrade review
+
+A fresh [Oracle consultation](https://chatgpt.com/c/6ae7b768-e7f8-83e8-9346-6bed72bd3346) reviewed raw paired
+measurements and reported reading all five requested files at commit
+`d62b2e5dbc675371d618cfa59f8444d0ac1b0a63`. The request contained measurements, fixed constraints and competing
+explanations without a preferred diagnosis or action ranking. Preflight showed GPT-6, Pro at 5 of 5, and a Pro
+composer. The completed response's regeneration menu explicitly identified `6 Pro`. The review did not inspect
+the live hosts, switch or BMC and did not execute an intervention.
+
+Its first recommendation is to identify the exact carrier revision, connector, riser if present, and controller
+behind parent `0000:00:01.0`. DMI's `ES2` value does not establish the physical A1/A2 carrier revision.
+[ADLINK requires physical board identification before firmware selection](https://docs.ipi.wiki/com-hpc/aadk/firmware_A1vsA2.html).
+Once the path's supported speed and bifurcation are established, the preferred discriminator is an Altra-only
+test of the existing NIC through a verified compatible alternative path, if one is free. Keep firmware and
+runtime tuning unchanged for that test, and keep Turin online. If there is no safe alternative path, obtain
+board-specific vendor guidance or a qualified comparison device.
+
+Independent checks confirmed that [installed ADLINK 2.04.100.11](https://github.com/ADLINK/edk2_aadp/releases/tag/v2.04.100.11)
+already documents setting a Gen3 default instead of an unset speed after bifurcation changes, for active
+controllers. That change cannot be presented as a new benefit of a later flash. It may explain a configured
+Gen3 ceiling, but does not establish why this link negotiates Gen2 with advancing errors. NVIDIA's documented
+lane-skew and masked-AER fixes similarly predate the installed NIC firmware. The 16.35.8008 security-maintenance
+benefit remains separate from a proven PCIe repair.
+
+The Oracle could not retrieve and inspect either candidate firmware archive. Its board/image applicability
+assessment is therefore incomplete; it did not validate either flash as the first repair action. A new-version
+number or DMI label does not close that gap.
+
+Success for a future path test requires the expected negotiated speed and width after warm-up, stable outside
+training, with no new relevant AER errors over representative busy windows. Measure physical discards and
+out-of-buffer events separately, and assess client/storage latency separately. These are proposed experiment
+criteria, not vendor guarantees or observed repair results. Evidence of a clean expected-speed link before
+host-driver initialization that reproducibly degrades only when the driver starts would reverse the review's
+hardware-path-first direction. No physical move, flash, retrain, cooling change or new privilege was applied.
+
 ## Remaining work and authority
 
 The operator chose to preserve the hardware/runtime state, then explicitly authorized the single-port
@@ -244,11 +334,14 @@ Separately, PCIe diagnosis needs pre-OS versus post-driver speed observations, c
 checks and vendor-supported firmware investigation. Installed ADLINK firmware is 2.04.100.11; vendor 2.10.100.02
 requires a transitional procedure and its reviewed notes did not identify a specific fix for this failure.
 The independent oracle also identified newer NIC and Talos/kernel maintenance candidates, without establishing
-that either fixes this incident. Requalify versions, PSID, custom installer/extensions and recovery before use.
+that either fixes this incident. Talos 1.14.5 is now installed with the observations above; NIC firmware maintenance
+still requires qualification of the exact PSID and recovery procedure.
 
 Altra maintenance affects approximately 290 active pods, database primaries and twelve matching PDBs with
 zero allowed disruptions in the sampled inventory. Ceph's read-only stop assessment for its three OSDs
-allowed the stop but predicted 318 degraded PGs. No drain, forced eviction, database switchover or power action occurred.
+allowed the stop but predicted 318 degraded PGs. No drain, forced eviction, database switchover or power action
+occurred during the switch trial or this post-upgrade metrics check. The separately authorized Talos maintenance
+is recorded in the rollout link above.
 
 The earlier independent review measured material PostgreSQL WAL/RBD latency and HDD queueing on both hosts.
 It did not quantify the NIC's contribution. Its Valkey hot-path sample showed no process disk-I/O increment;

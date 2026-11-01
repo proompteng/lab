@@ -30,6 +30,17 @@ const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
         3,
         include_str!("../migrations/0004_session_credentials.sql"),
     ),
+    (4, include_str!("../migrations/0005_session_gateways.sql")),
+    (5, include_str!("../migrations/0006_sign_in_attempts.sql")),
+    (
+        6,
+        include_str!("../migrations/0007_workspace_onboarding.sql"),
+    ),
+    (7, include_str!("../migrations/0008_access_requests.sql")),
+    (
+        8,
+        include_str!("../migrations/0009_provider_connections.sql"),
+    ),
 ];
 
 fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {
@@ -289,6 +300,10 @@ impl Database {
                 7,
                 include_str!("../../tengri/migrations/0007_ephemeral_oauth.sql"),
             ),
+            (
+                8,
+                include_str!("../../tengri/migrations/0008_platform_sign_in.sql"),
+            ),
         ];
         let mut client = self
             .pool
@@ -375,6 +390,14 @@ impl Database {
 
     #[tracing::instrument(name = "db.command_connection", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn command_connection(&self) -> Result<CommandConnection, Status> {
+        self.locked_connection(None).await
+    }
+
+    pub(crate) async fn provider_connection(&self, id: Uuid) -> Result<CommandConnection, Status> {
+        self.locked_connection(Some(id)).await
+    }
+
+    async fn locked_connection(&self, provider: Option<Uuid>) -> Result<CommandConnection, Status> {
         let permit = self
             .command_slots
             .clone()
@@ -397,11 +420,21 @@ impl Database {
         };
         let start = tokio::time::Instant::now();
         loop {
-            let row = connection
-                .client
-                .query_one("SELECT pg_try_advisory_lock(726635522918)", &[])
-                .await
-                .map_err(sql_error)?;
+            let row = if let Some(id) = provider {
+                connection
+                    .client
+                    .query_one(
+                        "SELECT pg_try_advisory_lock(726635,hashtext($1))",
+                        &[&id.to_string()],
+                    )
+                    .await
+            } else {
+                connection
+                    .client
+                    .query_one("SELECT pg_try_advisory_lock(726635522918)", &[])
+                    .await
+            }
+            .map_err(sql_error)?;
             if row.get::<_, bool>(0) {
                 return Ok(connection);
             }
@@ -624,6 +657,7 @@ pub fn receipt(
         platform_resources: Vec::new(),
         platform_client: String::new(),
         platform_request_hash: Vec::new(),
+        platform_workspace_id: String::new(),
     }
 }
 

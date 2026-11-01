@@ -4,8 +4,8 @@ Ofz owns platform authorization, service registration, policy onboarding and dur
 SpiceDB. [The platform package](platform/README.md) explains service/policy onboarding and relationship management;
 [the architecture and cutover guide](../../docs/platform/ofz-relay.md) covers Relay and its clients.
 
-`PlatformAuthorizationService` is the extensible platform contract. `TengriAuthorizationService` owns Tengri's existing
-identity, workspace lifecycle, session and content-access operations. The former `AuthorizationService` and its
+`PlatformAuthorizationService` owns browser sessions and the extensible platform authorization contract.
+`TengriAuthorizationService` owns Tengri's workspace lifecycle and content-access operations. The former `AuthorizationService` and its
 Tengri connector API are removed. Kubernetes connector execution goes through the separate Relay service.
 Ofz and its existing Tengri consumers retain their coordinated image release cohort.
 
@@ -50,8 +50,13 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all seven migrations through `0007_ephemeral_oauth.sql`; they cannot
-initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
+checksum. The controller and supervisor require all eight migrations through `0008_platform_sign_in.sql`; they cannot
+initialize their own schema. Ofz owns gateway-scoped, single-use PKCE attempts in an unlogged table; the web gateways
+have no database access. The migration drops the replaced Tengri attempt table and revokes the obsolete BFF SQL grants.
+Only these ephemeral attempt transactions use local commit acknowledgement. Session, policy and audit transactions
+retain their existing durability requirements. The browser fixture verifies attempt creation and concurrent single-use
+consumption while the synchronous standby is unavailable. Promote Ofz and complete its migration hook before promoting
+its consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 
@@ -146,6 +151,10 @@ The BFF supplies a fresh 256-bit credential when establishing a session and reus
 RPC retries. Ofz binds its operation ID to the credential hash and full request fingerprint. A committed retry returns
 the same still-active credential without consuming another OIDC nonce, creating a session, extending idle time, or
 writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
+Ordinary browser sign-in may reuse the issuer's verified passkey SSO. Ofz still requires a token issued within two
+minutes, the gateway's audience and authorized party, and level-two assurance authenticated within eight hours.
+The absolute session deadline never exceeds that authentication time plus eight hours; SSO cannot slide it forward.
+Sensitive changes retain their separate fresh-MFA requirement.
 A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
 
 `AuthorizeCommand` checks human command permission before the BFF resolves an external subject. It produces an audit
@@ -322,3 +331,42 @@ bounded `grpc_code` tag and a status-specific title. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
 contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
 database connection or changing authorization state. Confirm the returned IDs in both collectors.
+
+### Provider accounts
+
+Ofz owns provider OAuth2 accounts for registered HTTP and upstream MCP connectors. Product clients connect personal
+accounts; workspace administrators connect shared accounts in the independent portal. Ordinary connect, refresh and
+reconnect reuse the current session. Resource grants remain separate workspace policy decisions.
+
+`platform/provider-profiles.json` is the reviewed registration input and defaults to `[]`. Set
+`OFZ_PROVIDER_PROFILES_FILE` to a mounted replacement in both Ofz and its onboarding job. Each profile registers
+`id`, `name`, `workspace_id`, unique `connector_id`, `ownership` (`personal` or `workspace`), the native policy
+`resource` and `actions`, exact `resource_url`, `issuer`, `authorization_endpoint`, `token_endpoint`,
+`account_endpoint`, `account_id_field`, `account_name_field`, optional `revocation_endpoint`, `client_id`, optional
+absolute `client_secret_file` and `ca_file`, and `scopes`. All URLs are fixed HTTPS endpoints; the resource URL must
+exactly match Relay's canonical HTTP origin or MCP endpoint. The account endpoint returns the registered stable ID
+and display-name fields. No dynamic endpoint or client-supplied credential is accepted. Provider registrations are
+part of the qualified policy package hash; changing them requires onboarding the reviewed package before serving.
+
+Nonempty registrations also require `OFZ_PROVIDER_CREDENTIAL_KEY_FILE`, an operator-mounted stable 32-byte encryption
+key. Keep this key and its recovery copy outside source control. The runtime requires the key and provider client
+secrets; onboarding requires the registration file and any configured CA. Configure each provider's allowed callback
+at `https://proompteng.ai/api/platform/provider-connections/callback/<profile-id>` for personal accounts or
+`https://admin.proompteng.ai/api/platform/provider-connections/callback/<profile-id>` for workspace accounts. Scope
+changes require new provider consent. No external provider account or key is provisioned by the empty default.
+
+Authorization uses S256 PKCE, a five-minute attempt, browser binding and the original human/client/workspace. Tokens
+are encrypted with account/profile binding and never returned to a browser, Tengri guest or OpenCode. Reconnect
+preserves the connection ID and original provider identity; selecting another account is rejected. Refresh is
+serialized per account; uncertain exchanges are never repeated automatically. Local disconnect takes effect before
+upstream revocation, and its receipt says whether the provider confirmed revocation. Provider token failures require
+repair; policy denials remain policy denials.
+
+Only the attested Relay executor can resolve a token, after the exact authorized execution has durably started.
+Ofz binds that execution to the account revision. Disconnect or credential replacement blocks later dispatch and
+withholds results from the old revision. Shared accounts remain subject to the invoking workload's native resource
+permissions; connecting an account never grants access.
+
+`bash services/ofz/test-control.sh platform` qualifies the lifecycle against real PostgreSQL, SpiceDB and a controlled
+TLS OAuth provider, including HTTP and MCP execution for Tengri delegation and standalone OpenCode. It exercises
+refresh races, account mismatch, lost exchanges, revoked authority and replayed receipts without external accounts.

@@ -30,7 +30,7 @@ test('the public proxy forwards exact execution and lookup bodies over attested 
       'SPIFFE_ID',
       'SPIFFE_ENDPOINT_SOCKET',
       'SPIFFE_WORKLOAD_API_PROTO_PATH',
-      'TENGRI_DESKTOP_ORIGIN',
+      'PLATFORM_WEB_ORIGIN',
     ].map((key) => [key, process.env[key]]),
   )
   const operationId = '11111111-1111-4111-8111-111111111111'
@@ -101,7 +101,7 @@ test('the public proxy forwards exact execution and lookup bodies over attested 
     process.env.SPIFFE_ID = fixture.ownId
     process.env.SPIFFE_ENDPOINT_SOCKET = fixture.endpoint
     process.env.SPIFFE_WORKLOAD_API_PROTO_PATH = fixture.protoPath
-    process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+    process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
     const invoke = (value: unknown, host = 'proompteng.ai') =>
       POST(
         new Request('https://proompteng.ai/api/platform/relay/agent', {

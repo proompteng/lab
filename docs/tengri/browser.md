@@ -98,6 +98,14 @@ Existing Codex approval settings remain in effect.
 
 ## Private ChatGPT connection
 
+Confirm that the chosen ChatGPT account, workspace and surface allow custom MCP write actions before configuring
+the connection. OpenAI's [custom MCP guide](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt),
+checked 2026-11-01, lists full custom MCP support for Business and Enterprise/Edu and read/fetch permissions for Pro
+plans. Its [plugin guide](https://help.openai.com/en/articles/20001256-plugins-in-chatgpt) describes separate availability
+for plugin-hosted and local apps. The Pro model and MCP write permission are separate requirements; verify both in
+the actual conversation. This server's `computer` tool is correctly marked `readOnlyHint: false`, and browser input
+requires write permission. Installing a plugin or selecting Pro alone does not establish that those actions work.
+
 Chrome's **Connect ChatGPT** button asks the owner to download a separate browser connection. It uses the existing
 `IssueBrowserSession` operation, owner login, workspace/runtime binding, Ofz checks and preview revocation. The
 downloaded launch ticket expires after 30 seconds; exchanging it creates a browser-only lease lasting at most 30
