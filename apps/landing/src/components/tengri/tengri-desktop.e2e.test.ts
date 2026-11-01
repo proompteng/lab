@@ -5,6 +5,7 @@ import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/conne
 import { policyWriteSchema } from '@/lib/platform/policies'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import type { TengriCodexEvent } from '@/lib/tengri/types'
 import { codexThreadTitle, type TengriCodexThreadSummary } from '@/lib/tengri/codex-threads'
 
 async function openSettingsPane(settings: Locator, name: string) {
@@ -10274,6 +10275,61 @@ test('lets a slow final status complete while another conversation keeps polling
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
   await chat.getByRole('textbox', { name: 'Message your agent' }).fill('Next task')
   await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+})
+
+test('clears a recovered active-run outage when the turn finishes before its retry', async ({ page }, testInfo) => {
+  await page.clock.install()
+  const run: TengriCodexRun = {
+    runId: '33333333-3333-4333-8333-333333333333',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  let unavailable = false
+  let failedReads = 0
+  let recoveredReads = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'active-codex-runs')
+      return route.fallback()
+    if (unavailable) {
+      failedReads += 1
+      return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+    }
+    recoveredReads += 1
+    return route.fallback()
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-recovered'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await composer.fill('Keep this unsent follow-up')
+  unavailable = true
+  await page.clock.runFor(2_100)
+  await expect.poll(() => failedReads).toBeGreaterThan(0)
+  await page.clock.runFor(3_100)
+  await expect(chat.getByRole('alert')).toHaveText('Reconnecting to your agent…')
+  const readsBeforeCompletion = recoveredReads
+  unavailable = false
+  await emitCodexEvent(page, {
+    sequence: 10,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-recovered',
+    turnId: 'turn-recovered',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{"params":{"turn":{"id":"turn-recovered","status":"completed"}}}',
+  } satisfies TengriCodexEvent)
+  await expect.poll(() => recoveredReads).toBeGreaterThan(readsBeforeCompletion)
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(chat.getByText('Agent returned an invalid event', { exact: true })).toHaveCount(0)
+  await expect(chat.getByRole('alert')).toHaveCount(0)
+  await expect(composer).toHaveValue('Keep this unsent follow-up')
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+  await page.screenshot({ path: testInfo.outputPath('recovered-chat.png'), animations: 'disabled' })
 })
 
 for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {

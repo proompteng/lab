@@ -217,6 +217,9 @@ describe('complete Jev batch evidence', () => {
     )
     const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
     expect(Result.isFailure(usableEntryBatchInferences(mixed, result, 450, JevBatchPlanVersion.V8))).toBe(true)
+    expect(usableEntryBatchInferences(mixed, result, 450, JevBatchPlanVersion.V8)).toMatchObject({
+      failure: { availabilityReason: 'NO_USABLE_CANDIDATES' },
+    })
     const versionThree = Result.getOrThrow(
       makeJevBatchPlan({
         ...planMaterial,
@@ -272,7 +275,13 @@ describe('complete Jev batch evidence', () => {
     const result = Result.getOrThrow(makeJevBatchResult(plan, resultMaterial()))
     expect(Result.isFailure(usableEntryBatchInferences(plan, result, 399, JevBatchPlanVersion.V8))).toBe(true)
     expect(Result.isSuccess(usableEntryBatchInferences(plan, result, 9999, JevBatchPlanVersion.V8))).toBe(true)
+    expect(usableEntryBatchInferences(plan, result, 9999, JevBatchPlanVersion.Ablation)).toMatchObject({
+      failure: { availabilityReason: 'POLICY_MISMATCH' },
+    })
     expect(Result.isFailure(usableEntryBatchInferences(plan, result, 10000, JevBatchPlanVersion.V8))).toBe(true)
+    expect(usableEntryBatchInferences(plan, result, 10000, JevBatchPlanVersion.V8)).toMatchObject({
+      failure: { availabilityReason: 'OUTSIDE_VALIDITY_WINDOW' },
+    })
     expect(Result.isFailure(usableEntryBatchInferences(plan, result, Number.NaN, JevBatchPlanVersion.V8))).toBe(true)
     const { resultHash: _, ...lateMaterial } = result
     const late = Result.getOrThrow(makeJevBatchResult(plan, { ...lateMaterial, completedAt: at(10001) }))
@@ -364,6 +373,9 @@ describe('complete Jev batch evidence', () => {
     )
     expect(Result.isFailure(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V8))).toBe(true)
     expect(Result.getOrThrow(decodeJevBatchResult(plan, result))).toEqual(result)
+    expect(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V8)).toMatchObject({
+      failure: { availabilityReason: 'INFERENCE_INCOMPLETE' },
+    })
   })
 
   test('unattempted and abandoned candidates finalize only after expiry and cannot authorize entry', () => {
