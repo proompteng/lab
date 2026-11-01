@@ -239,7 +239,8 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
           if (transition.successor.kind !== 'HANDOFF') continue
           const committed = transition.successor.handoff
           const owner = work.find((entry) => entry.claim.requestId === committed.requestId)
-          if (owner !== undefined) yield* logCommittedEntryHandoff(owner.request.cycleId, committed)
+          if (owner !== undefined)
+            yield* logCommittedEntryHandoff(owner.request.cycleId, committed, owner.sourceFeasibility)
         }
       })
     return yield* Effect.gen(function* () {
