@@ -18,6 +18,7 @@ import {
   type EntryStageTransition,
 } from './entry-inference'
 import { makeSelectedBaseStartStageRequest } from './staged-chart-questions'
+import { logCommittedEntryHandoff } from './entry-inference-diagnostics'
 import {
   makeStagedDispatchClaim,
   makeStagedSkipReceipt,
@@ -231,6 +232,14 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
               category: 'EXISTING_HANDOFF',
               message: 'An existing stage admission cannot be dispatched again',
             })
+        }
+        // Only newly admitted, durably committed handoffs are logged. Replays retain
+        // the existing refusal above; handoffHash permits downstream deduplication.
+        for (const transition of transitions) {
+          if (transition.successor.kind !== 'HANDOFF') continue
+          const committed = transition.successor.handoff
+          const owner = work.find((entry) => entry.claim.requestId === committed.requestId)
+          if (owner !== undefined) yield* logCommittedEntryHandoff(owner.request.cycleId, committed)
         }
       })
     return yield* Effect.gen(function* () {
