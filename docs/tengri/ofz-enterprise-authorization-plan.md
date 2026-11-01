@@ -296,7 +296,7 @@ BFF, Ofz, controller, supervisor, guest, and brokers without recording private c
 
 - [Tengri implementation and host boundary](../../services/tengri/README.md)
 - [Current authorization code](../../services/tengri/src/authz.rs), [central schema](../../services/ofz/schema.zed),
-  [ticket state](../../services/tengri/src/tickets.rs), and [BFF authentication](../../apps/landing/src/lib/tengri/auth.ts)
+  [ticket state](../../services/tengri/src/tickets.rs), and [browser authentication](../../apps/landing/src/lib/platform/auth.ts)
 - [Ofz datastore and backup configuration](../../argocd/applications/ofz/README.md)
 - [Keycloak desired state](../../argocd/applications/keycloak/keycloak.yaml)
 - [Fleet quotas at the research baseline](https://github.com/proompteng/lab/blob/f65e44e0c2703fb50adace16740f6d57895d4460/argocd/applications/tengri/resource-quota.yaml)

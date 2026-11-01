@@ -5,32 +5,85 @@
       "kind": "kubernetes.namespace",
       "nativeType": "kubernetes_namespace",
       "relations": [
-        { "name": "status_reader", "subjects": ["human", "workload"] },
-        { "name": "log_reader", "subjects": ["human", "workload"] },
-        { "name": "event_reader", "subjects": ["human", "workload"] }
-      ]
+        {
+          "name": "status_reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "log_reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "event_reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "status_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "log_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "event_workspace",
+          "subjects": ["workspace"]
+        }
+      ],
+      "workspaceScoped": true
     },
-    { "kind": "tengri.workspace", "nativeType": "workspace", "relations": [] }
+    {
+      "kind": "tengri.workspace",
+      "nativeType": "workspace",
+      "relations": [],
+      "workspaceScoped": false
+    },
+    {
+      "kind": "platform.workspace",
+      "nativeType": "platform_workspace",
+      "workspaceScoped": false,
+      "relations": [
+        {
+          "name": "member",
+          "subjects": ["human"]
+        },
+        {
+          "name": "administrator",
+          "subjects": ["human"]
+        },
+        {
+          "name": "client",
+          "subjects": ["workload"]
+        }
+      ]
+    }
   ],
   "actions": [
     {
       "id": "kubernetes.status.read",
       "resourceKind": "kubernetes.namespace",
       "permission": "read_status",
-      "grantRelation": "status_reader"
+      "grantRelation": "status_reader",
+      "workspaceGrantRelation": "status_workspace"
     },
     {
       "id": "kubernetes.logs.read",
       "resourceKind": "kubernetes.namespace",
       "permission": "read_logs",
-      "grantRelation": "log_reader"
+      "grantRelation": "log_reader",
+      "workspaceGrantRelation": "log_workspace"
     },
     {
       "id": "kubernetes.events.read",
       "resourceKind": "kubernetes.namespace",
       "permission": "read_events",
-      "grantRelation": "event_reader"
+      "grantRelation": "event_reader",
+      "workspaceGrantRelation": "event_workspace"
     },
-    { "id": "tengri.delegations.manage", "resourceKind": "tengri.workspace", "permission": "manage_grants" }
+    {
+      "id": "tengri.delegations.manage",
+      "resourceKind": "tengri.workspace",
+      "permission": "manage_grants"
+    }
   ]
 }

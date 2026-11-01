@@ -61,8 +61,15 @@ pub async fn record(
             "execution outcome differs from its authorization",
         ));
     }
-    let previous=tx.query_opt("SELECT authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id FROM ofz.platform_executions WHERE operation_id=$1 FOR UPDATE", &[&operation]).await.map_err(sql_error)?;
+    let previous=tx.query_opt("SELECT authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id,workspace_id,provider_connection_id,provider_credential_revision FROM ofz.platform_executions WHERE operation_id=$1 FOR UPDATE", &[&operation]).await.map_err(sql_error)?;
     if let Some(row) = &previous {
+        let workspace = row.get::<_, Uuid>(5).to_string();
+        if !receipt.platform_workspace_id.is_empty() && receipt.platform_workspace_id != workspace {
+            return Err(Status::permission_denied(
+                "execution workspace differs from its authorization",
+            ));
+        }
+        receipt.platform_workspace_id = workspace;
         if row.get::<_, Uuid>(0) != authorization || request.outcome == "started" {
             return Err(Status::already_exists("execution ID already used"));
         }
@@ -98,9 +105,9 @@ pub async fn record(
         .map_err(|_| Status::internal("encode execution audit target"))?;
     store::record_audit(&*tx, &receipt, &target).await?;
     let statement = if request.outcome == "started" {
-        "INSERT INTO ofz.platform_executions(operation_id,authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(operation_id) DO NOTHING"
+        "INSERT INTO ofz.platform_executions(operation_id,authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id,workspace_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(operation_id) DO NOTHING"
     } else {
-        "UPDATE ofz.platform_executions SET outcome=$3,upstream_status=$4,result_hash=$5,audit_receipt_id=$6 WHERE operation_id=$1 AND authorization_receipt_id=$2"
+        "UPDATE ofz.platform_executions SET outcome=$3,upstream_status=$4,result_hash=$5,audit_receipt_id=$6 WHERE operation_id=$1 AND authorization_receipt_id=$2 AND workspace_id=$7"
     };
     let changed = tx
         .execute(
@@ -112,12 +119,21 @@ pub async fn record(
                 &(request.upstream_status as i32),
                 &request.result_hash,
                 &decision::parse_uuid(&receipt.id)?,
+                &decision::parse_uuid(&receipt.platform_workspace_id)?,
             ],
         )
         .await
         .map_err(sql_error)?;
     if changed != 1 {
         return Err(Status::already_exists("execution ID already used"));
+    }
+    if request.outcome == "failed"
+        && request.upstream_status == 401
+        && let Some(row) = &previous
+        && let (Some(provider), Some(revision)) =
+            (row.get::<_, Option<Uuid>>(6), row.get::<_, Option<i64>>(7))
+    {
+        tx.execute("UPDATE ofz.provider_connections SET state='reconnect',revision=revision+1,credential=NULL,expires_at_ms=NULL,updated_at_ms=ofz.now_ms() WHERE id=$1 AND revision=$2 AND state='ready'", &[&provider, &revision]).await.map_err(sql_error)?;
     }
     tx.commit().await.map_err(sql_error)?;
     Ok(proto::RecordPlatformExecutionResponse {
@@ -126,12 +142,12 @@ pub async fn record(
 }
 
 #[derive(PartialEq, Eq)]
-enum Owner {
+pub(crate) enum Owner {
     Human(String),
     Workload(String),
 }
 
-async fn owner(
+pub(crate) async fn owner(
     connection: &tokio_postgres::Client,
     receipt: &proto::AuditReceipt,
 ) -> Result<Owner, Status> {
@@ -197,7 +213,7 @@ pub async fn get(
             .map_err(sql_error)?;
         let current: proto::AuditReceipt = store::decode(current.get(0))?;
         let row = connection.query_opt(
-            "SELECT e.authorization_receipt_id,e.outcome,e.upstream_status,e.result_hash,e.audit_receipt_id,a.receipt,o.created_at_ms FROM ofz.platform_executions e JOIN ofz.audit a ON a.id=e.authorization_receipt_id JOIN ofz.audit o ON o.id=e.audit_receipt_id WHERE e.operation_id=$1",
+            "SELECT e.authorization_receipt_id,e.outcome,e.upstream_status,e.result_hash,e.audit_receipt_id,a.receipt,o.created_at_ms,e.workspace_id FROM ofz.platform_executions e JOIN ofz.audit a ON a.id=e.authorization_receipt_id JOIN ofz.audit o ON o.id=e.audit_receipt_id WHERE e.operation_id=$1",
             &[&decision::parse_uuid(&authorization.operation_id)?],
         ).await.map_err(sql_error)?.ok_or_else(|| Status::not_found("execution unavailable"))?;
         let original: proto::AuditReceipt = store::decode(row.get(5))?;
@@ -207,6 +223,7 @@ pub async fn get(
             || original.platform_client != current.platform_client
             || original.platform_action != current.platform_action
             || original.platform_resources != current.platform_resources
+            || row.get::<_, Uuid>(7).to_string() != current.platform_workspace_id
             || original.platform_request_hash != request.execution_request_hash
             || owner(&connection, &original).await? != owner(&connection, &current).await?
         {

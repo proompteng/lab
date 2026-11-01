@@ -329,7 +329,7 @@ def main():
     assert schema_actions == actual["bff_access"], (
         f"access schema and handler classification disagree: unclassified={sorted(actual['bff_access'] - schema_actions)}, missing={sorted(schema_actions - actual['bff_access'])}"
     )
-    auth = (ROOT / "apps/landing/src/lib/tengri/auth.ts").read_text()
+    auth = (ROOT / "apps/landing/src/lib/platform/auth.ts").read_text()
     actual["bff_auth"] = operation_cases(auth)
     actual["bff_auth_http"] = next_routes(
         ROOT / "apps/landing/src/app/api/auth", "/api/auth"

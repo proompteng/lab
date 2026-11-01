@@ -54,7 +54,11 @@ test.skipIf(!binary)(
         const beforeLookups = lookups
         server = new grpc.Server()
         server.addService(service.service, {
-          listOperations(_call: grpc.ServerUnaryCall<unknown, unknown>, callback: grpc.sendUnaryData<unknown>) {
+          listOperations(
+            call: grpc.ServerUnaryCall<{ subject: { clientService: string; workloadId: string } }, unknown>,
+            callback: grpc.sendUnaryData<unknown>,
+          ) {
+            expect(call.request.subject).toMatchObject({ clientService: 'opencode', workloadId: ownId })
             callback(null, {
               operations: [
                 {
