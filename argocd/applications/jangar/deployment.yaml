@@ -49,48 +49,6 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
-        - name: docker
-          restartPolicy: Always
-          image: docker:29.8.0-dind@sha256:5efed980cba3fc126cf54e21a5a6ff8849d05b6e0623d6e7612f48e9cd6cd17e
-          imagePullPolicy: IfNotPresent
-          command:
-            - dockerd-entrypoint.sh
-          args:
-            - --host=unix:///var/run/docker.sock
-            - --storage-driver=overlay2
-            - --feature=containerd-snapshotter=false
-            - --shutdown-timeout=90
-          startupProbe:
-            exec:
-              command: [docker, info]
-            periodSeconds: 2
-            timeoutSeconds: 5
-            failureThreshold: 60
-          readinessProbe:
-            exec:
-              command: [docker, info]
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          env:
-            - name: DOCKER_TLS_CERTDIR
-              value: ''
-            - name: XDG_RUNTIME_DIR
-              value: /tmp/docker-runtime
-          securityContext:
-            privileged: true
-          resources:
-            requests:
-              cpu: '1'
-              memory: 2Gi
-            limits:
-              cpu: '2'
-              memory: 4Gi
-          volumeMounts:
-            - name: docker-lib
-              mountPath: /var/lib/docker
-            - name: docker-sock
-              mountPath: /var/run
       containers:
         - name: app
           image: registry.ide-newton.ts.net/lab/jangar:640cb586@sha256:78913053b4bd222d01d2351eb19136edfda3fa4cb8253541b4ac0736f092ac26
@@ -165,9 +123,9 @@ spec:
             - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
               value: '5000'
             - name: JANGAR_MODELS
-              value: qwen36-flamingo,gpt-6-astra
+              value: qwen38-flamingo,gpt-6-astra
             - name: JANGAR_DEFAULT_MODEL
-              value: qwen36-flamingo
+              value: qwen38-flamingo
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: '6'
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
@@ -376,12 +334,6 @@ spec:
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
               value: /workspace/lab
-            - name: DOCKER_HOST
-              value: unix:///var/run/docker.sock
-            - name: DOCKER_TLS_VERIFY
-              value: ''
-            - name: DOCKER_ENABLED
-              value: '1'
             - name: OPENAI_API_BASE_URL
               value: http://flamingo.flamingo.svc.cluster.local/v1
             - name: OPENAI_EMBEDDING_API_BASE_URL
@@ -432,11 +384,6 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
-            - name: docker-lib
-              mountPath: /var/lib/docker
-              readOnly: true
-            - name: docker-sock
-              mountPath: /var/run
             - name: jangar-db-ca
               mountPath: /etc/ssl/certs/jangar-db
               readOnly: true
@@ -448,10 +395,6 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: jangar-workspace
-        - name: docker-lib
-          emptyDir: {}
-        - name: docker-sock
-          emptyDir: {}
         - name: jangar-db-ca
           secret:
             secretName: jangar-db-ca

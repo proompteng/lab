@@ -14,6 +14,7 @@ import {
 import { Cause, Context, Data, Effect, Exit, Layer, ManagedRuntime, Option } from 'effect'
 
 import { ensureFileDirectory } from '../../scripts/codex/lib/fs'
+import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../runner-result'
 
 import { uploadOutputArtifacts } from './artifact-upload'
 import {
@@ -32,6 +33,7 @@ import {
 type AgentRunPayload = Record<string, unknown>
 
 export const DEFAULT_CODEX_BINARY_PATH = '/usr/local/bin/codex'
+const MAX_RESULT_RESPONSE_CHARS = 64_000
 
 export type CodexAppServerRunnerStatus = {
   provider: string
@@ -53,6 +55,7 @@ export type CodexAppServerRunnerStatus = {
     outputArtifacts?: AgentProviderOutputArtifact[]
   }
   error?: string
+  result?: AgentRunnerResultPreview
 }
 
 export type CodexAppServerRunnerClient = {
@@ -65,6 +68,7 @@ export type CodexAppServerRunnerClient = {
     options?: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal },
   ) => Promise<{ lastTurn: Turn | null }>
   interruptTurn?: (turnId: string, threadId: string) => Promise<void>
+  getTurnItems?: (threadId: string, turnId: string) => Promise<Turn['items']>
   stop?: () => void
 }
 
@@ -103,7 +107,7 @@ export class CodexRunnerClientError extends Data.TaggedError('CodexRunnerClientE
 }> {}
 
 export class CodexRunnerTurnError extends Data.TaggedError('CodexRunnerTurnError')<{
-  readonly operation: 'start-turn' | 'stream-turn'
+  readonly operation: 'start-turn' | 'stream-turn' | 'read-turn-items'
   readonly threadId?: string
   readonly turnId?: string
   readonly cause: unknown
@@ -124,7 +128,7 @@ export class CodexRunnerStatusError extends Data.TaggedError('CodexRunnerStatusE
 }> {}
 
 export class CodexRunnerArtifactError extends Data.TaggedError('CodexRunnerArtifactError')<{
-  readonly operation: 'upload-output-artifacts'
+  readonly operation: 'upload-output-artifacts' | 'write-result'
   readonly cause: unknown
 }> {}
 
@@ -301,15 +305,6 @@ const createCancellationWaiter = (
   })
 
   return { promise, cleanup }
-}
-
-const readNested = (value: unknown, path: string[]): unknown => {
-  let current = value
-  for (const segment of path) {
-    if (!isRecord(current)) return undefined
-    current = current[segment]
-  }
-  return current
 }
 
 const readJsonFile = async (path: string): Promise<AgentRunPayload> => {
@@ -937,6 +932,8 @@ const consumeTurnStreamEffect = ({
   Effect.tryPromise({
     try: async () => {
       const iterator = stream[Symbol.asyncIterator]()
+      let responseText = ''
+      let responseTruncated = false
       const cancellationWaiter = createCancellationWaiter(
         signal,
         () => threadId,
@@ -952,7 +949,12 @@ const consumeTurnStreamEffect = ({
             ? await Promise.race([nextDelta, cancellationWaiter.promise])
             : await nextDelta
           if (done) {
-            return value ?? null
+            return { turn: value ?? null, responseText, responseTruncated }
+          }
+          if (value.type === 'message') {
+            const remaining = MAX_RESULT_RESPONSE_CHARS - responseText.length
+            responseText += value.delta.slice(0, remaining)
+            responseTruncated ||= value.delta.length > remaining
           }
           writeDelta(value, logStream)
         }
@@ -1017,6 +1019,8 @@ type CodexAppServerAdapterState = {
   threadId?: string
   turnId?: string
   finalTurn: Turn | null
+  responseText: string
+  responseTruncated: boolean
   outputArtifacts: AgentProviderOutputArtifact[]
   client: CodexAppServerRunnerClient | null
   logStream: Awaited<ReturnType<typeof openLog>>
@@ -1081,21 +1085,79 @@ export const runCodexAppServerAdapterEffect = ({
     const response = yield* startTurnStreamEffect(state.client, prompt, turnOptions)
     state.threadId = response.threadId
     state.turnId = response.turnId
-    state.finalTurn = yield* consumeTurnStreamEffect({
+    const completion = yield* consumeTurnStreamEffect({
       stream: response.stream,
       signal: options.abortSignal,
       threadId: response.threadId,
       turnId: response.turnId,
       logStream: state.logStream,
     })
+    state.finalTurn = completion.turn
+    state.responseText = completion.responseText
+    state.responseTruncated = completion.responseTruncated
     const idleResult = yield* waitForThreadIdleEffect(state.client, response.threadId, options.abortSignal)
     if (idleResult?.lastTurn) {
-      state.finalTurn = idleResult.lastTurn
+      let finalTurn = idleResult.lastTurn
+      state.turnId = finalTurn.id
+      if (finalTurn.status === 'completed' && finalTurn.itemsView !== 'full') {
+        const readItems = state.client.getTurnItems?.bind(state.client)
+        const threadId = response.threadId
+        const turnId = finalTurn.id
+        if (!readItems) {
+          return yield* Effect.fail(
+            new CodexRunnerTurnError({
+              operation: 'read-turn-items',
+              threadId,
+              turnId,
+              cause: 'Completed turn items are not loaded',
+            }),
+          )
+        }
+        const items = yield* Effect.tryPromise({
+          try: () => readItems(threadId, turnId),
+          catch: (cause) => new CodexRunnerTurnError({ operation: 'read-turn-items', threadId, turnId, cause }),
+        })
+        finalTurn = { ...finalTurn, items, itemsView: 'full' }
+      }
+      state.finalTurn = finalTurn
+      const messages = finalTurn.items.flatMap((item) =>
+        item.type === 'agentMessage' && item.phase !== 'commentary' ? [item.text] : [],
+      )
+      if (messages.length > 0 || idleResult.lastTurn.id !== response.turnId) {
+        const text = messages.join('\n')
+        state.responseText = text.slice(0, MAX_RESULT_RESPONSE_CHARS)
+        state.responseTruncated = text.length > MAX_RESULT_RESPONSE_CHARS
+      }
     }
 
     const terminalError = terminalErrorForTurn(state.finalTurn, state.threadId, state.turnId)
     if (terminalError) {
       yield* Effect.fail(terminalError)
+    }
+
+    if (spec.artifacts?.resultPath) {
+      const resultPath = spec.artifacts.resultPath
+      yield* Effect.tryPromise({
+        try: async () => {
+          await ensureFileDirectory(resultPath)
+          await writeFile(
+            resultPath,
+            `${JSON.stringify(
+              {
+                schemaVersion: 'agents.proompteng.ai/result/v1',
+                threadId: state.threadId,
+                turnId: state.turnId,
+                responseText: state.responseText,
+                responseTruncated: state.responseTruncated,
+              },
+              null,
+              2,
+            )}\n`,
+            { mode: 0o600 },
+          )
+        },
+        catch: (cause) => new CodexRunnerArtifactError({ operation: 'write-result', cause }),
+      })
     }
 
     state.outputArtifacts = yield* uploadOutputArtifactsEffect(
@@ -1120,6 +1182,8 @@ export const runCodexAppServerAdapter = async (
   let caughtError: unknown
   const state: CodexAppServerAdapterState = {
     finalTurn: null,
+    responseText: '',
+    responseTruncated: false,
     outputArtifacts: renderOutputArtifacts(spec.providerSpec?.outputArtifacts, buildTemplateContext(spec)),
     client: null,
     logStream: null,
@@ -1169,6 +1233,14 @@ export const runCodexAppServerAdapter = async (
       ...(adapter.model ? { model: adapter.model } : {}),
       ...(adapter.effort ? { effort: adapter.effort } : {}),
       ...(adapter.cwd !== undefined ? { cwd: adapter.cwd } : {}),
+      ...(state.responseText
+        ? {
+            result: {
+              text: state.responseText.slice(0, AGENT_RUNNER_RESULT_PREVIEW_CHARS),
+              truncated: state.responseTruncated || state.responseText.length > AGENT_RUNNER_RESULT_PREVIEW_CHARS,
+            },
+          }
+        : {}),
       artifacts: {
         statusPath,
         logPath,

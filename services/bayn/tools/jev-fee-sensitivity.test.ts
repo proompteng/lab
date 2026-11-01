@@ -147,6 +147,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
     const protocol = defaultJevProtocolDocument
     const economics = Result.getOrThrow(
       jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
         cryptoFeeTier: null,
 
         protocol,
@@ -157,10 +158,17 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
       }),
     )
     if (economics === null) throw new Error('funded fixture')
-    const result = hypotheticalCryptoFeeSensitivity({ symbol, protocol, economics, bidMicros: 100_000_000n })
+    const result = hypotheticalCryptoFeeSensitivity({
+      feeAt: '2026-09-04T14:15:00.000Z',
+      symbol,
+      protocol,
+      economics,
+      bidMicros: 100_000_000n,
+    })
     expect(result.baselineReproducedExactly).toBe(true)
     expect(() =>
       hypotheticalCryptoFeeSensitivity({
+        feeAt: '2026-09-04T14:15:00.000Z',
         symbol,
         protocol,
         economics: { ...economics, receivedQuantityAtoms: '1' },
@@ -178,6 +186,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
     }
     expect(() =>
       hypotheticalCryptoFeeSensitivity({
+        feeAt: '2026-09-04T14:15:00.000Z',
         symbol,
         protocol,
         economics: { ...economics, holdingExitBreakEvenBidUsd: 1 },

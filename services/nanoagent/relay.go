@@ -33,6 +33,8 @@ type relayBinding struct {
 	Generation string `json:"generation"`
 }
 type relayConfiguration struct {
+	ConnectionID string `json:"connectionId"`
+	relayGeneration
 	DelegationID  string           `json:"delegationId"`
 	ConnectorID   string           `json:"connectorId"`
 	ClientService string           `json:"clientService"`
@@ -55,10 +57,7 @@ func relayIdentity(root string) (map[string]string, error) {
 		return nil, errors.New("create connector identity storage")
 	}
 	keyFile := filepath.Join(root, "identity.pem")
-	if metadata, err := os.Lstat(keyFile); err == nil && (!metadata.Mode().IsRegular() || metadata.Mode().Perm()&0077 != 0) {
-		return nil, errors.New("connector identity must be an owner-only regular file")
-	}
-	raw, err := os.ReadFile(keyFile)
+	raw, err := relayPrivateFile(keyFile, 16384)
 	if errors.Is(err, os.ErrNotExist) {
 		key, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if genErr != nil {
@@ -122,6 +121,28 @@ func relayIdentity(root string) (map[string]string, error) {
 	return map[string]string{"agentId": agentID, "proofKeyThumbprint": base64.RawURLEncoding.EncodeToString(thumbprint[:])}, nil
 }
 
+type relayRemoval struct {
+	ConnectionID string `json:"connectionId"`
+	DelegationID string `json:"delegationId,omitempty"`
+	relayGeneration
+}
+
+func relayDecode(params json.RawMessage, target any) error {
+	if len(params) > 512*1024 {
+		return errors.New("connector configuration is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(params))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(target) != nil {
+		return errors.New("invalid connector configuration")
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return errors.New("invalid connector configuration")
+	}
+	return nil
+}
+
 func (supervisor *codexSupervisor) relayCall(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
 	supervisor.relayMu.Lock()
 	defer supervisor.relayMu.Unlock()
@@ -129,85 +150,130 @@ func (supervisor *codexSupervisor) relayCall(ctx context.Context, method string,
 	if err != nil {
 		return codexCallResult{}, err
 	}
-	if method == "relay/identity" {
-		raw, _ := json.Marshal(identity)
-		return codexCallResult{result: raw}, nil
-	}
-	if len(params) > 512*1024 {
-		return codexCallResult{}, errors.New("connector configuration is too large")
-	}
-	var config relayConfiguration
-	decoder := json.NewDecoder(bytes.NewReader(params))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&config) != nil || !relayUUID.MatchString(config.DelegationID) {
-		return codexCallResult{}, errors.New("invalid connector configuration")
-	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		return codexCallResult{}, errors.New("invalid connector configuration")
-	}
-	serverName := "relay_" + strings.ReplaceAll(config.DelegationID, "-", "")
-	file := filepath.Join(supervisor.relayRoot, config.DelegationID+".json")
-	var value any
+	var result any
 	switch method {
+	case "relay/identity":
+		installed, err := relayInstallations(supervisor.relayRoot)
+		if err != nil {
+			return codexCallResult{}, err
+		}
+		result = map[string]any{"agentId": identity["agentId"], "proofKeyThumbprint": identity["proofKeyThumbprint"], "connections": installed}
 	case "relay/configure":
-		endpoint, parseErr := url.Parse(config.Endpoint)
-		if parseErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Path != "/api/platform/relay/agent" || endpoint.RawQuery != "" || endpoint.Fragment != "" || !relayName.MatchString(config.ConnectorID) || config.ClientService != "tengri-web" || config.Binding.Service != "tengri" || !relayUUID.MatchString(config.Binding.ID) || !relayUUID.MatchString(config.Binding.Generation) || !relayCredential.MatchString(config.Credential) || len(config.Operations) == 0 || len(config.Operations) > 128 || config.KeyFile != "" {
-			return codexCallResult{}, errors.New("invalid connector grant")
-		}
-		seen := map[string]bool{}
-		for _, operation := range config.Operations {
-			var schema map[string]json.RawMessage
-			if !relayName.MatchString(operation.Name) || seen[operation.Name] || len(operation.Description) > 4096 || json.Unmarshal(operation.InputSchema, &schema) != nil || string(schema["type"]) != `"object"` {
-				return codexCallResult{}, errors.New("invalid connector operation")
-			}
-			seen[operation.Name] = true
-		}
-		config.KeyFile = filepath.Join(supervisor.relayRoot, "identity.pem")
-		raw, _ := json.Marshal(config)
-		temp, createErr := os.CreateTemp(supervisor.relayRoot, ".grant-")
-		if createErr != nil {
-			return codexCallResult{}, createErr
-		}
-		defer os.Remove(temp.Name())
-		_, writeErr := temp.Write(raw)
-		if writeErr == nil {
-			writeErr = temp.Sync()
-		}
-		closeErr := temp.Close()
-		if writeErr != nil {
-			return codexCallResult{}, writeErr
-		}
-		if closeErr != nil {
-			return codexCallResult{}, closeErr
-		}
-		if err := os.Rename(temp.Name(), file); err != nil {
+		var config relayConfiguration
+		if err := relayDecode(params, &config); err != nil {
 			return codexCallResult{}, err
 		}
-		if err := relaySyncDirectory(supervisor.relayRoot); err != nil {
+		if err := supervisor.relayConfigure(ctx, config); err != nil {
 			return codexCallResult{}, err
 		}
-		value = map[string]any{"command": "/usr/local/bin/tengri-relay", "args": []string{file}, "required": false, "tool_timeout_sec": 40}
+		result = map[string]any{"configured": true, "connectionId": config.ConnectionID, "delegationId": config.DelegationID, "proofKeyThumbprint": identity["proofKeyThumbprint"], "recoveryGeneration": fmt.Sprint(config.RecoveryGeneration), "credentialGeneration": fmt.Sprint(config.CredentialGeneration)}
 	case "relay/remove":
-		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+		var removal relayRemoval
+		if err := relayDecode(params, &removal); err != nil {
 			return codexCallResult{}, err
 		}
-		if err := relaySyncDirectory(supervisor.relayRoot); err != nil {
+		removed, err := supervisor.relayRemove(ctx, removal)
+		if err != nil {
 			return codexCallResult{}, err
 		}
-		value = map[string]any{"command": "/usr/local/bin/tengri-relay", "args": []string{file}, "required": false, "enabled": false}
+		result = map[string]any{"configured": false, "removed": removed, "connectionId": removal.ConnectionID, "delegationId": removal.DelegationID, "recoveryGeneration": fmt.Sprint(removal.RecoveryGeneration), "credentialGeneration": fmt.Sprint(removal.CredentialGeneration)}
 	default:
 		return codexCallResult{}, errors.New("unsupported connector configuration action")
 	}
+	raw, _ := json.Marshal(result)
+	return codexCallResult{result: raw}, nil
+}
+
+func (supervisor *codexSupervisor) relayApply(ctx context.Context, connectionID, file string, enabled bool) error {
+	value := map[string]any{"command": "/usr/local/bin/tengri-relay", "args": []string{file}, "required": false, "tool_timeout_sec": 40, "enabled": enabled}
+	serverName := "relay_" + strings.ReplaceAll(connectionID, "-", "")
 	edits, _ := json.Marshal(map[string]any{"edits": []any{map[string]any{"keyPath": "mcp_servers." + serverName, "mergeStrategy": "replace", "value": value}}, "reloadUserConfig": true})
 	if _, err := supervisor.request(ctx, "config/batchWrite", edits, true, nil); err != nil {
-		return codexCallResult{}, errors.New("connector configuration could not be applied")
+		return errors.New("connector configuration could not be applied")
 	}
 	if _, err := supervisor.request(ctx, "config/mcpServer/reload", json.RawMessage(`null`), true, nil); err != nil {
-		return codexCallResult{}, errors.New("connector tools could not be refreshed")
+		return errors.New("connector tools could not be refreshed")
 	}
-	raw, _ := json.Marshal(map[string]any{"configured": method == "relay/configure", "delegationId": config.DelegationID, "proofKeyThumbprint": identity["proofKeyThumbprint"]})
-	return codexCallResult{result: raw}, nil
+	return nil
+}
+
+func (supervisor *codexSupervisor) relayConfigure(ctx context.Context, config relayConfiguration) error {
+	endpoint, parseErr := url.Parse(config.Endpoint)
+	if !relayUUID.MatchString(config.ConnectionID) || !relayUUID.MatchString(config.DelegationID) || !config.relayGeneration.valid() || parseErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Path != "/api/platform/relay/agent" || endpoint.RawQuery != "" || endpoint.Fragment != "" || !relayName.MatchString(config.ConnectorID) || config.ClientService != "tengri-web" || config.Binding.Service != "tengri" || !relayUUID.MatchString(config.Binding.ID) || !relayUUID.MatchString(config.Binding.Generation) || !relayCredential.MatchString(config.Credential) || len(config.Operations) == 0 || len(config.Operations) > 128 || config.KeyFile != "" {
+		return errors.New("invalid connector grant")
+	}
+	seen := map[string]bool{}
+	for _, operation := range config.Operations {
+		var schema map[string]json.RawMessage
+		if !relayName.MatchString(operation.Name) || seen[operation.Name] || !operation.ReadOnly || len(operation.Description) > 4096 || json.Unmarshal(operation.InputSchema, &schema) != nil || string(schema["type"]) != `"object"` {
+			return errors.New("invalid read-only connector operation")
+		}
+		seen[operation.Name] = true
+	}
+	config.KeyFile = filepath.Join(supervisor.relayRoot, "identity.pem")
+	raw, _ := json.Marshal(config)
+	hash := relayConfigurationHash(raw)
+	previous, err := relayLoadState(supervisor.relayRoot, config.ConnectionID)
+	if err != nil {
+		return err
+	}
+	if previous != nil {
+		order := config.relayGeneration.compare(previous.relayGeneration)
+		if order < 0 || (order == 0 && (previous.Removed || previous.DelegationID != config.DelegationID || previous.ConfigurationHash != hash)) {
+			return errors.New("connector installation is stale or changed")
+		}
+	}
+	state := relayState{ConnectionID: config.ConnectionID, DelegationID: config.DelegationID, relayGeneration: config.relayGeneration, ConfigurationHash: hash}
+	if err := relaySaveState(supervisor.relayRoot, state); err != nil {
+		return err
+	}
+	file := filepath.Join(supervisor.relayRoot, config.ConnectionID+".json")
+	if err := relayWriteFile(supervisor.relayRoot, file, raw); err != nil {
+		return err
+	}
+	if err := supervisor.relayApply(ctx, config.ConnectionID, file, true); err != nil {
+		return err
+	}
+	state.Applied = true
+	return relaySaveState(supervisor.relayRoot, state)
+}
+
+func (supervisor *codexSupervisor) relayRemove(ctx context.Context, removal relayRemoval) (bool, error) {
+	if !relayUUID.MatchString(removal.ConnectionID) || (removal.DelegationID != "" && !relayUUID.MatchString(removal.DelegationID)) || !removal.relayGeneration.valid() {
+		return false, errors.New("invalid connector removal")
+	}
+	previous, err := relayLoadState(supervisor.relayRoot, removal.ConnectionID)
+	if err != nil {
+		return false, err
+	}
+	if previous != nil {
+		order := removal.relayGeneration.compare(previous.relayGeneration)
+		if order < 0 || (!previous.Removed && removal.DelegationID != "" && previous.DelegationID != removal.DelegationID) {
+			return false, nil
+		}
+		if order == 0 && previous.Removed && previous.Applied {
+			return true, nil
+		}
+	}
+	state := relayState{ConnectionID: removal.ConnectionID, DelegationID: removal.DelegationID, relayGeneration: removal.relayGeneration, Removed: true}
+	if err := relaySaveState(supervisor.relayRoot, state); err != nil {
+		return false, err
+	}
+	file := filepath.Join(supervisor.relayRoot, removal.ConnectionID+".json")
+	if err := supervisor.relayApply(ctx, removal.ConnectionID, file, false); err != nil {
+		return false, err
+	}
+	if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := relaySyncDirectory(supervisor.relayRoot); err != nil {
+		return false, err
+	}
+	state.Applied = true
+	if err := relaySaveState(supervisor.relayRoot, state); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func relaySyncDirectory(path string) error {

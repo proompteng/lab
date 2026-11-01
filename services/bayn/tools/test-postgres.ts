@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url'
 
 const files = [
+  'src/db/candidate-cutover-diagnostics.integration.test.ts',
+  'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
   'src/db/remove-unused-schema.integration.test.ts',
   'src/db/current-jev-cycle-migration.integration.test.ts',
@@ -34,6 +36,7 @@ const files = [
   'src/research-inference/store.integration.test.ts',
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',
+  'src/system-assessment/postgres.integration.test.ts',
 ]
 const [shard = '1/1', ...extra] = process.argv.slice(2)
 if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
@@ -51,4 +54,9 @@ const run = (args: readonly string[]) => {
 }
 
 run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
-if (shard.startsWith('1/')) run(['src/shadow-decision.test.ts', '--test-name-pattern', 'migrated cycle guard'])
+if (shard.startsWith('1/'))
+  run([
+    'src/shadow-decision.test.ts',
+    '--test-name-pattern',
+    'migrated cycle guard|PostgreSQL entry binding and nested',
+  ])

@@ -1,4 +1,4 @@
-import { createDelegatedAgentTools } from './delegated-agent'
+import { createAgentRunTools } from './agent-runs'
 import { createFileTools } from './file'
 import { createGitTools } from './git'
 import { createGuideTools } from './guide'
@@ -15,5 +15,5 @@ export const createAgentsShellTools = () => [
   ...createShellTools(),
   ...createGitTools(),
   ...createKubectlTools(),
-  ...createDelegatedAgentTools(),
+  ...createAgentRunTools(),
 ]

@@ -18,7 +18,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         expiresAt: new Date(
           Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -44,7 +44,7 @@ test('SOL within the spread limit still requires a model-selected exit plan', ()
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   expect(plan.candidates.find((candidate) => candidate.symbol === 'SOL/USD')?.status).toBe(

@@ -10,7 +10,7 @@ FROM node:${NODE_VERSION}-bookworm-slim AS node-runtime
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-cli
 
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.166.0
 
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -49,6 +49,7 @@ COPY --from=codex-package-build /opt/proompteng/packages/codex/package.json pack
 COPY --from=codex-package-build /opt/proompteng/packages/codex/dist packages/codex/dist
 COPY services/agents/package.json services/agents/package.json
 COPY services/agents/src/runner services/agents/src/runner
+COPY services/agents/src/runner-result.ts services/agents/src/runner-result.ts
 COPY services/agents/src/linear-mcp/bridge-auth.ts services/agents/src/linear-mcp/bridge-auth.ts
 COPY services/agents/src/linear-mcp/config.ts services/agents/src/linear-mcp/config.ts
 COPY services/agents/src/linear-mcp/contract.ts services/agents/src/linear-mcp/contract.ts

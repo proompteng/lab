@@ -1,5 +1,20 @@
 # Tengri control plane
 
+The controller exports process-local metrics without querying Kubernetes or PostgreSQL during a scrape. Successful
+readiness checks refresh guest and ticket inventory; their last-success timestamp and age identify stale gauges.
+Readiness still checks current Ofz authority, SQL access, and Kubernetes within the existing two-second deadline,
+with separate dependency error/timeout counters. Alloy discovers each controller Pod rather than combining independent
+counters behind a load-balanced Service.
+
+Boot/resume histograms measure successful CR creation or persisted resume intent through guest readiness, including
+reconciliation retries. They exclude BFF admission and are not a browser end-to-end SLO. Recovering a failed readiness
+probe is not another boot. Lifecycle identity is recorded with the running-intent CAS, so a failed resume cannot become
+a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
+The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
+or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
+Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
+
 Relay client installation is an authenticated guest-control operation. It uses the shared
 [Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
 installation acknowledgement before activation. The former dormant connector gate and contract are removed.
@@ -428,8 +443,11 @@ Codex is idle across all conversations. Active turns, pending starts/steering an
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
 unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
 activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
-is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
-each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+is serialized per workspace across clients in the same guest pool. Conflicts with other controller replicas and
+reconcilers use exponential backoff with jitter, capped at 100 ms, within a one-second retry budget. Each attempt
+reads current lifecycle state and must win its own CAS, so parallel browser module requests can recover from a busy
+replica while a sleep reservation still rejects control. Other workspaces remain independent; no policy decision or
+admission result is cached.
 Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
 reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
 admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
@@ -508,17 +526,19 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 8 provides direct file metadata and requires canonical UUID operation identities for every submission and
+Guest API 10 requires conversation-scoped pending-operation fences and retains direct file metadata and canonical UUID operation identities for every submission and
 control, plus confirmed native command cleanup before reporting cancellation. The web BFF, controller and guest must
 agree on this version; the operation inventory rejects drift. Older guests require a fenced cold replacement on their
 retained home.
 `SendCodexInput` returns a
-durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
+durable run, and `GetActiveCodexRuns` recovers the workspace's active runs without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
 after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
 
-`TengriWorkspaceRuns` holds one active run per immutable workspace UID. Its short claim and release handlers are
+`TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
+execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
+and release handlers are
 private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
 control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
 before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
@@ -551,19 +571,20 @@ controls live in Restate. One workflow per control ID records the exact pending 
 the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
 Native approval IDs additionally bind a random process identity, thread, and turn.
 
-Stop is a durable request. The workspace object retains the latest authenticated Stop authority, ordered by the original
+Stop is a durable request. The workspace object retains Stop authority separately for each run, ordered by the original
 admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
-Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
+Repeated observations return only changed controls. Stop does not release the conversation after an interrupt acknowledgement: the worker waits for
 the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
 and the sleep pin. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
 of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
-runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
+runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain that conversation claim. The desktop
 displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a
 MicroVM annotation before dispatch. Idle sleep must claim that same field with a UID/resource-version CAS before
 requesting an Ofz stop, so an old idle decision cannot sleep a concurrent admission. Automatic idle sleep respects
-the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority. Terminal cleanup removes only the matching pin
+the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority.
+The sleep fence contains a set of active run IDs. Terminal cleanup removes only its own ID
 using MicroVM UID and resource-version preconditions.
 
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
@@ -577,8 +598,10 @@ fresh signed read with exponential backoff capped at one second. Each request re
 window. Signature and authority denials, missing or conflicting runs and invalid responses fail immediately.
 Run submissions and controls are not replayed by this read recovery.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
-Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
-run and control invocations before registering this worker version, and retain earlier versions for pinned history.
+Stop after preparation and immediately before dispatch. The conversation-concurrency migration changes workspace state
+from a single claim to a map and changes the sleep pin to a JSON set. Drain active run and control invocations before
+registering this worker version, verify that the old sleep pin has cleared, and retain earlier versions for pinned history.
+The controller and BFF must use the plural active-run RPC together; the singular RPC is removed.
 Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
@@ -604,7 +627,7 @@ account. Run the real Restate process-replacement fixture with Docker available:
 cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
 ```
 
-This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping;
+This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping and its disposable Restate data is in tmpfs. Only the worker is killed;
 running-command recovery and authenticated deployment acceptance remain separate evidence boundaries.
 
 ## Error reporting and request traces

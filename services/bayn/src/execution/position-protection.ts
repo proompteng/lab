@@ -1,6 +1,6 @@
 import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind } from '../instruments'
-import type { JevFundedExitPlan } from '../jev/strategy-exit-plan'
+import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import { quantityScale } from '../quantity'
 
 export type BrokerProtectionMethod = 'BRACKET' | 'OCO' | 'STOP_LIMIT' | 'APPLICATION'
@@ -42,7 +42,7 @@ export type PositionProtectionAction =
   | { readonly _tag: 'Complete' }
 
 export const decidePositionProtection = (input: {
-  readonly plan: JevFundedExitPlan
+  readonly plan: FundedEntryExitPlan
   readonly entry: ProtectedEntryState
   readonly quantityAtoms: bigint
   readonly protection: ProtectionOrderState
@@ -88,7 +88,7 @@ export const entryBracketProtection = (
   symbol: string,
   quantityAtoms: string,
   observedAt: string,
-  plan: JevFundedExitPlan | undefined,
+  plan: FundedEntryExitPlan | undefined,
 ) => {
   if (plan === undefined || alpacaEntryProtectionMethod(symbol, BigInt(quantityAtoms), observedAt) !== 'BRACKET')
     return undefined
