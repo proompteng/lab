@@ -465,7 +465,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
 
   useEffect(() => {
     const prompt = promptRef.current
-    if (active && prompt && !prompt.disabled && document.activeElement === prompt.closest('[data-window-id]')) {
+    if (
+      !window.matchMedia('(pointer:coarse)').matches &&
+      active &&
+      prompt &&
+      !prompt.disabled &&
+      document.activeElement === prompt.closest('[data-window-id]')
+    ) {
       prompt.focus({ preventScroll: true })
     }
   }, [account?.authenticated, active, replayRecovering, threadReady])
@@ -628,7 +634,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   useEffect(() => {
     if (!focusComposerRequested.current || !active || compactDrawerOpen || promptRef.current?.disabled) return
     focusComposerRequested.current = false
-    requestAnimationFrame(() => promptRef.current?.focus())
+    requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }))
   }, [active, compactDrawerOpen, replayRecovering, submitting, threadId, threadReady])
 
   useEffect(() => {
@@ -1631,7 +1637,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     requestAnimationFrame(() => {
       if (promptRef.current?.disabled) return
       focusComposerRequested.current = false
-      promptRef.current?.focus()
+      promptRef.current?.focus({ preventScroll: true })
     })
   }
 
@@ -1646,13 +1652,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   function switchConversation(nextThreadId: string) {
     if (!canChangeConversation) return
     showChat()
-    if (nextThreadId === threadIdRef.current) {
-      focusComposerAfterConversationChange()
-      return
+    if (nextThreadId !== threadIdRef.current) {
+      writeStoredThread(agentId, nextThreadId)
+      resetTranscriptUi(nextThreadId)
     }
-    writeStoredThread(agentId, nextThreadId)
-    resetTranscriptUi(nextThreadId)
-    focusComposerAfterConversationChange()
+    if (window.matchMedia('(pointer:coarse)').matches) {
+      focusComposerRequested.current = false
+      setSidebarOpen(false)
+    } else focusComposerAfterConversationChange()
   }
 
   function selectOptions(next: TengriCodexSelection) {
@@ -1868,7 +1875,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     setPrompt(text)
                     requestAnimationFrame(() => {
                       const textarea = promptRef.current
-                      textarea?.focus()
+                      textarea?.focus({ preventScroll: true })
                       textarea?.setSelectionRange(text.length, text.length)
                     })
                   }}

@@ -11,38 +11,53 @@ def nextRandom (state : UInt32) : UInt32 :=
   let state := state ^^^ (state >>> 17)
   state ^^^ (state <<< 5)
 
-def blockStart (state : UInt32) : Nat := state.toNat * 20 / 4294967296
+def blockStart (sessions : Nat) (state : UInt32) : Nat := state.toNat * sessions / 4294967296
 
-theorem block_start_in_range (state : UInt32) : blockStart state < 20 := by
-  have h := state.toNat_lt
+theorem block_start_in_range (sessions : Nat) (positive : 0 < sessions) (state : UInt32) :
+    blockStart sessions state < sessions := by
+  have scaled := Nat.mul_lt_mul_of_pos_right state.toNat_lt positive
   unfold blockStart
   omega
 
-def sampleBlocks : Nat → UInt32 → UInt32 × List Nat
+def sampleBlocks (sessions : Nat) : Nat → UInt32 → UInt32 × List Nat
   | 0, state => (state, [])
   | n + 1, state =>
     let state := nextRandom state
-    let start := blockStart state
-    let (finalState, rest) := sampleBlocks n state
-    (finalState, start :: (start + 1) % 20 :: rest)
+    let start := blockStart sessions state
+    let (finalState, rest) := sampleBlocks sessions n state
+    (finalState, start :: (start + 1) % sessions :: rest)
 
-theorem sample_count (blocks : Nat) (state : UInt32) :
-    (sampleBlocks blocks state).2.length = 2 * blocks := by
+theorem sample_count (sessions blocks : Nat) (state : UInt32) :
+    (sampleBlocks sessions blocks state).2.length = 2 * blocks := by
   induction blocks generalizing state with
   | zero => simp [sampleBlocks]
   | succ n ih => simp [sampleBlocks, ih]; omega
 
-theorem sampled_indices_in_range (blocks : Nat) (state : UInt32) :
-    ∀ i ∈ (sampleBlocks blocks state).2, i < 20 := by
+theorem sampled_indices_in_range (sessions : Nat) (positive : 0 < sessions) (blocks : Nat) (state : UInt32) :
+    ∀ i ∈ (sampleBlocks sessions blocks state).2, i < sessions := by
   induction blocks generalizing state with
   | zero => simp [sampleBlocks]
   | succ n ih =>
     simp only [sampleBlocks, List.mem_cons]
     intro i h
     rcases h with h | h | h
-    · subst i; exact block_start_in_range _
-    · subst i; omega
+    · subst i; exact block_start_in_range sessions positive _
+    · subst i; exact Nat.mod_lt _ positive
     · exact ih _ i h
+
+def sampleSessions (sessions : Nat) (state : UInt32) : UInt32 × List Nat :=
+  let (next, indices) := sampleBlocks sessions ((sessions + 1) / 2) state
+  (next, indices.take sessions)
+
+theorem sample_has_registered_length (sessions : Nat) (state : UInt32) :
+    (sampleSessions sessions state).2.length = sessions := by
+  simp [sampleSessions, sample_count]
+  omega
+
+theorem session_sample_indices_in_range (sessions : Nat) (positive : 0 < sessions) (state : UInt32) :
+    ∀ i ∈ (sampleSessions sessions state).2, i < sessions := by
+  intro i member
+  exact sampled_indices_in_range sessions positive _ state i (List.mem_of_mem_take member)
 
 def sampledTotal (pnl : Array Int) (indices : List Nat) : Int :=
   (indices.map fun i => pnl[i]!).sum
@@ -69,7 +84,7 @@ def frozenBootstrap (candidate : Array Int) (controls : Array (Array Int)) (atte
   let mut totals : Array Int := #[]
   let mut differences : Array (Array Int) := controls.map fun _ => #[]
   for _ in [:10000] do
-    let (next, indices) := sampleBlocks 10 state
+    let (next, indices) := sampleSessions candidate.size state
     state := next
     let total := sampledTotal candidate indices
     totals := totals.push total
@@ -85,7 +100,8 @@ def tailResolutionSupported (attempt : Nat) : Prop := 0 < attempt ∧ 60 * attem
 instance (attempt : Nat) : Decidable (tailResolutionSupported attempt) := by
   unfold tailResolutionSupported; infer_instance
 
-theorem frozen_sample_has_twenty_sessions (state : UInt32) : (sampleBlocks 10 state).2.length = 20 := by
-  exact sample_count 10 state
+theorem odd_window_has_exactly_registered_sessions :
+    (sampleSessions 3 20260921).2.length = 3 ∧ (sampleSessions 21 20260921).2.length = 21 := by
+  constructor <;> exact sample_has_registered_length _ _
 
 end Bayn
