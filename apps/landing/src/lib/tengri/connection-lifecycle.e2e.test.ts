@@ -8,6 +8,9 @@ import {
   PlatformConnectionSchema,
   PlatformDecisionSchema,
   ListPlatformConnectionsResponseSchema,
+  ProviderConnectionState,
+  ProviderConnectionSchema,
+  type ProviderConnection,
   type PlatformConnection,
 } from './generated/proompteng/authz/v1/platform_pb'
 import { ConnectorOperationSchema } from './generated/proompteng/relay/v1/relay_pb'
@@ -38,6 +41,7 @@ const operation = create(ConnectorOperationSchema, {
 })
 let connection: PlatformConnection | undefined
 let precedingConnections: PlatformConnection[] = []
+let providers: ProviderConnection[] = []
 let catalog = [operation]
 let generation = BigInt(10)
 let recoveryGeneration = BigInt(3)
@@ -59,6 +63,7 @@ const decision = () =>
 void mock.module('../platform/ofz', () => ({
   OfzError,
   ofzCall: async (method: { name: string }, input: unknown) => {
+    if (method.name === 'ListProviderConnections') return { connections: providers }
     const body = z.record(z.string(), z.unknown()).parse(input)
     events.push({ name: method.name, body })
     expect(body.issuer).toEqual({ humanId: 'github:7', sessionId: workspace, origin: 'https://proompteng.ai' })
@@ -228,6 +233,7 @@ beforeEach(() => {
   identity.session.idleDeadlineUnixMs = BigInt(Date.now() + 3_600_000)
   connection = undefined
   precedingConnections = []
+  providers = []
   catalog = [operation]
   generation = BigInt(10)
   recoveryGeneration = BigInt(3)
@@ -266,6 +272,39 @@ test('BFF keeps idle workspaces untouched and activates only after exact guest a
   expect(
     JSON.stringify(result, (_key, value: unknown) => (typeof value === 'bigint' ? String(value) : value)),
   ).not.toContain('b'.repeat(43))
+})
+
+test('an unconnected provider prevents consent and credential installation, then resumes the same intent', async () => {
+  providers = [
+    create(ProviderConnectionSchema, {
+      profileId: 'inventory',
+      connectorId: 'galactic',
+      state: ProviderConnectionState.RECONNECT,
+    }),
+  ]
+  const request = save()
+  await expect(saveConnection(identity, request)).rejects.toMatchObject({ code: 'provider_reconnect_required' })
+  expect(events.some((event) => event.name === 'PutPlatformConnection')).toBe(false)
+  expect(installed).toHaveLength(0)
+  providers[0]!.state = ProviderConnectionState.READY
+  const result = await saveConnection(identity, request)
+  expect(result.connections[0]?.id).toBe(request.connectionId)
+  expect(result.connections[0]?.credentialActive).toBe(true)
+})
+
+test('a provider needing repair is not shown active or renewed with a guest credential', async () => {
+  await saveConnection(identity, save())
+  providers = [
+    create(ProviderConnectionSchema, {
+      profileId: 'inventory',
+      connectorId: 'galactic',
+      state: ProviderConnectionState.RECONNECT,
+    }),
+  ]
+  events.length = 0
+  const result = await reconcileConnections(identity, 'microvm-fixture')
+  expect(result.connections[0]?.credentialActive).toBe(false)
+  expect(events.some((event) => event.name === 'CreatePlatformDelegation')).toBe(false)
 })
 
 for (const [status, code] of [

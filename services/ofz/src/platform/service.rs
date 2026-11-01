@@ -1,7 +1,9 @@
 use super::{
     authorization, catalog, connections, executions,
     mutations::{self, Command},
-    onboarding, requests, workspaces,
+    onboarding,
+    providers::Providers,
+    requests, workspaces,
 };
 use crate::{
     native::Native,
@@ -20,20 +22,92 @@ pub struct Service {
     database: Database,
     native: Native,
     issuer: Issuer,
+    providers: Arc<Providers>,
     capacity: Arc<Semaphore>,
 }
 impl Service {
-    pub fn new(database: Database, native: Native, issuer: Issuer) -> Self {
+    pub fn new(database: Database, native: Native, issuer: Issuer, providers: Providers) -> Self {
         Self {
             database,
             native,
             issuer,
+            providers: Arc::new(providers),
             capacity: Arc::new(Semaphore::new(128)),
         }
     }
 }
 #[tonic::async_trait]
 impl PlatformAuthorizationService for Service {
+    async fn list_provider_connections(
+        &self,
+        request: Request<proto::ListProviderConnectionsRequest>,
+    ) -> Result<Response<proto::ListProviderConnectionsResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("provider connections are busy"))?;
+        self.providers
+            .list(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn begin_provider_connection(
+        &self,
+        request: Request<proto::BeginProviderConnectionRequest>,
+    ) -> Result<Response<proto::BeginProviderConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("provider connections are busy"))?;
+        self.providers
+            .begin(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn complete_provider_connection(
+        &self,
+        request: Request<proto::CompleteProviderConnectionRequest>,
+    ) -> Result<Response<proto::CompleteProviderConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("provider connections are busy"))?;
+        self.providers
+            .complete(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn disconnect_provider_connection(
+        &self,
+        request: Request<proto::DisconnectProviderConnectionRequest>,
+    ) -> Result<Response<proto::DisconnectProviderConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("provider connections are busy"))?;
+        self.providers
+            .disconnect(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn resolve_provider_credential(
+        &self,
+        request: Request<proto::ResolveProviderCredentialRequest>,
+    ) -> Result<Response<proto::ResolveProviderCredentialResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("provider connections are busy"))?;
+        self.providers
+            .credential(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
     async fn list_platform_workspaces(
         &self,
         request: Request<proto::ListPlatformWorkspacesRequest>,
@@ -162,6 +236,11 @@ impl PlatformAuthorizationService for Service {
         }
         onboarding::verify_configuration(&self.database).await?;
         Ok(Response::new(proto::GetPlatformConfigurationResponse {
+            provider_profiles: if registry::configured()?.has_role(&peer, "relay.executor") {
+                self.providers.registrations()
+            } else {
+                Vec::new()
+            },
             policy_version: self.database.state().await?.version,
             relay_clients: registry::configured()?
                 .services
