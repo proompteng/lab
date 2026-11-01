@@ -1,0 +1,29 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: ofz-control
+  annotations:
+    argocd.argoproj.io/sync-wave: '-7'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: ofz-db
+  name: ofz_control
+  owner: ofz_migrator
+  databaseReclaimPolicy: retain
+  ensure: present
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: tengri-control
+  annotations:
+    argocd.argoproj.io/sync-wave: '-7'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: ofz-db
+  name: tengri_control
+  owner: tengri_migrator
+  databaseReclaimPolicy: retain
+  ensure: present

@@ -66,3 +66,22 @@ func containsEnvironmentEntry(environment []string, expected string) bool {
 	}
 	return false
 }
+
+func TestChildProcessEnvironmentDoesNotPassPlatformTelemetry(t *testing.T) {
+	environment := childProcessEnvironment([]string{
+		"PATH=/usr/bin", "SENTRY_DSN=http://platform-ingest/8",
+		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://platform-collector/v1/traces",
+		"APP_SOURCE_REVISION=platform-source", "MY_APP_SOURCE_REVISION=user-source",
+	}, "HOME=/home/nanoagent")
+	for _, value := range environment {
+		key, _, _ := strings.Cut(value, "=")
+		if key == "SENTRY_DSN" || key == "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" || key == "APP_SOURCE_REVISION" {
+			t.Fatalf("platform telemetry leaked to a user subprocess: %s", key)
+		}
+	}
+	for _, value := range []string{"PATH=/usr/bin", "HOME=/home/nanoagent", "MY_APP_SOURCE_REVISION=user-source"} {
+		if !slices.Contains(environment, value) {
+			t.Fatalf("user subprocess lost its environment: %s", value)
+		}
+	}
+}

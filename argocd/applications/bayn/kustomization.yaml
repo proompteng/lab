@@ -2,13 +2,19 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: bayn
 resources:
+  - telemetry.yaml
+  - glitchtip-dsns.yaml
   - serviceaccount.yaml
   - clickhouse-secret.yaml
   - alpaca-sealedsecret.yaml
   - objectbucketclaim.yaml
+  - research-storage.yaml
+  - research-objectbucket.yaml
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
+  - postgres-monitoring.yaml
   - postgres-scheduled-backup.yaml
+  - native-arrival-postgres.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml
   - egress-proxy.yaml
@@ -18,10 +24,24 @@ resources:
   - execution-controller-pdb.yaml
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
+  - execution-activation-networkpolicy.yaml
   - service.yaml
   - status-pdb.yaml
   - networkpolicy.yaml
+  - jev-sealedsecret.yaml
+  - openai-externalsecret.yaml
+  - bayn-research-db-sealedsecret.yaml
+  - bayn-research-authority-sealedsecret.yaml
+  - research-worker.yaml
+  - opencode-retained-state.yaml
+  - research-networkpolicy.yaml
 configMapGenerator:
+  - name: bayn-telemetry
+    files:
+      - config.alloy=telemetry.alloy
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-4"
   - name: bayn-egress-proxy
     files:
       - squid.conf

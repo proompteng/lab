@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Context, Data, Effect, Exit, Layer, Option, Schema, Semaphore } from 'effect'
-import type { Connection } from 'effect/unstable/sql/SqlConnection'
+import type { Connection } from 'effect/sql/SqlConnection'
+import { withObservedStage } from '../telemetry'
 
 const LOCK_NAMESPACE = 1_111_578_958 // ASCII "BAYN"
 const WRITER_LEASE = 1
@@ -71,7 +72,7 @@ const acquire = Effect.gen(function* () {
           message: 'another PostgreSQL transaction owns the execution writer fence',
         })
       }
-    })
+    }).pipe(withObservedStage('bayn.postgres.writer-lease.acquire', { dependency: 'postgresql', operation }))
 
   const checkHeld = (connection: Connection, operation: 'check' | 'transaction') =>
     Effect.gen(function* () {
@@ -101,49 +102,66 @@ const acquire = Effect.gen(function* () {
           message: 'PostgreSQL execution writer fence is no longer held',
         })
       }
-    })
+    }).pipe(withObservedStage('bayn.postgres.writer-lease.check', { dependency: 'postgresql', operation }))
 
   const runTransaction = <A, E, R>(
     operation: 'check' | 'transaction',
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E | WriterFenceError, R> =>
-    transactionPermit.withPermit(
-      Effect.scoped(
-        Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            const connection = yield* sql.reserve.pipe(Effect.mapError((cause) => unavailable('acquire', cause)))
-            activeConnection = connection
-            yield* connection
-              .executeUnprepared('BEGIN', [], undefined)
-              .pipe(Effect.mapError((cause) => unavailable('transaction', cause)))
-            const exit = yield* Effect.exit(
-              acquireTransactionLease(connection, operation).pipe(
-                Effect.andThen(checkHeld(connection, operation)),
-                Effect.andThen(restore(effect)),
-                Effect.provideService(sql.transactionService, [connection, 0]),
-              ),
-            )
-            const finalized = yield* Effect.exit(
-              connection
-                .executeUnprepared(Exit.isSuccess(exit) ? 'COMMIT' : 'ROLLBACK', [], undefined)
-                .pipe(Effect.mapError((cause) => unavailable('transaction', cause))),
-            )
-            if (Exit.isFailure(finalized)) {
-              return yield* Effect.failCause(
-                Exit.isFailure(exit) ? Cause.combine(exit.cause, finalized.cause) : finalized.cause,
+    transactionPermit
+      .withPermit(
+        Effect.scoped(
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const connection = yield* restore(
+                sql.reserve.pipe(
+                  Effect.mapError((cause) => unavailable('acquire', cause)),
+                  withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }),
+                ),
               )
-            }
-            return yield* exit
-          }),
-        ).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              activeConnection = undefined
+              activeConnection = connection
+              const exit = yield* Effect.exit(
+                restore(
+                  connection.executeUnprepared('BEGIN', [], undefined).pipe(
+                    Effect.mapError((cause) => unavailable('transaction', cause)),
+                    withObservedStage('bayn.postgres.begin', { dependency: 'postgresql' }),
+                    Effect.andThen(acquireTransactionLease(connection, operation)),
+                    Effect.andThen(checkHeld(connection, operation)),
+                    Effect.andThen(effect),
+                    Effect.provideService(sql.transactionService, [connection, 0]),
+                    Effect.provideService(sql.transactionSemaphoreService, Semaphore.makeUnsafe(1)),
+                  ),
+                ),
+              )
+              // BEGIN can succeed before its acknowledgment is lost. Roll back interrupted startup too.
+              const finalized = yield* Effect.exit(
+                connection.executeUnprepared(Exit.isSuccess(exit) ? 'COMMIT' : 'ROLLBACK', [], undefined).pipe(
+                  Effect.mapError((cause) => unavailable('transaction', cause)),
+                  withObservedStage(Exit.isSuccess(exit) ? 'bayn.postgres.commit' : 'bayn.postgres.rollback', {
+                    dependency: 'postgresql',
+                  }),
+                ),
+              )
+              if (Exit.isFailure(finalized)) {
+                return yield* Effect.failCause(
+                  Exit.isFailure(exit) ? Cause.combine(exit.cause, finalized.cause) : finalized.cause,
+                )
+              }
+              return yield* exit
             }),
+          ).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                activeConnection = undefined
+              }),
+            ),
           ),
         ),
-      ),
-    )
+      )
+      .pipe(
+        withObservedStage('bayn.postgres.writer-fence', { dependency: 'postgresql' }),
+        Effect.annotateLogs({ operation }),
+      )
 
   const check = runTransaction('check', Effect.void)
   const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | WriterFenceError, R> =>

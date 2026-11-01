@@ -6,31 +6,106 @@ metadata:
 data:
   config.json: |-
     {
-      "nodePathMap":[
-        {
-          "node":"talos-192-168-1-85",
-          "paths":["/var/mnt/local-path-provisioner"]
-        },
-        {
-          "node":"talos-192-168-1-194",
-          "paths":["/var/mnt/local-path-provisioner"]
-        },
-        {
-          "node":"talos-192-168-1-203",
-          "paths":["/var/mnt/local-path-provisioner"]
-        },
-        {
-          "node":"turin",
-          "paths":[
-            "/var/mnt/turin-nvme-intel",
-            "/var/mnt/turin-nvme-transcend"
+      "nodePathMap": [],
+      "storageClassConfigs": {
+        "local-path": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-85",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-203",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-intel",
+                "/var/mnt/turin-nvme-transcend"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": [
+                "/var/local-path-provisioner"
+              ]
+            }
           ]
         },
-        {
-          "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
-          "paths":["/var/local-path-provisioner"]
+        "local-path-ryzen": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-turin-nvme-intel": {
+          "nodePathMap": [
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-intel"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-turin-nvme-transcend": {
+          "nodePathMap": [
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-transcend"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-ci-amd64": {
+          "nodePathMap": [
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-transcend"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
         }
-      ]
+      }
     }
   helperPod.yaml: |-
     apiVersion: v1

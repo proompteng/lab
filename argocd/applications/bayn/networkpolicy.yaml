@@ -32,6 +32,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
@@ -176,8 +187,21 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-execution-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-research
       ports:
         - port: 3128
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opencode-research
+      ports:
+        - port: 3129
           protocol: TCP
   egress:
     - to:

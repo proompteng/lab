@@ -228,6 +228,10 @@ export const workflowTaskFailureWorkflow = defineWorkflow(
     }),
 )
 
+export const retryingFailureWorkflow = defineWorkflow('integrationRetryingFailureWorkflow', ({ info }) =>
+  Effect.fail(new Error(`failed run ${info.runId}`)),
+)
+
 const signalHandles = defineWorkflowSignals({
   unblock: Schema.String,
   finish: Schema.Struct({}),
@@ -365,6 +369,7 @@ export const integrationWorkflows = [
   metadataWorkflow,
   timerCancellationWorkflow,
   workflowTaskFailureWorkflow,
+  retryingFailureWorkflow,
   signalQueryWorkflow,
   queryOnlyWorkflow,
   updateWorkflow,

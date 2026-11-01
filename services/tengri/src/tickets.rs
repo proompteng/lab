@@ -1,34 +1,115 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime},
-};
-
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
-use hmac::{Hmac, Mac};
 use http::Uri;
-use rand::distr::{Alphanumeric, SampleString};
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-use crate::guest::EDITOR_PORT;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tonic::Status;
+use uuid::Uuid;
 
-const TICKET_LIFETIME: Duration = Duration::from_secs(30);
-const PREVIEW_SESSION_LIFETIME: Duration = Duration::from_secs(30 * 60);
-const PENDING_TICKET_LIMIT: usize = 128;
-const PENDING_TICKET_LIMIT_PER_AGENT: usize = 16;
-const PREVIEW_SESSION_LIMIT: usize = 96;
-const PREVIEW_SESSION_LIMIT_PER_AGENT: usize = 16;
-const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
+use crate::{
+    auth::Principal,
+    control::{Database, sql_error},
+    guest::{BROWSER_PORT, EDITOR_PORT},
+    ofz::{self, proto::Action},
+};
 
-#[derive(Clone, Debug)]
+const TICKET_LIFETIME_MS: i64 = 30_000;
+const PREVIEW_LIFETIME_MS: i64 = 30 * 60 * 1000;
+const TICKET_LIMIT: i32 = 128;
+const PREVIEW_LIMIT: i32 = 96;
+const PER_WORKSPACE_LIMIT: i32 = 16;
+
+#[derive(Clone, Copy)]
+enum CapabilityTable {
+    Tickets,
+    Previews,
+}
+
+impl CapabilityTable {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Tickets => "tengri.tickets",
+            Self::Previews => "tengri.previews",
+        }
+    }
+
+    async fn allocate(
+        self,
+        tx: &tokio_postgres::Transaction<'_>,
+        workspace: Uuid,
+    ) -> Result<(i16, i16), Status> {
+        let table = self.name();
+        tx.batch_execute(&format!(
+            "DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE expires_at_ms<=tengri.now_ms() FOR UPDATE SKIP LOCKED)"
+        )).await.map_err(sql_error)?;
+        let workspace_slot = self
+            .reserve_slot(tx, Some(workspace), PER_WORKSPACE_LIMIT)
+            .await?;
+        let limit = match self {
+            Self::Tickets => TICKET_LIMIT,
+            Self::Previews => PREVIEW_LIMIT,
+        };
+        let capacity_slot = self.reserve_slot(tx, None, limit).await?;
+        Ok((capacity_slot, workspace_slot))
+    }
+
+    async fn reserve_slot(
+        self,
+        tx: &tokio_postgres::Transaction<'_>,
+        workspace: Option<Uuid>,
+        limit: i32,
+    ) -> Result<i16, Status> {
+        let table = self.name();
+        let column = if workspace.is_some() {
+            "workspace_slot"
+        } else {
+            "capacity_slot"
+        };
+        let candidates = tx.query(&format!(
+            "SELECT slot::smallint FROM generate_series(1,$1::integer) slot WHERE NOT EXISTS (SELECT 1 FROM {table} WHERE {column}=slot AND ($2::uuid IS NULL OR workspace_uid=$2)) ORDER BY slot"
+        ), &[&limit, &workspace]).await.map_err(sql_error)?;
+        for candidate in candidates {
+            let slot: i16 = candidate.get(0);
+            let mut hash = Sha256::new();
+            hash.update(b"tengri-capability-slot\0");
+            hash.update(table.as_bytes());
+            hash.update([u8::from(workspace.is_some())]);
+            hash.update(workspace.unwrap_or_else(Uuid::nil).as_bytes());
+            hash.update(slot.to_be_bytes());
+            let key = i64::from_be_bytes(hash.finalize()[..8].try_into().unwrap());
+            let locked: bool = tx
+                .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&key])
+                .await
+                .map_err(sql_error)?
+                .get(0);
+            if !locked {
+                continue;
+            }
+            // A previous holder may have committed after the candidate scan. Read a new snapshot.
+            let free: bool = tx.query_one(&format!(
+                "SELECT NOT EXISTS (SELECT 1 FROM {table} WHERE {column}=$1 AND ($2::uuid IS NULL OR workspace_uid=$2))"
+            ), &[&slot, &workspace]).await.map_err(sql_error)?.get(0);
+            if free {
+                return Ok(slot);
+            }
+        }
+        Err(Status::resource_exhausted("capability capacity exhausted"))
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum TicketScope {
     Terminal {
         terminal_id: String,
     },
     Preview {
-        incarnation: Option<String>,
+        incarnation: String,
         session_id: String,
         port: u16,
         initial_path: String,
@@ -36,21 +117,24 @@ pub enum TicketScope {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TicketRecord {
-    pub owner_hash: String,
+    pub principal: Principal,
     pub agent_id: String,
     pub scope: TicketScope,
-    expires_at: SystemTime,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PreviewSessionRecord {
-    pub incarnation: Option<String>,
-    pub revocation_token: String,
+    pub lease_id: Uuid,
+    pub incarnation: String,
     pub id: String,
+    // Plaintext exists only in the response or the currently presented credential.
+    #[serde(skip)]
     pub token: String,
-    pub owner_hash: String,
+    pub principal: Principal,
     pub agent_id: String,
     pub port: u16,
     pub initial_path: String,
@@ -61,9 +145,9 @@ pub struct PreviewSessionRecord {
 #[derive(Clone)]
 pub struct TicketStore {
     public_url: Arc<str>,
-    signing_secret: Arc<[u8]>,
-    tickets: Arc<Mutex<HashMap<String, TicketRecord>>>,
-    previews: Arc<Mutex<HashMap<String, PreviewSessionRecord>>>,
+    database: Arc<Database>,
+    #[cfg(test)]
+    preview_lifetime_ms: i64,
 }
 
 #[derive(Debug)]
@@ -81,382 +165,452 @@ pub struct TicketStats {
 }
 
 impl TicketStore {
-    pub fn new(public_url: String, signing_secret: String) -> anyhow::Result<Self> {
+    pub fn new(public_url: String, database: Arc<Database>) -> anyhow::Result<Self> {
         let public_url = public_url.trim_end_matches('/');
         validate_public_url(public_url)?;
-        anyhow::ensure!(
-            signing_secret.len() >= 32,
-            "TENGRI_TICKET_SIGNING_SECRET must contain at least 32 bytes"
-        );
         Ok(Self {
-            public_url: Arc::from(public_url.to_owned()),
-            signing_secret: Arc::from(signing_secret.into_bytes()),
-            tickets: Arc::new(Mutex::new(HashMap::new())),
-            previews: Arc::new(Mutex::new(HashMap::new())),
+            public_url: public_url.to_owned().into(),
+            database,
+            #[cfg(test)]
+            preview_lifetime_ms: PREVIEW_LIFETIME_MS,
         })
     }
 
-    pub fn issue_terminal(
+    #[cfg(test)]
+    pub(crate) fn with_preview_lifetime(mut self, lifetime_ms: i64) -> Self {
+        assert!((1..=PREVIEW_LIFETIME_MS).contains(&lifetime_ms));
+        self.preview_lifetime_ms = lifetime_ms;
+        self
+    }
+
+    pub async fn issue_terminal(
         &self,
-        owner_hash: &str,
+        principal: &Principal,
         agent_id: &str,
         terminal_id: &str,
     ) -> Result<IssuedTicket, Status> {
-        let mut issued = self.issue(
-            owner_hash,
-            agent_id,
-            TicketScope::Terminal {
-                terminal_id: terminal_id.to_owned(),
-            },
-            "/v1/terminal/ws",
-            None,
-        )?;
+        let mut issued = self
+            .issue(
+                principal,
+                agent_id,
+                TicketScope::Terminal {
+                    terminal_id: terminal_id.into(),
+                },
+                "/v1/terminal/ws",
+                false,
+            )
+            .await?;
         issued.url = websocket_url(&issued.url)?;
         Ok(issued)
     }
 
-    pub fn issue_preview(
+    pub async fn issue_preview(
         &self,
-        owner_hash: &str,
+        principal: &Principal,
         agent_id: &str,
         port: u16,
         initial_path: &str,
         initial_fragment: &str,
     ) -> Result<IssuedTicket, Status> {
-        let session_id = random_dns_label(PREVIEW_SESSION_LABEL_LENGTH);
-        let mut issued = self.issue(
-            owner_hash,
+        let id = dns_id(random_token().as_bytes());
+        self.preview(
+            principal,
             agent_id,
-            TicketScope::Preview {
-                incarnation: None,
-                session_id: session_id.clone(),
-                port,
-                initial_path: initial_path.to_owned(),
-                initial_fragment: initial_fragment.to_owned(),
-            },
-            "/v1/preview/open",
-            Some('#'),
-        )?;
-        issued.id = session_id;
-        Ok(issued)
+            id,
+            port,
+            initial_path,
+            initial_fragment,
+        )
+        .await
     }
 
-    pub fn issue_editor(
+    pub async fn issue_editor(
         &self,
-        owner_hash: &str,
+        principal: &Principal,
         agent_id: &str,
-        incarnation: &str,
         window_id: &str,
     ) -> Result<IssuedTicket, Status> {
-        let identity = format!("{owner_hash}\0{agent_id}\0{incarnation}\0{window_id}");
-        let session_id = format!("{:x}", Sha256::digest(identity.as_bytes()))
-            [..PREVIEW_SESSION_LABEL_LENGTH]
-            .to_owned();
-        let mut issued = self.issue(
-            owner_hash,
+        let context = &principal.context;
+        let identity = format!(
+            "{}\0{}\0{}\0{}\0{}\0{window_id}",
+            principal.owner_hash,
+            context.session_id,
+            context.workspace_uid,
+            context.runtime_epoch,
+            context.origin
+        );
+        self.preview(
+            principal,
             agent_id,
-            TicketScope::Preview {
-                incarnation: Some(incarnation.to_owned()),
-                session_id: session_id.clone(),
-                port: EDITOR_PORT,
-                initial_path: "/_tengri/editor/open".to_owned(),
-                initial_fragment: String::new(),
-            },
-            "/v1/preview/open",
-            Some('#'),
-        )?;
-        issued.id = session_id;
+            dns_id(identity.as_bytes()),
+            EDITOR_PORT,
+            "/",
+            "",
+        )
+        .await
+    }
+
+    pub async fn issue_browser(
+        &self,
+        principal: &Principal,
+        agent_id: &str,
+        window_id: &str,
+    ) -> Result<IssuedTicket, Status> {
+        let context = &principal.context;
+        let identity = format!(
+            "browser\0{}\0{}\0{}\0{}\0{}\0{window_id}",
+            principal.owner_hash,
+            context.session_id,
+            context.workspace_uid,
+            context.runtime_epoch,
+            context.origin,
+        );
+        self.preview(
+            principal,
+            agent_id,
+            dns_id(identity.as_bytes()),
+            BROWSER_PORT,
+            "/",
+            "",
+        )
+        .await
+    }
+
+    async fn preview(
+        &self,
+        principal: &Principal,
+        agent_id: &str,
+        id: String,
+        port: u16,
+        initial_path: &str,
+        initial_fragment: &str,
+    ) -> Result<IssuedTicket, Status> {
+        let mut issued = self
+            .issue(
+                principal,
+                agent_id,
+                TicketScope::Preview {
+                    incarnation: principal.context.workspace_uid.clone(),
+                    session_id: id.clone(),
+                    port,
+                    initial_path: initial_path.into(),
+                    initial_fragment: initial_fragment.into(),
+                },
+                "/v1/preview/open",
+                true,
+            )
+            .await?;
+        issued.id = id;
         Ok(issued)
     }
 
-    pub fn revoke_editors(&self, owner_hash: &str) -> Result<(), Status> {
-        let mut tickets = self
-            .tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?;
-        let mut previews = self
-            .previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?;
-        tickets.retain(|_, ticket| {
-            !(ticket.owner_hash == owner_hash
-                && matches!(
-                    ticket.scope,
-                    TicketScope::Preview {
-                        port: EDITOR_PORT,
-                        ..
-                    }
-                ))
-        });
-        previews.retain(|_, session| {
-            !(session.owner_hash == owner_hash && session.port == EDITOR_PORT)
-        });
-        Ok(())
-    }
-
-    pub fn revoke_preview_lease(
+    #[tracing::instrument(name = "db.tickets.issue", skip_all)]
+    async fn issue(
         &self,
-        owner_hash: &str,
+        principal: &Principal,
         agent_id: &str,
-        session_id: &str,
-        revocation_token: &str,
-    ) -> Result<(), Status> {
-        self.tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?
-            .retain(|token, ticket| {
-                !(token == revocation_token
-                    && ticket.owner_hash == owner_hash
-                    && ticket.agent_id == agent_id
-                    && matches!(&ticket.scope, TicketScope::Preview { session_id: id, .. } if id == session_id))
-            });
-        self.previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?
-            .retain(|id, session| {
-                !(id == session_id
-                    && session.owner_hash == owner_hash
-                    && session.agent_id == agent_id
-                    && session.revocation_token == revocation_token)
-            });
-        Ok(())
-    }
-
-    pub fn consume(&self, token: &str) -> Result<TicketRecord, Status> {
-        let mut tickets = self
-            .tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?;
-        tickets.retain(|_, ticket| ticket.expires_at > SystemTime::now());
-        let ticket = tickets.remove(token).ok_or_else(|| {
-            Status::unauthenticated("ticket is invalid, expired, or already used")
-        })?;
-        if ticket.expires_at <= SystemTime::now() {
-            return Err(Status::unauthenticated("ticket expired"));
+        scope: TicketScope,
+        path: &str,
+        fragment: bool,
+    ) -> Result<IssuedTicket, Status> {
+        let (uid, session) = bindings(principal)?;
+        let expected = match &scope {
+            TicketScope::Terminal { terminal_id }
+                if !terminal_id.is_empty() && terminal_id.len() <= 128 =>
+            {
+                Action::TerminalControl
+            }
+            TicketScope::Preview {
+                port: EDITOR_PORT, ..
+            } => Action::EditorOpen,
+            TicketScope::Preview {
+                port: BROWSER_PORT, ..
+            } => Action::BrowserControl,
+            TicketScope::Preview { port: 1.., .. } => Action::PreviewAccess,
+            _ => return Err(Status::invalid_argument("invalid capability scope")),
+        };
+        if principal.action != expected || agent_id.is_empty() || agent_id.len() > 253 {
+            return Err(Status::permission_denied(
+                "capability action binding rejected",
+            ));
         }
-        Ok(ticket)
+        let token = random_token();
+        let payload = serde_json::to_value(TicketRecord {
+            principal: principal.clone(),
+            agent_id: agent_id.into(),
+            scope,
+        })
+        .map_err(|_| Status::internal("capability encoding failed"))?;
+        let mut client = self.database.connection().await?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        let (capacity_slot, workspace_slot) = CapabilityTable::Tickets.allocate(&tx, uid).await?;
+        let expiry: i64 = tx.query_one("INSERT INTO tengri.tickets(token_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms,capacity_slot,workspace_slot) VALUES($1,$2,$3,$4,$5,tengri.now_ms()+$6,$7,$8) RETURNING expires_at_ms",
+            &[&token_hash(&token)?, &agent_id, &uid, &session, &payload, &TICKET_LIFETIME_MS, &capacity_slot, &workspace_slot]).await.map_err(sql_error)?.get(0);
+        tx.commit().await.map_err(sql_error)?;
+        Ok(IssuedTicket {
+            id: token.clone(),
+            url: if fragment {
+                format!("{}{path}#{token}", self.public_url)
+            } else {
+                format!("{}{path}", self.public_url)
+            },
+            token,
+            expires_at: DateTime::<Utc>::from_timestamp_millis(expiry)
+                .ok_or_else(|| Status::internal("invalid capability deadline"))?
+                .to_rfc3339(),
+        })
     }
 
-    pub fn consume_preview(&self, token: &str) -> Result<PreviewSessionRecord, Status> {
-        let mut tickets = self
-            .tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?;
-        let now = SystemTime::now();
-        tickets.retain(|_, ticket| ticket.expires_at > now);
-        let ticket = tickets.get(token).cloned().ok_or_else(|| {
-            Status::unauthenticated("ticket is invalid, expired, or already used")
-        })?;
+    pub async fn consume(&self, token: &str) -> Result<TicketRecord, Status> {
+        let client = self.database.connection().await?;
+        let row = client.query_opt("DELETE FROM tengri.tickets WHERE token_hash=$1 AND expires_at_ms>tengri.now_ms() RETURNING payload", &[&token_hash(token)?])
+            .await.map_err(sql_error)?.ok_or_else(invalid_capability)?;
+        let mut record: TicketRecord = decode(row.get(0))?;
+        if !matches!(record.scope, TicketScope::Terminal { .. }) {
+            return Err(Status::permission_denied("terminal capability required"));
+        }
+        bindings(&record.principal)?;
+        // The SQL capability lifetime is independent of the original BFF submission deadline.
+        // Redemption still requires a new Ofz check of this exact session and runtime binding.
+        record.principal.context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        Ok(record)
+    }
+
+    #[tracing::instrument(name = "db.previews.redeem", skip_all)]
+    pub async fn consume_preview(&self, token: &str) -> Result<PreviewSessionRecord, Status> {
+        let hash = token_hash(token)?;
+        let mut client = self.database.connection().await?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        let row = tx.query_opt("DELETE FROM tengri.tickets WHERE token_hash=$1 AND expires_at_ms>tengri.now_ms() RETURNING payload", &[&hash])
+            .await.map_err(sql_error)?.ok_or_else(invalid_capability)?;
+        let ticket: TicketRecord = decode(row.get(0))?;
+        let (uid, session_id) = bindings(&ticket.principal)?;
         let TicketScope::Preview {
             incarnation,
-            session_id,
+            session_id: id,
             port,
             initial_path,
             initial_fragment,
         } = ticket.scope
         else {
-            return Err(Status::permission_denied(
-                "ticket is not scoped to a preview",
-            ));
+            return Err(Status::permission_denied("preview capability required"));
         };
-        let mut previews = self
-            .previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?;
-        previews.retain(|_, active| active.expires_at > now);
-        if !previews.contains_key(&session_id)
-            && (previews.len() >= PREVIEW_SESSION_LIMIT
-                || previews
-                    .values()
-                    .filter(|active| active.agent_id == ticket.agent_id)
-                    .count()
-                    >= PREVIEW_SESSION_LIMIT_PER_AGENT)
-        {
-            tickets.remove(token);
-            return Err(Status::resource_exhausted(
-                "too many active preview sessions",
-            ));
-        }
-        tickets.remove(token);
-        let session = PreviewSessionRecord {
+        let existing = tx.query_opt("SELECT capacity_slot,workspace_slot,payload,expires_at_ms>tengri.now_ms() FROM tengri.previews WHERE id=$1 AND workspace_uid=$2 FOR UPDATE", &[&id, &uid]).await.map_err(sql_error)?;
+        let (capacity_slot, workspace_slot, lease_id) = match existing {
+            Some(row) => {
+                let previous: PreviewSessionRecord = decode(row.get(2))?;
+                let lease_id = if row.get::<_, bool>(3) {
+                    previous.lease_id
+                } else {
+                    Uuid::new_v4()
+                };
+                (row.get::<_, i16>(0), row.get::<_, i16>(1), lease_id)
+            }
+            None => {
+                let (capacity_slot, workspace_slot) =
+                    CapabilityTable::Previews.allocate(&tx, uid).await?;
+                (capacity_slot, workspace_slot, Uuid::new_v4())
+            }
+        };
+        #[cfg(not(test))]
+        let lifetime = PREVIEW_LIFETIME_MS;
+        #[cfg(test)]
+        let lifetime = self.preview_lifetime_ms;
+        let expiry: i64 = tx
+            .query_one("SELECT tengri.now_ms()+$1", &[&lifetime])
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        let mut session = PreviewSessionRecord {
+            lease_id,
             incarnation,
-            revocation_token: token.to_owned(),
-            id: session_id,
-            token: self.signed_token(),
-            owner_hash: ticket.owner_hash,
+            id,
+            token: random_token(),
+            principal: ticket.principal,
             agent_id: ticket.agent_id,
             port,
             initial_path,
             initial_fragment,
-            expires_at: SystemTime::now()
-                + if port == EDITOR_PORT {
-                    Duration::from_secs(24 * 60 * 60)
-                } else {
-                    PREVIEW_SESSION_LIFETIME
-                },
+            expires_at: UNIX_EPOCH + Duration::from_millis(expiry as u64),
         };
-        previews.insert(session.id.clone(), session.clone());
-        Ok(session)
-    }
-
-    pub fn revoke_preview(
-        &self,
-        owner_hash: &str,
-        agent_id: &str,
-        session_id: &str,
-    ) -> Result<(), Status> {
-        self.tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?
-            .retain(|_, ticket| {
-                !(ticket.owner_hash == owner_hash
-                    && ticket.agent_id == agent_id
-                    && matches!(
-                        &ticket.scope,
-                        TicketScope::Preview {
-                            session_id: pending_id,
-                            ..
-                        } if pending_id == session_id
-                    ))
-            });
-        self.previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?
-            .retain(|id, session| {
-                !(id == session_id
-                    && session.owner_hash == owner_hash
-                    && session.agent_id == agent_id)
-            });
-        Ok(())
-    }
-
-    pub fn preview_session(&self, id: &str, token: &str) -> Result<PreviewSessionRecord, Status> {
-        let mut previews = self
-            .previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?;
-        previews.retain(|_, session| session.expires_at > SystemTime::now());
-        let session = previews
-            .get(id)
-            .filter(|session| constant_time_eq(session.token.as_bytes(), token.as_bytes()))
-            .cloned()
-            .ok_or_else(|| Status::unauthenticated("preview session is invalid or expired"))?;
-        if session.owner_hash.len() != 64
-            || !session
-                .owner_hash
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err(Status::internal("preview session owner is invalid"));
-        }
-        Ok(session)
-    }
-
-    pub fn stats(&self) -> Result<TicketStats, Status> {
-        let now = SystemTime::now();
-        let mut tickets = self
-            .tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?;
-        tickets.retain(|_, ticket| ticket.expires_at > now);
-        let mut previews = self
-            .previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?;
-        previews.retain(|_, session| session.expires_at > now);
-        Ok(TicketStats {
-            pending: tickets.len(),
-            previews: previews.len(),
-        })
-    }
-
-    pub fn remove_agent(&self, agent_id: &str) -> Result<(), Status> {
-        self.tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?
-            .retain(|_, ticket| ticket.agent_id != agent_id);
-        self.previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?
-            .retain(|_, session| session.agent_id != agent_id);
-        Ok(())
-    }
-
-    fn issue(
-        &self,
-        owner_hash: &str,
-        agent_id: &str,
-        scope: TicketScope,
-        path: &str,
-        token_separator: Option<char>,
-    ) -> Result<IssuedTicket, Status> {
-        let token = self.signed_token();
-        let expires_at = SystemTime::now() + TICKET_LIFETIME;
-        let mut tickets = self
-            .tickets
-            .lock()
-            .map_err(|_| Status::internal("ticket state is unavailable"))?;
-        let now = SystemTime::now();
-        tickets.retain(|_, ticket| ticket.expires_at > now);
-        if tickets.len() >= PENDING_TICKET_LIMIT
-            || tickets
-                .values()
-                .filter(|ticket| ticket.agent_id == agent_id)
-                .count()
-                >= PENDING_TICKET_LIMIT_PER_AGENT
-        {
-            return Err(Status::resource_exhausted(
-                "too many pending one-use tickets",
+        let payload = serde_json::to_value(&session)
+            .map_err(|_| Status::internal("capability encoding failed"))?;
+        let changed = tx.execute("INSERT INTO tengri.previews(id,token_hash,revocation_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms,capacity_slot,workspace_slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,revocation_hash=excluded.revocation_hash,agent_id=excluded.agent_id,session_id=excluded.session_id,payload=excluded.payload,expires_at_ms=excluded.expires_at_ms WHERE tengri.previews.workspace_uid=excluded.workspace_uid",
+            &[&session.id,&token_hash(&session.token)?,&hash,&session.agent_id,&uid,&session_id,&payload,&expiry,&capacity_slot,&workspace_slot]).await.map_err(sql_error)?;
+        if changed != 1 {
+            return Err(Status::permission_denied(
+                "preview workspace binding rejected",
             ));
         }
-        tickets.insert(
-            token.clone(),
-            TicketRecord {
-                owner_hash: owner_hash.to_owned(),
-                agent_id: agent_id.to_owned(),
-                scope,
-                expires_at,
-            },
-        );
-        Ok(IssuedTicket {
-            id: token.clone(),
-            url: token_separator.map_or_else(
-                || format!("{}{path}", self.public_url),
-                |separator| format!("{}{path}{separator}{token}", self.public_url),
-            ),
-            token,
-            expires_at: DateTime::<Utc>::from(expires_at).to_rfc3339(),
+        tx.commit().await.map_err(sql_error)?;
+        session.principal.context.deadline_unix_ms =
+            ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        Ok(session)
+    }
+
+    pub async fn preview_session(
+        &self,
+        id: &str,
+        token: &str,
+    ) -> Result<PreviewSessionRecord, Status> {
+        let client = self.database.connection().await?;
+        let row = client.query_opt("SELECT payload FROM tengri.previews WHERE id=$1 AND token_hash=$2 AND expires_at_ms>tengri.now_ms()", &[&id,&token_hash(token)?])
+            .await.map_err(sql_error)?.ok_or_else(invalid_capability)?;
+        let mut session: PreviewSessionRecord = decode(row.get(0))?;
+        bindings(&session.principal)?;
+        session.principal.context.deadline_unix_ms =
+            ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        session.token = token.into();
+        Ok(session)
+    }
+
+    #[tracing::instrument(name = "db.previews.lease", skip_all)]
+    pub async fn require_preview_lease(
+        &self,
+        expected: &PreviewSessionRecord,
+    ) -> Result<(), Status> {
+        bindings(&expected.principal)?;
+        let client = self.database.connection().await?;
+        let row = client
+            .query_opt(
+                "SELECT payload FROM tengri.previews WHERE id=$1 AND expires_at_ms>tengri.now_ms()",
+                &[&expected.id],
+            )
+            .await
+            .map_err(sql_error)?
+            .ok_or_else(invalid_capability)?;
+        let mut current: PreviewSessionRecord = decode(row.get(0))?;
+        bindings(&current.principal)?;
+        // Credentials admit new handshakes. Established streams require the current lease with
+        // the same authority; only the per-request trace and admission deadline may change.
+        current
+            .principal
+            .context
+            .trace_id
+            .clone_from(&expected.principal.context.trace_id);
+        current.principal.context.deadline_unix_ms = expected.principal.context.deadline_unix_ms;
+        if current.lease_id != expected.lease_id
+            || current.id != expected.id
+            || current.incarnation != expected.incarnation
+            || current.agent_id != expected.agent_id
+            || current.port != expected.port
+            || current.principal.owner_hash != expected.principal.owner_hash
+            || current.principal.recovery_generation != expected.principal.recovery_generation
+            || current.principal.action != expected.principal.action
+            || current.principal.context != expected.principal.context
+        {
+            return Err(invalid_capability());
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_preview_lease(
+        &self,
+        principal: &Principal,
+        agent_id: &str,
+        id: &str,
+        token: &str,
+    ) -> Result<(), Status> {
+        let (uid, session) = bindings(principal)?;
+        let hash = token_hash(token)?;
+        let mut client = self.database.connection().await?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        tx.execute("DELETE FROM tengri.tickets WHERE token_hash=$1 AND workspace_uid=$2 AND session_id=$3 AND agent_id=$4 AND payload->'scope'->>'session_id'=$5 AND payload->'principal'->>'owner_hash'=$6",
+            &[&hash,&uid,&session,&agent_id,&id,&principal.owner_hash]).await.map_err(sql_error)?;
+        tx.execute("DELETE FROM tengri.previews WHERE id=$1 AND revocation_hash=$2 AND workspace_uid=$3 AND session_id=$4 AND agent_id=$5 AND payload->'principal'->>'owner_hash'=$6",
+            &[&id,&hash,&uid,&session,&agent_id,&principal.owner_hash]).await.map_err(sql_error)?;
+        tx.commit().await.map_err(sql_error)?;
+        Ok(())
+    }
+
+    pub async fn revoke_desktop_previews(&self, principal: &Principal) -> Result<(), Status> {
+        let session = Uuid::parse_str(&principal.context.session_id)
+            .map_err(|_| Status::unauthenticated("session required"))?;
+        let mut client = self.database.connection().await?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        tx.execute("DELETE FROM tengri.tickets WHERE session_id=$1 AND payload->'principal'->>'owner_hash'=$2 AND (payload->'scope'->>'port')::integer IN ($3,$4)",
+            &[&session,&principal.owner_hash,&(EDITOR_PORT as i32),&(BROWSER_PORT as i32)]).await.map_err(sql_error)?;
+        tx.execute("DELETE FROM tengri.previews WHERE session_id=$1 AND payload->'principal'->>'owner_hash'=$2 AND (payload->>'port')::integer IN ($3,$4)",
+            &[&session,&principal.owner_hash,&(EDITOR_PORT as i32),&(BROWSER_PORT as i32)]).await.map_err(sql_error)?;
+        tx.commit().await.map_err(sql_error)?;
+        Ok(())
+    }
+
+    pub async fn remove_agent(&self, workspace_uid: &str) -> Result<(), Status> {
+        let uid = Uuid::parse_str(workspace_uid)
+            .map_err(|_| Status::invalid_argument("workspace UID required"))?;
+        let mut client = self.database.connection().await?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        tx.execute("DELETE FROM tengri.tickets WHERE workspace_uid=$1", &[&uid])
+            .await
+            .map_err(sql_error)?;
+        tx.execute(
+            "DELETE FROM tengri.previews WHERE workspace_uid=$1",
+            &[&uid],
+        )
+        .await
+        .map_err(sql_error)?;
+        tx.commit().await.map_err(sql_error)?;
+        Ok(())
+    }
+
+    pub async fn stats(&self) -> Result<TicketStats, Status> {
+        let client = self.database.connection().await?;
+        let row = client.query_one("SELECT (SELECT count(*) FROM tengri.tickets WHERE expires_at_ms>tengri.now_ms()),(SELECT count(*) FROM tengri.previews WHERE expires_at_ms>tengri.now_ms())", &[]).await.map_err(sql_error)?;
+        Ok(TicketStats {
+            pending: row.get::<_, i64>(0) as usize,
+            previews: row.get::<_, i64>(1) as usize,
         })
     }
+}
 
-    fn signed_token(&self) -> String {
-        let nonce = random_token(48);
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.signing_secret)
-            .expect("validated HMAC signing secret");
-        mac.update(nonce.as_bytes());
-        let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
-        format!("{nonce}.{signature}")
+fn bindings(principal: &Principal) -> Result<(Uuid, Uuid), Status> {
+    let context = &principal.context;
+    if !ofz::canonical_human(&principal.owner_hash)
+        || !matches!(context.actor.as_ref().and_then(|a| a.identity.as_ref()), Some(ofz::proto::actor::Identity::HumanId(human)) if human == &principal.owner_hash)
+        || !ofz::canonical_uuid(&context.workspace_uid)
+        || !ofz::canonical_uuid(&context.runtime_epoch)
+        || !ofz::canonical_uuid(&context.session_id)
+        || principal.recovery_generation == 0
+        || context.contract_version != 1
+    {
+        return Err(Status::unauthenticated(
+            "complete capability identity and runtime binding required",
+        ));
     }
+    Ok((
+        Uuid::parse_str(&context.workspace_uid).unwrap(),
+        Uuid::parse_str(&context.session_id).unwrap(),
+    ))
 }
 
-fn random_token(length: usize) -> String {
-    Alphanumeric.sample_string(&mut rand::rng(), length)
+fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, Status> {
+    serde_json::from_value(value).map_err(|_| Status::unavailable("stored capability is invalid"))
 }
 
-fn random_dns_label(length: usize) -> String {
-    random_token(length).to_ascii_lowercase()
+fn random_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
+fn token_hash(token: &str) -> Result<Vec<u8>, Status> {
+    if token.len() != 43
+        || URL_SAFE_NO_PAD
+            .decode(token)
+            .ok()
+            .is_none_or(|bytes| bytes.len() != 32 || URL_SAFE_NO_PAD.encode(bytes) != token)
+    {
+        return Err(invalid_capability());
     }
-    left.iter()
-        .zip(right)
-        .fold(0_u8, |difference, (left, right)| {
-            difference | (left ^ right)
-        })
-        == 0
+    Ok(Sha256::digest(token.as_bytes()).to_vec())
+}
+
+fn dns_id(value: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(value))[..24].into()
+}
+fn invalid_capability() -> Status {
+    Status::unauthenticated("capability is invalid, expired or already used")
 }
 
 fn websocket_url(public_url: &str) -> Result<String, Status> {
@@ -496,323 +650,201 @@ fn validate_public_url(public_url: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn editor_origins_survive_reload_and_isolate_identity() {
-        let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
-        let owner = "a".repeat(64);
-        let other_owner = "b".repeat(64);
-        let issue = |owner: &str, agent: &str, incarnation: &str, window: &str| {
-            store
-                .issue_editor(owner, agent, incarnation, window)
-                .unwrap()
-        };
-        let first = issue(&owner, "agent", "incarnation", "window");
-        let replacement = issue(&owner, "agent", "incarnation", "window");
-        assert_eq!(first.id, replacement.id);
-        assert_ne!(first.token, replacement.token);
-        for other in [
-            issue(&other_owner, "agent", "incarnation", "window"),
-            issue(&owner, "other", "incarnation", "window"),
-            issue(&owner, "agent", "other", "window"),
-            issue(&owner, "agent", "incarnation", "other"),
-        ] {
-            assert_ne!(first.id, other.id);
-        }
-        let old_session = store.consume_preview(&first.token).unwrap();
-        let session = store.consume_preview(&replacement.token).unwrap();
-        assert!(
-            store
-                .preview_session(&session.id, &old_session.token)
-                .is_err()
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_browser_renewal_keeps_origin_but_rotates_and_fences_credentials()
+    {
+        let database = Arc::new(Database::shared_fixture().await);
+        let store = TicketStore::new("https://gateway.proompteng.ai".into(), database).unwrap();
+        let owner = Principal::fixture(
+            &"a".repeat(64),
+            &Uuid::new_v4().to_string(),
+            Action::BrowserControl,
         );
-        store
-            .revoke_preview_lease(&owner, "agent", &first.id, &first.token)
+        let first = store
+            .issue_browser(&owner, "agent", "desktop-window-01")
+            .await
             .unwrap();
-        assert!(store.preview_session(&session.id, &session.token).is_ok());
-        store
-            .revoke_preview_lease(&other_owner, "agent", &session.id, &replacement.token)
+        let original = store.consume_preview(&first.token).await.unwrap();
+        let next = store
+            .issue_browser(&owner, "agent", "desktop-window-01")
+            .await
             .unwrap();
-        assert!(store.preview_session(&session.id, &session.token).is_ok());
-        store
-            .revoke_preview_lease(&owner, "agent", &session.id, &replacement.token)
-            .unwrap();
-        assert!(store.preview_session(&session.id, &session.token).is_err());
-    }
-
-    #[test]
-    fn logout_revokes_all_owned_editor_leases_and_pending_launches() {
-        let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
-        let owner = "a".repeat(64);
-        let other_owner = "b".repeat(64);
-        let pending = store
-            .issue_editor(&owner, "agent", "uid", "pending")
-            .unwrap();
-        let other_pending = store
-            .issue_editor(&other_owner, "other", "uid", "pending")
-            .unwrap();
-        let sessions: Vec<_> = ["first", "second"]
-            .into_iter()
-            .map(|window| {
-                let ticket = store.issue_editor(&owner, "agent", "uid", window).unwrap();
-                store.consume_preview(&ticket.token).unwrap()
-            })
-            .collect();
-        let other = store
-            .issue_editor(&other_owner, "other", "uid", "first")
-            .unwrap();
-        let other = store.consume_preview(&other.token).unwrap();
-        let preview = store.issue_preview(&owner, "agent", 3000, "/", "").unwrap();
-        let preview = store.consume_preview(&preview.token).unwrap();
-
-        store.revoke_editors(&owner).unwrap();
-        store.revoke_editors(&owner).unwrap();
-
-        assert!(store.consume_preview(&pending.token).is_err());
-        for session in sessions {
-            assert!(store.preview_session(&session.id, &session.token).is_err());
-        }
-        assert!(store.consume_preview(&other_pending.token).is_ok());
-        assert!(store.preview_session(&other.id, &other.token).is_ok());
-        assert!(store.preview_session(&preview.id, &preview.token).is_ok());
-    }
-
-    #[test]
-    fn editor_lease_revocation_binds_pending_ticket_scope() {
-        let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
-        let ticket = store
-            .issue_editor("owner", "agent", "incarnation", "window")
-            .unwrap();
-        store
-            .revoke_preview_lease("owner", "agent", "wrong-session", &ticket.token)
-            .unwrap();
-        assert!(store.consume_preview(&ticket.token).is_ok());
-        let ticket = store
-            .issue_editor("owner", "agent", "incarnation", "window")
-            .unwrap();
-        store
-            .revoke_preview_lease("owner", "agent", &ticket.id, &ticket.token)
-            .unwrap();
-        assert!(store.consume_preview(&ticket.token).is_err());
-    }
-
-    #[test]
-    fn tickets_are_single_use_and_scope_preserving() {
-        let store =
-            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
-        let issued = store
-            .issue_terminal("owner", "agent", "terminal")
-            .expect("ticket");
-        let ticket = store.consume(&issued.token).expect("consume");
-        assert!(matches!(
-            ticket.scope,
-            TicketScope::Terminal { ref terminal_id } if terminal_id == "terminal"
-        ));
-        assert!(store.consume(&issued.token).is_err());
-        assert_eq!(issued.token.split('.').count(), 2);
-        assert!(!issued.url.contains(&issued.token));
-        assert_eq!(issued.url, "wss://tengri.example/v1/terminal/ws");
-    }
-
-    #[test]
-    fn localhost_terminal_tickets_use_plain_websockets() {
-        let store =
-            TicketStore::new("http://localhost:8080".to_owned(), "s".repeat(32)).expect("store");
-        let issued = store
-            .issue_terminal("owner", "agent", "terminal")
-            .expect("ticket");
-
-        assert_eq!(issued.url, "ws://localhost:8080/v1/terminal/ws");
-    }
-
-    #[test]
-    fn localhost_http_exception_requires_an_exact_hostname() {
-        for invalid in [
-            "http://localhost.attacker.example",
-            "http://127.0.0.1:8080",
-            "http://[::1]:8080",
-            "https://tengri.example/base",
-            "https://tengri.example/?query=1",
+        let renewed = store.consume_preview(&next.token).await.unwrap();
+        assert_eq!(original.id, renewed.id);
+        assert_eq!(renewed.port, BROWSER_PORT);
+        assert_ne!(original.token, renewed.token);
+        assert_eq!(original.lease_id, renewed.lease_id);
+        store.require_preview_lease(&original).await.unwrap();
+        for field in [
+            "session",
+            "grant",
+            "workspace",
+            "runtime",
+            "origin",
+            "permission",
+            "recovery",
+            "port",
+            "owner",
+            "actor",
         ] {
+            let mut foreign = original.clone();
+            match field {
+                "session" => foreign.principal.context.session_id = Uuid::new_v4().to_string(),
+                "grant" => foreign.principal.context.grant_id = Uuid::new_v4().to_string(),
+                "workspace" => foreign.principal.context.workspace_uid = Uuid::new_v4().to_string(),
+                "runtime" => foreign.principal.context.runtime_epoch = Uuid::new_v4().to_string(),
+                "origin" => foreign.principal.context.origin = "https://other.example".into(),
+                "permission" => foreign.principal.action = Action::EditorOpen,
+                "recovery" => foreign.principal.recovery_generation += 1,
+                "port" => foreign.port += 1,
+                "owner" => foreign.principal.owner_hash = "b".repeat(64),
+                "actor" => {
+                    foreign.principal.context.actor.as_mut().unwrap().identity =
+                        Some(ofz::proto::actor::Identity::HumanId("b".repeat(64)))
+                }
+                _ => unreachable!(),
+            }
             assert!(
-                TicketStore::new(invalid.to_owned(), "s".repeat(32)).is_err(),
-                "accepted invalid public URL {invalid}",
+                store.require_preview_lease(&foreign).await.is_err(),
+                "changed {field} must fence a connection"
             );
         }
-    }
-
-    #[test]
-    fn removing_an_agent_revokes_terminal_and_preview_capabilities() {
-        let store =
-            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
-        let terminal = store
-            .issue_terminal("owner", "agent-a", "terminal")
-            .expect("terminal ticket");
-        let preview = store
-            .issue_preview("owner", "agent-a", 3000, "/", "")
-            .expect("preview ticket");
-        let other = store
-            .issue_terminal("owner", "agent-b", "terminal")
-            .expect("other ticket");
-
-        store.remove_agent("agent-a").expect("revoke agent");
-
-        assert!(store.consume(&terminal.token).is_err());
-        assert!(store.consume(&preview.token).is_err());
-        assert!(store.consume(&other.token).is_ok());
-    }
-
-    #[test]
-    fn preview_session_ids_are_dns_safe() {
-        let store =
-            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
-        let ticket = store
-            .issue_preview(
-                &"a".repeat(64),
-                "agent",
-                3000,
-                "/dashboard?mode=dev",
-                "#editor",
-            )
-            .expect("preview ticket");
-        let launch = reqwest::Url::parse(&ticket.url).expect("preview launch URL");
-        assert_eq!(launch.query(), None);
-        assert_eq!(launch.fragment(), Some(ticket.token.as_str()));
-        let session = store
-            .consume_preview(&ticket.token)
-            .expect("preview session");
-        assert_eq!(session.id, ticket.id);
-        assert_eq!(session.id.len(), 24);
-        assert_eq!(session.initial_path, "/dashboard?mode=dev");
-        assert_eq!(session.initial_fragment, "#editor");
         assert!(
-            session
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            store
+                .preview_session(&original.id, &original.token)
+                .await
+                .is_err()
         );
-    }
-
-    #[test]
-    fn preview_revocation_is_owner_scoped_and_clears_pending_and_active_sessions() {
-        let owner = "a".repeat(64);
-        let store =
-            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
-        let pending = store
-            .issue_preview(&owner, "agent", 3000, "/pending", "")
-            .expect("pending preview");
-        store
-            .revoke_preview("different-owner", "agent", &pending.id)
-            .expect("wrong-owner revoke is idempotent");
-        let pending_session = store
-            .consume_preview(&pending.token)
-            .expect("wrong owner did not revoke preview");
-        store
-            .revoke_preview(&owner, "agent", &pending_session.id)
-            .expect("clean up wrong-owner proof");
-
-        let active = store
-            .issue_preview(&owner, "agent", 3000, "/active", "")
-            .expect("active preview");
-        let session = store
-            .consume_preview(&active.token)
-            .expect("create active preview");
-        assert_eq!(store.stats().expect("stats").previews, 1);
-        store
-            .revoke_preview(&owner, "agent", &session.id)
-            .expect("revoke active preview");
-        assert_eq!(store.stats().expect("stats").previews, 0);
-        assert!(store.preview_session(&session.id, &session.token).is_err());
-
-        let pending = store
-            .issue_preview(&owner, "agent", 3000, "/pending-again", "")
-            .expect("pending preview again");
-        store
-            .revoke_preview(&owner, "agent", &pending.id)
-            .expect("revoke pending preview");
-        assert!(store.consume_preview(&pending.token).is_err());
-    }
-
-    #[test]
-    fn preview_revocation_cannot_race_between_ticket_consumption_and_session_creation() {
-        use std::sync::Barrier;
-
-        let owner = "a".repeat(64);
-        let store =
-            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
-        for _ in 0..100 {
-            let issued = store
-                .issue_preview(&owner, "agent", 3000, "/race", "")
-                .expect("preview ticket");
-            let barrier = Arc::new(Barrier::new(3));
-            let consumed = std::thread::scope(|scope| {
-                let consume_store = store.clone();
-                let consume_barrier = barrier.clone();
-                let token = issued.token.clone();
-                let consume = scope.spawn(move || {
-                    consume_barrier.wait();
-                    consume_store.consume_preview(&token)
-                });
-                let revoke_store = store.clone();
-                let revoke_barrier = barrier.clone();
-                let session_id = issued.id.clone();
-                let owner = owner.clone();
-                let revoke = scope.spawn(move || {
-                    revoke_barrier.wait();
-                    revoke_store.revoke_preview(&owner, "agent", &session_id)
-                });
-                barrier.wait();
-                let consumed = consume.join().expect("consume thread");
-                revoke
-                    .join()
-                    .expect("revoke thread")
-                    .expect("revoke preview");
-                consumed
-            });
-            if let Ok(session) = consumed {
-                assert!(store.preview_session(&session.id, &session.token).is_err());
-            }
-            assert_eq!(store.stats().expect("stats").previews, 0);
-        }
-    }
-
-    #[test]
-    fn ticket_and_preview_session_state_is_bounded_per_agent() {
-        let store =
-            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
-        for index in 0..PENDING_TICKET_LIMIT_PER_AGENT {
-            store
-                .issue_terminal("owner", "agent", &format!("terminal-{index}"))
-                .expect("ticket within limit");
-        }
-        let error = store
-            .issue_terminal("owner", "agent", "one-too-many")
-            .expect_err("pending ticket limit");
-        assert_eq!(error.code(), tonic::Code::ResourceExhausted);
         assert!(
             store
-                .issue_terminal("owner", "other-agent", "terminal")
+                .preview_session(&renewed.id, &renewed.token)
+                .await
                 .is_ok()
         );
+        store
+            .revoke_preview_lease(&owner, "agent", &renewed.id, &first.token)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .preview_session(&renewed.id, &renewed.token)
+                .await
+                .is_ok()
+        );
+        let mut editor_owner = owner.clone();
+        editor_owner.action = Action::EditorOpen;
+        let editor = store
+            .issue_editor(&editor_owner, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        let other_window = store
+            .issue_browser(&owner, "agent", "desktop-window-02")
+            .await
+            .unwrap();
+        let mut other_session = owner.clone();
+        other_session.context.session_id = Uuid::new_v4().to_string();
+        let other_login = store
+            .issue_browser(&other_session, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        assert_ne!(renewed.id, editor.id);
+        assert_ne!(renewed.id, other_window.id);
+        assert_ne!(renewed.id, other_login.id);
+        store
+            .revoke_preview_lease(&owner, "agent", &renewed.id, &next.token)
+            .await
+            .unwrap();
+        assert!(store.require_preview_lease(&original).await.is_err());
+        let reopened = store
+            .issue_browser(&owner, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        let reopened = store.consume_preview(&reopened.token).await.unwrap();
+        assert_eq!(reopened.id, original.id);
+        assert_ne!(reopened.lease_id, original.lease_id);
+        assert!(
+            store.require_preview_lease(&original).await.is_err(),
+            "reopening a revoked lease must not revive its old connection"
+        );
+        store.require_preview_lease(&reopened).await.unwrap();
 
-        let previews = TicketStore::new(
-            "https://tengri.example".to_owned(),
-            "different-signing-secret-1234567890".to_owned(),
-        )
-        .expect("preview store");
-        for _ in 0..PREVIEW_SESSION_LIMIT_PER_AGENT {
-            let issued = previews
-                .issue_preview(&"a".repeat(64), "agent", 3000, "/", "")
-                .expect("preview ticket");
-            previews
-                .consume_preview(&issued.token)
-                .expect("preview within limit");
+        assert!(
+            store
+                .preview_session(&renewed.id, &renewed.token)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_pending_reservations_do_not_block_other_slots() {
+        let database = Arc::new(Database::shared_fixture().await);
+        let store =
+            TicketStore::new("https://tengri.proompteng.ai".into(), database.clone()).unwrap();
+        let mut client = database.connection().await.unwrap();
+        client
+            .batch_execute("DELETE FROM tengri.tickets; DELETE FROM tengri.previews")
+            .await
+            .unwrap();
+        let owner = Principal::fixture(
+            &"a".repeat(64),
+            &Uuid::new_v4().to_string(),
+            Action::EditorOpen,
+        );
+        let uid = Uuid::parse_str(&owner.context.workspace_uid).unwrap();
+        let tx = client.transaction().await.unwrap();
+        let reserved_ticket = CapabilityTable::Tickets.allocate(&tx, uid).await.unwrap();
+        let reserved_preview = CapabilityTable::Previews.allocate(&tx, uid).await.unwrap();
+        let started = tokio::time::Instant::now();
+        let outcome = async {
+            let ticket = tokio::time::timeout(
+                Duration::from_secs(2),
+                store.issue_editor(&owner, "agent", "code"),
+            )
+            .await
+            .map_err(|_| {
+                Status::deadline_exceeded("ticket allocation waited for another reservation")
+            })??;
+            let reader = database.connection().await?;
+            let row = reader
+                .query_one(
+                    "SELECT capacity_slot,workspace_slot FROM tengri.tickets",
+                    &[],
+                )
+                .await
+                .map_err(sql_error)?;
+            assert_ne!(reserved_ticket.0, row.get::<_, i16>(0));
+            assert_ne!(reserved_ticket.1, row.get::<_, i16>(1));
+            let preview =
+                tokio::time::timeout(Duration::from_secs(2), store.consume_preview(&ticket.token))
+                    .await
+                    .map_err(|_| {
+                        Status::deadline_exceeded(
+                            "preview allocation waited for another reservation",
+                        )
+                    })??;
+            let row = reader
+                .query_one(
+                    "SELECT capacity_slot,workspace_slot FROM tengri.previews WHERE id=$1",
+                    &[&preview.id],
+                )
+                .await
+                .map_err(sql_error)?;
+            assert_ne!(reserved_preview.0, row.get::<_, i16>(0));
+            assert_ne!(reserved_preview.1, row.get::<_, i16>(1));
+            Ok::<_, Status>(())
         }
-        let issued = previews
-            .issue_preview(&"a".repeat(64), "agent", 3000, "/", "")
-            .expect("overflow preview ticket");
-        let error = previews
-            .consume_preview(&issued.token)
-            .expect_err("preview session limit");
-        assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+        .await;
+        eprintln!(
+            "independent ticket and preview round trip completed in {:?}",
+            started.elapsed()
+        );
+        tx.rollback().await.unwrap();
+        assert!(
+            matches!(outcome, Ok(())),
+            "independent reservations must proceed before another commit: {outcome:?}"
+        );
     }
 }

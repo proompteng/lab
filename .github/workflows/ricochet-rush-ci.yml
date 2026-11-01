@@ -8,14 +8,12 @@ on:
     paths:
       - apps/ricochet-rush/**
       - .github/workflows/ricochet-rush-ci.yml
-      - .github/ci/impact-map.yml
   push:
     branches:
       - main
     paths:
       - apps/ricochet-rush/**
       - .github/workflows/ricochet-rush-ci.yml
-      - .github/ci/impact-map.yml
   workflow_dispatch:
 
 concurrency:

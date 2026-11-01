@@ -6,7 +6,8 @@ This directory is the repository source for the existing three-node Talos/Kubern
 - **kubectl context**: `galactic-lan`
 - **desired Talos**: `v1.14.0`
 - **desired Kubernetes**: `v1.37.0`
-- **Kubernetes API endpoint**: NUC HAProxy on `https://nuc:6443`
+- **Kubernetes API access**: use `galactic-lan` or `galactic-tailscale` through Ryzen; the
+  [access runbook](../../docs/runbooks/galactic-kubernetes-access.md) owns the current endpoints.
 
 The Elauwit provider LAN uses the following Talos API addresses. These are local-network endpoints even though they
 are in `100.100.244.0/24`; do not replace them with Tailscale addresses:
@@ -25,6 +26,8 @@ They are not current cluster instructions; follow `docs/repository-cleanup-todo.
 
 Runbooks:
 
+- [Ryzen compute/local-storage placement](scheduling/README.md) (Ceph service exception, client migration, and AMD64 CI scratch)
+- [Hardware and network upgrade plan](docs/hardware-network-upgrade-plan.md) (received 100G parts, installation order, and Ceph migration gate)
 - `devices/galactic/releases/README.md` (Talos 1.14 and Kubernetes 1.37 rollout)
 - `devices/galactic/docs/add-control-plane-node.md`
 - `devices/galactic/docs/bootstrap-argocd.md`
@@ -36,7 +39,6 @@ Runbooks:
 
 Related:
 
-- NUC HAProxy config: `devices/nuc/k8s-api-lb/README.md`
 - Ryzen bootstrap: `devices/ryzen/docs/cluster-bootstrap.md`
 - Ampone join: `devices/ampone/docs/cluster-bootstrap.md`
 - Altra join: `devices/altra/docs/cluster-bootstrap.md`

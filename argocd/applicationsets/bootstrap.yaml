@@ -4,6 +4,10 @@ metadata:
   name: bootstrap
   namespace: argocd
 spec:
+  preservedFields:
+    annotations:
+      - argocd.argoproj.io/skip-reconcile
+      - storage.proompteng.ai/ceph-remount-owner
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
@@ -74,6 +78,14 @@ spec:
                       nameRegex: '.*cert-manager.io'
                       jqPathExpressions:
                         - .spec.caBundle
+                - name: multus
+                  path: argocd/applications/multus
+                  namespace: kube-system
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-2"
+                  renderWithLovely: false
+                  automation: auto
+                  enabled: "true"
                 - name: rook-ceph
                   path: argocd/applications/rook-ceph
                   namespace: rook-ceph
@@ -84,6 +96,30 @@ spec:
                   ignoreDifferences:
                     - kind: Secret
                       name: rook-ceph-object-user-objectstore-loki
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
+                        - /metadata/labels
+                        - /metadata/ownerReferences
+                        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                    - kind: Secret
+                      name: rook-ceph-object-user-objectstore-bayn-research-capture
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
+                        - /metadata/labels
+                        - /metadata/ownerReferences
+                        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                    - kind: Secret
+                      name: bayn-research-captures
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
+                        - /metadata/labels
+                        - /metadata/ownerReferences
+                        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                    - kind: ConfigMap
+                      name: bayn-research-captures
                       namespace: rook-ceph
                       jsonPointers:
                         - /data

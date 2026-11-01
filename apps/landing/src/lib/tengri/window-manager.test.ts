@@ -11,7 +11,7 @@ describe('Tengri desktop window manager', () => {
   test('clicking the active window preserves state while focusing another window raises it once', () => {
     const state = initialWindowState(viewport)
     expect(windowReducer(state, { type: 'focus', id: state.activeWindowId })).toBe(state)
-    expect(windowReducer(state, { type: 'open', app: 'chrome', title: 'Chrome', viewport })).toBe(state)
+    expect(windowReducer(state, { type: 'open', app: 'tengri', title: 'Tengri', viewport })).toBe(state)
 
     const focused = windowReducer(state, { type: 'focus', id: 'finder-1' })
     expect(focused.activeWindowId).toBe('finder-1')
@@ -22,8 +22,8 @@ describe('Tengri desktop window manager', () => {
 
   test('boots with Finder behind frontmost Chrome', () => {
     const state = initialWindowState(viewport)
-    expect(state.windows.map((window) => window.app)).toEqual(['finder', 'chrome'])
-    expect(state.activeApp).toBe('chrome')
+    expect(state.windows.map((window) => window.app)).toEqual(['finder', 'tengri'])
+    expect(state.activeApp).toBe('tengri')
   })
 
   test('preserves zoom and normal geometry through minimize, hydration, and app switching', () => {
@@ -34,7 +34,7 @@ describe('Tengri desktop window manager', () => {
     const zoomedBounds = state.windows.find((window) => window.id === id)!.bounds
     state = windowReducer(state, { type: 'minimize', id })
     state = windowReducer(state, { type: 'hydrate', state, viewport })
-    state = windowReducer(state, { type: 'open', app: 'chrome', title: 'Chrome', viewport })
+    state = windowReducer(state, { type: 'open', app: 'tengri', title: 'Tengri', viewport })
     expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'maximized', bounds: zoomedBounds })
     state = windowReducer(state, { type: 'focus', id: 'finder-1' })
     state = windowReducer(state, { type: 'restore', id, viewport })
@@ -50,7 +50,7 @@ describe('Tengri desktop window manager', () => {
     const focused = windowReducer(state, { type: 'focus', id: 'finder-1' })
     expect(focused).not.toBe(state)
     const finder = focused.windows.find((window) => window.id === 'finder-1')!
-    const chrome = focused.windows.find((window) => window.app === 'chrome')!
+    const chrome = focused.windows.find((window) => window.app === 'tengri')!
     expect(finder.z).toBeGreaterThan(chrome.z)
     expect(windowReducer(focused, { type: 'focus', id: 'finder-1' })).toBe(focused)
   })
@@ -197,7 +197,7 @@ describe('Tengri desktop window manager', () => {
     const fullViewport = { x: 0, y: 0, width: 1440, height: 900 }
     const usableViewport = { x: 0, y: 0, width: 1440, height: 774 }
     const base = initialWindowState(fullViewport)
-    const chrome = base.windows.find((window) => window.app === 'chrome')!
+    const chrome = base.windows.find((window) => window.app === 'tengri')!
     const oldBounds = { x: 300, y: 149, width: 1060, height: 700 }
     const persisted = {
       ...base,
@@ -226,7 +226,7 @@ describe('Tengri desktop window manager', () => {
     const fullViewport = { x: 0, y: 0, width: 1440, height: 900 }
     const usableViewport = { x: 0, y: 0, width: 1440, height: 774 }
     const base = initialWindowState(fullViewport)
-    const chrome = base.windows.find((window) => window.app === 'chrome')!
+    const chrome = base.windows.find((window) => window.app === 'tengri')!
     const oldBounds = { x: 300, y: 149, width: 1060, height: 700 }
     const maximized = {
       ...base,
@@ -257,7 +257,7 @@ describe('Tengri desktop window manager', () => {
   test('hydrates an intentionally empty desktop with Finder as the frontmost application', () => {
     const empty = {
       ...initialWindowState(viewport),
-      activeApp: 'chrome' as const,
+      activeApp: 'tengri' as const,
       activeWindowId: '',
       windows: [],
     }
@@ -362,9 +362,9 @@ describe('Tengri desktop window manager', () => {
       { x: 0, y: 0, width: 1_440, height: 774 },
       { x: 0, y: 0, width: 390, height: 424 },
     ]) {
-      let state = initialWindowState(usableViewport, ['finder', 'chrome', 'code', 'terminal', 'settings'])
+      let state = initialWindowState(usableViewport, ['finder', 'tengri', 'code', 'terminal', 'settings'])
       for (let index = 0; index < 6; index += 1) {
-        state = windowReducer(state, { type: 'new', app: 'chrome', title: 'Chrome', viewport: usableViewport })
+        state = windowReducer(state, { type: 'new', app: 'tengri', title: 'Tengri', viewport: usableViewport })
       }
 
       expect(state.windows.every((window) => isInsideViewport(window.bounds, usableViewport))).toBe(true)

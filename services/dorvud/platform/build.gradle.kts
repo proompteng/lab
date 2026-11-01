@@ -26,8 +26,12 @@ dependencies {
   implementation("com.typesafe:config:1.4.3")
   implementation("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
   implementation("ch.qos.logback:logback-classic:$logbackVersion")
+  implementation("io.sentry:sentry:8.61.0")
+  compileOnly("org.apache.logging.log4j:log4j-core:2.24.3")
+  annotationProcessor("org.apache.logging.log4j:log4j-core:2.24.3")
 
   testImplementation("io.mockk:mockk:1.13.12")
+  testImplementation("org.apache.logging.log4j:log4j-core:2.24.3")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
@@ -36,4 +40,19 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 
 tasks.withType<JavaCompile> {
   options.release.set(21)
+}
+
+tasks.register<Jar>("glitchtipJar") {
+  archiveFileName.set("dorvud-glitchtip.jar")
+  duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+  from(sourceSets.main.get().output) {
+    include("ai/proompteng/dorvud/platform/observability/**")
+    include("META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat")
+  }
+  from({
+    configurations.runtimeClasspath
+      .get()
+      .filter { it.name == "sentry-8.61.0.jar" }
+      .map { zipTree(it) }
+  })
 }

@@ -2,26 +2,30 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
-
+import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result } from 'effect'
+import * as Reactivity from 'effect/reactivity/Reactivity'
 import {
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-} from '../index'
+} from '../construction'
 import { PostgresClientLive } from '../../db/postgres-client'
+import { runDatabase } from '../../db/database-error'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
+import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
+import { defaultJevProtocolDocument } from '../../jev/protocol'
+import { makeIntradayCycleDraft } from '../runner/calendar-decisions'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
-import { CycleObservability, CycleObservabilityLive, CycleStore, CycleStoreLive } from '.'
+import { CycleObservability, CycleObservabilityLive } from './observability'
+import { CycleStore } from './model'
+import { CycleStoreLive } from './postgres'
 
-const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const qualificationRunId = '1'.repeat(64)
@@ -40,6 +44,90 @@ const config = {
   postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
 }
 
+describePostgres('PostgreSQL operation diagnostics', () => {
+  test('identifies a real lock wait and emits its named operation without parameters', async () => {
+    const logs: Readonly<Record<string, unknown>>[] = []
+    const diagnosticUrl = new URL(testUrl)
+    diagnosticUrl.searchParams.set(
+      'options',
+      '-c log_lock_waits=on -c deadlock_timeout=1s -c log_min_duration_statement=1000ms -c log_parameter_max_length=0 -c log_parameter_max_length_on_error=0 -c statement_timeout=5000',
+    )
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const blocker = yield* PgClient.make({
+          url: Redacted.make(diagnosticUrl.toString()),
+          applicationName: 'bayn-diagnostics-holder',
+          maxConnections: 1,
+        })
+        const waiter = yield* PgClient.make({
+          url: Redacted.make(diagnosticUrl.toString()),
+          applicationName: 'bayn-diagnostics-waiter',
+          maxConnections: 1,
+        })
+        const observer = yield* PgClient.make({
+          url: Redacted.make(testUrl),
+          applicationName: 'bayn-diagnostics-observer',
+          maxConnections: 1,
+        })
+        const settings = yield* waiter<
+          Record<string, string>
+        >`SELECT current_setting('log_lock_waits') AS locks, current_setting('log_parameter_max_length') AS parameters, current_setting('log_parameter_max_length_on_error') AS error_parameters`
+        expect(settings[0]).toEqual({ locks: 'on', parameters: '0', error_parameters: '0' })
+        const [{ pid: waiterPid }] = yield* waiter<{ pid: number }>`SELECT pg_backend_pid() AS pid`
+        const acquired = yield* Deferred.make<number>()
+        const release = yield* Deferred.make<void>()
+        const lock = 1643955326
+        const holding = yield* blocker
+          .withTransaction(
+            Effect.gen(function* () {
+              const [{ pid }] = yield* blocker<{
+                pid: number
+              }>`SELECT pg_backend_pid() AS pid, pg_advisory_xact_lock(${lock})`
+              yield* Deferred.succeed(acquired, pid)
+              yield* Deferred.await(release)
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        const blockerPid = yield* Deferred.await(acquired)
+        const privateParameter = 'diagnostic-private-parameter'
+        const waiting = yield* runDatabase(
+          'diagnostic-lock-wait',
+          waiter.withTransaction(waiter`SELECT pg_advisory_xact_lock(${lock}), ${privateParameter}::text AS marker`),
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        let observed = false
+        for (let attempt = 0; attempt < 100 && !observed; attempt++) {
+          const rows = yield* observer<{
+            event: string | null
+            blockers: number[]
+          }>`SELECT wait_event_type AS event, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE pid=${waiterPid}`
+          observed = rows[0]?.event === 'Lock' && rows[0].blockers.includes(blockerPid)
+          if (!observed) yield* Effect.sleep('10 millis')
+        }
+        expect(observed).toBe(true)
+        yield* Effect.sleep('1100 millis')
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(holding)
+        yield* Fiber.join(waiting)
+        expect(logs).toContainEqual(
+          expect.objectContaining({
+            operation: 'diagnostic-lock-wait',
+            dependency: 'postgresql',
+            outcome: 'succeeded',
+          }),
+        )
+        expect(JSON.stringify(logs)).not.toContain(privateParameter)
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Logger.layer([Logger.make(({ fiber }) => logs.push(fiber.getRef(References.CurrentLogAnnotations)))]),
+        ),
+        Effect.provide(Reactivity.layer),
+        Effect.timeout('10 seconds'),
+      ),
+    )
+  }, 15000)
+})
+
 const value = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
@@ -48,7 +136,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 const draft = () => {
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date: sessionDate,
       openAt: '2026-08-28T13:30:00.000Z',
@@ -58,10 +146,11 @@ const draft = () => {
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-      strategyName: 'intraday-momentum',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: 'jev',
       qualificationRunId,
-      strategyProtocolHash: canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
+      strategyProtocolHash: Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', version: 1 })),
       accountId,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
@@ -71,7 +160,6 @@ const draft = () => {
     }),
   )
   const candidate = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, executionPolicy))))
-  if (!isIntradayCycleDraft(candidate)) throw new Error('expected the active intraday cycle contract')
   return candidate
 }
 
@@ -115,12 +203,12 @@ const seedSafetyState = Effect.gen(function* () {
       content_hash, status, discrepancies, reconciled_at
     ) VALUES (
       ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
-      ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+      ${reconciliationHash}, 'EXACT', ${sql.json([])}, ${reconciledAt}
     )
   `
 })
 
-const seedUnresolvedMutation = (cycleId: string) =>
+const seedUnresolvedMutation = (cycleId: string, startedAt = '2026-08-28T14:32:00.000Z') =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const intentId = '6'.repeat(64)
@@ -128,11 +216,11 @@ const seedUnresolvedMutation = (cycleId: string) =>
       INSERT INTO intents (
         intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
         decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-        quantity_micros, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
+        quantity_atoms, notional_limit_micros, limit_price_micros, state, terminal_outcome, state_version, created_at, updated_at
       ) VALUES (
-        ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
+        ${intentId}, 'bayn.execution-intent.v5', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
         ${'7'.repeat(64)}, ${'8'.repeat(64)}, ${accountId}, 'bayn-observability-unresolved', 'SPY', 'BUY',
-        'LIMIT', 'IOC', 1000000, 1000000, 'PLANNED', NULL, 1,
+        'LIMIT', 'DAY', 1000000, 1000000, 1000000000, 'PLANNED', NULL, 1,
         '2026-08-28T14:32:00.000Z', '2026-08-28T14:32:00.000Z'
       )
     `
@@ -144,7 +232,7 @@ const seedUnresolvedMutation = (cycleId: string) =>
       ) VALUES (
         ${'9'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'a'.repeat(64)}, ${intentId}, 1,
         'SUBMIT', 'SUBMIT_STARTED', ${'b'.repeat(64)}, 1000, NULL, NULL, NULL, NULL,
-        '2026-08-28T14:32:00.000Z'
+        ${startedAt}
       )
     `
   })
@@ -177,7 +265,7 @@ const seedAccountSnapshots = (
               event_id, account_id, schema_version, status, currency,
               cash_micros, equity_micros, buying_power_micros
             ) VALUES (
-              ${snapshot.eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+              ${snapshot.eventId}, ${accountId}, 'bayn.paper-account-snapshot.v2', 'ACTIVE', 'USD',
               ${snapshot.cashMicros}, ${snapshot.cashMicros}, ${snapshot.cashMicros}
             )
           `
@@ -228,6 +316,40 @@ describePostgres('PostgreSQL intraday observability projection', () => {
     await runtime?.dispose()
   })
 
+  test('projects the persisted continuous calendar for a native crypto admission', async () => {
+    const window = value(
+      tradingWindow(continuousMarketHours, activatedAt, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
+    )
+    if (window === null) throw new Error('Expected continuous admission')
+    const executionPolicy = value(makeCycleExecutionPolicyFromModel(defaultJevProtocolDocument.executionModel))
+    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+      throw new Error('Expected native policy')
+    const candidate = value(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: qualificationRunId,
+          strategyName: 'jev',
+          strategyProtocolHash: '6'.repeat(64),
+          accountId,
+          executionPolicy,
+        },
+        continuousMarketHours,
+        window,
+      ),
+    )
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* CycleStore).acquire(candidate, activatedAt)
+        return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+      }),
+    )
+    expect(projection.current).toMatchObject({
+      cycleId: candidate.identity.cycleId,
+      executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
+      submissionOpenAt: activatedAt,
+    })
+  })
+
   test('projects the active intraday cycle with exact safety and zero execution facts', async () => {
     const candidate = draft()
     const projection = await runtime.runPromise(
@@ -266,6 +388,198 @@ describePostgres('PostgreSQL intraday observability projection', () => {
       fillCount: 0,
       transactionCount: 0,
       netRealizedPnlAfterExecutionFeesMicros: '0',
+    })
+  })
+
+  test.each([
+    {
+      label: 'unsupported setup',
+      rejections: { 'BTC/USD': 'MODEL_SETUP_UNSUPPORTED' },
+      expected: 'JEV_MODEL_ABSTAINED',
+    },
+    { label: 'wait', rejections: { 'BTC/USD': 'MODEL_WAIT' }, expected: 'JEV_MODEL_ABSTAINED' },
+    { label: 'avoid', rejections: { 'BTC/USD': 'MODEL_AVOID' }, expected: 'JEV_MODEL_ABSTAINED' },
+    {
+      label: 'funded setup abstention mixed with unfunded candidates',
+      rejections: { 'BTC/USD': 'MODEL_SETUP_UNSUPPORTED', 'ETH/USD': 'NO_FUNDED_CANDIDATES' },
+      expected: 'JEV_MODEL_ABSTAINED',
+    },
+    {
+      label: 'wait mixed with unfunded candidates',
+      rejections: { 'BTC/USD': 'MODEL_WAIT', 'ETH/USD': 'NO_FUNDED_CANDIDATES' },
+      expected: 'JEV_MODEL_ABSTAINED',
+    },
+    {
+      label: 'only genuinely unfunded candidates',
+      rejections: { 'BTC/USD': 'NO_FUNDED_CANDIDATES', 'ETH/USD': 'NO_FUNDED_CANDIDATES' },
+      expected: 'JEV_NO_FUNDED_CANDIDATES',
+    },
+    { label: 'unknown rejection', rejections: { 'BTC/USD': 'FUTURE_REJECTION' }, expected: null },
+    { label: 'null rejection', rejections: { 'BTC/USD': null }, expected: null },
+    {
+      label: 'unknown rejection mixed with known abstention',
+      rejections: { 'BTC/USD': 'FUTURE_REJECTION', 'ETH/USD': 'MODEL_WAIT' },
+      expected: null,
+    },
+    { label: 'no entry rejections', rejections: {}, expected: 'TARGETS_SATISFIED' },
+  ])('reports the retained no-trade reason honestly: $label', async ({ rejections, expected }) => {
+    const candidate = draft()
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CycleStore).acquire(candidate, acquiredAt)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Exercise the full production status reader with isolated retained-document projections.
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text, created_at timestamptz, document jsonb
+            ) ON COMMIT DROP`
+            const document = {
+              targetPlan: { status: 'NO_TRADE', reason: 'TARGETS_SATISFIED', targets: [] },
+              strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v7', entryPlanRejections: rejections },
+              orderedIntentIds: [],
+              dispatchable: false,
+            }
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
+              ${candidate.identity.cycleId}, ${activatedAt}, ${sql.json(document)}
+            )`
+            const projection = yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+            expect(projection.execution).toMatchObject({
+              decision: {
+                targetPlanStatus: 'NO_TRADE',
+                targetPlanReason: expected,
+                targetCount: 0,
+                dispatchable: false,
+              },
+              intentCount: 0,
+              orderCount: 0,
+              fillCount: 0,
+            })
+            const retained = yield* sql<{ document: unknown }>`SELECT document FROM autonomous_cycle_shadow_decisions`
+            expect(retained[0]?.document).toEqual(document)
+          }),
+        )
+      }),
+    )
+  })
+
+  test.each([
+    {
+      accepted: true,
+      fillAt: '2026-08-28T14:32:00.800000000Z',
+      brokerFillLatency: 800,
+      ingestionLatency: 1200,
+      regressions: 0,
+    },
+    {
+      accepted: false,
+      fillAt: '2026-08-28T14:32:00.800000000Z',
+      brokerFillLatency: 800,
+      ingestionLatency: 1200,
+      regressions: 0,
+    },
+    {
+      accepted: true,
+      fillAt: '2026-08-28T14:32:02.500000000Z',
+      brokerFillLatency: 2500,
+      ingestionLatency: null,
+      regressions: 1,
+    },
+  ])(
+    'separates submit acceptance, broker-fill time, ingestion, and clock regressions (%j)',
+    async ({ accepted, fillAt, brokerFillLatency, ingestionLatency, regressions }) => {
+      const candidate = draft()
+      const projection = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const store = yield* CycleStore
+          yield* store.acquire(candidate, acquiredAt)
+          yield* store.activate(candidate.identity.cycleId, activatedAt)
+          yield* seedSafetyState
+          yield* seedUnresolvedMutation(candidate.identity.cycleId, '2026-08-28T14:32:00.100Z')
+          if (accepted)
+            yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+          request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+          response_content_hash, occurred_at
+        ) VALUES (
+          ${'d'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'a'.repeat(64)}, ${'6'.repeat(64)}, 2,
+          'SUBMIT', 'SUBMIT_ACCEPTED', ${'b'.repeat(64)}, 1000, 'latency-order', 'latency-request', 200,
+          ${'c'.repeat(64)}, '2026-08-28T14:32:00.350Z'
+        )`
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES
+            (${'e'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'e'.repeat(64)}, 'ORDER', 'ALPACA', ${accountId},
+              'latency-order-observed', 1, '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
+            (${'f'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'f'.repeat(64)}, 'FILL', 'ALPACA', ${accountId},
+              'latency-fill-observed', 2, '2026-08-28T14:32:00.800Z', '2026-08-28T14:32:02.000Z')`
+              yield* sql`
+          INSERT INTO orders (
+            event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
+            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status
+          ) VALUES (
+            ${'e'.repeat(64)}, ${accountId}, 'bayn.order.v3', 'latency-order', 'bayn-observability-unresolved',
+            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED'
+          )`
+              yield* sql`
+          INSERT INTO fills (
+            event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
+            symbol, side, quantity_atoms, price_atoms, fee_micros, source_timestamp
+          ) VALUES (
+            ${'f'.repeat(64)}, ${accountId}, 'bayn.fill.v2', 'latency-fill', 'latency-order',
+            'bayn-observability-unresolved', ${'6'.repeat(64)}, 'SPY', 'BUY', 500000, 1000000, 0,
+            ${fillAt}
+          )`
+            }),
+          )
+          return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+        }),
+      )
+      expect(projection.execution).toMatchObject({
+        maximumIntentToSubmitLatencyMs: 100,
+        maximumOrderAcknowledgementLatencyMs: accepted ? 250 : null,
+        maximumOrderObservationLatencyMs: 1500,
+        maximumIntentToBrokerFillLatencyMs: brokerFillLatency,
+        maximumFillLatencyMs: 2000,
+        maximumFillIngestionLatencyMs: ingestionLatency,
+        latencyClockRegressionCount: regressions,
+      })
+    },
+  )
+
+  test('includes posted broker fees and refunds in account economics without mixing accounts or future posts', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft(), acquiredAt)
+        yield* seedSafetyState
+        const sql = yield* PgClient.PgClient
+        for (const fee of [
+          { id: 'fee', account: accountId, net: '-230000', posted: reconciledAt },
+          { id: 'refund', account: accountId, net: '10000', posted: reconciledAt },
+          { id: 'pending', account: accountId, net: '-900000', posted: null },
+          { id: 'future', account: accountId, net: '-900000', posted: '2999-01-01T00:00:00.000Z' },
+          { id: 'other', account: 'other-account', net: '-900000', posted: reconciledAt },
+        ]) {
+          const data = { accountId: fee.account, activityId: fee.id, date: sessionDate, netAmountMicros: fee.net }
+          yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at,posted_at)
+          VALUES (${fee.account},${fee.id},${sessionDate},${fee.net},${sql.json(data)},${sql.json({ requestId: 'fee-read', status: 200, contentHash: stateHash, observedAt: reconciledAt })},${stateHash},${stateHash},1,1,${reconciledAt},${fee.posted})`
+        }
+        return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+      }),
+    )
+    expect(projection.economics?.accounting).toMatchObject({
+      fillCount: 0,
+      transactionCount: 0,
+      grossRealizedPnlMicros: '0',
+      executionFeesMicros: '220000',
+      netRealizedPnlAfterExecutionFeesMicros: '-220000',
     })
   })
 
@@ -478,7 +792,7 @@ describePostgres('PostgreSQL intraday observability projection', () => {
                   event_id, account_id, schema_version, status, currency,
                   cash_micros, equity_micros, buying_power_micros
                 ) VALUES (
-                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v2', 'ACTIVE', 'USD',
                   ${cashMicros}, ${cashMicros}, ${cashMicros}
                 )
               `

@@ -65,6 +65,26 @@ git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
 
 run_with_helm3 helm lint --kube-version "${KUBE_VERSION_FOR_HELM}" "${CHART_DIR}"
 
+for identity_mode in default override; do
+  identity_name='Greg Konush'
+  identity_email='12027037+gregkonush@users.noreply.github.com'
+  identity_args=()
+  if [[ "${identity_mode}" == override ]]; then
+    identity_name='Another Operator'
+    identity_email='operator@example.invalid'
+    identity_args=(
+      --set-string "agentsShell.env.vars.AGENTS_SHELL_GIT_USER_NAME=${identity_name}"
+      --set-string "agentsShell.env.vars.AGENTS_SHELL_GIT_USER_EMAIL=${identity_email}"
+    )
+  fi
+  identity_render="$(mktemp)"
+  run_with_helm3 helm template agents "${CHART_DIR}" --kube-version "${KUBE_VERSION_FOR_HELM}" \
+    --namespace agents --values "${ARGOCD_AGENTS_DIR}/values.yaml" "${identity_args[@]}" >"${identity_render}"
+  python3 "${ROOT_DIR}/scripts/agents/check-shell-git-identity.py" "${identity_render}" \
+    "${ROOT_DIR}/services/agents/scripts/agents-shell-entrypoint.sh" "${identity_name}" "${identity_email}"
+  rm -f "${identity_render}"
+done
+
 chart_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/Chart.yaml" | sed "s/[\"']//g")"
 artifacthub_version="$(awk -F': *' '$1 == "version" {print $2; exit}' "${CHART_DIR}/artifacthub-pkg.yml" | sed "s/[\"']//g")"
 if [[ -z "${chart_version}" || -z "${artifacthub_version}" || "${chart_version}" != "${artifacthub_version}" ]]; then

@@ -1,11 +1,11 @@
 import { Effect, Result } from 'effect'
 
 import type { AuthorityGenerationStoreShape } from './db/execution-store'
-import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
+import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
 import { Authority, KillState } from './execution/contracts'
 import { legacyObserveSuccessorGenerationSchemaVersion } from './execution/legacy-wire'
 import type { WriterFenceService } from './execution/writer-fence'
-import { OperationalError } from './errors'
+import { CapitalActivationReconciliationNotExact, OperationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { currentUtcInstant } from './time'
 
@@ -39,7 +39,7 @@ export type TerminalGenerationRolloverReceipt =
 export interface TerminalGenerationRecoveryInput<R> {
   readonly accountId: string
   readonly blockedIntents: BlockedCycleIntentStoreShape
-  readonly authorityStore: AuthorityGenerationStoreShape
+  readonly authorityStore: Pick<AuthorityGenerationStoreShape, 'ensureAuthorityGeneration'>
   readonly writerFence: WriterFenceService
   /** Must persist and validate a fresh exact, flat reconciliation after intent settlement. */
   readonly reconcileAfterSettlement: Effect.Effect<void, OperationalError, R>
@@ -54,10 +54,11 @@ const recoveryError = (message: string, cause?: unknown): OperationalError =>
     cause: cause === undefined ? { _tag: 'TerminalGenerationRecoveryRejected' } : cause,
   })
 
-const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
-  error.operation === 'terminal-generation-recovery' &&
-  error.cause instanceof BlockedCycleIntentStoreError &&
-  error.cause.failure === 'invariant'
+const settlementNeedsRecovery = (error: OperationalError): boolean =>
+  (error.operation === 'terminal-generation-recovery' &&
+    error.cause instanceof BlockedCycleIntentStoreError &&
+    error.cause.failure === 'invariant') ||
+  (error.operation === 'capital-activation' && error.cause instanceof CapitalActivationReconciliationNotExact)
 
 export type RestrictedGenerationRecoveryAdvance<A> =
   | { readonly _tag: 'Waiting'; readonly advance: A }
@@ -97,7 +98,7 @@ export const advanceRestrictedGenerationRecovery = <A, E, R>(
               : { _tag: 'Waiting', advance: advanced },
         ),
         Effect.catch((error) =>
-          settlementNeedsMutationRecovery(error)
+          settlementNeedsRecovery(error)
             ? Effect.succeed<RestrictedGenerationRecoveryAdvance<A>>({ _tag: 'Waiting', advance: advanced })
             : Effect.fail(error),
         ),

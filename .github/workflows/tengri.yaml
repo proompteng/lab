@@ -12,6 +12,7 @@ on:
       - 'services/tengri/**'
       - 'bun.lock'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
   workflow_dispatch:
 
 concurrency:
@@ -32,7 +33,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Install desktop dependencies
         run: >-
@@ -43,7 +44,7 @@ jobs:
           --filter @proompteng/design
 
       - name: Install Chromium
-        run: bunx playwright install --with-deps chromium
+        run: node .github/scripts/install-tengri-chromium.mjs
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -56,16 +57,22 @@ jobs:
         with:
           toolchain: 1.90.0
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler
+      - name: Cache editor acceptance Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: landing-editor-acceptance
+          workspaces: services/tengri -> target
+
+      - name: Install browser acceptance prerequisites
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
+
+      - name: Build desktop for browser acceptance
+        run: bun run --cwd apps/landing build
 
       - name: Run Tengri desktop browser suite
         run: bun run --cwd apps/landing test:e2e
 
-      - name: Build desktop for VS Code acceptance
-        run: bun run --cwd apps/landing build
-
-      - name: Run real VS Code acceptance
+      - name: Run real Chromium, CUA, and VS Code acceptance
         env:
           TENGRI_EDITOR_NEXT_MODE: start
         run: bash services/nanoagent/test-vscode-browser.sh
@@ -82,6 +89,8 @@ jobs:
             /tmp/tengri-vscode.*/gateway.log
             /tmp/tengri-vscode.*/desktop.log
             /tmp/tengri-vscode.*/proxy.log
-            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
+            /tmp/tengri-vscode.*/vscode.log
+            /tmp/tengri-vscode.*/browser.log
+            /tmp/tengri-vscode.*/browser-results
           if-no-files-found: ignore
           retention-days: 7

@@ -8,6 +8,7 @@ export type DesktopGateState =
   | { kind: 'failed'; agent: TengriAgent }
   | { kind: 'loading' }
   | { kind: 'ready'; agent: TengriAgent }
+  | { kind: 'paused'; agent: TengriAgent }
   | { kind: 'sign-in' }
   | { kind: 'sleeping'; agent: TengriAgent }
   | { kind: 'transitioning'; agent: TengriAgent }
@@ -22,7 +23,12 @@ export function resolveDesktopGate(snapshot: TengriDesktopSnapshot | null, error
   const agent = snapshot.agents[0]
   if (!agent) return { kind: 'create' }
   if (agent.phase === 'ready') return { kind: 'ready', agent }
-  if (agent.phase === 'sleeping') return { kind: 'sleeping', agent }
+  if (agent.phase === 'sleeping') {
+    const paused = agent.conditions.some(
+      (condition) => condition.type === 'Ready' && condition.reason === 'AuthorizationPaused',
+    )
+    return { kind: paused ? 'paused' : 'sleeping', agent }
+  }
   if (agent.phase === 'failed') return { kind: 'failed', agent }
   if (agent.phase === 'unknown') return { kind: 'unknown', agent }
   return { kind: 'transitioning', agent }
@@ -33,10 +39,10 @@ export function shouldRenderTengriDesktop(authConfigured: boolean, controlPlaneC
 }
 
 export function desktopRefreshDelay(state: DesktopGateState, now: number): number | null {
-  if (state.kind === 'transitioning') return 2_000
+  if (state.kind === 'transitioning' || state.kind === 'paused') return 2_000
   if (state.kind === 'failed') return 30_000
-  if (state.kind === 'ready') return refreshBeforeDeadline(now, state.agent.idleDeadline, state.agent.expiresAt)
-  if (state.kind === 'sleeping') return refreshBeforeDeadline(now, state.agent.expiresAt)
+  if (state.kind === 'ready') return refreshBeforeDeadline(now, state.agent.idleDeadline)
+  if (state.kind === 'sleeping') return 30_000
   return null
 }
 

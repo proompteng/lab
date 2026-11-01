@@ -1,6 +1,6 @@
 # 63. Torghut Profit Windows and Evidence Escrow Contract (2026-03-21)
 
-Status: Approved for implementation (`discover`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Executive summary
 

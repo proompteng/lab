@@ -93,7 +93,7 @@ export const makeActivityLifecycle = (
               await driver.shutdown()
             },
             catch: (error) => error,
-          }).pipe(Effect.catchAll(() => Effect.void)),
+          }).pipe(Effect.catch(() => Effect.void)),
         }
       })
 

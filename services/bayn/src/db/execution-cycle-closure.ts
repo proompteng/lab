@@ -4,7 +4,6 @@ import { canonicalHashV1Result } from '../hash'
 import { legacyCycleClosureSchemaVersion, legacyExecutionAuthorityToken } from '../execution/legacy-wire'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { Pipeable } from '../pipeable'
 
 const ExecutionCycleClosureMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyCycleClosureSchemaVersion),
@@ -21,7 +20,9 @@ const ExecutionCycleClosureMaterialSchema = Schema.Struct({
       closure.document.bindings.cycleId === closure.cycleId &&
       closure.document.submissionCutoffAt === closure.expiresAt &&
       closure.document.expiresAt === closure.expiresAt &&
-      closure.document.createdAt === closure.createdAt,
+      closure.document.createdAt === closure.createdAt &&
+      (closure.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v5' ||
+        closure.document.strategyDecision.entryDecisionHash === closure.entryDecisionHash),
   ),
 )
 
@@ -75,20 +76,7 @@ export class ExecutionCycleClosureStore extends Context.Service<
   ExecutionCycleClosureStoreShape
 >()('@proompteng/bayn/db/execution-cycle-closure/ExecutionCycleClosureStore') {}
 
-const decodeExecutionCycleClosureResultDataFirst = Schema.decodeUnknownResult(
+export const decodeExecutionCycleClosureResult = Schema.decodeUnknownResult(
   ExecutionCycleClosureSchema,
   strictParseOptions,
-)
-
-export const decodeExecutionCycleClosureResult = Pipeable.dual(1, (input: unknown) =>
-  decodeExecutionCycleClosureResultDataFirst(input),
-)
-
-const decodeExecutionCycleClosureMaterialResultDataFirst = Schema.decodeUnknownResult(
-  ExecutionCycleClosureMaterialSchema,
-  strictParseOptions,
-)
-
-export const decodeExecutionCycleClosureMaterialResult = Pipeable.dual(1, (input: unknown) =>
-  decodeExecutionCycleClosureMaterialResultDataFirst(input),
 )

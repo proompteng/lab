@@ -1,8 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
-import type { SqlError } from 'effect/unstable/sql/SqlError'
+import { Effect, Option, Result } from 'effect'
+import type { SqlError } from 'effect/sql/SqlError'
 
-import { MutationOperation } from '../../../broker/alpaca-mutations'
+import { MutationOperation } from '../../../broker/alpaca-mutations/model'
 import { IntentState } from '../../contracts'
 import {
   decideMutationAuthority,
@@ -12,6 +12,7 @@ import {
   decideMutationStartReplay,
   decideSubmitStartWrite,
   decodeStartInput,
+  storeError,
   startStoreOperationFor,
 } from '../decisions'
 import type { MutationStartInput, MutationStoreError, StartReceipt } from '../model'
@@ -19,7 +20,6 @@ import { decodeAuthoritySnapshot, decodeIntentIds, decodeIntentSnapshot, decodeU
 import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
-import { Pipeable } from '../../../pipeable'
 
 export interface MutationStartPostgres {
   readonly authorizeSubmit: (
@@ -37,7 +37,7 @@ export interface MutationStartPostgres {
   ) => Effect.Effect<StartReceipt, MutationStoreError | SqlError | WriterFenceError>
 }
 
-const makeMutationStartPostgresDataFirst = (
+export const makeMutationStartPostgres = (
   sql: PgClient.PgClient,
   fence: WriterFenceService,
   events: MutationEventPostgres,
@@ -200,7 +200,19 @@ const makeMutationStartPostgresDataFirst = (
         ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
         ...(closeOnly === true ? { closeOnly: true as const } : {}),
       }),
-    ).pipe(Effect.flatMap((input) => fence.transaction(beginTransaction(operation, input))))
+    ).pipe(
+      Effect.flatMap((input) =>
+        Effect.gen(function* () {
+          if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+            return yield* storeError({
+              operation: startStoreOperationFor(operation),
+              failure: 'invariant',
+              message: 'mutation admission must commit independently before broker routing',
+            })
+          return yield* fence.transaction(beginTransaction(operation, input))
+        }),
+      ),
+    )
 
   const authorizeSubmit = (intentId: string, closeOnly = false) =>
     Effect.gen(function* () {
@@ -211,5 +223,3 @@ const makeMutationStartPostgresDataFirst = (
 
   return { authorizeSubmit, begin }
 }
-
-export const makeMutationStartPostgres = Pipeable.dual(3, makeMutationStartPostgresDataFirst)

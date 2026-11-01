@@ -4,18 +4,7 @@ Date: 2026-05-05
 
 Author: Victor Chen, Jangar Engineering
 
-Status: Accepted for implementation planning
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
-
-Extends:
-
-- `docs/agents/designs/74-jangar-evidence-settlement-cells-and-torghut-hypothesis-revenue-governor-2026-05-05.md`
-- `docs/agents/designs/73-jangar-evidence-settlement-and-runtime-freshness-leases-2026-05-05.md`
-- `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
-- `docs/agents/designs/jangar-control-plane-failure-mode-reduction-and-safe-rollout-architecture-2026-03-16.md`
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

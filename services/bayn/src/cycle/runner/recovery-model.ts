@@ -1,13 +1,6 @@
 import { Data, Schema } from 'effect'
 
-import {
-  AutonomousCycleSchema,
-  type ActiveDecisionBoundCycle,
-  type ActiveUnboundCycle,
-  type AutonomousCycle,
-  type CycleCompletionState,
-  type PendingCycle,
-} from '../model'
+import { AutonomousCycleSchema, type AutonomousCycle, type CycleCompletionState } from '../model'
 import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 
@@ -38,26 +31,6 @@ export interface CycleRecoveryState {
   readonly cycle: AutonomousCycle | undefined
   readonly decisionDocument?: CycleDecisionDocument | null
 }
-
-type RecoveryScope = Pick<CycleRecoveryState, 'accountId' | 'cycleBindingId' | 'observedAt' | 'strategyProtocolHash'>
-
-export type CorrelatedCycleRecoveryState =
-  | (RecoveryScope & {
-      readonly cycle?: undefined
-      readonly decisionDocument?: undefined
-    })
-  | (RecoveryScope & {
-      readonly cycle: PendingCycle
-      readonly decisionDocument?: undefined
-    })
-  | (RecoveryScope & {
-      readonly cycle: ActiveUnboundCycle
-      readonly decisionDocument?: undefined
-    })
-  | (RecoveryScope & {
-      readonly cycle: ActiveDecisionBoundCycle
-      readonly decisionDocument?: CycleDecisionDocument | null
-    })
 
 interface DecodeRecoveryStateIssue {
   readonly operation: 'decode-state'
@@ -123,6 +96,4 @@ const CycleRecoveryStateSchema = Schema.Struct({
 
 export type DecodedCycleRecoveryState = typeof CycleRecoveryStateSchema.Type
 
-const decodeCycleRecoveryState = Schema.decodeUnknownResult(CycleRecoveryStateSchema, strictParseOptions)
-
-export const decodeCycleRecoveryStateResult = (input: unknown) => decodeCycleRecoveryState(input)
+export const decodeCycleRecoveryStateResult = Schema.decodeUnknownResult(CycleRecoveryStateSchema, strictParseOptions)

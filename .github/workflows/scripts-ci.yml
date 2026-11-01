@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'packages/scripts/**'
+      - '.github/actions/affected-inputs/**'
+      - '.github/ci/**'
       - 'scripts/jangar/**'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
@@ -39,6 +41,7 @@ on:
       - 'charts/agents/**'
       - 'argocd/applicationsets/**'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/agents/primitives/**'
@@ -55,14 +58,20 @@ on:
       - 'kubernetes/rook-ceph-rbd-canary/README.md'
       - 'kubernetes/rook-ceph-rwx-benchmarks/README.md'
       - '.github/workflows/scripts-ci.yml'
+      - '.github/workflows/temporal-bun-sdk.yml'
+      - '.github/actionlint.yaml'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
   pull_request:
     paths:
       - 'packages/scripts/**'
+      - '.github/actions/affected-inputs/**'
+      - '.github/ci/**'
       - 'scripts/jangar/**'
       - '.github/workflows/pull-request.yml'
       - '.github/workflows/scripts-ci.yml'
+      - '.github/workflows/temporal-bun-sdk.yml'
+      - '.github/actionlint.yaml'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
       - 'argocd/applications/observability/**'
@@ -95,6 +104,7 @@ on:
       - 'charts/agents/**'
       - 'argocd/applicationsets/**'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/agents/primitives/**'
@@ -121,9 +131,22 @@ jobs:
   lint-and-test:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.0
+      bun-version: 1.4.2
       node-version: 24.11.1
-      install-command: sudo apt-get update && sudo apt-get install --yes lua5.4 && bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build
+      install-command: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes lua5.4
+        curl --fail --location --silent --show-error https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz --output "${RUNNER_TEMP}/prometheus.tar.gz"
+        echo "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  ${RUNNER_TEMP}/prometheus.tar.gz" | sha256sum --check --strict
+        tar --extract --gzip --file "${RUNNER_TEMP}/prometheus.tar.gz" --directory "${RUNNER_TEMP}" prometheus-3.5.0.linux-amd64/promtool
+        sudo install "${RUNNER_TEMP}/prometheus-3.5.0.linux-amd64/promtool" /usr/local/bin/promtool
+        curl --fail --location --silent --show-error https://github.com/grafana/alloy/releases/download/v1.19.2/alloy-linux-amd64.zip --output "${RUNNER_TEMP}/alloy.zip"
+        echo "3694ea4e1044b367e1c21ffe28117f209c5989fa5e604d000321809f871ab701  ${RUNNER_TEMP}/alloy.zip" | sha256sum --check --strict
+        unzip -q "${RUNNER_TEMP}/alloy.zip" -d "${RUNNER_TEMP}/alloy"
+        sudo install "${RUNNER_TEMP}/alloy/alloy-linux-amd64" /usr/local/bin/alloy
+        bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
+        bun run --filter @proompteng/temporal-bun-sdk build
       lint-command: bun run --filter @proompteng/scripts lint
       oxlint-command: bun run --cwd packages/scripts lint:oxlint
       oxlint-type-command: bun run --cwd packages/scripts lint:oxlint:type

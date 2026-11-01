@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { generationScope, ledgerReplayBoundary, openingSnapshotBoundary } from './scope'
+import { generationScope, openingSnapshotBoundary } from './scope'
 
 export const transactionQuery = (
   sql: PgClient.PgClient,
@@ -25,12 +25,10 @@ export const transactionQuery = (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
     JOIN broker_events AS event ON event.event_id = snapshot.event_id
-    CROSS JOIN latest_reconciliation
-    CROSS JOIN first_cycle
+      AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
     WHERE snapshot.account_id = ${accountId}
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
       AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-      AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   )
@@ -42,13 +40,13 @@ export const transactionQuery = (
     transaction.account_id,
     transaction.symbol,
     transaction.side,
-    transaction.quantity_micros::text AS quantity_micros,
-    transaction.price_micros::text AS price_micros,
+    transaction.quantity_atoms::text AS quantity_atoms,
+    transaction.price_atoms::text AS price_atoms,
     transaction.notional_micros::text AS notional_micros,
     transaction.fee_micros::text AS fee_micros,
     transaction.cost_basis_micros::text AS cost_basis_micros,
     transaction.realized_pnl_micros::text AS realized_pnl_micros,
-    transaction.quantity_delta_micros::text AS quantity_delta_micros,
+    transaction.quantity_delta_atoms::text AS quantity_delta_atoms,
     transaction.cost_basis_delta_micros::text AS cost_basis_delta_micros,
     transaction.cash_delta_micros::text AS cash_delta_micros,
     transaction.ledger_plan_hash,
@@ -69,16 +67,8 @@ export const transactionQuery = (
 export const ledgerTransactionQuery = (
   sql: PgClient.PgClient,
   accountId: string,
-  authorityGenerationHash: string | undefined,
+  accountReconciledAt: Date | undefined,
 ) => sql<Record<string, unknown>>`
-  WITH latest_reconciliation AS (
-    SELECT reconciliation.reconciled_at
-    FROM reconciliations AS reconciliation
-    WHERE reconciliation.account_id = ${accountId}
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-    LIMIT 1
-  )
   SELECT
     transaction.schema_version,
     transaction.transaction_id,
@@ -87,13 +77,13 @@ export const ledgerTransactionQuery = (
     transaction.account_id,
     transaction.symbol,
     transaction.side,
-    transaction.quantity_micros::text AS quantity_micros,
-    transaction.price_micros::text AS price_micros,
+    transaction.quantity_atoms::text AS quantity_atoms,
+    transaction.price_atoms::text AS price_atoms,
     transaction.notional_micros::text AS notional_micros,
     transaction.fee_micros::text AS fee_micros,
     transaction.cost_basis_micros::text AS cost_basis_micros,
     transaction.realized_pnl_micros::text AS realized_pnl_micros,
-    transaction.quantity_delta_micros::text AS quantity_delta_micros,
+    transaction.quantity_delta_atoms::text AS quantity_delta_atoms,
     transaction.cost_basis_delta_micros::text AS cost_basis_delta_micros,
     transaction.cash_delta_micros::text AS cash_delta_micros,
     transaction.ledger_plan_hash,
@@ -101,10 +91,9 @@ export const ledgerTransactionQuery = (
     transaction.occurred_at,
     intent.cycle_id
   FROM accounting_transactions AS transaction
-  CROSS JOIN latest_reconciliation
   LEFT JOIN intents AS intent ON intent.intent_id = transaction.intent_id
   WHERE transaction.account_id = ${accountId}
-    AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
+    AND transaction.occurred_at <= ${accountReconciledAt ?? null}::timestamptz
   ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
 `
 
@@ -132,12 +121,10 @@ export const receiptQuery = (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
     JOIN broker_events AS event ON event.event_id = snapshot.event_id
-    CROSS JOIN latest_reconciliation
-    CROSS JOIN first_cycle
+      AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
     WHERE snapshot.account_id = ${accountId}
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
       AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-      AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   ), selected_transactions AS (
@@ -175,16 +162,8 @@ export const receiptQuery = (
 export const ledgerReceiptQuery = (
   sql: PgClient.PgClient,
   accountId: string,
-  authorityGenerationHash: string | undefined,
+  accountReconciledAt: Date | undefined,
 ) => sql<Record<string, unknown>>`
-  WITH latest_reconciliation AS (
-    SELECT reconciliation.reconciled_at
-    FROM reconciliations AS reconciliation
-    WHERE reconciliation.account_id = ${accountId}
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-    LIMIT 1
-  )
   SELECT
     receipt.schema_version,
     receipt.receipt_id,
@@ -204,8 +183,7 @@ export const ledgerReceiptQuery = (
     receipt.recorded_at
   FROM accounting_receipts AS receipt
   JOIN accounting_transactions AS transaction USING (broker_event_id)
-  CROSS JOIN latest_reconciliation
   WHERE transaction.account_id = ${accountId}
-    AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
+    AND transaction.occurred_at <= ${accountReconciledAt ?? null}::timestamptz
   ORDER BY receipt.broker_event_id COLLATE "C"
 `

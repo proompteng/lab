@@ -1,5 +1,5 @@
 import { Effect, Layer } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { HttpClient } from 'effect/http'
 
 import type { BrokerConnection } from '../connection'
 import { BrokerReadError } from './failures'
@@ -8,10 +8,10 @@ import {
   BrokerSession,
   BrokerSessionAcquisitionError,
   BrokerSessionAcquisitionStage,
-  layer as brokerSessionLayer,
+  cachedLayer as brokerSessionLayer,
 } from './session'
 import { BrokerRead } from './model'
-import { Pipeable } from '../../pipeable'
+import { BrokerObservations } from './observed-snapshot'
 
 const brokerSessionAcquisitionError = (
   connection: BrokerConnection,
@@ -36,22 +36,12 @@ const mapHttpAcquisitionError = (
     ),
   )
 
-const AlpacaBrokerResourcesLiveDataFirst = (
+export const AlpacaBrokerResourcesLive = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError> = alpacaHttpLayer(connection),
-): Layer.Layer<BrokerSession | BrokerRead | AlpacaHttpClient, BrokerSessionAcquisitionError> => {
+): Layer.Layer<BrokerSession | BrokerRead | AlpacaHttpClient, BrokerSessionAcquisitionError, BrokerObservations> => {
   const sharedHttp = mapHttpAcquisitionError(connection, http)
   const session = brokerSessionLayer(connection).pipe(Layer.provide(sharedHttp))
   const client = Layer.effect(AlpacaHttpClient, HttpClient.HttpClient).pipe(Layer.provide(sharedHttp))
   return Layer.merge(session, client)
 }
-
-export const AlpacaBrokerResourcesLive = Pipeable.by<
-  (
-    http?: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,
-  ) => (connection: BrokerConnection) => ReturnType<typeof AlpacaBrokerResourcesLiveDataFirst>,
-  typeof AlpacaBrokerResourcesLiveDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'baseUrl' in arguments_[0],
-  AlpacaBrokerResourcesLiveDataFirst,
-)

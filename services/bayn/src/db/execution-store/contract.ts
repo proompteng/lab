@@ -1,7 +1,7 @@
 import { Context, Data, Effect } from 'effect'
 
 import type { BrokerEventInput, FillEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
-import type { RuntimeConfig } from '../../config'
+import type { RuntimeConfig } from '../../config/model'
 import type {
   AccountingReceipt,
   Authority,
@@ -10,7 +10,7 @@ import type {
   ResearchCapitalGrantProofBinding,
   Valuation,
 } from '../../execution/contracts'
-import type { BrokerSnapshot, IntentBinding, ReconciliationWriteResult } from '../reconciliation'
+import type { BrokerSnapshot, IntentBinding, ReconciledBrokerSnapshot } from '../reconciliation'
 
 export const VALUATION_SNAPSHOT_MAX_SKEW_MS = 30_000
 
@@ -25,6 +25,8 @@ export interface PositionSnapshotReceipt {
   readonly eventIds: readonly string[]
   readonly deduplicated: boolean
 }
+
+export type HistoryEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order' | 'Fill' }>
 
 export interface EnsureAuthorityGenerationInput {
   readonly generationHash: string
@@ -55,6 +57,9 @@ export class ExecutionStoreError extends Data.TaggedError('ExecutionStoreError')
 }> {}
 
 export interface BrokerEventStoreShape {
+  readonly completeHistory: (
+    inputs: readonly HistoryEventInput[],
+  ) => Effect.Effect<ReadonlySet<string>, ExecutionStoreError>
   readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, ExecutionStoreError>
   readonly ingestPositions: (
     input: PositionSnapshotInput,
@@ -63,6 +68,7 @@ export interface BrokerEventStoreShape {
 
 export interface FillAccountingStoreShape {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
+  readonly verifyCompleted: (inputs: readonly FillEventInput[]) => Effect.Effect<void, ExecutionStoreError>
 }
 
 export interface ValuationStoreShape {
@@ -71,8 +77,15 @@ export interface ValuationStoreShape {
 }
 
 export interface ReconciliationStoreShape {
+  readonly retainCashReporting: (
+    snapshot: Pick<BrokerSnapshot, 'account' | 'accountEventId' | 'cashReportingQuantumMicros'>,
+  ) => Effect.Effect<void, ExecutionStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], ExecutionStoreError>
-  readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationWriteResult, ExecutionStoreError>
+  /** Recovers committed fees, ingests and prepares one cut, commits, then posts and verifies its ledger evidence. */
+  readonly reconcile: <E, R>(
+    accountId: string,
+    ingestSnapshot: Effect.Effect<BrokerSnapshot, E, R>,
+  ) => Effect.Effect<ReconciledBrokerSnapshot, E | ExecutionStoreError, R>
 }
 
 export interface AuthorityGenerationStoreShape {
@@ -80,15 +93,15 @@ export interface AuthorityGenerationStoreShape {
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Initializes the configured OBSERVE root only when no authority state exists; otherwise returns the current state. */
-  readonly readOrInitializeObserveAuthority?: (
+  readonly readOrInitializeObserveAuthority: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Read-only recovery view used to resume a durable execution close lease after process restart. */
-  readonly readAuthorityState?: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readResearchAuthorityGeneration?: (
+  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readResearchAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
-  readonly readAuthorityGenerationLineage?: (
+  readonly readAuthorityGenerationLineage: (
     generationHash: string,
   ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
 }

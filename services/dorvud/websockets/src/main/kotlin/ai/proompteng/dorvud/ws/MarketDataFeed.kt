@@ -1,5 +1,7 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.CRYPTO_LOCATIONS
+import ai.proompteng.dorvud.platform.isCryptoPair
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
@@ -47,6 +49,7 @@ data class ObservationFeedConfig(
 )
 
 data class FeedRuntimeConfig(
+  val marketType: AlpacaMarketType,
   val feed: String,
   val equityFeed: EquityFeed?,
   val channels: List<String>,
@@ -55,18 +58,42 @@ data class FeedRuntimeConfig(
   val symbolOverridesByChannel: Map<String, List<String>> = emptyMap(),
   val symbolAllowlist: Set<String>,
   val core: Boolean,
+  val cryptoEventsTopic: String? = null,
 )
+
+data class CryptoFeedConfig(
+  val location: String,
+  val symbols: List<String>,
+  val topic: String,
+) {
+  companion object {
+    fun fromEnv(
+      env: Map<String, String>,
+      marketType: AlpacaMarketType,
+      coreSymbols: List<String>,
+    ): CryptoFeedConfig? {
+      val rawSymbols = env["ALPACA_CRYPTO_SYMBOLS"]
+      if (rawSymbols == null && marketType != AlpacaMarketType.CRYPTO) return null
+      require(marketType != AlpacaMarketType.OPTIONS) { "crypto and options streams require separate forwarders" }
+      val symbols = (rawSymbols?.split(",") ?: coreSymbols).map { it.trim().uppercase() }
+      require(symbols.isNotEmpty() && symbols.all(::isCryptoPair) && symbols.distinct().size == symbols.size) {
+        "ALPACA_CRYPTO_SYMBOLS must contain unique BASE/QUOTE pairs"
+      }
+      val location = env["ALPACA_CRYPTO_LOCATION"]?.trim()?.lowercase() ?: "us"
+      require(location in CRYPTO_LOCATIONS) { "unsupported ALPACA_CRYPTO_LOCATION" }
+      val topic = requireNotNull(env["TOPIC_CRYPTO_EVENTS"]?.trim()?.takeIf { it.isNotEmpty() }) { "TOPIC_CRYPTO_EVENTS must be set" }
+      return CryptoFeedConfig(location, symbols, topic)
+    }
+  }
+}
 
 internal fun FeedRuntimeConfig.desiredSymbolsByChannel(symbols: Collection<String>): Map<String, List<String>> {
   val normalized = symbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
   return channels.associateWith { channel -> symbolOverridesByChannel[channel] ?: normalized }
 }
 
-internal fun FeedRuntimeConfig.topicFor(
-  channel: String,
-  marketType: AlpacaMarketType,
-): String? =
-  when (canonicalMarketDataChannel(channel)) {
+internal fun FeedRuntimeConfig.topicFor(channel: String): String? =
+  cryptoEventsTopic ?: when (canonicalMarketDataChannel(channel)) {
     "trades" -> topics.trades
     "quotes" -> topics.quotes
     "bars", "updatedBars" -> topics.bars1m
@@ -120,18 +147,21 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
     }
   val core =
     FeedRuntimeConfig(
-      feed = alpacaFeed,
+      marketType = alpacaMarketType,
+      feed = if (alpacaMarketType == AlpacaMarketType.CRYPTO) requireNotNull(cryptoFeed).location else alpacaFeed,
       equityFeed = coreEquityFeed,
       channels = alpacaMarketDataChannels,
       topics = topics,
-      symbols = staticSymbols,
+      symbols = if (alpacaMarketType == AlpacaMarketType.CRYPTO) requireNotNull(cryptoFeed).symbols else staticSymbols,
       symbolOverridesByChannel = alpacaMarketDataSymbolOverrides,
       symbolAllowlist = symbolAllowlist,
       core = true,
+      cryptoEventsTopic = cryptoFeed?.takeIf { alpacaMarketType == AlpacaMarketType.CRYPTO }?.topic,
     )
   return listOf(core) +
     observationFeeds.map { observation ->
       FeedRuntimeConfig(
+        marketType = AlpacaMarketType.EQUITY,
         feed = observation.feed.id,
         equityFeed = observation.feed,
         channels = defaultAlpacaMarketDataChannels(AlpacaMarketType.EQUITY),
@@ -140,5 +170,20 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
         symbolAllowlist = emptySet(),
         core = false,
       )
-    }
+    } +
+    listOfNotNull(
+      cryptoFeed?.takeIf { alpacaMarketType != AlpacaMarketType.CRYPTO }?.let { crypto ->
+        FeedRuntimeConfig(
+          marketType = AlpacaMarketType.CRYPTO,
+          feed = crypto.location,
+          equityFeed = null,
+          channels = defaultAlpacaMarketDataChannels(AlpacaMarketType.CRYPTO),
+          topics = topics,
+          symbols = crypto.symbols,
+          symbolAllowlist = crypto.symbols.toSet(),
+          core = false,
+          cryptoEventsTopic = crypto.topic,
+        )
+      },
+    )
 }

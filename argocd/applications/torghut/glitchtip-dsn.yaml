@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dorvud-glitchtip
+  namespace: torghut
+data:
+  DORVUD_GLITCHTIP_DSN: http://d535539debed4d90b8cdd06279c18f11@glitchtip-web.glitchtip.svc.cluster.local:80/9

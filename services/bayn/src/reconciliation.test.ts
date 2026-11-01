@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from './testing/property-test-support'
 
 import {
   AccountStatus,
@@ -17,13 +19,16 @@ import {
   type Position,
   type Valuation,
 } from './execution/contracts'
+import type { AccountingTransaction } from './accounting/schema'
+import { prepareAccounting } from './accounting/domain'
+import { positionCostAnchor } from './reconciliation/position-cost-reporting'
+import { compareReconciliation } from './simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type ReconciliationDecisionError,
   type ReconciliationSnapshot,
-} from './reconciliation'
+} from './simulation-reconciliation/broker-model'
 
 const successOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): A => Result.getOrThrow(result)
 const failureOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): ReconciliationDecisionError => {
@@ -36,7 +41,8 @@ const observedAt = '2026-07-22T15:30:00.000Z'
 const reconciledAt = '2026-07-22T15:30:01.000Z'
 
 const account: AccountSnapshot = {
-  schemaVersion: 'bayn.paper-account-snapshot.v1',
+  schemaVersion: 'bayn.paper-account-snapshot.v2',
+  cryptoFeeTier: null,
   accountId: 'paper-account',
   status: AccountStatus.Active,
   currency: 'USD',
@@ -47,10 +53,11 @@ const account: AccountSnapshot = {
 }
 
 const position: Position = {
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: '90000000',
   accountId: account.accountId,
   symbol: 'NVDA',
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '90000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
@@ -59,7 +66,7 @@ const position: Position = {
 }
 
 const order: Order = {
-  schemaVersion: 'bayn.paper-order.v1',
+  schemaVersion: 'bayn.order.v3',
   accountId: account.accountId,
   brokerOrderId: 'broker-order-1',
   clientOrderId: 'bayn-order-1',
@@ -69,14 +76,14 @@ const order: Order = {
   orderType: OrderType.Limit,
   limitPriceMicros: '100000000',
   timeInForce: TimeInForce.Day,
-  quantityMicros: position.quantityMicros,
-  filledQuantityMicros: position.quantityMicros,
+  quantityAtoms: position.quantityAtoms,
+  filledQuantityAtoms: position.quantityAtoms,
   status: OrderStatus.Filled,
   observedAt,
 }
 
 const fill: Fill = {
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId: account.accountId,
   fillId: 'fill-1',
   brokerOrderId: order.brokerOrderId,
@@ -84,8 +91,8 @@ const fill: Fill = {
   ...(order.intentId === undefined ? {} : { intentId: order.intentId }),
   symbol: order.symbol,
   side: order.side,
-  quantityMicros: position.quantityMicros,
-  priceMicros: '90000000',
+  quantityAtoms: position.quantityAtoms,
+  priceAtoms: '90000000000',
   feeMicros: '0',
   occurredAt: observedAt,
 }
@@ -117,10 +124,10 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
       side: order.side,
       orderType: OrderType.Market,
       submittedOrderType: OrderType.Limit,
-      submittedQuantityMicros: position.quantityMicros,
+      submittedQuantityAtoms: position.quantityAtoms,
       ...(order.limitPriceMicros === undefined ? {} : { submittedLimitPriceMicros: order.limitPriceMicros }),
       timeInForce: order.timeInForce,
-      quantityMicros: position.quantityMicros,
+      quantityAtoms: position.quantityAtoms,
       state: IntentState.Terminal,
       terminalOutcome: TerminalOutcome.Filled,
       expectsBrokerOrder: true,
@@ -129,7 +136,12 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
   ],
   durableFills: [{ fillId: fill.fillId, brokerOrderId: fill.brokerOrderId, accounted: true }],
   projectedPositions: [
-    { symbol: position.symbol, quantityMicros: position.quantityMicros, costBasisMicros: '90000000' },
+    {
+      costBasisAnchor: null,
+      symbol: position.symbol,
+      quantityAtoms: position.quantityAtoms,
+      costBasisMicros: '90000000',
+    },
   ],
   expectedCashMicros: account.cashMicros,
   valuation,
@@ -158,10 +170,10 @@ describe('execution reconciliation', () => {
   })
 
   test('reconciles the exact notional MARKET representation used by current BUY submissions', () => {
-    const { quantityMicros: _omittedOrderQuantity, limitPriceMicros: _omittedLimitPrice, ...currentOrderBase } = order
+    const { quantityAtoms: _omittedOrderQuantity, limitPriceMicros: _omittedLimitPrice, ...currentOrderBase } = order
     const currentOrder: Order = {
       ...currentOrderBase,
-      schemaVersion: 'bayn.paper-order.v2',
+      schemaVersion: 'bayn.order.v3',
       orderType: OrderType.Market,
       notionalMicros: '100000000',
     }
@@ -169,7 +181,7 @@ describe('execution reconciliation', () => {
     if (legacyIntent === undefined) throw new Error('expected reconciliation intent fixture')
     const {
       submittedLimitPriceMicros: _omittedSubmittedLimitPrice,
-      submittedQuantityMicros: _omittedSubmittedQuantity,
+      submittedQuantityAtoms: _omittedSubmittedQuantity,
       ...currentIntentBase
     } = legacyIntent
     const result = successOf(
@@ -208,7 +220,7 @@ describe('execution reconciliation', () => {
     const externalOrder = { ...order, brokerOrderId: 'external-order', clientOrderId: 'external-client' }
     const input = snapshot({
       account: { ...account, cashMicros: '899000000', equityMicros: '998000000' },
-      positions: [{ ...position, quantityMicros: '2000000' }],
+      positions: [{ ...position, quantityAtoms: '2000000000' }],
       orders: [order, externalOrder],
       fills: [{ ...fill, fillId: 'missing-fill' }],
       intents: [
@@ -221,7 +233,7 @@ describe('execution reconciliation', () => {
           submittedOrderType: OrderType.Limit,
           ...(order.limitPriceMicros === undefined ? {} : { submittedLimitPriceMicros: order.limitPriceMicros }),
           timeInForce: order.timeInForce,
-          quantityMicros: position.quantityMicros,
+          quantityAtoms: position.quantityAtoms,
           state: IntentState.Terminal,
           terminalOutcome: TerminalOutcome.Filled,
           expectsBrokerOrder: true,
@@ -247,12 +259,11 @@ describe('execution reconciliation', () => {
         DiscrepancyKind.Accounting,
         DiscrepancyKind.Position,
         DiscrepancyKind.Cash,
-        DiscrepancyKind.Valuation,
       ]),
     )
     expect(first.metrics).toMatchObject({
       cashDifferenceMicros: '-1000000',
-      positionDifferenceMicros: '1000000',
+      positionDifferenceMicros: '1000000000',
       equityDifferenceMicros: '-2000000',
       accountingExact: false,
     })
@@ -296,7 +307,9 @@ describe('execution reconciliation', () => {
 
   test('detects broker position cost drift independently of quantity', () => {
     const result = successOf(
-      compareReconciliation(snapshot({ positions: [{ ...position, averageEntryPriceMicros: '91000000' }] })),
+      compareReconciliation(
+        snapshot({ positions: [{ ...position, averageEntryPriceMicros: '91000000', costBasisMicros: '91000000' }] }),
+      ),
     )
 
     expect(result.discrepancies).toHaveLength(1)
@@ -312,8 +325,10 @@ describe('execution reconciliation', () => {
     const result = successOf(
       compareReconciliation(
         snapshot({
-          positions: [{ ...position, quantityMicros: '500000', averageEntryPriceMicros: '1' }],
-          projectedPositions: [{ symbol: position.symbol, quantityMicros: '500000', costBasisMicros: '0' }],
+          positions: [{ ...position, quantityAtoms: '500000000', averageEntryPriceMicros: '1', costBasisMicros: '1' }],
+          projectedPositions: [
+            { costBasisAnchor: null, symbol: position.symbol, quantityAtoms: '500000000', costBasisMicros: '0' },
+          ],
         }),
       ),
     )
@@ -331,32 +346,347 @@ describe('execution reconciliation', () => {
     ])
   })
 
+  test('reproduces rounded-average broker position reporting from exact NVDA fill cost', () => {
+    const positions: Position[] = [
+      {
+        ...position,
+        schemaVersion: 'bayn.position.v2',
+        quantityAtoms: '91000000000',
+        averageEntryPriceMicros: '217158242',
+        costBasisMicros: '19761400022',
+      },
+    ]
+    const input = snapshot({
+      positions,
+      projectedPositions: [
+        { costBasisAnchor: null, symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400000' },
+      ],
+    })
+    expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+    for (const costBasisMicros of ['19761400021', '19761400023', '19761400100']) {
+      expect(
+        successOf(
+          compareReconciliation({
+            ...input,
+            positions: [
+              {
+                ...positions[0],
+                ...position,
+                schemaVersion: 'bayn.position.v2',
+                quantityAtoms: '91000000000',
+                averageEntryPriceMicros: '217158242',
+                costBasisMicros,
+              },
+            ],
+          }),
+        ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
+      ).toBe(true)
+    }
+    expect(
+      successOf(
+        compareReconciliation({
+          ...input,
+          projectedPositions: [
+            { costBasisAnchor: null, symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400100' },
+          ],
+        }),
+      ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
+    ).toBe(true)
+  })
+
+  test.each([false, true])(
+    'reproduces equity fill rounding without a tolerance, same-millisecond=%s',
+    (sameMillisecond) => {
+      const transactions: AccountingTransaction[] = []
+      const fillExecutionTimes = new Map<string, string>()
+      let lot = { quantityAtoms: '0', costMicros: '0' }
+      const record = (quantity: bigint, price: bigint, side: OrderSide) => {
+        const index = transactions.length
+        const occurredAt = sameMillisecond ? '2026-07-22T15:29:00.000Z' : `2026-07-22T15:29:0${index}.000Z`
+        const prepared = Result.getOrThrow(
+          prepareAccounting(
+            hash(String(index)),
+            {
+              ...fill,
+              symbol: 'QQQ',
+              side,
+              fillId: `equity-fill-${index}`,
+              quantityAtoms: String(quantity * 1_000_000_000n),
+              priceAtoms: String(price),
+              occurredAt,
+            },
+            lot,
+            1,
+          ),
+        )
+        transactions.push(prepared.transaction)
+        fillExecutionTimes.set(
+          prepared.transaction.brokerEventId,
+          `${occurredAt.slice(0, -1)}${String(index).padStart(6, '0')}Z`,
+        )
+        lot = {
+          quantityAtoms: String(BigInt(lot.quantityAtoms) + BigInt(prepared.transaction.quantityDeltaAtoms)),
+          costMicros: String(BigInt(lot.costMicros) + BigInt(prepared.transaction.costBasisDeltaMicros)),
+        }
+      }
+      for (const [quantity, price] of [
+        [4n, 692130000000n],
+        [13n, 692070000000n],
+        [7n, 692090000000n],
+        [2n, 692050000000n],
+        [1n, 692030000000n],
+      ] as const)
+        record(quantity, price, OrderSide.Buy)
+      const projected = { symbol: 'QQQ', quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros }
+      expect(projected).toEqual({ symbol: 'QQQ', quantityAtoms: '27000000000', costBasisMicros: '18686190000' })
+      const observed: Position = {
+        ...position,
+        symbol: 'QQQ',
+        quantityAtoms: projected.quantityAtoms,
+        averageEntryPriceMicros: '692081112',
+        costBasisMicros: '18686190024',
+      }
+      const input = snapshot({
+        positions: [observed],
+        orders: [],
+        fills: [],
+        intents: [],
+        durableFills: [],
+        projectedPositions: [
+          {
+            ...projected,
+            costBasisAnchor: positionCostAnchor(
+              account.accountId,
+              projected,
+              transactions,
+              [],
+              observedAt,
+              fillExecutionTimes,
+            ),
+          },
+        ],
+      })
+      expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+      for (const changed of [
+        { ...observed, costBasisMicros: '18686190023' },
+        { ...observed, costBasisMicros: '18686190025' },
+        { ...observed, averageEntryPriceMicros: '692081113' },
+        { ...observed, quantityAtoms: '27000000001' },
+      ])
+        expect(
+          successOf(compareReconciliation({ ...input, positions: [changed] })).discrepancies.length,
+        ).toBeGreaterThan(0)
+      expect(
+        positionCostAnchor(account.accountId, projected, transactions.slice(1), [], observedAt, fillExecutionTimes),
+      ).toBeNull()
+      expect(
+        positionCostAnchor(
+          account.accountId,
+          { ...projected, costBasisMicros: '18686190001' },
+          transactions,
+          [],
+          observedAt,
+          fillExecutionTimes,
+        ),
+      ).toBeNull()
+      expect(
+        positionCostAnchor(
+          account.accountId,
+          projected,
+          transactions,
+          [],
+          '2026-07-23T15:30:00.000Z',
+          fillExecutionTimes,
+        ),
+      ).toBeNull()
+      expect(
+        positionCostAnchor(
+          account.accountId,
+          projected,
+          transactions,
+          [],
+          '2026-07-22T15:28:59.999Z',
+          fillExecutionTimes,
+        ),
+      ).toBeNull()
+      expect(
+        positionCostAnchor(account.accountId, projected, transactions.toReversed(), [], observedAt, fillExecutionTimes),
+      ).toEqual(input.projectedPositions[0]?.costBasisAnchor)
+      expect(positionCostAnchor(account.accountId, projected, transactions, [], observedAt, new Map())).toBeNull()
+      expect(
+        positionCostAnchor(
+          account.accountId,
+          projected,
+          transactions,
+          [],
+          observedAt,
+          new Map(transactions.map((t) => [t.brokerEventId, '2026-07-22T15:29:00.000000000Z'])),
+        ),
+      ).toBeNull()
+      record(6n, 692420000000n, OrderSide.Sell)
+      const partial = { ...projected, quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros }
+      expect(partial).toMatchObject({ quantityAtoms: '21000000000', costBasisMicros: '14533703333' })
+      const partialAnchor = positionCostAnchor(
+        account.accountId,
+        partial,
+        transactions,
+        [],
+        observedAt,
+        fillExecutionTimes,
+      )
+      expect(
+        successOf(
+          compareReconciliation({
+            ...input,
+            positions: [{ ...observed, quantityAtoms: partial.quantityAtoms, costBasisMicros: '14533703352' }],
+            projectedPositions: [{ ...partial, costBasisAnchor: partialAnchor }],
+          }),
+        ).discrepancies,
+      ).toEqual([])
+      record(21n, 692420000000n, OrderSide.Sell)
+      record(2n, 100000000000n, OrderSide.Buy)
+      if (!sameMillisecond) {
+        const currentTimes = new Map(fillExecutionTimes)
+        for (const transaction of transactions.slice(0, 5)) currentTimes.delete(transaction.brokerEventId)
+        expect(
+          positionCostAnchor(
+            account.accountId,
+            { ...projected, quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros },
+            transactions,
+            [],
+            observedAt,
+            currentTimes,
+          ),
+        ).not.toBeNull()
+      }
+
+      expect(
+        positionCostAnchor(
+          account.accountId,
+          { ...projected, quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros },
+          transactions,
+          [],
+          observedAt,
+          fillExecutionTimes,
+        ),
+      ).toEqual({ priceAtomsNumerator: '100000000000', priceAtomsDenominator: '1' })
+    },
+  )
+
+  test('property: rounded-average position reporting rejects unrelated basis and quantity changes', () => {
+    checkProperty(
+      'position-cost-reporting',
+      fc.property(
+        fc.bigInt({ min: 1_000_000_000n, max: 1_000_000_000_000n }),
+        fc.bigInt({ min: 1_000_000n, max: 1_000_000_000_000n }),
+        (quantity, cost) => {
+          const price = (cost * 1_000_000_000n * 2n + quantity) / (quantity * 2n)
+          const reportedCost = (quantity * price + 500_000_000n) / 1_000_000_000n
+          const observed: Position = {
+            ...position,
+            quantityAtoms: String(quantity),
+            averageEntryPriceMicros: String(price),
+            costBasisMicros: String(reportedCost),
+          }
+          const input = snapshot({
+            positions: [observed],
+            projectedPositions: [
+              {
+                costBasisAnchor: null,
+                symbol: position.symbol,
+                quantityAtoms: String(quantity),
+                costBasisMicros: String(cost),
+              },
+            ],
+          })
+          expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+          const changedCost = reportedCost + (reportedCost === cost - 1n ? 2n : 1n)
+          expect(
+            successOf(
+              compareReconciliation({
+                ...input,
+                positions: [{ ...observed, costBasisMicros: String(changedCost) }],
+              }),
+            ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
+          ).toBe(true)
+          expect(
+            successOf(
+              compareReconciliation({
+                ...input,
+                positions: [{ ...observed, quantityAtoms: String(quantity + 1n) }],
+              }),
+            ).discrepancies.some(({ identity }) => identity === 'NVDA:quantity'),
+          ).toBe(true)
+        },
+      ),
+    )
+  })
+
+  test('uses broker cost basis without reconstructing it from rounded average entry price', () => {
+    const input = snapshot({
+      positions: [
+        {
+          ...position,
+          schemaVersion: 'bayn.position.v2',
+          quantityAtoms: '3000000000',
+          averageEntryPriceMicros: '100333333',
+          costBasisMicros: '301000000',
+        },
+      ],
+      projectedPositions: [
+        { costBasisAnchor: null, symbol: position.symbol, quantityAtoms: '3000000000', costBasisMicros: '301000000' },
+      ],
+    })
+    expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+    const drift = successOf(
+      compareReconciliation({
+        ...input,
+        positions: [
+          {
+            ...position,
+            schemaVersion: 'bayn.position.v2',
+            quantityAtoms: '3000000000',
+            averageEntryPriceMicros: '100333333',
+            costBasisMicros: '301000001',
+          },
+        ],
+      }),
+    )
+    expect(drift.discrepancies).toHaveLength(1)
+    expect(drift.discrepancies[0]).toMatchObject({
+      identity: `${position.symbol}:cost`,
+      expected: '301000000',
+      observed: '301000001',
+    })
+  })
+
   test('preserves reconciliation output above U128 and its exact evidence hashes', () => {
-    const quantityMicros = '170141183460469231731687303715884105727'
+    const quantityAtoms = '170141183460469231731687303715884105727'
     const result = successOf(
       compareReconciliation(
         snapshot({
           positions: [
             {
               ...position,
-              quantityMicros,
+              quantityAtoms,
               averageEntryPriceMicros: '340282366920938463463374607431768211455',
+              costBasisMicros: '57896044618658097711785492504343953926124568782438874324533730092809',
             },
           ],
-          projectedPositions: [{ symbol: position.symbol, quantityMicros, costBasisMicros: '0' }],
+          projectedPositions: [{ costBasisAnchor: null, symbol: position.symbol, quantityAtoms, costBasisMicros: '0' }],
         }),
       ),
     )
 
-    expect(result.observedHash).toBe('7d475d168ec5d130dbc08418eb200deef0775f8ab8339c453e3016a2d3caa7f1')
+    expect(result.observedHash).toBe('6aee902d58b45b8a15fd40771ac2afc2cde5518393ef3a182bd619b010acff4a')
     expect(result.discrepancies).toEqual([
       {
         discrepancyId: '82d8cf06a2c0300ed87632447e51b5fc7b03ac37eeb87df44e46edea3a0af96b',
         kind: DiscrepancyKind.Position,
         identity: `${position.symbol}:cost`,
         expected: '0',
-        observed: '57896044618658097711785492504343953926124568782438874324533730092808913',
-        evidenceHash: '937546e66a02272e1b3bbc238fdf84721746ebd04d30f6de5deae0627ad0bafd',
+        observed: '57896044618658097711785492504343953926124568782438874324533730092809',
+        evidenceHash: 'e63710ca9e2d9710238c379c3657b34595100ab3a2de6eacb8a2a6c42672859e',
       },
     ])
   })
@@ -371,6 +701,40 @@ describe('execution reconciliation', () => {
     expect(first.discrepancies[0].evidenceHash).not.toBe(second.discrepancies[0].evidenceHash)
   })
 
+  test('accepts an accounted broker fill before the acknowledged intent is terminalized', () => {
+    const current = snapshot()
+    const intents = current.intents.map(({ terminalOutcome: _terminalOutcome, ...intent }) => ({
+      ...intent,
+      state: IntentState.Acknowledged,
+    }))
+
+    expect(successOf(compareReconciliation({ ...current, intents })).discrepancies).toEqual([])
+    expect(
+      successOf(compareReconciliation({ ...current, intents, durableFills: [] })).discrepancies.length,
+    ).toBeGreaterThan(0)
+  })
+
+  test.each([observedAt, '2026-07-22T15:30:00.002Z'])(
+    'reports independent equity marks even when receipt timestamps coincide: %s',
+    (positionObservedAt) => {
+      const result = successOf(
+        compareReconciliation(
+          snapshot({
+            account: { ...account, equityMicros: '1000170000' },
+            positions: [{ ...position, observedAt: positionObservedAt }],
+          }),
+        ),
+      )
+
+      expect(result.discrepancies).toEqual([])
+      expect(result.metrics.equityDifferenceMicros).toBe('170000')
+      const flat = successOf(
+        compareReconciliation(snapshot({ positions: [], valuation: { ...valuation, equityMicros: '0' } })),
+      )
+      expect(flat.discrepancies.some(({ kind }) => kind === DiscrepancyKind.Valuation)).toBe(true)
+    },
+  )
+
   test('compares the complete order contract, lifecycle, and aggregate fill quantity', () => {
     const result = successOf(
       compareReconciliation(
@@ -380,7 +744,7 @@ describe('execution reconciliation', () => {
               ...order,
               limitPriceMicros: '90000000',
               status: OrderStatus.PartiallyFilled,
-              filledQuantityMicros: '500000',
+              filledQuantityAtoms: '500000000',
             },
           ],
         }),

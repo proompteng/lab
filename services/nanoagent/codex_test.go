@@ -83,6 +83,60 @@ func respondToCodexWireRequest(t *testing.T, supervisor *codexSupervisor, reques
 	supervisor.readMessagesWithLimit(nil, generation, strings.NewReader(string(message)+"\n"), codexProtocolLineMaxBytes)
 }
 
+func TestCodexThreadsDisableInheritedApps(t *testing.T) {
+	for _, method := range []string{"thread/start", "thread/resume"} {
+		for _, config := range []string{"null", `{"model_reasoning_effort":"high","features.apps":true,"features":{"apps":true,"shell_snapshot":true}}`} {
+			t.Run(method+"/"+config, func(t *testing.T) {
+				supervisor, writer := readyCodexSupervisor(t)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				params := json.RawMessage(`{"threadId":"thread-1","cwd":"/workspace","model":"fixture","config":` + config + `}`)
+				done := make(chan error, 1)
+				go func() {
+					_, err := supervisor.call(ctx, method, params)
+					done <- err
+				}()
+				request := readCodexWireRequest(t, writer)
+				var actual struct {
+					Cwd    string         `json:"cwd"`
+					Model  string         `json:"model"`
+					Config map[string]any `json:"config"`
+				}
+				if json.Unmarshal(request.Params, &actual) != nil || actual.Config["features.apps"] != false {
+					t.Fatalf("%s retained inherited app tools: %s", method, request.Params)
+				}
+				if actual.Cwd != "/workspace" || actual.Model != "fixture" {
+					t.Fatalf("%s changed the native workspace or model: %s", method, request.Params)
+				}
+				if config != "null" {
+					features, ok := actual.Config["features"].(map[string]any)
+					if !ok || features["apps"] != false || features["shell_snapshot"] != true || actual.Config["model_reasoning_effort"] != "high" {
+						t.Fatalf("%s changed unrelated settings or retained a nested apps override: %s", method, request.Params)
+					}
+				}
+				respondToCodexWireRequest(t, supervisor, request, nil)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexRejectsInvalidThreadConfigBeforeDispatch(t *testing.T) {
+	for _, params := range []string{`null`, `{"config":[]}`, `{"config":{"features":true}}`} {
+		supervisor, writer := readyCodexSupervisor(t)
+		if _, err := supervisor.call(context.Background(), "thread/start", json.RawMessage(params)); err == nil {
+			t.Fatalf("invalid thread configuration was accepted: %s", params)
+		}
+		select {
+		case request := <-writer.messages:
+			t.Fatalf("invalid thread configuration reached Codex: %s", request)
+		default:
+		}
+	}
+}
+
 func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
 	t.Parallel()
 	supervisor, writer := readyCodexSupervisor(t)
@@ -95,7 +149,10 @@ func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
 	}()
 
 	request := readCodexWireRequest(t, writer)
-	if request.Method != "thread/resume" || string(request.Params) != string(params) {
+	var wireParams struct {
+		ThreadID string `json:"threadId"`
+	}
+	if request.Method != "thread/resume" || json.Unmarshal(request.Params, &wireParams) != nil || wireParams.ThreadID != threadID {
 		t.Fatalf("Codex wire request = method %q params %s", request.Method, request.Params)
 	}
 	respondToCodexWireRequest(t, supervisor, request, json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`))
@@ -151,9 +208,15 @@ func TestMissingCodexConversationClassificationRejectsUnrelatedErrors(t *testing
 func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 	t.Parallel()
 	allowed := []string{
+		"model/list",
+		"mcpServerStatus/list",
 		"account/read",
 		"account/login/start",
 		"thread/start",
+		"thread/list",
+		"thread/archive",
+		"thread/unarchive",
+		"thread/read",
 		"thread/resume",
 		"thread/turns/list",
 		"thread/items/list",
@@ -205,7 +268,7 @@ func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false)
+		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false, nil)
 		done <- err
 	}()
 	select {
@@ -363,6 +426,263 @@ func TestApprovalCancellationRestartsBlockedProcessWriter(t *testing.T) {
 	}
 }
 
+func TestCodexMCPElicitationPublishesUnsupportedError(t *testing.T) {
+	for _, mode := range []string{"form", "url"} {
+		t.Run(mode, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			params, err := json.Marshal(map[string]string{
+				"threadId": "thread-1", "turnId": "turn-1", "mode": mode,
+				"message": "private MCP request content", "serverName": "fixture",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: params}
+			raw, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+
+			response := readCodexWireRequest(t, writer)
+			if string(response.ID) != "17" || string(response.Result) != `{"action":"cancel"}` || len(response.Error) != 0 {
+				t.Fatalf("MCP request must still fail closed, got %+v", response)
+			}
+			if len(supervisor.approvals) != 0 {
+				t.Fatal("unsupported MCP request created an actionable approval")
+			}
+			if len(supervisor.buffer) != 1 {
+				t.Fatalf("got %d events, want an explicit integration error", len(supervisor.buffer))
+			}
+			event := supervisor.buffer[0]
+			if event.Method != "error" || event.ApprovalID != "" {
+				t.Fatalf("unsupported request event = %+v", event)
+			}
+			var notification struct {
+				Method string `json:"method"`
+				Params struct {
+					ThreadID string `json:"threadId"`
+					TurnID   string `json:"turnId"`
+					Message  string `json:"message"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(event.Raw, &notification); err != nil {
+				t.Fatal(err)
+			}
+			if notification.Method != "error" || notification.Params.ThreadID != "thread-1" || notification.Params.TurnID != "turn-1" {
+				t.Fatalf("integration error lost its thread/turn scope: %s", event.Raw)
+			}
+			if !strings.Contains(notification.Params.Message, "No user decision was submitted") || strings.Contains(string(event.Raw), "private MCP request content") {
+				t.Fatalf("integration error should identify the adapter failure without request content: %s", event.Raw)
+			}
+		})
+	}
+}
+
+func TestCodexMCPElicitationFromStaleGenerationIsIgnored(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	message := codexRPCMessage{
+		ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request",
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1"}`),
+	}
+	supervisor.handleServerMessage(&codexProcessGeneration{}, message, nil)
+	if len(supervisor.buffer) != 0 || len(supervisor.approvals) != 0 || len(writer.messages) != 0 {
+		t.Fatal("stale MCP request affected the current process or event stream")
+	}
+}
+
+const testCodexMCPToolApprovalParams = `{"threadId":"thread-1","turnId":"turn-1","serverName":"fixture","mode":"form","message":"Allow the fixture tool?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_params":{"command":"fixture"}}}`
+
+func TestCodexMCPToolApprovalWaitsForExplicitDecision(t *testing.T) {
+	for _, decision := range []string{"approveOnce", "approveSession", "deny"} {
+		t.Run(decision, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
+			raw, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 {
+				t.Fatal("MCP confirmation did not wait for an explicit user decision")
+			}
+			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || string(supervisor.buffer[0].Raw) != string(raw) {
+				t.Fatal("MCP confirmation was not published with its original scope and arguments")
+			}
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), decision); err != nil {
+				t.Fatal(err)
+			}
+			response := readCodexWireRequest(t, writer)
+			var result struct {
+				Action  string         `json:"action"`
+				Content map[string]any `json:"content"`
+				Meta    struct {
+					Persist string `json:"persist"`
+				} `json:"_meta"`
+			}
+			if err := json.Unmarshal(response.Result, &result); err != nil {
+				t.Fatal(err)
+			}
+			wantAction := "accept"
+			if decision == "deny" {
+				wantAction = "decline"
+			}
+			if result.Action != wantAction || (result.Content != nil) != (wantAction == "accept") {
+				t.Fatalf("MCP result = %s", response.Result)
+			}
+			if (result.Meta.Persist == "session") != (decision == "approveSession") || len(supervisor.approvals) != 0 {
+				t.Fatalf("MCP decision changed scope or remained pending: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexMCPToolApprovalRejectsUnadvertisedScopeAndInputForms(t *testing.T) {
+	params := strings.Replace(testCodexMCPToolApprovalParams, `["session","always"]`, `"always"`, 1)
+	decisions := codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params))
+	approval := codexApproval{method: "mcpServer/elicitation/request", decisions: decisions}
+	if _, err := codexApprovalResult(approval, "approveSession"); err == nil {
+		t.Fatal("unadvertised session scope was accepted")
+	}
+	for _, params := range []string{
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{"token":{"type":"string"}}`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":["token"]`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"mcp_tool_call"`, `"new_access"`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"mode":"form"`, `"mode":"url"`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":true`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"$schema":42`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"additionalProperties":true`, 1),
+	} {
+		if codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params)) != nil {
+			t.Fatal("input/access elicitation was treated as a tool-use confirmation")
+		}
+	}
+}
+
+func TestCodexMCPToolApprovalAcceptsOptionalEmptySchemaMetadata(t *testing.T) {
+	for _, optional := range []string{`"required":[]`, `"$schema":"https://json-schema.org/draft/2020-12/schema"`, `"required":null,"$schema":null`, `"required":[],"$schema":"fixture"`} {
+		params := strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},`+optional, 1)
+		decisions := codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params))
+		if len(decisions) != 3 {
+			t.Fatalf("valid empty schema metadata rejected: %s", optional)
+		}
+	}
+}
+
+func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
+	for _, persist := range []string{`"always"`, `"session"`, `["session","always"]`} {
+		t.Run(persist, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			params := strings.Replace(testCodexMCPToolApprovalParams, `["session","always"]`, persist, 1)
+			params = strings.Replace(params, `"command":"fixture"`, `"command":"`+strings.Repeat("x", codexEventMaxBytes)+`"`, 1)
+			params = strings.Replace(params, `"tool_params":`, `"tool_description":"Harmless fixture tool.","tool_params":`, 1)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(params)}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
+				t.Fatal("oversized confirmation did not wait for an explicit decision")
+			}
+			event := supervisor.buffer[0]
+			if event.Method != message.Method || event.ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || len(event.Raw) > 16<<10 {
+				t.Fatal("oversized confirmation lost its method, approval ID, or size bound")
+			}
+			var bounded struct {
+				RawOmitted bool `json:"rawOmitted"`
+				Params     struct {
+					ThreadID   string `json:"threadId"`
+					TurnID     string `json:"turnId"`
+					ServerName string `json:"serverName"`
+					Message    string `json:"message"`
+					Meta       struct {
+						Description string          `json:"tool_description"`
+						Arguments   json.RawMessage `json:"tool_params"`
+					} `json:"_meta"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(event.Raw, &bounded); err != nil {
+				t.Fatal(err)
+			}
+			if !bounded.RawOmitted || bounded.Params.ThreadID != "thread-1" || bounded.Params.TurnID != "turn-1" ||
+				bounded.Params.ServerName != "fixture" || bounded.Params.Message != "Allow the fixture tool?" ||
+				bounded.Params.Meta.Description != "Harmless fixture tool." || len(bounded.Params.Meta.Arguments) != 0 {
+				t.Fatalf("bounded confirmation lost display metadata or retained arguments: %s", event.Raw)
+			}
+			var replay codexRPCMessage
+			if err := json.Unmarshal(event.Raw, &replay); err != nil {
+				t.Fatal(err)
+			}
+			decisions := codexApprovalDecisions(replay.Method, replay.Params)
+			_, session := decisions["approveSession"]
+			if len(decisions) < 2 || session != strings.Contains(persist, "session") || strings.Contains(string(event.Raw), "always") {
+				t.Fatalf("bounded confirmation changed advertised scopes: %s", event.Raw)
+			}
+			if !session {
+				if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveSession"); err == nil || len(writer.messages) != 0 {
+					t.Fatal("bounded confirmation accepted an unadvertised scope")
+				}
+			}
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "deny"); err != nil {
+				t.Fatal(err)
+			}
+			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"decline"}` {
+				t.Fatalf("bounded confirmation changed Deny: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexOversizedMCPApprovalBoundsDisplayAndCancelsUnboundedIdentity(t *testing.T) {
+	for _, field := range []string{"message", "tool_description", "threadId", "turnId", "serverName"} {
+		t.Run(field, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			var params map[string]any
+			if err := json.Unmarshal([]byte(testCodexMCPToolApprovalParams), &params); err != nil {
+				t.Fatal(err)
+			}
+			large := strings.Repeat("界", codexEventMaxBytes/3+1)
+			if field == "tool_description" {
+				params["_meta"].(map[string]any)[field] = large
+			} else {
+				params[field] = large
+			}
+			encoded, _ := json.Marshal(params)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: encoded}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if field == "message" || field == "tool_description" {
+				if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
+					t.Fatal("bounded display did not remain pending")
+				}
+				event := supervisor.buffer[0]
+				if event.Method != message.Method || len(event.Raw) > 16<<10 || !json.Valid(event.Raw) ||
+					!strings.Contains(string(event.Raw), "… (truncated)") || strings.Contains(string(event.Raw), "�") {
+					t.Fatal("display text was not bounded with valid UTF-8 and an explicit truncation notice")
+				}
+				return
+			}
+			if len(supervisor.approvals) != 0 || len(writer.messages) != 1 {
+				t.Fatal("unbounded identity created a hidden actionable approval")
+			}
+			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"cancel"}` {
+				t.Fatalf("unbounded identity did not cancel safely: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexResolvedMCPRequestCannotBeApprovedAfterCancellation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	request := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
+	raw, _ := json.Marshal(request)
+	supervisor.handleServerMessage(supervisor.generation, request, raw)
+	resolved := codexRPCMessage{Method: "serverRequest/resolved", Params: json.RawMessage(`{"threadId":"thread-1","requestId":17}`)}
+	raw, _ = json.Marshal(resolved)
+	supervisor.handleServerMessage(supervisor.generation, resolved, raw)
+	if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveOnce"); err == nil || len(writer.messages) != 0 {
+		t.Fatal("canceled MCP request was allowed to execute from a stale approval card")
+	}
+}
+
 func TestAutomaticCodexResponsesRestartBlockedProcessWriter(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -414,19 +734,22 @@ func TestCodexSupervisorCompletesInitializationHandshake(t *testing.T) {
 	}
 	directory := t.TempDir()
 	marker := filepath.Join(directory, "initialized.json")
+	arguments := filepath.Join(directory, "arguments.txt")
 	binary := filepath.Join(directory, "fake-codex")
 	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
 IFS= read -r initialize
 printf '%%s\n' '{"id":1,"result":{}}'
 IFS= read -r initialized
 printf '%%s' "$initialized" > %q
 sleep 30
-`, marker)
+`, arguments, marker)
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake app-server: %v", err)
 	}
 
 	supervisor := newCodexSupervisor(binary, directory)
+	supervisor.browserMCP = true
 	supervisor.start()
 	t.Cleanup(supervisor.close)
 
@@ -443,11 +766,54 @@ sleep 30
 			if !supervisor.isReady() {
 				t.Fatal("Codex supervisor was not ready after the initialization handshake")
 			}
+			args, err := os.ReadFile(arguments)
+			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
+				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
+			}
+			if !strings.Contains(string(args), "-c\nfeatures.apps=false\n") {
+				t.Fatalf("Codex inherited app tools are not disabled: %q", args)
+			}
+			for _, browserOption := range []string{`mcp_servers.tengri_browser.args=["browser-mcp"]`, "mcp_servers.tengri_browser.tool_timeout_sec=300", "mcp_servers.tengri_browser.required=true"} {
+				if !strings.Contains(string(args), browserOption+"\n") {
+					t.Fatalf("Codex browser configuration missing %s: %q", browserOption, args)
+				}
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("Codex app-server did not receive the initialized notification")
+}
+
+func TestCodexSupervisorDoesNotPublishReadyWhenInitializationFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a local fake app-server process")
+	}
+	directory := t.TempDir()
+	binary := filepath.Join(directory, "fake-codex")
+	script := `#!/bin/sh
+IFS= read -r initialize
+printf '%s\n' '{"id":1,"error":{"code":-32600,"message":"initialization rejected"}}'
+sleep 30
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+	supervisor := newCodexSupervisor(binary, directory)
+	_, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex lifecycle: %v", err)
+	}
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	select {
+	case event := <-events:
+		if event.Method != "error" || supervisor.isReady() {
+			t.Fatalf("rejected initialization reported a ready runtime: %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Codex did not report failed initialization")
+	}
 }
 
 func TestCodexSupervisorRestartsAfterProcessExit(t *testing.T) {
@@ -470,19 +836,33 @@ exit 17
 	}
 
 	supervisor := newCodexSupervisor(binary, directory)
+	subscription, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex lifecycle: %v", err)
+	}
+	t.Cleanup(func() { supervisor.unsubscribe(subscription) })
 	supervisor.start()
 	t.Cleanup(supervisor.close)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		content, err := os.ReadFile(marker)
-		if err == nil && strings.Count(string(content), "started\n") >= 2 {
-			return
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	var restartingSequence uint64
+	for {
+		select {
+		case event := <-events:
+			if event.Method == "error" {
+				restartingSequence = event.Sequence
+			}
+			if event.Method == "tengri/runtimeReady" && restartingSequence > 0 {
+				if event.Sequence <= restartingSequence || !strings.Contains(string(event.Raw), `"generationId":`) {
+					t.Fatalf("invalid recovered lifecycle event: %+v", event)
+				}
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("Codex restart never published successful initialization after its restart notice")
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
-	content, _ := os.ReadFile(marker)
-	t.Fatalf("Codex app-server starts = %d, want at least 2", strings.Count(string(content), "started\n"))
 }
 
 func TestCodexDeviceLoginRestartCancelsThePreviousAttempt(t *testing.T) {
@@ -738,6 +1118,52 @@ func TestCodexOversizedEventIsReplacedWithTruthfulWarning(t *testing.T) {
 	}
 	if supervisor.buffer[0].ApprovalID != "approval" {
 		t.Fatalf("oversized approval ID = %q, want preserved approval", supervisor.buffer[0].ApprovalID)
+	}
+}
+
+func TestCodexReplayProjectsOnlyToolResultImages(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, item string
+		projected  bool
+	}{
+		{"mcp", `{"type":"mcpToolCall","result":{"content":[{"type":"image","data":"image-data","mimeType":"image/png"},{"type":"text","text":"tool output"}],"structuredContent":{"type":"image","data":"keep-structured-data"}}}`, true},
+		{"dynamic", `{"type":"dynamicToolCall","contentItems":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"},{"type":"inputText","text":"tool output"}]}`, true},
+		{"user", `{"type":"userMessage","content":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"}]}`, false},
+		{"text", `{"type":"mcpToolCall","result":{"content":[{"type":"text","text":"tool output"}]}}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw := json.RawMessage(`{"method":"item/completed","emittedAtMs":9007199254740993,"params":{"threadId":"thread","turnId":"turn","item":` + test.item + `}}`)
+			original := string(raw)
+			supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+			supervisor.publish("item/completed", "", raw)
+			projected := string(supervisor.buffer[0].Raw)
+			if test.projected {
+				if !strings.Contains(projected, "[Image output]") || strings.Contains(projected, "image-data") || !strings.Contains(projected, "tool output") || !strings.Contains(projected, "9007199254740993") {
+					t.Fatalf("incorrect desktop projection: %s", projected)
+				}
+				if test.name == "mcp" && !strings.Contains(projected, "keep-structured-data") {
+					t.Fatal("desktop projection altered structured tool output")
+				}
+				if test.name == "dynamic" {
+					var event struct {
+						Params struct {
+							Item struct {
+								ContentItems []struct{ Type string } `json:"contentItems"`
+							} `json:"item"`
+						} `json:"params"`
+					}
+					if err := json.Unmarshal([]byte(projected), &event); err != nil || len(event.Params.Item.ContentItems) != 2 || event.Params.Item.ContentItems[0].Type != "inputText" {
+						t.Fatalf("projected dynamic image violates the app-server content schema: %s, %v", projected, err)
+					}
+				}
+			} else if projected != original {
+				t.Fatalf("non-image tool output or user input changed: %s", projected)
+			}
+			if string(raw) != original {
+				t.Fatal("desktop projection mutated the original Codex message")
+			}
+		})
 	}
 }
 

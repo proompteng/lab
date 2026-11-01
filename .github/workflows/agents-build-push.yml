@@ -92,7 +92,7 @@ jobs:
       - control-plane-image
       - agents-shell-image
       - runner-image
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     timeout-minutes: 15
     steps:
       - name: Checkout

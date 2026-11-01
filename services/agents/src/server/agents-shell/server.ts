@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
 import type { AuthContext } from './auth'
@@ -7,7 +9,12 @@ import { installEffectToolHandlers } from './mcp-adapter'
 import type { AgentsShellRunner } from './runner'
 import { createAgentsShellTools } from './tools'
 
-export const createAgentsShellServer = (config: AgentsShellConfig, runner: AgentsShellRunner, auth: AuthContext) => {
+export const createAgentsShellServer = (
+  config: AgentsShellConfig,
+  runner: AgentsShellRunner,
+  auth: AuthContext,
+  requestId: string = randomUUID(),
+) => {
   const server = new McpServer(
     {
       name: config.name,
@@ -21,7 +28,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     },
   )
 
-  installEffectToolHandlers(server, createAgentsShellTools(), { config, runner, auth })
+  installEffectToolHandlers(server, createAgentsShellTools(), { config, runner, auth, requestId })
 
   return server
 }

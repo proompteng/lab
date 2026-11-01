@@ -25,7 +25,7 @@ jobs:
   checks:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.0
+      bun-version: 1.4.2
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/khoshut
       lint-command: bunx oxfmt --check services/khoshut

@@ -33,3 +33,10 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --ignore-exclude-lb
+      - op: add
+        path: /spec/template/spec/tolerations/-
+        value:
+          key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule

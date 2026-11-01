@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tengri-observability
+data:
+  SENTRY_DSN: http://91419c9056984ed9a816c67de91b57ec@glitchtip-web.glitchtip.svc.cluster.local/6
+  NANOAGENT_SENTRY_DSN: http://29e3c780fe0349fdb17a41fd3e8e5a77@glitchtip-web.glitchtip.svc.cluster.local/8
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://observability-tempo-v3-distributor.observability.svc.cluster.local:4318/v1/traces

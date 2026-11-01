@@ -1,24 +1,35 @@
-import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
+import { positionProtectionIntervalMs } from '../jev/exit-policy'
+import type { ReconciliationRuntime } from './model'
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
+import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import type { AutonomousCycle } from '../cycle'
+import type { AutonomousCycle } from '../cycle/model'
 import {
   CycleDecisionBuildError,
   CycleRunnerError,
-  cyclePassLogFacts,
-  decideIdleReconciliationCadence,
-  validateCyclePassTimeout,
-  validateReconciliationInterval,
   type CycleRunContext,
   type CyclePassObservation,
   type CycleRunResult,
-} from '../cycle/runner'
-import { validateCycleLoopInterval } from '../cycle/runner/decisions'
+} from '../cycle/runner/model'
+import { cyclePassLogFacts } from '../cycle/runner/pass-decisions'
+import {
+  decideIdleReconciliationCadence,
+  validateCyclePassTimeout,
+  validateReconciliationInterval,
+} from '../cycle/runner/reconciliation-cadence'
+import { validateCycleLoopInterval } from '../cycle/runner/pass-decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
-import type { CycleDecisionBindingEvidence } from '../cycle/store'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
+import type { CycleDecisionBindingEvidence } from '../cycle/store/model'
 import { OperationalError, operationalError } from '../errors'
-import { archiveVerifiedIntradaySnapshotReference, type IntradayMarketDataService } from '../market-data'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
+import { type IntradayMarketDataService } from '../market-data/intraday/model'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
+import { AuthorityGenerationStore } from '../db/execution-store'
+import { ReconciliationStatus, type AuthorityState } from '../execution/contracts'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
@@ -29,6 +40,7 @@ import type {
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
   RecoveryFirstCycleDriver,
+  RecoveryFirstCycleAdvance,
   RecoveryFirstRuntime,
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
@@ -38,10 +50,12 @@ import {
   buildObserveCycleDecision,
   decisionBuildError,
   mutationCyclePassTimeoutError,
+  ReconciliationPassTimeoutError,
   observePass,
   reconciliationRunnerError,
   runMutationPassWithinTimeout,
   type ReconciliationPassError,
+  type PricingReconciliationRead,
 } from './decision-builder'
 import {
   deferPostMutationReconciliation,
@@ -52,47 +66,164 @@ import {
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconcileForPricing?: PricingReconciliationRead<ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
+
+const reconciliationReusableUntil = (
+  cached: ReconciliationPassResult,
+  authority: AuthorityState,
+  now: number,
+  maximumAgeMs: number,
+): number | undefined => {
+  if (
+    cached.riskContext.authority?.generationHash !== authority.generationHash ||
+    cached.riskContext.authority.version !== authority.version ||
+    cached.report.reconciliation.status !== ReconciliationStatus.Exact ||
+    !cached.report.metrics.accountingExact ||
+    cached.riskContext.unknownMutationCount !== 0
+  )
+    return undefined
+  const state = cached.brokerState
+  const observations = [
+    state.account.observedAt,
+    state.positionsObservedAt,
+    state.ordersObservedAt,
+    cached.report.reconciliation.reconciledAt,
+    cached.riskContext.authorityObservedAt,
+  ]
+  if (observations.some((at) => at === null || !Number.isFinite(Date.parse(at)) || Date.parse(at) > now))
+    return undefined
+  return Math.min(...observations.map((at) => Date.parse(at ?? ''))) + maximumAgeMs
+}
+
+/** Owned by one serialized pass, discarded before its post-mutation continuation. */
+export const reconciliationForPreparation = <R>(
+  initial: ReconciliationPassResult | undefined,
+  refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
+  readAuthority: Effect.Effect<AuthorityState, ReconciliationPassError, R>,
+  maximumAgeMs: number,
+) =>
+  Effect.gen(function* () {
+    const previous = yield* Ref.make(initial)
+    const preflightAvailable = yield* Ref.make(initial !== undefined)
+    const refreshAndRemember = refresh.pipe(
+      Effect.tap((facts) => Ref.set(previous, facts)),
+      Effect.tap(() => Ref.set(preflightAvailable, false)),
+    )
+    return {
+      refresh: refreshAndRemember,
+      read: Effect.gen(function* () {
+        const cached = yield* Ref.get(previous)
+        const firstUse = yield* Ref.getAndSet(preflightAvailable, false)
+        const now = yield* Clock.currentTimeMillis
+        const authority = yield* readAuthority
+        if (
+          cached !== undefined &&
+          firstUse &&
+          cached.riskContext.authority?.generationHash === authority.generationHash &&
+          cached.riskContext.authority.version === authority.version
+        )
+          return cached
+        if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
+          return cached
+        return yield* refreshAndRemember
+      }),
+      readForPricing: (minimumRemainingMs: number) =>
+        Effect.gen(function* () {
+          // Unlike the ordinary first use, pricing must prove prospective coverage even for preflight facts.
+          yield* Ref.set(preflightAvailable, false)
+          const cached = yield* Ref.get(previous)
+          const authority = yield* readAuthority
+          const now = yield* Clock.currentTimeMillis
+          const freshUntil =
+            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
+          if (cached !== undefined && freshUntil !== undefined && now + minimumRemainingMs < freshUntil)
+            return { reconciliation: cached, freshUntil }
+          const reconciliation = yield* refreshAndRemember
+          const refreshedAuthority = yield* readAuthority
+          const refreshedAt = yield* Clock.currentTimeMillis
+          const refreshedUntil = reconciliationReusableUntil(
+            reconciliation,
+            refreshedAuthority,
+            refreshedAt,
+            maximumAgeMs,
+          )
+          return {
+            reconciliation,
+            freshUntil:
+              refreshedUntil !== undefined && refreshedAt + minimumRemainingMs < refreshedUntil
+                ? refreshedUntil
+                : undefined,
+          }
+        }),
+    }
+  })
 
 const verifyDecisionBindingEvidence = (
   marketData: IntradayMarketDataService | undefined,
   document: CycleDecisionDocument,
 ): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
   const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
-  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') return Effect.succeed({})
+  if (binding === undefined || binding.schemaVersion === 'bayn.reconciled-position-liquidation-binding.v1')
+    return Effect.succeed({})
   if (
     marketData === undefined ||
     !('decisionMarketDataRows' in document) ||
-    document.decisionMarketDataRows === undefined
-  ) {
+    (binding.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+      binding.schemaVersion !== 'bayn.execution-market-data-binding.v4')
+  )
     return Effect.fail(
       new CycleDecisionBuildError({
         failure: 'contract',
-        message: 'intraday decision has no archive reader or persisted rows for external verification',
+        message: 'Decision requires canonical market data and persisted input rows',
       }),
     )
-  }
-  const snapshot = reconstructBoundIntradaySnapshot(binding, document.decisionMarketDataRows)
-  if (snapshot === undefined) {
-    return Effect.fail(
-      new CycleDecisionBuildError({
-        failure: 'contract',
-        message: 'intraday decision rows do not reconstruct their bound archive snapshot',
-      }),
+  const inputs = [{ binding, rows: document.decisionMarketDataRows }]
+  const pricing = document.bindings.executionMarketData
+  if (pricing !== undefined && pricing.snapshotId !== binding.snapshotId) {
+    if (
+      (pricing.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+        pricing.schemaVersion !== 'bayn.execution-market-data-binding.v4') ||
+      document.executionMarketDataRows === undefined
     )
-  }
-  return marketData.verifyArchiveSnapshot(snapshot).pipe(
-    Effect.map((verified) => ({
-      intradaySnapshotReferences: [archiveVerifiedIntradaySnapshotReference(verified)],
-    })),
-    Effect.mapError(
-      (cause) =>
+      return Effect.fail(
         new CycleDecisionBuildError({
-          failure: 'market-data',
-          message: 'intraday decision does not match the immutable archive at its bound watermarks',
-          cause,
+          failure: 'contract',
+          message: 'Pricing requires canonical market data and persisted input rows',
         }),
+      )
+    inputs.push({ binding: pricing, rows: document.executionMarketDataRows })
+  }
+  return Effect.forEach(inputs, ({ binding: source, rows }) => {
+    const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(source, rows)
+    if (snapshot === undefined)
+      return Effect.fail(
+        new CycleDecisionBuildError({
+          failure: 'contract',
+          message: 'Decision or pricing input cut does not reproduce',
+        }),
+      )
+    return marketData.verifyReference(snapshot).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CycleDecisionBuildError({
+            failure: 'market-data',
+            message: 'Decision source evidence is unavailable',
+            cause,
+          }),
+      ),
+    )
+  }).pipe(
+    Effect.map(
+      (references): CycleDecisionBindingEvidence => ({
+        simulatedSnapshotReferences: references.filter(
+          (reference) => reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2',
+        ),
+        streamingSnapshotReferences: references.filter(
+          (reference) => reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1',
+        ),
+      }),
     ),
   )
 }
@@ -116,23 +247,70 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   lifecycleAdvance: Effect.Effect<A, E, R>,
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
+  stage: 'bayn.execution.bounded-pass' | 'bayn.execution.generation-pass' = 'bayn.execution.bounded-pass',
 ): Effect.Effect<A, E, R> =>
-  operationPermit.withPermit(lifecycleAdvance).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
+    let interruptionRequestedAt = startedAt
+    return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
+      withObservedStage(stage),
+      Effect.provideService(ActiveExecutionStages, activeStages),
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        onDeadline: operationCurrentTimeMillis.pipe(
+          Effect.flatMap((requestedAt) => {
+            interruptionRequestedAt = requestedAt
+            return Effect.logWarning('Bayn execution pass interruption requested').pipe(
+              Effect.annotateLogs({
+                service: 'bayn',
+                stage,
+                timeoutMs,
+                executionElapsedMs: Math.max(0, requestedAt - startedAt),
+                activeStages: [...activeStages.values()].map(({ startedAt: stageStartedAt, ...stage }) => ({
+                  ...stage,
+                  elapsedMs: Math.max(0, requestedAt - stageStartedAt),
+                })),
+              }),
+            )
+          }),
+        ),
+        orElse: () =>
+          operationCurrentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) =>
+              Effect.logError('Bayn execution pass deadline exceeded').pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  stage,
+                  timeoutMs,
+                  elapsedMs: Math.max(0, finishedAt - startedAt),
+                  deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),
+                  executionElapsedMs: Math.max(0, interruptionRequestedAt - startedAt),
+                  cancellationElapsedMs: Math.max(0, finishedAt - interruptionRequestedAt),
+                }),
+                Effect.andThen(
+                  onTimeout(mutationCyclePassTimeoutError(timeoutMs)).pipe(
+                    withObservedStage('bayn.execution.timeout-recovery', {
+                      slowAfterMs: 1_000,
+                      recordCompletion: true,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      }),
+    )
+  })
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+): Effect.Effect<ReconciliationPassResult, CycleRunnerError, ObserveDecisionRuntime> =>
   Clock.currentTimeNanos.pipe(
     Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
     Effect.andThen(
       reconcile.pipe(
-        Effect.asVoid,
         Effect.mapError(reconciliationRunnerError),
         Effect.tapError((lastFailure) =>
           Clock.currentTimeNanos.pipe(
@@ -143,17 +321,29 @@ const attemptMutationIdleReconciliation = (
     ),
   )
 
+const isPendingBrokerReconciliation = (error: CycleRunnerError): boolean =>
+  error.operation === 'reconcile' &&
+  error.cause instanceof OperationalError &&
+  error.cause.operation === 'reconciliation' &&
+  error.cause.cause instanceof BrokerReadError &&
+  error.cause.cause.kind === BrokerReadErrorKind.ObservationPending
+
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const nowNanos = yield* Clock.currentTimeNanos
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'RECONCILE') yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    if (
+      decision._tag === 'RECONCILE' ||
+      (state.lastFailure !== undefined && isPendingBrokerReconciliation(state.lastFailure))
+    )
+      return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
+    return undefined
   })
 
 const observeMutationCycleResult = (
@@ -176,7 +366,102 @@ const observeMutationCycleResult = (
 export const recoveryFirstCycleNextDelayMs = (input: {
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
-}): number => Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
+  readonly postMutationDelayMs?: number
+}): number => {
+  const cadence = Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
+  return input.postMutationDelayMs === undefined
+    ? cadence
+    : Math.min(cadence, Math.max(mutationConsistencyDelayMs, input.postMutationDelayMs))
+}
+
+/** Expected quote or broker publication waits use a short continuation; source failures keep their backoff. */
+export const executionEvidenceContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (
+    result.outcome !== 'RECOVERED' ||
+    result.action !== 'WAITING' ||
+    (result.waitReason !== 'CLOSE_QUOTE_PENDING' &&
+      result.waitReason !== 'BROKER_OBSERVATION_PENDING' &&
+      result.waitReason !== 'JEV_POSITION_AWAITING_RECONCILIATION')
+  )
+    return undefined
+  const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
+  return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
+}
+
+/** A known future signal boundary may shorten one durable wait, without accelerating missing-data retries. */
+export const decisionReadinessContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (
+    result.outcome !== 'RECOVERED' ||
+    result.action !== 'WAITING' ||
+    result.readiness === undefined ||
+    (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
+      result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved) ||
+    result.readiness.availableAt === undefined
+  )
+    return undefined
+  const availableAt = Date.parse(result.readiness.availableAt)
+  const remainingMs = availableAt - Date.parse(observedAt)
+  return Number.isSafeInteger(remainingMs) &&
+    remainingMs > 0 &&
+    remainingMs < normalDelayMs &&
+    availableAt < Date.parse(result.cycle.window.submissionCutoffAt)
+    ? remainingMs
+    : undefined
+}
+
+/** Price protection wakes independently of signal windows; the first-fill deadline still caps each wait. */
+export const maximumHoldContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.maximumHoldDueAt === undefined)
+    return undefined
+  const dueAt = Date.parse(result.maximumHoldDueAt)
+  const remainingMs = dueAt - Date.parse(observedAt)
+  const closeRemainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
+  if (!Number.isSafeInteger(remainingMs) || !Number.isSafeInteger(closeRemainingMs) || closeRemainingMs <= 0)
+    return undefined
+  if (remainingMs > 0) return Math.min(remainingMs, closeRemainingMs, normalDelayMs, positionProtectionIntervalMs)
+  // Slow management work may cross a deadline that was still future when evaluated. Recheck once; the next
+  // fresh management pass takes the maximum-hold exit path and cannot emit this pre-eligibility wait again.
+  const evaluatedAt = Date.parse(result.maximumHoldEvaluatedAt ?? '')
+  return evaluatedAt < dueAt && evaluatedAt <= Date.parse(observedAt) ? 1 : undefined
+}
+
+/** Projection health is checked after the pass; a later failure owns its continuation timing. */
+export const checkAdvancedMarketProjection = <R>(
+  advanced: RecoveryFirstCycleAdvance,
+  check: IntradayMarketDataService['check'],
+  observeFailure: (cause: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>,
+): Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R> =>
+  check.pipe(
+    Effect.matchEffect({
+      onFailure: (cause) =>
+        observeFailure(
+          new CycleRunnerError({
+            operation: 'build-decision',
+            failure: 'market-data',
+            message: 'Execution worker market projection is unavailable',
+            cause,
+          }),
+        ).pipe(
+          Effect.map((failed) => {
+            const { nextDelayMs: _nextDelayMs, ...completed } = advanced
+            return { ...completed, ...failed }
+          }),
+        ),
+      onSuccess: () => Effect.succeed(advanced),
+    }),
+  )
 
 const makeRecoveryFirstCycleDriverEffect = (
   input: ObserveAutonomousCycleInput,
@@ -188,15 +473,68 @@ const makeRecoveryFirstCycleDriverEffect = (
 ): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
+    // A local continuation hint, not evidence or mutation authority. Restarting loses only acceleration.
+    const postExitCloseAt = yield* Ref.make<string | undefined>(undefined)
+    // The generation deadline can interrupt reconciliation before its own timeout is reported.
+    // Clear this marker before entering any cycle work; only the serialized preflight may retry without restriction.
+    const preflightOnly = yield* Ref.make(false)
     const operationPermit = yield* Semaphore.make(1)
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const nextDelayMs = recoveryFirstCycleNextDelayMs(input)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
+      Effect.tap((result) =>
+        capability._tag === 'RecoveryOnly' ? Effect.void : capability.executionProgram.recordReconciliation(result),
+      ),
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+      Effect.tap(() => Ref.set(postExitCloseAt, undefined)),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) && capability._tag !== 'RecoveryOnly'
+          ? capability.executionProgram.invalidateBrokerState
+          : Effect.void,
+      ),
     )
+    const observeReconciliationFailure = (error: CycleRunnerError) => {
+      if (isPendingBrokerReconciliation(error))
+        return currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) =>
+            observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
+          ),
+          Effect.map((observation) => ({
+            observation,
+            nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs),
+          })),
+        )
+      return Effect.gen(function* () {
+        const observedAt = yield* currentUtcInstant
+        const closeAt = yield* Ref.get(postExitCloseAt)
+        const remaining = closeAt === undefined ? 0 : Date.parse(closeAt) - Date.parse(observedAt)
+        const missingPostExitCut =
+          remaining > 0 &&
+          error.operation === 'reconcile' &&
+          error.cause instanceof OperationalError &&
+          error.cause.operation === 'reconciliation' &&
+          error.cause.cause instanceof BrokerReadError &&
+          error.cause.cause.operation === 'preflight' &&
+          error.cause.cause.kind === BrokerReadErrorKind.Timeout &&
+          error.cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+        if (missingPostExitCut) yield* Ref.set(cadence, {})
+        else yield* Ref.set(postExitCloseAt, undefined)
+        const observation = yield* observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })
+        return {
+          observation,
+          ...(missingPostExitCut ? { nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs, remaining) } : {}),
+        }
+      })
+    }
     const observeCycleFailure = (error: CycleRunnerError) =>
-      (capability._tag === 'Mutation' && shouldRestrictMutationLoopFailure(error)
-        ? restrictMutationLoopFailure(error)
+      (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
+        ? restrictMutationLoopFailure(error).pipe(
+            withObservedStage('bayn.execution.restriction-persistence', {
+              dependency: 'postgresql',
+              slowAfterMs: 1_000,
+              recordCompletion: true,
+            }),
+          )
         : Effect.void
       ).pipe(
         Effect.catch((restrictionError: CycleRunnerError) =>
@@ -207,68 +545,140 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.andThen(Effect.fail(restrictionError)),
           ),
         ),
-        Effect.andThen(currentUtcInstant),
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-        Effect.map((observation) => ({ observation })),
+        Effect.andThen(observeReconciliationFailure(error)),
       )
-    const advanceCycle = Effect.gen(function* () {
-      const context: CycleRunContext<ObserveDecisionRuntime> = {
-        cycleBindingId: startup.cycleBindingId,
-        strategyName: 'intraday-momentum',
-        strategyProtocolHash: preparation.strategyProtocolHash,
-        accountId: input.accountId,
-        executionPolicy: preparation.executionPolicy,
-        buildDecision: (cycle) => buildDecision(cycle, reconcile),
-        buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
-      }
-      const result = yield* runMutationPassWithinTimeout(
-        runRecoveryFirstCyclePass(input, policy, context, reconcile, capability),
-        cyclePassTimeoutMs,
+    const observeTimeout = (error: CycleRunnerError) =>
+      Ref.get(preflightOnly).pipe(
+        Effect.flatMap((preflight) =>
+          preflight
+            ? Ref.set(cadence, {}).pipe(
+                Effect.andThen(
+                  observeReconciliationFailure(
+                    reconciliationRunnerError(
+                      new ReconciliationPassTimeoutError({
+                        timeoutMs: cyclePassTimeoutMs,
+                        message: `broker reconciliation preflight interrupted: ${error.message}`,
+                      }),
+                    ),
+                  ),
+                ),
+              )
+            : observeCycleFailure(error),
+        ),
       )
-      if (isPostMutationReconciliation(result)) {
-        // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
-        // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
-        // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
-        // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
-        yield* Ref.set(cadence, {})
-        return {
-          result: deferPostMutationReconciliation(result),
-          ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+    const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
+      Effect.gen(function* () {
+        const authorityStore = yield* AuthorityGenerationStore
+        const {
+          read: reconcileForAdvance,
+          refresh: refreshForAdvance,
+          readForPricing,
+        } = yield* reconciliationForPreparation(
+          preflight,
+          reconcile,
+          authorityStore.readAuthorityState,
+          policy.maxBrokerStateAgeMs,
+        )
+        const context: CycleRunContext<ObserveDecisionRuntime> = {
+          cycleBindingId: startup.cycleBindingId,
+          strategyName: 'jev',
+          strategyProtocolHash: preparation.strategyProtocolHash,
+          accountId: input.accountId,
+          authorityGenerationHash: input.authorityGenerationHash,
+          executionPolicy: preparation.executionPolicy,
+          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance, readForPricing),
+          buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
-      }
-      return { result }
-    }).pipe(
+        const result = yield* runMutationPassWithinTimeout(
+          runRecoveryFirstCyclePass(
+            input,
+            policy,
+            context,
+            { read: reconcileForAdvance, refresh: refreshForAdvance },
+            capability,
+            preflight,
+          ),
+          cyclePassTimeoutMs,
+        )
+        if (isPostMutationReconciliation(result)) {
+          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
+          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
+          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
+          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
+          yield* Ref.set(cadence, {})
+          yield* Ref.set(
+            postExitCloseAt,
+            result.logContext.mutationPhase === 'CLOSE' ? result.cycle.window.executionCloseAt : undefined,
+          )
+          return {
+            result: deferPostMutationReconciliation(result),
+            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
+          }
+        }
+        return { result }
+      }).pipe(
+        Effect.matchEffect({
+          onFailure: observeCycleFailure,
+          onSuccess: ({ result, nextDelayMs }) =>
+            observeMutationCycleResult(startup, cadence, result).pipe(
+              Effect.map((observation) => ({
+                observation,
+                result,
+                ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+              })),
+            ),
+        }),
+      )
+    const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
+    const runCycleAdvance = Ref.set(preflightOnly, true).pipe(
+      Effect.andThen(reconciliationPreflight),
       Effect.matchEffect({
-        onFailure: observeCycleFailure,
-        onSuccess: ({ result, nextDelayMs }) =>
-          observeMutationCycleResult(startup, cadence, result).pipe(
-            Effect.map((observation) => ({
-              observation,
-              result,
-              ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
-            })),
+        onFailure: observeReconciliationFailure,
+        onSuccess: (preflight) =>
+          Ref.set(preflightOnly, false).pipe(
+            Effect.andThen(advanceCycle(preflight)),
+            Effect.flatMap((advanced) =>
+              capability._tag !== 'Mutation' ||
+              input.intradayMarketData === undefined ||
+              advanced.observation.result === 'FAILURE'
+                ? Effect.succeed(advanced)
+                : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
+            ),
           ),
       }),
-    )
-    const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
-    const runCycleAdvance = reconciliationPreflight.pipe(
-      Effect.matchEffect({
-        onFailure: (error) =>
-          currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-            Effect.map((observation) => ({ observation })),
-          ),
-        onSuccess: () => advanceCycle,
+      Effect.flatMap((advanced) => {
+        if (advanced.observation.result === 'FAILURE' || !('result' in advanced) || advanced.result === undefined)
+          return Effect.succeed(advanced)
+        return currentUtcInstant.pipe(
+          Effect.map((observedAt) => {
+            const cadence = advanced.nextDelayMs ?? nextDelayMs
+            const continuation =
+              executionEvidenceContinuationDelayMs(advanced.result, cadence, observedAt) ??
+              decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
+            const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
+            if (maximumHold !== undefined) {
+              const delay = Math.min(continuation ?? cadence, maximumHold)
+              return {
+                ...advanced,
+                nextDelayMs: delay,
+                nextWakeAt: new Date(Date.parse(observedAt) + delay).toISOString(),
+              }
+            }
+            return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
+          }),
+        )
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      runCycleAdvance,
+      runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
       cyclePassTimeoutMs,
-      observeCycleFailure,
+      observeTimeout,
     )
     return {
       advance,
+      timeoutMs: cyclePassTimeoutMs,
+      onTimeout: observeTimeout,
       nextDelayMs,
     }
   })
@@ -307,13 +717,14 @@ export const observeDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile) =>
+  (cycle, reconcile, reconcileForPricing) =>
     buildObserveCycleDecision({
       authorityGenerationHash: input.authorityGenerationHash,
       cycle,
       executionModel: preparation.executionModel,
       policy,
       reconcile,
+      ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
       strategy: input.strategy,
       decisionFinalizationHeadroomMs: executionDecisionFinalizationHeadroomMs(input),
       ...(input.intradayMarketData === undefined ? {} : { intradayMarketData: input.intradayMarketData }),
@@ -325,7 +736,8 @@ export const mutationDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile) =>
-    buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
-      Effect.mapError(decisionBuildError),
-    )
+  (cycle, reconcile, reconcileForPricing) =>
+    buildMutationShadowCycleDecision({
+      ...mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+      ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
+    }).pipe(Effect.mapError(decisionBuildError))

@@ -4,24 +4,24 @@ import { decodeSearchAttributes, encodeSearchAttributes } from './client/seriali
 import type { DataConverter } from './common/payloads'
 import type { SearchAttributes } from './proto/temporal/api/common/v1/message_pb'
 
-export type SearchAttributeSchema = Schema.Schema<unknown>
+export type SearchAttributeSchema = Schema.Codec<unknown>
 
 export type SearchAttributeSchemaMap = Record<string, SearchAttributeSchema>
 
 export const defineSearchAttributes = <T extends SearchAttributeSchemaMap>(fields: T) => Schema.Struct(fields)
 
 export interface TypedSearchAttributes<T> {
-  readonly schema: Schema.Schema<T>
+  readonly schema: Schema.Codec<T>
   readonly encode: (input: T) => Promise<SearchAttributes | undefined>
   readonly decode: (attributes?: SearchAttributes | null) => Promise<T | undefined>
 }
 
 export const createTypedSearchAttributes = <T>(
-  schema: Schema.Schema<T>,
+  schema: Schema.Codec<T>,
   dataConverter: DataConverter,
 ): TypedSearchAttributes<T> => {
   const encode = async (input: T): Promise<SearchAttributes | undefined> => {
-    const parsed = await Effect.runPromise(Schema.decodeUnknown(schema)(input))
+    const parsed = await Effect.runPromise(Schema.decodeUnknownEffect(schema)(input))
     return encodeSearchAttributes(dataConverter, parsed as Record<string, unknown>)
   }
 
@@ -30,7 +30,7 @@ export const createTypedSearchAttributes = <T>(
     if (!decoded) {
       return undefined
     }
-    return Effect.runPromise(Schema.decodeUnknown(schema)(decoded))
+    return Effect.runPromise(Schema.decodeUnknownEffect(schema)(decoded))
   }
 
   return {

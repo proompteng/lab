@@ -1,6 +1,6 @@
 # 199. Jangar Material Action Custody Flight Recorder And Merge Reentry SLO (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar material action custody, AgentRun failure-debt reduction, ready truth, source-to-serving rollout proof,
@@ -13,7 +13,6 @@ Companion Torghut contract:
 Extends:
 
 - `docs/agents/designs/198-jangar-material-gate-digest-and-alpha-closure-carry-2026-05-14.md`
-- `docs/agents/designs/197-jangar-compact-alpha-closure-ingestion-and-stage-credit-repair-gate-2026-05-14.md`
 - `docs/agents/designs/188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
 - `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`

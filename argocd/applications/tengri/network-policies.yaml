@@ -1,25 +1,110 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: tengri-default-deny
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
-spec:
-  podSelector: {}
-  policyTypes: [Ingress, Egress]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
   name: tengri-control-plane
-  annotations:
-    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: tengri
 spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: tengri
-      app.kubernetes.io/component: control-plane
-  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/instance: observability-tempo-v3
+              app.kubernetes.io/component: distributor
+      ports:
+        - protocol: TCP
+          port: 4318
+    - ports:
+        - port: 9443
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ofz-api
+    - ports:
+        - port: 15012
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    - ports:
+        - port: 443
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+    - ports:
+        - port: 6443
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 100.100.244.141/32
+        - ipBlock:
+            cidr: 100.100.244.142/32
+        - ipBlock:
+            cidr: 100.100.244.190/32
+    - ports:
+        - port: 8443
+          protocol: TCP
+      to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-slot
+    - ports:
+        - port: 5432
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: ofz-db
   ingress:
     - from:
         - namespaceSelector:
@@ -29,8 +114,8 @@ spec:
             matchLabels:
               app: proompteng
       ports:
-        - protocol: TCP
-          port: 50051
+        - port: 50051
+          protocol: TCP
     - from:
         - namespaceSelector:
             matchLabels:
@@ -39,89 +124,82 @@ spec:
             matchLabels:
               app.kubernetes.io/name: traefik
       ports:
-        - protocol: TCP
-          port: 8080
-        - protocol: TCP
-          port: 8081
+        - port: 8080
+          protocol: TCP
+        - port: 8081
+          protocol: TCP
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: observability
       ports:
-        - protocol: TCP
-          port: 8080
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    - to:
-        - ipBlock:
-            cidr: 10.96.0.1/32
-      ports:
-        - protocol: TCP
-          port: 443
-    - to:
-        - ipBlock:
-            cidr: 100.100.244.141/32
-        - ipBlock:
-            cidr: 100.100.244.142/32
-        - ipBlock:
-            cidr: 100.100.244.190/32
-      ports:
-        - protocol: TCP
-          port: 6443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: nanoagent
-              app.kubernetes.io/component: microvm
-      ports:
-        - protocol: TCP
-          port: 8080
+        - port: 8080
+          protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: control-plane
+      app.kubernetes.io/name: tengri
+  policyTypes:
+    - Ingress
+    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: tengri-microvm-guests
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  name: tengri-default-deny
+  namespace: tengri
 spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: nanoagent
-      app.kubernetes.io/component: microvm
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: tengri
-              app.kubernetes.io/component: control-plane
-      ports:
-        - protocol: TCP
-          port: 8080
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  name: tengri-slots
+  namespace: tengri
+spec:
   egress:
     - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/instance: observability-tempo-v3
+              app.kubernetes.io/component: distributor
+      ports:
+        - protocol: TCP
+          port: 4318
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
               k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -141,3 +219,168 @@ spec:
               - 203.0.113.0/24
               - 224.0.0.0/4
               - 240.0.0.0/4
+    - ports:
+        - port: 5432
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: ofz-db
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: control-plane
+              app.kubernetes.io/name: tengri
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: run-worker
+              app.kubernetes.io/name: tengri
+      ports:
+        - port: 8443
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 8080
+          protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tengri-slot
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  name: tengri-run-worker
+  namespace: tengri
+spec:
+  egress:
+  - ports:
+    - port: 8000
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: glitchtip
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: web
+          app.kubernetes.io/name: glitchtip
+  - ports:
+    - port: 4318
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: distributor
+          app.kubernetes.io/instance: observability-tempo-v3
+          app.kubernetes.io/name: tempo
+  - ports:
+    - port: 9443
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ofz
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ofz-api
+  - ports:
+    - port: 15012
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: istio-system
+      podSelector:
+        matchLabels:
+          app: istiod
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  - ports:
+    - port: 443
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 10.96.0.1/32
+  - ports:
+    - port: 6443
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 100.100.244.141/32
+    - ipBlock:
+        cidr: 100.100.244.142/32
+    - ipBlock:
+        cidr: 100.100.244.190/32
+  - ports:
+    - port: 8443
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: tengri-slot
+  - ports:
+    - port: 5432
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ofz
+      podSelector:
+        matchLabels:
+          cnpg.io/cluster: ofz-db
+  - ports:
+    - port: 8080
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: restate
+      podSelector:
+        matchLabels:
+          app: restate
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: restate
+      podSelector:
+        matchLabels:
+          app: restate
+    ports:
+    - protocol: TCP
+      port: 9080
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: run-worker
+      app.kubernetes.io/name: tengri
+  policyTypes:
+  - Ingress
+  - Egress

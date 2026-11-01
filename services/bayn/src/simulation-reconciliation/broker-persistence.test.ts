@@ -1,31 +1,35 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Logger, References } from 'effect'
+import { Cause, Effect, Logger, References, Result } from 'effect'
 
 import { provideTestLayer } from '../effect-test-support'
 
-import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca'
+import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca/model'
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from '../db/reconciliation'
-import type { WriterFenceService } from '../execution/writer-fence'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { ReconciliationStatus, type Valuation } from '../execution/contracts'
 import { persistStableSnapshot } from './broker-persistence'
 import type { StableBrokerSnapshot } from './broker-reconciler-model'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '2026-07-30T10:08:00.000Z'
-const reconciliationId = canonicalHashV1('reconciliation-log-redaction')
-const accountingHash = canonicalHashV1('accounting-state')
+const reconciliationId = Result.getOrThrow(canonicalHashV1Result('reconciliation-log-redaction'))
+const accountingHash = Result.getOrThrow(canonicalHashV1Result('accounting-state'))
 
 const evidence = (identity: string): ReadEvidence => ({
   requestId: `request-${identity}`,
   status: 200,
-  contentHash: canonicalHashV1(identity),
+  contentHash: Result.getOrThrow(canonicalHashV1Result(identity)),
   observedAt,
 })
 
 const account: Account = {
+  cryptoStatus: null,
+  cryptoFeeTier: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -45,14 +49,15 @@ const snapshot: StableBrokerSnapshot = {
   history: {
     orders: { rows: [], observedAt },
     fills: [],
+    fees: [],
   },
 }
 
 const valuation: Valuation = {
   schemaVersion: 'bayn.paper-valuation.v1',
-  valuationId: canonicalHashV1('valuation'),
+  valuationId: Result.getOrThrow(canonicalHashV1Result('valuation')),
   accountId,
-  sourceHash: canonicalHashV1('valuation-source'),
+  sourceHash: Result.getOrThrow(canonicalHashV1Result('valuation-source')),
   cashMicros: account.cashMicros,
   longMarketValueMicros: '0',
   shortMarketValueMicros: '0',
@@ -65,9 +70,9 @@ const writeResult = (persisted: BrokerSnapshot): ReconciliationWriteResult => ({
     schemaVersion: 'bayn.paper-reconciliation.v1',
     reconciliationId,
     accountId,
-    expectedHash: canonicalHashV1('expected-state'),
-    observedHash: canonicalHashV1('expected-state'),
-    contentHash: canonicalHashV1('reconciliation-content'),
+    expectedHash: Result.getOrThrow(canonicalHashV1Result('expected-state')),
+    observedHash: Result.getOrThrow(canonicalHashV1Result('expected-state')),
+    contentHash: Result.getOrThrow(canonicalHashV1Result('reconciliation-content')),
     status: ReconciliationStatus.Exact,
     discrepancies: [],
     reconciledAt: persisted.reconciledAt,
@@ -95,44 +100,45 @@ const writeResult = (persisted: BrokerSnapshot): ReconciliationWriteResult => ({
 
 const store: ReconciliationPersistence = {
   events: {
+    completeHistory: () => Effect.succeed(new Set()),
     ingest: (input) =>
       Effect.succeed({
-        eventId: canonicalHashV1(input.sourceEventId),
+        eventId: Result.getOrThrow(canonicalHashV1Result(input.sourceEventId)),
         sourceSequence: '1',
         deduplicated: false,
       }),
     ingestPositions: (input) =>
       Effect.succeed({
-        snapshotId: canonicalHashV1(input.sourceHash),
+        snapshotId: Result.getOrThrow(canonicalHashV1Result(input.sourceHash)),
         eventIds: [],
         deduplicated: false,
       }),
   },
   accounting: {
     account: () => Effect.die(new Error('empty successful reconciliation must not account a fill')),
+    verifyCompleted: () => Effect.void,
   },
   valuation: {
     value: () => Effect.succeed(valuation),
     hasAccountBaseline: () => Effect.die(new Error('empty successful reconciliation must not read a baseline')),
   },
   reconciliation: {
+    retainCashReporting: () => Effect.void,
     bindings: (boundAccountId) => {
       expect(boundAccountId).toBe(accountId)
       return Effect.succeed([])
     },
-    reconcile: (persisted) => {
-      expect(persisted.account.accountId).toBe(accountId)
-      return Effect.succeed(writeResult(persisted))
-    },
+    reconcile: (_, snapshot) =>
+      snapshot.pipe(
+        Effect.map((snapshot) => {
+          expect(snapshot.account.accountId).toBe(accountId)
+          return { snapshot, persisted: writeResult(snapshot) }
+        }),
+      ),
   },
   authorityRestriction: {
     restrictAuthority: () => Effect.die(new Error('successful reconciliation must not restrict authority')),
   },
-}
-
-const fence: WriterFenceService = {
-  check: Effect.void,
-  transaction: (effect) => effect,
 }
 
 describe('simulation reconciliation persistence logging', () => {
@@ -151,8 +157,8 @@ describe('simulation reconciliation persistence logging', () => {
     })
 
     const result = await Effect.runPromise(
-      persistStableSnapshot(store, fence, snapshot, Effect.succeed(observedAt)).pipe(
-        provideTestLayer(Logger.layer([logger])),
+      persistStableSnapshot(store, snapshot, Effect.succeed(observedAt)).pipe((self) =>
+        provideTestLayer(self, Logger.layer([logger])),
       ),
     )
 

@@ -87,17 +87,23 @@ After the installer finishes, verify that the persistent configuration still con
 allocator flag before rebooting; the active configuration retains the old settings until that restart.
 
 [`devices/nuc/image-factory/release.json`](../../nuc/image-factory/release.json) pins the official extension catalog,
-the combined catalog digest, and the existing signed Kata `4.1.0-r5` multi-architecture image. The catalog builder
+the combined catalog digest, and the signed Kata `4.1.0-r6` multi-architecture image. The catalog builder
 and the deployed factory verification consume this same release lock.
 Its extension manifest supports Talos `>= v1.13.0-alpha.2`. The catalog promotes those exact bytes to GHCR and signs
-them through the existing trusted Kata workflow. Ryzen already runs r5; this rollout also moves Turin and Altra from
-r4 to r5. Their runtime acceptance remains required.
+them through the existing trusted Kata workflow. The r6 device manager resolves block-device paths before its
+reuse lookup, so a container restart reuses the existing Dragonball device instead of attaching its disk twice.
+Publication does not change installed node extensions. Their runtime acceptance remains required.
 
 The catalog workflow verifies the source signature and both architectures, builds a catalog with deterministic contents,
 and requires its computed image digest to match the release lock. It
 then signs the published extension and catalog before making the Talos version tag discoverable. It refuses to replace
-an existing version tag with different contents. The `v1.13.9` catalog and accepted installers remain available for
-recovery. `catalog.sh build <directory>` can repeat the artifact validation with Crane, Cosign, jq, and GNU tar.
+an existing version tag with different contents unless `previousCatalogDigest` names its exact current digest.
+The reviewed r5-to-r6 replacement pins that previous digest. Repeating publication after the replacement is a no-op.
+Preserve the accepted installer before the targeted cache rebuild, then record and verify the completed replacement
+installer before any node upgrade. The `v1.13.9` catalog and accepted installers remain available for
+recovery. `catalog.sh build <directory>` runs the publication-boundary tests and artifact validation with Python 3,
+Crane, Cosign, jq, and GNU tar. Catalog-only updates reuse the pinned, signed Kata binary; changes to Kata source
+still run both native builds.
 
 The native Kata regression tests use `nix develop --file devices/galactic/extensions/kata/shell.nix` on Linux, with
 Rust 1.96 installed by the workflow. This

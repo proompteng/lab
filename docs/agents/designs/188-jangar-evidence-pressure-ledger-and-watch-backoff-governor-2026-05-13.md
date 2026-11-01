@@ -1,21 +1,16 @@
 # 188. Jangar Evidence Pressure Ledger And Watch Backoff Governor (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane resilience, Kubernetes watch pressure, evidence transport health, scheduler admission,
 GitHub review ingestion, rollout proof, Torghut repair dispatch, validation, rollback, and cross-stage handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
 
 Extends:
 
 - `docs/agents/designs/187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`
 - `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
 - `docs/agents/designs/185-jangar-clearance-market-and-rollout-truth-settlement-2026-05-12.md`
-- `docs/agents/designs/140-jangar-watch-reliability-state-exchange-and-capital-action-governor-2026-05-07.md`
 - `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
 - `services/jangar/README.md`
 

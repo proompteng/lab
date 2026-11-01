@@ -84,3 +84,57 @@ spec:
   method: volumeSnapshot
   online: false
   target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: buzz-db-pg18-20260910
+  namespace: buzz
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '-16'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: buzz-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: jangar-db-pg18-20260910
+  namespace: jangar
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: jangar-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: torghut-db-pg18-20260910
+  namespace: torghut
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '-14'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: torghut-db
+  method: volumeSnapshot
+  online: false
+  target: primary

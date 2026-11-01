@@ -157,6 +157,9 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT INSERT ON signal.intraday_bars_1m_v2',
       'GRANT INSERT ON signal.intraday_quotes_v1',
       'GRANT INSERT ON signal.intraday_trades_v1',
+      'GRANT INSERT ON signal.intraday_features_v1',
+      'GRANT INSERT ON signal.crypto_market_events_v1',
+      'GRANT INSERT ON signal.crypto_market_features_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v2',
     ])
@@ -168,6 +171,8 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.intraday_bars_1m_v2',
       'GRANT SELECT ON signal.intraday_quotes_v1',
       'GRANT SELECT ON signal.intraday_trades_v1',
+      'GRANT SELECT ON signal.intraday_features_v1',
+      'GRANT SELECT ON signal.crypto_market_events_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])
@@ -209,8 +214,12 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('signal.intraday_bars_1m_v2 ON CLUSTER default')
     expect(migration).toContain('signal.intraday_quotes_v1 ON CLUSTER default')
     expect(migration).toContain('signal.intraday_trades_v1 ON CLUSTER default')
-    expect(migration.match(/event_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(2)
-    expect(migration.match(/ingest_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(2)
+    expect(migration).toContain('signal.crypto_market_events_v1 ON CLUSTER default')
+    expect(migration).toContain('signal.crypto_market_features_v1 ON CLUSTER default')
+    expect(migration).toContain('TTL toDateTime(window_end) + INTERVAL 30 DAY DELETE')
+    expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 30 DAY DELETE')
+    expect(migration.match(/event_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(3)
+    expect(migration.match(/ingest_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(3)
     expect(migration).toContain('ENGINE = ReplicatedReplacingMergeTree(')
     expect(migration).toContain('PARTITION BY toYYYYMM(event_ts)')
     expect(migration).toContain('universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset')
@@ -254,7 +263,7 @@ describe('Signal publisher GitOps authority contract', () => {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 16,
         state: 'running',
-        upgradeMode: 'stateless',
+        upgradeMode: 'savepoint',
       },
       taskManager: {
         replicas: 8,
@@ -270,6 +279,9 @@ describe('Signal publisher GitOps authority contract', () => {
     const expectedCoreArchiveHash = createHash('sha256').update(coreArchiveSymbols.join(',')).digest('hex')
     expect(config.data).toMatchObject({
       ARCHIVE_GROUP_ID: 'bayn-market-data-archive-v3',
+      ARCHIVE_CRYPTO_TOPIC: 'bayn.market-data.crypto.v1',
+      ARCHIVE_CRYPTO_LOCATION: 'us',
+      ARCHIVE_CRYPTO_SYMBOLS: 'BTC/USD,ETH/USD,SOL/USD',
       ARCHIVE_OFFSET_RESET: 'latest',
       ARCHIVE_CORE_FEED: 'iex',
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',
@@ -297,6 +309,24 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(liveCoreSymbols.length + liveDecisionSymbols.length * 2).toBe(30)
     expect(coreTopics.find((topic) => topic.metadata.name === 'torghut.quotes.v1')?.spec.partitions).toBe(13)
     expect(websocket.data.ALPACA_FEED).toBe('iex')
+    expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
+    expect(websocket.data.ALPACA_CRYPTO_LOCATION).toBe(config.data.ARCHIVE_CRYPTO_LOCATION)
+    expect(websocket.data.ALPACA_CRYPTO_SYMBOLS).toBe(config.data.ARCHIVE_CRYPTO_SYMBOLS)
+    const ta = parse(readFileSync(resolve(root, 'argocd/applications/torghut/ta/configmap.yaml'), 'utf8'))
+    expect(ta.data.TA_CRYPTO_TOPIC).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
+    expect(ta.data.TA_CRYPTO_LOCATION).toBe(config.data.ARCHIVE_CRYPTO_LOCATION)
+    expect(ta.data.TA_CRYPTO_SYMBOLS).toBe(config.data.ARCHIVE_CRYPTO_SYMBOLS)
+    expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).toBe('bayn.market-data.crypto.features.v1')
+    expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).toBe(config.data.ARCHIVE_CRYPTO_FEATURES_TOPIC)
+    expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).not.toBe(ta.data.TA_CRYPTO_TOPIC)
+    expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_KEY_ID')).toEqual({
+      name: 'ALPACA_KEY_ID',
+      valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_KEY_ID' } },
+    })
+    expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_SECRET_KEY')).toEqual({
+      name: 'ALPACA_SECRET_KEY',
+      valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_SECRET_KEY' } },
+    })
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
       expect.arrayContaining([
@@ -315,7 +345,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'argocd.argoproj.io/sync-wave': '5',
     })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-intraday-symbol-budget-v2',
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-jev-latest-iex-v1',
     })
   })
 
@@ -327,7 +357,7 @@ describe('Signal publisher GitOps authority contract', () => {
     )
     const names = topics.map((topic) => topic.metadata.name)
 
-    expect(new Set(names).size).toBe(7)
+    expect(new Set(names).size).toBe(9)
     expect(names).toEqual(
       expect.arrayContaining([
         'bayn.market-data.delayed-sip.trades.v1',
@@ -337,6 +367,8 @@ describe('Signal publisher GitOps authority contract', () => {
         'bayn.market-data.overnight.quotes.v1',
         'bayn.market-data.overnight.bars.1m.v1',
         'bayn.market-data.observation.status.v1',
+        'bayn.market-data.crypto.v1',
+        'bayn.market-data.crypto.features.v1',
       ]),
     )
     for (const topic of topics) {

@@ -1,17 +1,34 @@
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { expect, test } from 'bun:test'
 
 import { Cause, Deferred, Effect, Exit, Fiber, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
-import { CycleRunnerError } from '../cycle/runner'
-import { CycleStoreError } from '../cycle/store'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { CycleRunnerError } from '../cycle/runner/model'
+import { CycleStoreError } from '../cycle/store/model'
 import { operationalError } from '../errors'
-import { IntradaySnapshotFailure } from '../market-data'
+import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { IntradayIngestionDelayDirection } from '../market-data/intraday/model'
 import { ObserveDecisionAwaitingSignal, decisionBuildError, reconciliationRunnerError } from './decision-builder'
-import { runRestateAdvanceWithinTimeout } from './recovery-driver'
+import { recoveryFirstCycleNextDelayMs, runRestateAdvanceWithinTimeout } from './recovery-driver'
 import { shouldRestrictMutationLoopFailure } from './mutation-interpreter'
+
+test.each([
+  [0, 30_000, 1_000],
+  [1_000, 30_000, 1_000],
+  [1_250, 30_000, 1_250],
+  [60_000, 30_000, 30_000],
+  [0, 500, 500],
+] as const)('post-mutation delay %i uses cadence %i without falling back to idle (%i)', (delay, cadence, expected) => {
+  expect(
+    recoveryFirstCycleNextDelayMs({
+      pollIntervalMs: cadence,
+      reconciliationIntervalMs: 30_000,
+      postMutationDelayMs: delay,
+    }),
+  ).toBe(expected)
+})
 
 test('retries an oldest-unfinished preflight read without permanently restricting execution authority', () => {
   expect(
@@ -96,6 +113,7 @@ test('maps an expected armed-entry wait to a non-terminal decision outcome', () 
   const error = decisionBuildError(
     new ObserveDecisionAwaitingSignal({
       message: 'entry remains armed',
+      readiness: { reason: DecisionReadinessReason.NoEligibleCandidate, message: 'entry remains armed' },
       observedAt: '2026-08-18T13:35:01.000Z',
       submissionCutoffAt: '2026-08-18T14:00:00.000Z',
     }),
@@ -129,7 +147,16 @@ test('keeps an incomplete intraday archive retryable without weakening malformed
     }),
   )
 
-  expect(incomplete).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
+  expect(incomplete).toMatchObject({
+    _tag: 'CycleDecisionBuildError',
+    failure: 'not-ready',
+    readiness: {
+      reason: 'SNAPSHOT_UNAVAILABLE',
+      message: 'intraday snapshot lacks a per-symbol range-completion bar',
+      symbol: 'AMD',
+      eventAt: '2026-08-27T13:34:00.000Z',
+    },
+  })
   expect(malformed).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'market-data' })
 })
 

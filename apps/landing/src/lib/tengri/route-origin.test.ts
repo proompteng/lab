@@ -1,18 +1,11 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
 
 let identityLookups = 0
 let authConfigured = true
-void mock.module('@/lib/tengri/auth', () => ({
-  getTengriIdentity: async () => {
-    identityLookups += 1
-    return null
-  },
-  isTengriAuthConfigured: () => authConfigured,
-}))
-
-process.env.BETTER_AUTH_URL = 'https://proompteng.ai'
+const auth = await import('./auth')
+let restoreAuth = () => {}
 
 const [{ GET: getSnapshot }, { GET: watchCodexEvents }, { GET: watchFileEvents }] = await Promise.all([
   import('../../app/api/tengri/route'),
@@ -30,8 +23,24 @@ describe('Tengri BFF GET origin enforcement', () => {
   beforeEach(() => {
     identityLookups = 0
     authConfigured = true
-    process.env.BETTER_AUTH_URL = 'https://proompteng.ai'
+    const priorOrigin = process.env.TENGRI_DESKTOP_ORIGIN
+    process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+    // Replacing the module drops unrelated exports for later auth tests. Scoped
+    // spies keep the real module intact regardless of test discovery order.
+    const identity = spyOn(auth, 'getTengriIdentity').mockImplementation(async () => {
+      identityLookups += 1
+      return null
+    })
+    const configured = spyOn(auth, 'isTengriAuthConfigured').mockImplementation(() => authConfigured)
+    restoreAuth = () => {
+      identity.mockRestore()
+      configured.mockRestore()
+      if (priorOrigin === undefined) delete process.env.TENGRI_DESKTOP_ORIGIN
+      else process.env.TENGRI_DESKTOP_ORIGIN = priorOrigin
+    }
   })
+
+  afterEach(() => restoreAuth())
 
   test.each(handlers)('rejects cross-origin %s before authenticating the request', async (_name, handler, url) => {
     const response = await handler(
@@ -60,12 +69,12 @@ describe('Tengri BFF GET origin enforcement', () => {
     expect(identityLookups).toBe(1)
   })
 
-  test('preserves the unconfigured localhost snapshot when BETTER_AUTH_URL is unset', async () => {
-    delete process.env.BETTER_AUTH_URL
+  test('uses the fixed public origin for an unconfigured snapshot', async () => {
+    delete process.env.TENGRI_DESKTOP_ORIGIN
     authConfigured = false
 
     const response = await getSnapshot(
-      new Request('http://localhost:3000/api/tengri', {
+      new Request('https://proompteng.ai/api/tengri', {
         headers: { 'sec-fetch-site': 'same-origin' },
       }),
     )

@@ -27,7 +27,7 @@ let
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
   sourcePaths = [
     "services/bayn"
-    "packages/scripts/src/bayn/update-manifests.ts"
+    "docs/bayn/jev-migration-acceptance-v2.json"
   ];
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;
@@ -35,13 +35,16 @@ let
       let
         rel = relativePath path;
       in
-      type == "directory"
-      || rel == "package.json"
-      || rel == "bun.lock"
-      || rel == "bunfig.toml"
-      || rel == ".npmrc"
-      || rel == "tsconfig.base.json"
-      || lib.any (prefix: isUnder prefix rel) sourcePaths;
+      !(isUnder "services/bayn/formal" rel)
+      && (
+        type == "directory"
+        || rel == "package.json"
+        || rel == "bun.lock"
+        || rel == "bunfig.toml"
+        || rel == ".npmrc"
+        || rel == "tsconfig.base.json"
+        || lib.any (prefix: isUnder prefix rel) sourcePaths
+      );
   };
   resolvedDepsHash = depsHash.${pkgs.stdenv.hostPlatform.system};
   deps = pkgs.stdenvNoCC.mkDerivation {
@@ -116,6 +119,8 @@ let
       }
 
       run_bun_install
+      bash ${./normalize-bayn-bun-deps.sh} "$out"
+      bash ${./prune-bun-dependency-metadata.sh} "$out"
 
       runHook postInstall
     '';
@@ -144,6 +149,8 @@ pkgs.stdenvNoCC.mkDerivation {
     export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
     mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
     cp -R ${deps}/. "$TMPDIR/work/"
+    chmod -R u+w "$TMPDIR/work"
+    cp -R ${dependencySource}/. "$TMPDIR/work/"
     chmod -R u+w "$TMPDIR/work"
     cp -R . "$TMPDIR/work/"
     cd "$TMPDIR/work"

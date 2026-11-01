@@ -1,10 +1,18 @@
+import { strictParseOptions } from '../../schemas'
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 
-import type { MarketCalendarObservation } from '../../broker/alpaca'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { makeCycleExecutionPolicy } from '../construction'
-import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './calendar-decisions'
+import { CycleState, AutonomousCycleSchema } from '../model'
+import {
+  intradayEntryRearmDelayMs,
+  makeIntradayCycleDraft,
+  nextIntradayEntryAttemptOrdinal,
+  selectIntradayExecutionSession,
+} from './calendar-decisions'
 
 const policy = Result.getOrThrow(
   makeCycleExecutionPolicy({
@@ -18,8 +26,8 @@ if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
   throw new Error('calendar decision fixture requires the full-session execution policy')
 }
 
-const observation: MarketCalendarObservation = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+const observation: MarketCalendarObservation = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
   source: 'alpaca-v2-calendar',
   requestedRange: { start: '2026-11-27', end: '2026-11-30' },
   timeZone: 'UTC',
@@ -36,9 +44,29 @@ const observation: MarketCalendarObservation = {
     },
   ],
   normalizedResponseHash: '1'.repeat(64),
-}
+})
 
 describe('intraday calendar decisions', () => {
+  test.each([
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_001, eligible: true },
+    { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_001, eligible: true },
+  ])('requires a nonempty completed-feature window: %j', ({ warmupMinutes, durationMs, eligible }) => {
+    const session = {
+      date: '2026-11-27',
+      openAt: '2026-11-27T14:30:00.000Z',
+      closeAt: new Date(Date.parse('2026-11-27T14:30:00.000Z') + durationMs).toISOString(),
+    }
+    const selected = selectIntradayExecutionSession(
+      { ...observation, sessions: [session] },
+      { ...policy, warmupAfterOpenMs: warmupMinutes * 60_000, submissionCutoffBeforeCloseMs: 5 * 60_000 },
+      session.openAt,
+    )
+
+    expect(selected).toEqual(eligible ? session : undefined)
+  })
+
   test('includes the strategy decision delay when selecting a session', () => {
     expect(selectIntradayExecutionSession(observation, policy, '2026-11-27T14:00:00.000Z')?.date).toBe('2026-11-30')
   })
@@ -46,7 +74,7 @@ describe('intraday calendar decisions', () => {
   test('derives a distinct cycle for every session under the same standing mandate', () => {
     const candidate = {
       cycleBindingId: '2'.repeat(64),
-      strategyName: 'intraday-momentum' as const,
+      strategyName: 'jev' as const,
       strategyProtocolHash: '3'.repeat(64),
       accountId: 'sandbox-account',
       executionPolicy: policy,
@@ -60,6 +88,95 @@ describe('intraday calendar decisions', () => {
     expect(monday.identity.qualificationRunId).toBe(candidate.cycleBindingId)
     expect(friday.identity.executionSessionDate).toBe('2026-11-27')
     expect(monday.identity.executionSessionDate).toBe('2026-11-30')
+    expect(friday.schemaVersion).toBe('bayn.autonomous-cycle.v4')
+    expect(friday.identity).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+    })
     expect(monday.identity.cycleId).not.toBe(friday.identity.cycleId)
+  })
+
+  test('rearms successive zero-fill attempts until the session cutoff with distinct immutable cycles', () => {
+    const candidate = {
+      cycleBindingId: '2'.repeat(64),
+      strategyName: 'jev' as const,
+      strategyProtocolHash: '3'.repeat(64),
+      accountId: 'sandbox-account',
+      executionPolicy: policy,
+    }
+    const session = observation.sessions[1]
+    if (session === undefined) throw new Error('calendar fixture is incomplete')
+    const firstDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 1))
+    const secondDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 2))
+    const terminalAt = '2026-11-30T15:30:00.000Z'
+    const first = Effect.runSync(
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
+        ...firstDraft,
+        state: CycleState.Completed,
+        bindings: { snapshotId: '4'.repeat(64), decisionHash: '5'.repeat(64) },
+        stateVersion: 2,
+        createdAt: firstDraft.window.submissionOpenAt,
+        updatedAt: terminalAt,
+        terminalAt,
+      }),
+    )
+    const beforeRearm = new Date(Date.parse(terminalAt) + intradayEntryRearmDelayMs - 1).toISOString()
+    const atRearm = new Date(Date.parse(terminalAt) + intradayEntryRearmDelayMs).toISOString()
+
+    expect(secondDraft.identity.cycleId).not.toBe(firstDraft.identity.cycleId)
+    expect(secondDraft.identity).toMatchObject({ entryAttemptOrdinal: 2 })
+    expect(nextIntradayEntryAttemptOrdinal(first, beforeRearm, first.window.submissionCutoffAt)).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(first, atRearm, first.window.submissionCutoffAt)).toBe(2)
+
+    const second = Effect.runSync(
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
+        ...secondDraft,
+        state: CycleState.Completed,
+        bindings: { snapshotId: '6'.repeat(64), decisionHash: '7'.repeat(64) },
+        stateVersion: 2,
+        createdAt: secondDraft.window.submissionOpenAt,
+        updatedAt: atRearm,
+        terminalAt: atRearm,
+      }),
+    )
+    expect(
+      nextIntradayEntryAttemptOrdinal(
+        second,
+        new Date(Date.parse(atRearm) + intradayEntryRearmDelayMs).toISOString(),
+        second.window.submissionCutoffAt,
+      ),
+    ).toBe(3)
+    const thirdDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 3))
+    expect(thirdDraft.identity.cycleId).not.toBe(secondDraft.identity.cycleId)
+    expect(
+      nextIntradayEntryAttemptOrdinal(second, second.window.submissionCutoffAt, second.window.submissionCutoffAt),
+    ).toBeUndefined()
+    expect(
+      nextIntradayEntryAttemptOrdinal(
+        { ...second, state: CycleState.Active },
+        atRearm,
+        second.window.submissionCutoffAt,
+      ),
+    ).toBeUndefined()
+    const blocked = { ...first, state: CycleState.Blocked }
+    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm, blocked.window.submissionCutoffAt)).toBeUndefined()
+    expect(
+      nextIntradayEntryAttemptOrdinal(blocked, beforeRearm, blocked.window.submissionCutoffAt, true),
+    ).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm, blocked.window.submissionCutoffAt, true)).toBe(2)
+    expect(
+      nextIntradayEntryAttemptOrdinal(
+        { ...first, state: CycleState.Active },
+        atRearm,
+        first.window.submissionCutoffAt,
+        true,
+      ),
+    ).toBeUndefined()
   })
 })

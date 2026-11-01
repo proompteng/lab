@@ -1,8 +1,16 @@
+import { cryptoMarketFixture } from './testing/crypto-market-fixture'
+import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { adverseQuotePrices } from './observe-composition/intraday-market-data'
+import { jevEntryQuoteExclusion } from './jev/trading-signals'
+import { jevMarketForSymbol } from './jev/markets'
+import { JevEntryExclusion } from './jev/batch'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from './testing/property-test-support'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import {
   AccountStatus,
   DiscrepancyKind,
@@ -16,7 +24,7 @@ import {
   type Position,
   type Reconciliation,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import {
   TargetPlanReason,
   TargetPlanStatus,
@@ -25,11 +33,9 @@ import {
   planTargets,
   quoteBoundTargetPlannerInputSchemaVersion,
   referenceTargetPlanSchemaVersion,
-  type SignalSessionReferencePrices,
   type TargetPlanResult,
   type TargetPlannerInput,
-  type TargetPlannerInputV1,
-} from './target-planner'
+} from './target-planner/index'
 
 const hash = (digit: string): string => digit.repeat(64)
 const accountId = 'paper-account-1'
@@ -50,8 +56,8 @@ interface FixtureOptions {
   readonly decisionHash?: string
   readonly equityMicros?: string
   readonly maximumInputAgeMs?: number
-  readonly maximumBuyQuantityMicros?: Readonly<Record<string, string>>
-  readonly maximumSellQuantityMicros?: Readonly<Record<string, string>>
+  readonly maximumBuyQuantityAtoms?: Readonly<Record<string, string>>
+  readonly maximumSellQuantityAtoms?: Readonly<Record<string, string>>
   readonly observedAt?: string
   readonly orders?: readonly Order[]
   readonly ordersObservedAt?: string
@@ -62,7 +68,6 @@ interface FixtureOptions {
   readonly askPriceMicros?: Readonly<Record<string, string>>
   readonly pricesObservedAt?: string
   readonly referenceSignalDate?: '2026-07-21' | '2026-07-22'
-  readonly quoteBound?: boolean
   readonly submissionCutoffAt?: string
   readonly targetWeights?: Readonly<Record<string, number>>
   readonly unknownOrderCount?: number
@@ -70,17 +75,18 @@ interface FixtureOptions {
 
 const position = (
   symbol: string,
-  quantityMicros: string,
+  quantityAtoms: string,
   positionObservedAt = brokerObservedAt,
   positionAccountId = accountId,
 ): Position => ({
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: ((BigInt(quantityAtoms) * BigInt('50000000')) / 1_000_000_000n).toString(),
   accountId: positionAccountId,
   symbol,
-  quantityMicros,
+  quantityAtoms,
   averageEntryPriceMicros: '50000000',
   marketPriceMicros: '50000000',
-  marketValueMicros: quantityMicros.startsWith('-') ? '-1' : quantityMicros === '0' ? '0' : '1',
+  marketValueMicros: quantityAtoms.startsWith('-') ? '-1' : quantityAtoms === '0' ? '0' : '1',
   unrealizedPnlMicros: '0',
   observedAt: positionObservedAt,
 })
@@ -92,34 +98,21 @@ const order = (
   orderAccountId = accountId,
   known = true,
 ): Order => ({
-  schemaVersion: 'bayn.paper-order.v1',
+  schemaVersion: 'bayn.order.v3',
   accountId: orderAccountId,
   brokerOrderId: `broker-${status}`,
   clientOrderId: `client-${status}`,
   ...(known ? { intentId: hash('9') } : {}),
   symbol,
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
-  filledQuantityMicros: status === OrderStatus.Filled ? '1000000' : '0',
+  limitPriceMicros: '50000000',
+  quantityAtoms: '1000000000',
+  filledQuantityAtoms: status === OrderStatus.Filled ? '1000000000' : '0',
   status,
   observedAt: orderObservedAt,
 })
-
-const referencePrices = (
-  priceMicros: Readonly<Record<string, string>>,
-  referenceObservedAt: string,
-  referenceSignalDate: '2026-07-21' | '2026-07-22',
-): SignalSessionReferencePrices => {
-  const material = {
-    schemaVersion: 'bayn.signal-session-reference-prices.v1' as const,
-    signalDate: referenceSignalDate,
-    observedAt: referenceObservedAt,
-    priceMicros,
-  }
-  return { ...material, contentHash: canonicalHashV1(material) }
-}
 
 const reconciliation = (
   account: AccountSnapshot,
@@ -147,14 +140,16 @@ const reconciliation = (
     discrepancies: [],
     reconciledAt,
   }
-  const reconciliationId = canonicalHashV1({
-    schemaVersion: 'bayn.paper-reconciliation-id.v1',
-    material,
-  })
+  const reconciliationId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material,
+    }),
+  )
   return {
     ...material,
     reconciliationId,
-    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ ...material, reconciliationId })),
   }
 }
 
@@ -163,12 +158,13 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
   const positionsObservedAt = options.positionsObservedAt ?? brokerObservedAt
   const ordersObservedAt = options.ordersObservedAt ?? brokerObservedAt
   const positions = options.positions ?? [
-    position('AMD', '80000000', positionsObservedAt, inputAccountId),
-    position('NVDA', '60000000', positionsObservedAt, inputAccountId),
+    position('AMD', '80000000000', positionsObservedAt, inputAccountId),
+    position('NVDA', '60000000000', positionsObservedAt, inputAccountId),
   ]
   const orders = options.orders ?? []
   const account: AccountSnapshot = {
-    schemaVersion: 'bayn.paper-account-snapshot.v1',
+    schemaVersion: 'bayn.paper-account-snapshot.v2',
+    cryptoFeeTier: null,
     accountId: inputAccountId,
     status: options.accountStatus ?? AccountStatus.Active,
     currency: 'USD',
@@ -178,22 +174,31 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     observedAt: options.accountObservedAt ?? brokerObservedAt,
   }
   const prices = options.priceMicros ?? { AMD: '50000000', NVDA: '100000000' }
-  const common: Omit<TargetPlannerInputV1, 'schemaVersion'> = {
+  const snapshotId = hash('7')
+  const snapshotContentHash = hash('8')
+  const bidPriceMicros = options.bidPriceMicros ?? prices
+  const askPriceMicros = options.askPriceMicros ?? prices
+  const priceMaterial = {
+    schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
+    signalDate: options.referenceSignalDate ?? signalDate,
+    observedAt: options.pricesObservedAt ?? pricesObservedAt,
+    snapshotId,
+    snapshotContentHash,
+    priceReference: 'verified-adverse-quote-boundary' as const,
+    priceMicros: askPriceMicros,
+    bidPriceMicros,
+    askPriceMicros,
+  } as const
+  return {
+    schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
     strategyName: 'risk-balanced-trend',
     cycleId: hash('1'),
     decisionHash: options.decisionHash ?? hash('2'),
     policyHash: hash('3'),
     accountId: inputAccountId,
     signalDate,
-    targetWeights: options.targetWeights ?? {
-      AMD: 0.5,
-      NVDA: 0.5,
-    },
-    referencePrices: referencePrices(
-      prices,
-      options.pricesObservedAt ?? pricesObservedAt,
-      options.referenceSignalDate ?? signalDate,
-    ),
+    targetWeights: options.targetWeights ?? { AMD: 0.5, NVDA: 0.5 },
+    referencePrices: { ...priceMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(priceMaterial)) },
     brokerState: {
       account,
       positions,
@@ -204,60 +209,29 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
       reconciliation: reconciliation(account, positions, positionsObservedAt, orders, ordersObservedAt),
       unknownOrderCount: options.unknownOrderCount ?? 0,
     },
+    allocationCapitalMicros: options.allocationCapitalMicros ?? account.equityMicros,
     precision: {
-      quantityIncrementMicros: '1',
+      quantityIncrementAtoms: '1000',
       priceIncrementMicros: '100',
       minimumBuyNotionalMicros: '1000000',
+    },
+    executionTerms: {
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+      priceReference: 'verified-adverse-quote-boundary',
+      snapshotId,
+      snapshotContentHash,
+      maximumBuyQuantityAtoms:
+        options.maximumBuyQuantityAtoms ??
+        Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
+      maximumSellQuantityAtoms:
+        options.maximumSellQuantityAtoms ??
+        Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
     },
     maximumInputAgeMs: options.maximumInputAgeMs ?? 120_000,
     submissionCutoffAt: options.submissionCutoffAt ?? submissionCutoffAt,
     observedAt: options.observedAt ?? observedAt,
   }
-  return options.quoteBound === true
-    ? (() => {
-        const snapshotId = hash('7')
-        const snapshotContentHash = hash('8')
-        const bidPriceMicros = options.bidPriceMicros ?? prices
-        const askPriceMicros = options.askPriceMicros ?? prices
-        const priceMaterial = {
-          schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
-          signalDate,
-          observedAt: options.pricesObservedAt ?? pricesObservedAt,
-          snapshotId,
-          snapshotContentHash,
-          priceReference: 'verified-adverse-quote-boundary' as const,
-          priceMicros: askPriceMicros,
-          bidPriceMicros,
-          askPriceMicros,
-        } as const
-        return {
-          schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
-          ...common,
-          referencePrices: { ...priceMaterial, contentHash: canonicalHashV1(priceMaterial) },
-          allocationCapitalMicros: options.allocationCapitalMicros ?? '1000000000',
-          precision: { ...common.precision, quantityIncrementMicros: '1000000' as const },
-          executionTerms: {
-            orderType: OrderType.Limit,
-            timeInForce: TimeInForce.ImmediateOrCancel,
-            priceReference: 'verified-adverse-quote-boundary' as const,
-            snapshotId,
-            snapshotContentHash,
-            maximumBuyQuantityMicros:
-              options.maximumBuyQuantityMicros ??
-              Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
-            maximumSellQuantityMicros:
-              options.maximumSellQuantityMicros ??
-              Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
-          },
-        }
-      })()
-    : options.allocationCapitalMicros === undefined
-      ? { schemaVersion: 'bayn.paper-target-planner-input.v1', ...common }
-      : {
-          schemaVersion: 'bayn.paper-target-planner-input.v2',
-          ...common,
-          allocationCapitalMicros: options.allocationCapitalMicros,
-        }
 }
 
 const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
@@ -266,9 +240,95 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
   return result.success
 }
 
+test('property: the shared equity and crypto planner obeys quantity precision, liquidity and available capital', () => {
+  checkProperty(
+    'target-planner-capital-and-precision',
+    fc.property(
+      fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'),
+      fc.bigInt({ min: 1_000_000n, max: 100_000_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000_000n }),
+      (symbol, priceUnits, desiredLots, capacityLots) => {
+        const increment = symbol === 'AAPL' ? 1_000_000_000n : 1n
+        const price = priceUnits * 100n
+        const capital = (desiredLots * increment * price + 999_999_999n) / 1_000_000_000n
+        const capacity = capacityLots * increment
+        const baseInput = fixture({
+          positions: [],
+          targetWeights: { [symbol]: 1 },
+          equityMicros: capital.toString(),
+          allocationCapitalMicros: capital.toString(),
+          buyingPowerMicros: capital.toString(),
+          priceMicros: { [symbol]: price.toString() },
+          maximumBuyQuantityAtoms: { [symbol]: capacity.toString() },
+          maximumSellQuantityAtoms: { [symbol]: '0' },
+        })
+        const input = {
+          ...baseInput,
+          precision: {
+            ...baseInput.precision,
+            quantityIncrementAtoms: increment.toString(),
+            minimumBuyNotionalMicros: '1',
+          },
+        }
+        const saved = JSON.stringify(input)
+        const planned = planSuccess(input)
+        expect(planned.status).toBe(TargetPlanStatus.Planned)
+        expect(planned.intentTargets).toHaveLength(1)
+        const quantity = BigInt(planned.intentTargets[0]?.quantityAtoms ?? '0')
+        const notional = (quantity * price + 999_999_999n) / 1_000_000_000n
+        expect(quantity).toBeGreaterThan(0n)
+        expect(quantity % increment).toBe(0n)
+        expect(quantity).toBeLessThanOrEqual(capacity)
+        expect(notional).toBeLessThanOrEqual(capital)
+        expect(planned.requiredReferenceBuyNotionalMicros).toBe(notional.toString())
+        expect(BigInt(planned.residualBuyingPowerMicros) + notional).toBe(capital)
+        expect(planSuccess(input)).toEqual(planned)
+        expect(JSON.stringify(input)).toBe(saved)
+        const tampered = { ...planned, requiredReferenceBuyNotionalMicros: (notional + 1n).toString() }
+        expect(Result.isFailure(decodeTargetPlanResult(tampered))).toBe(true)
+      },
+    ),
+  )
+})
+
+test('property: exhausted buying power and the exact cutoff cannot emit a buy intent', () => {
+  checkProperty(
+    'target-planner-submit-boundaries',
+    fc.property(fc.integer({ min: 1, max: 1_000_000 }), fc.integer({ min: 0, max: 60_000 }), (price, lateMs) => {
+      const options = {
+        positions: [],
+        targetWeights: { AAPL: 1 },
+        priceMicros: { AAPL: String(BigInt(price) * 1_000_000n) },
+        equityMicros: '10000000000000',
+        allocationCapitalMicros: '10000000000000',
+      }
+      const noCash = planSuccess(fixture({ ...options, buyingPowerMicros: '0' }))
+      expect(noCash.status).toBe(TargetPlanStatus.Blocked)
+      expect(noCash.reason).toBe(TargetPlanReason.InsufficientBuyingPower)
+      expect(noCash.intentTargets).toEqual([])
+      const late = planSuccess(
+        fixture({
+          ...options,
+          maximumInputAgeMs: 600_000,
+          observedAt: new Date(Date.parse(submissionCutoffAt) + lateMs).toISOString(),
+        }),
+      )
+      expect(late.status).toBe(TargetPlanStatus.Blocked)
+      expect(late.reason).toBe(TargetPlanReason.SubmissionCutoffReached)
+      expect(late.intentTargets).toEqual([])
+    }),
+  )
+})
+
 describe('causal target planner', () => {
   test('permits an empty quote-bound no-trade plan only for a flat account without unresolved orders', () => {
-    const options = { quoteBound: true, positions: [], targetWeights: {}, priceMicros: {} } as const
+    const options = {
+      allocationCapitalMicros: '1000000000',
+      positions: [],
+      targetWeights: {},
+      priceMicros: {},
+    } as const
     const planned = planSuccess(fixture(options))
     expect(planned).toMatchObject({ status: TargetPlanStatus.NoTrade, targets: [], intentTargets: [] })
     expect(Result.isSuccess(decodeTargetPlanResult(planned))).toBeTrue()
@@ -276,9 +336,8 @@ describe('causal target planner', () => {
       TargetPlanStatus.NoTrade,
     )
     for (const input of [
-      fixture({ ...options, positions: [position('AMD', '1000000')] }),
+      fixture({ ...options, positions: [position('AMD', '1000000000')] }),
       fixture({ ...options, orders: [order(OrderStatus.New)] }),
-      fixture({ ...options, quoteBound: false }),
     ]) {
       expect(planSuccess(input).status).toBe(TargetPlanStatus.Blocked)
     }
@@ -287,11 +346,11 @@ describe('causal target planner', () => {
   test('binds absent whole-share ask capacity as a durable close-only block when holdings exist', () => {
     const blocked = planSuccess(
       fixture({
-        quoteBound: true,
-        positions: [position('AMD', '1000000')],
+        allocationCapitalMicros: '1000000000',
+        positions: [position('AMD', '1000000000')],
         priceMicros: { AMD: '100000000' },
         targetWeights: { AMD: 1 },
-        maximumBuyQuantityMicros: { AMD: '0' },
+        maximumBuyQuantityAtoms: { AMD: '0' },
       }),
     )
 
@@ -299,7 +358,7 @@ describe('causal target planner', () => {
       schemaVersion: referenceTargetPlanSchemaVersion,
       status: TargetPlanStatus.Blocked,
       reason: TargetPlanReason.InsufficientBuyLiquidity,
-      targets: [{ symbol: 'AMD', currentQuantityMicros: '1000000', targetQuantityMicros: '1000000' }],
+      targets: [{ symbol: 'AMD', currentQuantityAtoms: '1000000000', targetQuantityAtoms: '1000000000' }],
       intentTargets: [],
       requiredReferenceBuyNotionalMicros: '0',
     })
@@ -309,11 +368,11 @@ describe('causal target planner', () => {
   test('binds insufficient entry sell liquidity as a durable close-only block', () => {
     const blocked = planSuccess(
       fixture({
-        quoteBound: true,
-        positions: [position('AMD', '2000000')],
+        allocationCapitalMicros: '1000000000',
+        positions: [position('AMD', '2000000000')],
         priceMicros: { AMD: '100000000' },
         targetWeights: { AMD: 0 },
-        maximumSellQuantityMicros: { AMD: '1000000' },
+        maximumSellQuantityAtoms: { AMD: '1000000000' },
       }),
     )
 
@@ -331,7 +390,7 @@ describe('causal target planner', () => {
   test('plans whole-share LIMIT/IOC deltas against an immutable adverse quote boundary', () => {
     const result = planSuccess(
       fixture({
-        quoteBound: true,
+        allocationCapitalMicros: '1000000000',
         positions: [],
         priceMicros: { AMD: '30000000' },
         targetWeights: { AMD: 1 },
@@ -347,13 +406,13 @@ describe('causal target planner', () => {
         priceReference: 'verified-adverse-quote-boundary',
       },
       requiredReferenceBuyNotionalMicros: '990000000',
-      targets: [{ symbol: 'AMD', targetQuantityMicros: '33000000' }],
+      targets: [{ symbol: 'AMD', targetQuantityAtoms: '33000000000' }],
       intentTargets: [
         {
           symbol: 'AMD',
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: '33000000',
+          quantityAtoms: '33000000000',
         },
       ],
     })
@@ -361,37 +420,36 @@ describe('causal target planner', () => {
 
   test('prices buys at the verified ask, sells at the verified bid, and does not churn inside the spread', () => {
     const options = {
-      quoteBound: true,
       allocationCapitalMicros: '1000000000',
       priceMicros: { AMD: '100000000' },
       bidPriceMicros: { AMD: '90000000' },
       askPriceMicros: { AMD: '100000000' },
       targetWeights: { AMD: 1 },
     } as const
-    const buy = planSuccess(fixture({ ...options, positions: [position('AMD', '5000000')] }))
-    const sell = planSuccess(fixture({ ...options, positions: [position('AMD', '12000000')] }))
-    const insideSpread = planSuccess(fixture({ ...options, positions: [position('AMD', '10000000')] }))
+    const buy = planSuccess(fixture({ ...options, positions: [position('AMD', '5000000000')] }))
+    const sell = planSuccess(fixture({ ...options, positions: [position('AMD', '12000000000')] }))
+    const insideSpread = planSuccess(fixture({ ...options, positions: [position('AMD', '10000000000')] }))
 
     expect(buy).toMatchObject({
       status: TargetPlanStatus.Planned,
-      targets: [{ symbol: 'AMD', referencePriceMicros: '100000000', targetQuantityMicros: '10000000' }],
-      intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityMicros: '5000000' }],
+      targets: [{ symbol: 'AMD', referencePriceMicros: '100000000', targetQuantityAtoms: '10000000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityAtoms: '5000000000' }],
     })
     expect(sell).toMatchObject({
       status: TargetPlanStatus.Planned,
-      targets: [{ symbol: 'AMD', referencePriceMicros: '90000000', targetQuantityMicros: '11000000' }],
-      intentTargets: [{ symbol: 'AMD', side: OrderSide.Sell, quantityMicros: '1000000' }],
+      targets: [{ symbol: 'AMD', referencePriceMicros: '90000000', targetQuantityAtoms: '11000000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Sell, quantityAtoms: '1000000000' }],
     })
     expect(insideSpread).toMatchObject({
       status: TargetPlanStatus.NoTrade,
       reason: TargetPlanReason.TargetsSatisfied,
-      targets: [{ symbol: 'AMD', referencePriceMicros: '100000000', targetQuantityMicros: '10000000' }],
+      targets: [{ symbol: 'AMD', referencePriceMicros: '100000000', targetQuantityAtoms: '10000000000' }],
       intentTargets: [],
     })
   })
 
   test('rejects quote prices not bound to the execution snapshot identity', () => {
-    const input = fixture({ quoteBound: true })
+    const input = fixture({ allocationCapitalMicros: '1000000000' })
     if (input.schemaVersion !== 'bayn.target-planner-input.quote-bound.v1') throw new Error('expected quote input')
 
     expect(
@@ -404,9 +462,14 @@ describe('causal target planner', () => {
     ).toBe(true)
   })
 
-  test('keeps the legacy target-plan decoder strict to MARKET/DAY evidence', () => {
+  test('rejects quote-bound evidence mislabeled as a legacy target plan', () => {
     const current = planSuccess(
-      fixture({ quoteBound: true, positions: [], priceMicros: { AMD: '30000000' }, targetWeights: { AMD: 1 } }),
+      fixture({
+        allocationCapitalMicros: '1000000000',
+        positions: [],
+        priceMicros: { AMD: '30000000' },
+        targetWeights: { AMD: 1 },
+      }),
     )
     const { outputHash: _outputHash, ...currentMaterial } = current
     const mislabeledLegacy = {
@@ -415,77 +478,80 @@ describe('causal target planner', () => {
     }
 
     expect(
-      Result.isFailure(decodeTargetPlanResult({ ...mislabeledLegacy, outputHash: canonicalHashV1(mislabeledLegacy) })),
-    ).toBe(true)
-  })
-
-  test('rejects quote-bound planning that permits fractional-share quantities', () => {
-    const input = fixture({ quoteBound: true, positions: [] })
-
-    expect(
       Result.isFailure(
-        planTargets({
-          ...input,
-          precision: { ...input.precision, quantityIncrementMicros: '1' },
+        decodeTargetPlanResult({
+          ...mislabeledLegacy,
+          outputHash: Result.getOrThrow(canonicalHashV1Result(mislabeledLegacy)),
         }),
       ),
     ).toBe(true)
   })
 
-  test('plans an exact fractional MARKET/DAY close without permitting a buy', () => {
+  test('plans quote-bound quantities at the validated instrument increment', () => {
+    const input = fixture({ allocationCapitalMicros: '1000000000', positions: [] })
+
+    expect(
+      Result.isSuccess(
+        planTargets({
+          ...input,
+          precision: { ...input.precision, quantityIncrementAtoms: '1000' },
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('plans an exact fractional LIMIT/DAY close without permitting a buy', () => {
     const input = fixture({
-      quoteBound: true,
       allocationCapitalMicros: '0',
-      positions: [position('AMD', '500000')],
+      positions: [position('AMD', '500000000')],
       priceMicros: { AMD: '100000000' },
       targetWeights: { AMD: 0 },
-      maximumBuyQuantityMicros: { AMD: '0' },
+      maximumBuyQuantityAtoms: { AMD: '0' },
     })
     if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
       return expect.unreachable('fractional close fixture requires quote-bound planning')
     }
     const result = planSuccess({
       ...input,
-      precision: { ...input.precision, quantityIncrementMicros: '1' },
+      precision: { ...input.precision, quantityIncrementAtoms: '1000' },
       executionTerms: {
-        executionPurpose: 'fractional-close',
-        orderType: OrderType.Market,
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
         priceReference: 'verified-adverse-quote-boundary',
         snapshotId: input.executionTerms.snapshotId,
         snapshotContentHash: input.executionTerms.snapshotContentHash,
-        maximumBuyQuantityMicros: { AMD: '0' },
-        maximumSellQuantityMicros: { AMD: '500000' },
+        maximumBuyQuantityAtoms: { AMD: '0' },
+        maximumSellQuantityAtoms: { AMD: '500000000' },
       },
     })
 
     expect(result).toMatchObject({
       status: TargetPlanStatus.Planned,
       executionTerms: {
-        executionPurpose: 'fractional-close',
-        orderType: OrderType.Market,
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
         priceReference: 'verified-adverse-quote-boundary',
       },
-      targets: [{ symbol: 'AMD', currentQuantityMicros: '500000', targetQuantityMicros: '0' }],
+      targets: [{ symbol: 'AMD', currentQuantityAtoms: '500000000', targetQuantityAtoms: '0' }],
       intentTargets: [
         {
           symbol: 'AMD',
           side: OrderSide.Sell,
-          orderType: OrderType.Market,
+          orderType: OrderType.Limit,
           timeInForce: TimeInForce.Day,
-          quantityMicros: '500000',
+          quantityAtoms: '500000000',
         },
       ],
     })
   })
 
-  test('rejects a rehashed MARKET/DAY close that lacks matching durable close evidence', () => {
+  test('rejects a rehashed LIMIT/DAY close that lacks matching durable close evidence', () => {
     const planned = planSuccess(
       fixture({
-        quoteBound: true,
         allocationCapitalMicros: '0',
-        positions: [position('AMD', '1000000')],
+        positions: [position('AMD', '1000000000')],
         priceMicros: { AMD: '100000000' },
         targetWeights: { AMD: 0 },
       }),
@@ -496,24 +562,27 @@ describe('causal target planner', () => {
       ...material,
       intentTargets: planned.intentTargets.map((intent) => ({
         ...intent,
-        orderType: OrderType.Market,
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
       })),
     }
 
-    expect(Result.isFailure(decodeTargetPlanResult({ ...tampered, outputHash: canonicalHashV1(tampered) }))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeTargetPlanResult({ ...tampered, outputHash: Result.getOrThrow(canonicalHashV1Result(tampered)) }),
+      ),
+    ).toBe(true)
   })
 
   test('permits only the exactly reconciled short quantity in a forced buy-to-cover', () => {
     const input = fixture({
-      quoteBound: true,
       allocationCapitalMicros: '0',
       buyingPowerMicros: '1',
-      positions: [position('AMD', '-2000000')],
+      positions: [position('AMD', '-2000000000')],
       priceMicros: { AMD: '100000000' },
       targetWeights: { AMD: 0 },
-      maximumBuyQuantityMicros: { AMD: '2000000' },
-      maximumSellQuantityMicros: { AMD: '0' },
+      maximumBuyQuantityAtoms: { AMD: '2000000000' },
+      maximumSellQuantityAtoms: { AMD: '0' },
     })
     if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
       return expect.unreachable('forced close fixture requires quote-bound planning')
@@ -533,14 +602,14 @@ describe('causal target planner', () => {
       status: TargetPlanStatus.Planned,
       requiredReferenceBuyNotionalMicros: '0',
       residualBuyingPowerMicros: '1',
-      targets: [{ symbol: 'AMD', currentQuantityMicros: '-2000000', targetQuantityMicros: '0' }],
+      targets: [{ symbol: 'AMD', currentQuantityAtoms: '-2000000000', targetQuantityAtoms: '0' }],
       intentTargets: [
         {
           symbol: 'AMD',
           side: OrderSide.Buy,
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: '2000000',
+          quantityAtoms: '2000000000',
         },
       ],
     })
@@ -549,12 +618,11 @@ describe('causal target planner', () => {
   test('defers an entry-time short position to close-only containment', () => {
     const result = planSuccess(
       fixture({
-        quoteBound: true,
         allocationCapitalMicros: '1000000000',
-        positions: [position('AMD', '-2000000')],
+        positions: [position('AMD', '-2000000000')],
         priceMicros: { AMD: '100000000' },
         targetWeights: { AMD: 0 },
-        maximumBuyQuantityMicros: { AMD: '10000000' },
+        maximumBuyQuantityAtoms: { AMD: '10000000000' },
       }),
     )
 
@@ -568,49 +636,47 @@ describe('causal target planner', () => {
   test('caps only buy deltas at the verified whole-share ask quantity', () => {
     const result = planSuccess(
       fixture({
-        quoteBound: true,
-        positions: [position('AMD', '20000000')],
+        allocationCapitalMicros: '1000000000',
+        positions: [position('AMD', '20000000000')],
         priceMicros: { AMD: '10000000' },
         targetWeights: { AMD: 1 },
-        maximumBuyQuantityMicros: { AMD: '10000000' },
+        maximumBuyQuantityAtoms: { AMD: '10000000000' },
       }),
     )
 
     expect(result).toMatchObject({
       status: TargetPlanStatus.Planned,
-      targets: [{ symbol: 'AMD', currentQuantityMicros: '20000000', targetQuantityMicros: '30000000' }],
-      intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityMicros: '10000000' }],
+      targets: [{ symbol: 'AMD', currentQuantityAtoms: '20000000000', targetQuantityAtoms: '30000000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityAtoms: '10000000000' }],
     })
   })
 
   test('keeps sell-only reductions executable without whole-share ask capacity', () => {
     const result = planSuccess(
       fixture({
-        quoteBound: true,
         allocationCapitalMicros: '1000000000',
-        positions: [position('AMD', '20000000')],
+        positions: [position('AMD', '20000000000')],
         priceMicros: { AMD: '10000000' },
         targetWeights: { AMD: 0.1 },
-        maximumBuyQuantityMicros: { AMD: '0' },
+        maximumBuyQuantityAtoms: { AMD: '0' },
       }),
     )
 
     expect(result).toMatchObject({
       status: TargetPlanStatus.Planned,
-      targets: [{ symbol: 'AMD', currentQuantityMicros: '20000000', targetQuantityMicros: '10000000' }],
-      intentTargets: [{ symbol: 'AMD', side: OrderSide.Sell, quantityMicros: '10000000' }],
+      targets: [{ symbol: 'AMD', currentQuantityAtoms: '20000000000', targetQuantityAtoms: '10000000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Sell, quantityAtoms: '10000000000' }],
     })
   })
 
   test('fails closed when a positive buy delta has no whole-share ask capacity', () => {
     const result = planTargets(
       fixture({
-        quoteBound: true,
         allocationCapitalMicros: '1000000000',
         positions: [],
         priceMicros: { AMD: '10000000' },
         targetWeights: { AMD: 1 },
-        maximumBuyQuantityMicros: { AMD: '0' },
+        maximumBuyQuantityAtoms: { AMD: '0' },
       }),
     )
 
@@ -638,36 +704,58 @@ describe('causal target planner', () => {
       status: TargetPlanStatus.Planned,
       requiredReferenceBuyNotionalMicros: '1000000000',
       targets: [
-        { symbol: 'AMD', targetQuantityMicros: '10000000' },
-        { symbol: 'NVDA', targetQuantityMicros: '5000000' },
+        { symbol: 'AMD', targetQuantityAtoms: '10000000000' },
+        { symbol: 'NVDA', targetQuantityAtoms: '5000000000' },
       ],
     })
   })
 
-  test('preserves legacy full-equity planning and rejects allocation above current equity', () => {
-    const legacy = planSuccess(fixture({ positions: [] }))
+  test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
+    'rejects retired executable planner input %s',
+    (schemaVersion) => {
+      const { executionTerms: _terms, allocationCapitalMicros: _allocation, ...current } = fixture({ positions: [] })
+      const priceMaterial = {
+        schemaVersion: 'bayn.signal-session-reference-prices.v1',
+        signalDate: current.signalDate,
+        observedAt: current.referencePrices.observedAt,
+        priceMicros: current.referencePrices.priceMicros,
+      }
+      const retired = {
+        ...current,
+        schemaVersion,
+        referencePrices: { ...priceMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(priceMaterial)) },
+        ...(schemaVersion.endsWith('.v2') ? { allocationCapitalMicros: '1000000000' } : {}),
+      }
+      const result = planTargets(retired)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({ operation: 'decode-input', reason: 'contract' })
+      }
+    },
+  )
+
+  test('requires explicit allocation and rejects allocation above current equity', () => {
+    const input = fixture({ positions: [] })
+    const { allocationCapitalMicros: _allocation, ...withoutAllocation } = input
+    expect(Result.isFailure(planTargets(withoutAllocation))).toBe(true)
     const excessive = planSuccess(
       fixture({ allocationCapitalMicros: '10000000001', equityMicros: '10000000000', positions: [] }),
     )
-
-    expect(legacy.targets).toMatchObject([
-      { symbol: 'AMD', targetQuantityMicros: '100000000' },
-      { symbol: 'NVDA', targetQuantityMicros: '50000000' },
-    ])
-    expect(legacy.schemaVersion).toBe('bayn.paper-reference-target-plan.v1')
     expect(excessive).toMatchObject({ status: TargetPlanStatus.Blocked, reason: TargetPlanReason.InputMismatch })
   })
 
-  test('versions bounded allocation separately from strict legacy planner evidence', () => {
-    const legacy = fixture({ positions: [] })
-    const bounded = fixture({ allocationCapitalMicros: '1000000000', positions: [] })
-
-    expect(legacy.schemaVersion).toBe('bayn.paper-target-planner-input.v1')
-    expect(bounded.schemaVersion).toBe('bayn.paper-target-planner-input.v2')
-    expect(Result.isFailure(planTargets({ ...legacy, allocationCapitalMicros: '1000000000' }))).toBe(true)
-    if (bounded.schemaVersion !== 'bayn.paper-target-planner-input.v2') throw new Error('expected v2 planner input')
-    const { allocationCapitalMicros: _allocationCapitalMicros, ...boundedWithoutAllocation } = bounded
-    expect(Result.isFailure(planTargets(boundedWithoutAllocation))).toBe(true)
+  test('retains immutable legacy target-plan decoding without reopening legacy planning', () => {
+    const current = planSuccess(fixture())
+    if (current.status !== TargetPlanStatus.Planned) throw new Error('expected a planned historical fixture')
+    const { outputHash: _hash, executionTerms: _terms, ...currentMaterial } = current
+    const material = {
+      ...currentMaterial,
+      schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
+      intentTargets: current.intentTargets.map((intent) => ({ ...intent, timeInForce: TimeInForce.Day as const })),
+    }
+    const historical = { ...material, outputHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+    expect(Result.getOrThrow(decodeTargetPlanResult(historical))).toEqual(historical)
+    expect(Result.isFailure(decodeTargetPlanResult({ ...historical, outputHash: hash('f') }))).toBe(true)
   })
 
   test('turns an exhausted allocation into a deterministic flat no-trade target', () => {
@@ -689,27 +777,27 @@ describe('causal target planner', () => {
         symbol: 'AMD',
         targetWeight: 0.5,
         referencePriceMicros: '50000000',
-        currentQuantityMicros: '80000000',
-        targetQuantityMicros: '100000000',
+        currentQuantityAtoms: '80000000000',
+        targetQuantityAtoms: '100000000000',
       },
       {
         symbol: 'NVDA',
         targetWeight: 0.5,
         referencePriceMicros: '100000000',
-        currentQuantityMicros: '60000000',
-        targetQuantityMicros: '50000000',
+        currentQuantityAtoms: '60000000000',
+        targetQuantityAtoms: '50000000000',
       },
     ])
-    expect(result.intentTargets.map(({ symbol, side, quantityMicros }) => ({ symbol, side, quantityMicros }))).toEqual([
+    expect(result.intentTargets.map(({ symbol, side, quantityAtoms }) => ({ symbol, side, quantityAtoms }))).toEqual([
       {
         symbol: 'NVDA',
         side: OrderSide.Sell,
-        quantityMicros: '10000000',
+        quantityAtoms: '10000000000',
       },
       {
         symbol: 'AMD',
         side: OrderSide.Buy,
-        quantityMicros: '20000000',
+        quantityAtoms: '20000000000',
       },
     ])
     expect(result.requiredReferenceBuyNotionalMicros).toBe('1000000000')
@@ -732,8 +820,8 @@ describe('causal target planner', () => {
 
     expect(replay).toEqual(first)
     expect(reordered).toEqual(first)
-    expect(first.inputHash).toBe('aad6c6e6e3e1c6a0162d07b2f804639cc0a117d5ac3fdc0bc7658dea593e9a4b')
-    expect(first.outputHash).toBe('0e226d5942df14c30bc03d13e560ef481ff6d463021982c82dbd1a933d2aed8e')
+    expect(first.inputHash).toBe('0716076c92ec9f3fb0261b1aab72ae37e3376dc25aa39f690b112184501d88ba')
+    expect(first.outputHash).toBe('371fac767af074391ae9059615242e8f86f91421727f675e6c69991f2926592f')
     expect(changedDecision.inputHash).not.toBe(first.inputHash)
     expect(changedDecision.outputHash).not.toBe(first.outputHash)
     expect(changedDecision.intentTargets.every((intent) => intent.decisionHash === hash('4'))).toBe(true)
@@ -771,19 +859,19 @@ describe('causal target planner', () => {
     const liquidation = planSuccess(
       fixture({
         buyingPowerMicros: '-1000000',
-        positions: [position('AMD', '1000000'), position('NVDA', '2000000')],
+        positions: [position('AMD', '1000000000'), position('NVDA', '2000000000')],
         targetWeights: { AMD: 0, NVDA: 0 },
       }),
     )
     const short = planSuccess(
       fixture({
-        positions: [position('AMD', '-1'), position('NVDA', '2000000')],
+        positions: [position('AMD', '-1000'), position('NVDA', '2000000000')],
       }),
     )
 
-    expect(liquidation.intentTargets.map((intent) => [intent.symbol, intent.side, intent.quantityMicros])).toEqual([
-      ['AMD', OrderSide.Sell, '1000000'],
-      ['NVDA', OrderSide.Sell, '2000000'],
+    expect(liquidation.intentTargets.map((intent) => [intent.symbol, intent.side, intent.quantityAtoms])).toEqual([
+      ['AMD', OrderSide.Sell, '1000000000'],
+      ['NVDA', OrderSide.Sell, '2000000000'],
     ])
     expect(liquidation.status).toBe(TargetPlanStatus.Planned)
     expect(short).toMatchObject({
@@ -803,7 +891,7 @@ describe('causal target planner', () => {
     const sellDoesNotFund = planSuccess(
       fixture({
         buyingPowerMicros: '1500000000',
-        positions: [position('AMD', '0'), position('NVDA', '100000000')],
+        positions: [position('AMD', '0'), position('NVDA', '100000000000')],
         targetWeights: {
           AMD: 0.5,
           NVDA: 0,
@@ -852,17 +940,12 @@ describe('causal target planner', () => {
 
   test('rejects a reference vector labeled as a signal session that has not happened', () => {
     const input = fixture()
-    if (input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion) throw new Error('expected legacy input')
-    const material = {
-      schemaVersion: input.referencePrices.schemaVersion,
-      signalDate: '2026-07-24' as const,
-      observedAt: input.referencePrices.observedAt,
-      priceMicros: input.referencePrices.priceMicros,
-    }
+    const { contentHash: _hash, ...priceMaterial } = input.referencePrices
+    const material = { ...priceMaterial, signalDate: '2026-07-24' as const }
     const futureSignal = {
       ...input,
       signalDate: material.signalDate,
-      referencePrices: { ...material, contentHash: canonicalHashV1(material) },
+      referencePrices: { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) },
     }
 
     expect(planSuccess(futureSignal).reason).toBe(TargetPlanReason.IdentityMismatch)
@@ -872,12 +955,6 @@ describe('causal target planner', () => {
     const identity = planSuccess(fixture({ referenceSignalDate: '2026-07-21' }))
     const referenceInput = fixture()
     const reconciliationInput = fixture()
-    if (
-      referenceInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion ||
-      reconciliationInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-    ) {
-      throw new Error('expected legacy planner inputs')
-    }
     const leveraged = planSuccess(fixture({ targetWeights: { AMD: 0.75, NVDA: 0.75 } }))
     const badReference = {
       ...referenceInput,
@@ -922,7 +999,7 @@ describe('causal target planner', () => {
     })
     const precise = {
       ...preciseInput,
-      precision: { ...preciseInput.precision, quantityIncrementMicros: '1000000' as const },
+      precision: { ...preciseInput.precision, quantityIncrementAtoms: '1000000000' as const },
     }
     const rounded = planSuccess(precise)
 
@@ -930,12 +1007,12 @@ describe('causal target planner', () => {
       buyingPowerMicros: '10000000000',
       equityMicros: '1000000',
       positions: [],
-      priceMicros: { AMD: '100000000' },
-      targetWeights: { AMD: 0.1 },
+      priceMicros: { 'BTC/USD': '100000000' },
+      targetWeights: { 'BTC/USD': 0.1 },
     })
 
-    expect(rounded.targets[0]?.targetQuantityMicros).toBe('333000000')
-    expect(rounded.intentTargets[0]?.quantityMicros).toBe('333000000')
+    expect(rounded.targets[0]?.targetQuantityAtoms).toBe('333000000000')
+    expect(rounded.intentTargets[0]?.quantityAtoms).toBe('333000000000')
     const belowMinimum = planSuccess(dust)
     expect(belowMinimum.reason).toBe(TargetPlanReason.BelowMinimumBuyNotional)
     expect(belowMinimum.requiredReferenceBuyNotionalMicros).toBe('100000')
@@ -962,10 +1039,12 @@ describe('causal target planner', () => {
       discrepancies: [discrepancy],
       reconciledAt,
     }
-    const reconciliationId = canonicalHashV1({
-      schemaVersion: 'bayn.paper-reconciliation-id.v1',
-      material,
-    })
+    const reconciliationId = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.paper-reconciliation-id.v1',
+        material,
+      }),
+    )
     const discrepantInput = {
       ...input,
       brokerState: {
@@ -973,7 +1052,7 @@ describe('causal target planner', () => {
         reconciliation: {
           ...material,
           reconciliationId,
-          contentHash: canonicalHashV1({ ...material, reconciliationId }),
+          contentHash: Result.getOrThrow(canonicalHashV1Result({ ...material, reconciliationId })),
         },
       },
     }
@@ -987,8 +1066,8 @@ describe('causal target planner', () => {
       buyingPowerMicros: '10000000000',
       equityMicros: '1000000',
       positions: [],
-      priceMicros: { AMD: '100000000' },
-      targetWeights: { AMD: 0.1 },
+      priceMicros: { 'BTC/USD': '100000000' },
+      targetWeights: { 'BTC/USD': 0.1 },
     })
     const externalOrder = order(OrderStatus.Filled, 'AMD', brokerObservedAt, accountId, false)
     const cases: readonly [TargetPlanReason, TargetPlannerInput][] = [
@@ -1017,7 +1096,7 @@ describe('causal target planner', () => {
       [TargetPlanReason.UnresolvedOrder, fixture({ orders: [order(OrderStatus.New)] })],
       [
         TargetPlanReason.ShortPositionNotAllowed,
-        fixture({ positions: [position('AMD', '-1'), position('NVDA', '2000000')] }),
+        fixture({ positions: [position('AMD', '-1000'), position('NVDA', '2000000000')] }),
       ],
       [TargetPlanReason.NonPositiveEquity, fixture({ equityMicros: '0' })],
       [TargetPlanReason.BelowMinimumBuyNotional, belowMinimum],
@@ -1031,7 +1110,7 @@ describe('causal target planner', () => {
   test('returns tagged failures for malformed domain input without BigInt, date, or canonicalization defects', () => {
     const malformed: readonly unknown[] = [
       { ...fixture(), observedAt: 'not-an-instant' },
-      { ...fixture(), precision: { ...fixture().precision, quantityIncrementMicros: '0' } },
+      { ...fixture(), precision: { ...fixture().precision, quantityIncrementAtoms: '0' } },
       {
         ...fixture(),
         referencePrices: {
@@ -1082,14 +1161,14 @@ describe('causal target planner', () => {
     const filled = order(OrderStatus.Filled)
     const canceled = order(OrderStatus.Canceled)
     const cases = [
-      fixture({ positions: [position('AMD', '1'), position('AMD', '2')] }),
-      fixture({ positions: [position('NVDA', '2'), position('AMD', '1')] }),
+      fixture({ positions: [position('AMD', '1000'), position('AMD', '2000')] }),
+      fixture({ positions: [position('NVDA', '2000'), position('AMD', '1000')] }),
       fixture({ orders: [filled, canceled] }),
-      fixture({ positions: [{ ...position('AMD', '1'), marketValueMicros: '-1' }, position('NVDA', '2')] }),
-      fixture({ positions: [{ ...position('AMD', '0'), marketValueMicros: '1' }, position('NVDA', '2')] }),
-      fixture({ positions: [{ ...position('AMD', '-1'), marketValueMicros: '1' }, position('NVDA', '2')] }),
-      fixture({ positions: [position('AMD', '1', '2026-07-23T13:27:00.000Z'), position('NVDA', '2')] }),
-      fixture({ positions: [position('AMD', '1', '2026-07-23T13:29:00.001Z'), position('NVDA', '2')] }),
+      fixture({ positions: [{ ...position('AMD', '1000'), marketValueMicros: '-1' }, position('NVDA', '2000')] }),
+      fixture({ positions: [{ ...position('AMD', '0'), marketValueMicros: '1' }, position('NVDA', '2000')] }),
+      fixture({ positions: [{ ...position('AMD', '-1000'), marketValueMicros: '1' }, position('NVDA', '2000')] }),
+      fixture({ positions: [position('AMD', '1000', '2026-07-23T13:27:00.000Z'), position('NVDA', '2000')] }),
+      fixture({ positions: [position('AMD', '1000', '2026-07-23T13:29:00.001Z'), position('NVDA', '2000')] }),
       fixture({ unknownOrderCount: 1 }),
     ]
 
@@ -1100,7 +1179,7 @@ describe('causal target planner', () => {
     const valid = planSuccess(fixture())
     const rehash = (candidate: Omit<typeof valid, 'outputHash'>) => ({
       ...candidate,
-      outputHash: canonicalHashV1(candidate),
+      outputHash: Result.getOrThrow(canonicalHashV1Result(candidate)),
     })
     const { outputHash: _, ...material } = valid
     const candidates: readonly unknown[] = [
@@ -1108,7 +1187,7 @@ describe('causal target planner', () => {
       rehash({
         ...material,
         intentTargets: material.intentTargets.map((intent, index) =>
-          index === 0 ? { ...intent, quantityMicros: (BigInt(intent.quantityMicros) + 1n).toString() } : intent,
+          index === 0 ? { ...intent, quantityAtoms: (BigInt(intent.quantityAtoms) + 1n).toString() } : intent,
         ),
       }),
       rehash({ ...material, requiredReferenceBuyNotionalMicros: '1' }),
@@ -1116,19 +1195,19 @@ describe('causal target planner', () => {
       rehash({
         ...material,
         targets: material.targets.map((target, index) =>
-          index === 0 ? { ...target, targetQuantityMicros: target.currentQuantityMicros } : target,
+          index === 0 ? { ...target, targetQuantityAtoms: target.currentQuantityAtoms } : target,
         ),
       }),
       rehash({
         ...material,
         targets: material.targets.map((target, index) =>
-          index === 0 ? { ...target, targetQuantityMicros: '-1' } : target,
+          index === 0 ? { ...target, targetQuantityAtoms: '-1000' } : target,
         ),
       }),
       rehash({
         ...material,
         targets: material.targets.map((target, index) =>
-          index === 0 ? { ...target, currentQuantityMicros: '-1' } : target,
+          index === 0 ? { ...target, currentQuantityAtoms: '-1000' } : target,
         ),
       }),
       rehash({
@@ -1143,8 +1222,13 @@ describe('causal target planner', () => {
       (() => {
         const noTrade = planSuccess(fixture({ positions: [], targetWeights: { AMD: 0, NVDA: 0 } }))
         const { outputHash: _, ...noTradeMaterial } = noTrade
-        const impossible = { ...noTradeMaterial, targets: [] }
-        return { ...impossible, outputHash: canonicalHashV1(impossible) }
+        const { executionTerms: _terms, ...historicalMaterial } = noTradeMaterial
+        const impossible = {
+          ...historicalMaterial,
+          schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
+          targets: [],
+        }
+        return { ...impossible, outputHash: Result.getOrThrow(canonicalHashV1Result(impossible)) }
       })(),
       (() => {
         const impossible = {
@@ -1158,7 +1242,7 @@ describe('causal target planner', () => {
           availableBuyingPowerMicros: '-1',
           residualBuyingPowerMicros: '-1',
         }
-        return { ...impossible, outputHash: canonicalHashV1(impossible) }
+        return { ...impossible, outputHash: Result.getOrThrow(canonicalHashV1Result(impossible)) }
       })(),
     ]
 
@@ -1187,4 +1271,79 @@ describe('causal target planner', () => {
       expect(String(result.failure.cause)).toContain('well-formed Unicode')
     }
   })
+})
+
+const allocatedEntryQuoteFixture = cryptoMarketFixture().snapshot.latestQuotes['BTC/USD']
+if (allocatedEntryQuoteFixture === undefined) throw new Error('Expected native quote fixture')
+const entrySizingSymbolArbitrary = fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD')
+
+test('property: capital sizing is invariant to displayed quote size and never exceeds its allocation', () => {
+  checkProperty(
+    'capital-entry-sizing',
+    fc.property(
+      entrySizingSymbolArbitrary,
+      fc.integer({ min: 1_000_000, max: 1_000_000_000_000 }),
+      fc.integer({ min: 1, max: 200_000 }),
+      fc.integer({ min: 1, max: 100_000 }),
+      fc.integer({ min: 1, max: 100_000_000 }),
+      (symbol, capital, weightPpm, price, sizeAtoms) => {
+        const quote = {
+          ...allocatedEntryQuoteFixture,
+          symbol,
+          bidPrice: price,
+          askPrice: price + 0.01,
+          askSize: sizeAtoms / 1_000_000_000,
+        }
+        const input = {
+          snapshot: { latestQuotes: { [symbol]: quote } },
+          targetWeights: { [symbol]: weightPpm / 1_000_000 },
+          capitalMicros: String(capital),
+          precision: { quantityIncrementAtoms: '1', priceIncrementMicros: '100', minimumBuyNotionalMicros: '1000000' },
+        }
+        const first = Result.getOrThrow(
+          maximumAllocatedBuyQuantities({
+            ...input,
+            askPriceMicros: Result.getOrThrow(adverseQuotePrices(input.snapshot, [symbol])).askPriceMicros,
+          }),
+        )
+        const changedQuote = { ...quote, askSize: quote.askSize * 1000 }
+        const other = Result.getOrThrow(
+          maximumAllocatedBuyQuantities({
+            ...input,
+            askPriceMicros: Result.getOrThrow(
+              adverseQuotePrices({ latestQuotes: { [symbol]: changedQuote } }, [symbol]),
+            ).askPriceMicros,
+          }),
+        )
+        expect(first).toEqual(other)
+        const quantity = BigInt(first[symbol] ?? '0')
+        const prices = Result.getOrThrow(adverseQuotePrices(input.snapshot, [symbol]))
+        expect((quantity * BigInt(prices.askPriceMicros[symbol] ?? '0')) / 1_000_000_000n).toBeLessThanOrEqual(
+          (BigInt(capital) * BigInt(weightPpm)) / 1_000_000n,
+        )
+        expect(quantity % (symbol === 'AAPL' ? 1_000_000_000n : 1n)).toBe(0n)
+      },
+    ),
+  )
+})
+
+test('property: one quote gate enforces the exact market spread boundary and positive liquidity', () => {
+  checkProperty(
+    'market-entry-spread',
+    fc.property(entrySizingSymbolArbitrary, fc.integer({ min: 0, max: 100 }), (symbol, spreadBps) => {
+      const quote = {
+        ...allocatedEntryQuoteFixture,
+        symbol,
+        bidPrice: 10000 - spreadBps / 2,
+        askPrice: 10000 + spreadBps / 2,
+        bidSize: 1,
+        askSize: 1,
+      }
+      const exclusion = Result.getOrThrow(jevEntryQuoteExclusion(quote))
+      expect(exclusion).toBe(
+        spreadBps > jevMarketForSymbol(symbol).maximumEntrySpreadBps ? JevEntryExclusion.Spread : null,
+      )
+      expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askSize: 0 }))).not.toBeNull()
+    }),
+  )
 })

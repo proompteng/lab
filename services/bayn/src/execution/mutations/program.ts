@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
 
-import { MutationOperation } from '../../broker/alpaca-mutations'
+import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { storeError } from './decisions'
 import { MutationStore, MutationStoreError, type MutationStoreShape } from './model'
 import { makeMutationEventPostgres } from './postgres/events'
@@ -65,8 +65,11 @@ export const makePostgresMutationStore = Effect.gen(function* () {
         'record-submit',
         appendOutcome({ _tag: 'SubmitRejected' }, intentId, requestHash, evidence.observedAt, evidence),
       ),
-    submitDenied: (intentId, requestHash, occurredAt) =>
-      run('record-submit', appendOutcome({ _tag: 'SubmitDenied' }, intentId, requestHash, occurredAt)),
+    submitDenied: (intentId, requestHash, occurredAt, denialReason) =>
+      run(
+        'record-submit',
+        appendOutcome({ _tag: 'SubmitDenied' }, intentId, requestHash, occurredAt, undefined, undefined, denialReason),
+      ),
     submitUnknown: (intentId, requestHash, occurredAt, evidence, brokerOrderId) =>
       run(
         'record-submit',

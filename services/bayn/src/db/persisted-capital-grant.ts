@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, DateTime, Effect, Layer, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { BrokerEnvironmentSchema, BrokerProviderSchema, makeBrokerIdentity } from '../broker/identity'
 import {
@@ -13,7 +13,6 @@ import {
 } from '../execution/authority'
 import { Authority } from '../execution/contracts'
 import { NonNegativeIntegerSchema, Sha256Schema, StrictNonEmptyStringSchema, strictParseOptions } from '../schemas'
-import { Pipeable } from '../pipeable'
 
 export class PersistedCapitalGrantStoreError extends Data.TaggedError('PersistedCapitalGrantStoreError')<{
   readonly operation: 'read' | 'record' | 'revoke' | 'lock-submit'
@@ -118,7 +117,7 @@ export interface PersistedGrantGenerationBindingFailure {
   readonly observed: string | null
 }
 
-const validatePersistedGrantGenerationBindingDataFirst = (
+export const validatePersistedGrantGenerationBinding = (
   grant: Pick<CapitalGrantRecord, 'strategy'>,
   generation: PersistedGrantGenerationBindingFacts,
 ): Result.Result<void, PersistedGrantGenerationBindingFailure> => {
@@ -155,11 +154,6 @@ const validatePersistedGrantGenerationBindingDataFirst = (
         observed: mismatch.observed,
       })
 }
-
-export const validatePersistedGrantGenerationBinding = Pipeable.dual(
-  2,
-  validatePersistedGrantGenerationBindingDataFirst,
-)
 
 const sameRevocation = (left: CapitalGrantRevocation | undefined, right: CapitalGrantRevocation): boolean =>
   left?.schemaVersion === right.schemaVersion &&

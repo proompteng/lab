@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "bayn.cache-diagnostic-sample.v1",
+  "observedOn": "2026-10-13",
+  "sourceRevision": "36e65006b6381d721e05f8eb2f094d3cb90a672d",
+  "sourceChange": "https://github.com/proompteng/lab/pull/14994",
+  "inputArtifacts": [
+    "post-rollout-journal-summary.json",
+    "post-rollout-poll-trace-summary.json"
+  ],
+  "polls": {
+    "samples": 10,
+    "journalSizes": [
+      13
+    ],
+    "lazyReads": 0,
+    "eagerReads": 20,
+    "activeDurationMs": {
+      "min": 5342.0,
+      "median": 10862.5,
+      "max": 28897.0
+    },
+    "qualification": "SMALL_POSTCLOSE_SAMPLE_NO_NEW_CLOSURE_ORDERS"
+  },
+  "singlePollTraceSpansMs": {
+    "sql.execute": 1934.509258,
+    "bayn.broker.observation.capture": 1705.890707,
+    "bayn.broker.observation.publish": 522.828375
+  },
+  "limits": [
+    "Small postclose sample; no new protective closure orders.",
+    "A single SQL span duration and poll active times do not measure the cost of repeated cache-eligible reads.",
+    "This sample is not a latency percentile baseline or evidence of a Valkey performance improvement."
+  ]
+}

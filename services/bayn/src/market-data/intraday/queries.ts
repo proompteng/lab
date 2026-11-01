@@ -1,3 +1,5 @@
+import { exchangeSessions } from '../../market-hours'
+import { cryptoMarketProfile } from '../../jev/markets'
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect } from 'effect'
 
@@ -14,17 +16,49 @@ export interface IntradayArchivePageCursor {
 }
 
 export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseClient) => {
+  const barEventTime = sql`coalesce(event_ts_exact, event_ts)`
+  const barIngestionTime = sql`coalesce(ingest_ts_exact, ingest_ts)`
   const checkIntradayArchive = Effect.all(
     [
-      sql`SELECT 1 FROM signal.intraday_bars_1m_v2 LIMIT 0`,
+      sql`SELECT event_ts_exact, ingest_ts_exact FROM signal.intraday_bars_1m_v2 LIMIT 0`,
       sql`SELECT 1 FROM signal.intraday_quotes_v1 LIMIT 0`,
       sql`SELECT 1 FROM signal.intraday_trades_v1 LIMIT 0`,
     ],
     { concurrency: 3, discard: true },
   )
+  const archiveSource = (request: IntradaySnapshotQuery, kind: 'bars' | 'quotes' | 'trades', deduplicate: boolean) => {
+    if (request.feed !== cryptoMarketProfile.feed) {
+      if (kind === 'bars') return sql`SELECT * FROM signal.intraday_bars_1m_v2`
+      const final = deduplicate ? sql`FINAL` : sql``
+      if (kind === 'quotes') return sql`SELECT * FROM signal.intraday_quotes_v1 ${final}`
+      return sql`SELECT * FROM signal.intraday_trades_v1 ${final}`
+    }
+    const values =
+      kind === 'bars'
+        ? sql`event_ts AS event_ts_exact, ingest_ts AS ingest_ts_exact, toUInt8(1) AS is_final,
+          JSONExtractRaw(payload, 'o') AS open, JSONExtractRaw(payload, 'h') AS high,
+          JSONExtractRaw(payload, 'l') AS low, JSONExtractRaw(payload, 'c') AS close,
+          JSONExtractRaw(payload, 'v') AS volume,
+          if(toFloat64OrNull(JSONExtractRaw(payload, 'vw')) > 0, JSONExtractRaw(payload, 'vw'), NULL) AS vwap,
+          nullIf(nullIf(JSONExtractRaw(payload, 'n'), ''), 'null') AS trade_count,`
+        : kind === 'quotes'
+          ? sql`JSONExtractRaw(payload, 'bp') AS bid_price, JSONExtractRaw(payload, 'bs') AS bid_size,
+            JSONExtractRaw(payload, 'ap') AS ask_price, JSONExtractRaw(payload, 'as') AS ask_size,`
+          : sql`JSONExtractRaw(payload, 'p') AS price, JSONExtractRaw(payload, 's') AS size,`
+    return sql`SELECT provider, ${sql.param('String', cryptoMarketProfile.universeId)} AS universe_id,
+        ${sql.param('String', cryptoMarketProfile.universeSymbolHash)} AS universe_symbol_hash,
+        location AS feed, channel, 'continuous' AS market_session, 'real_time_crypto' AS delay_class,
+        symbol, event_ts, ingest_ts, source_topic, source_partition, source_offset, schema_version,
+        payload AS native_payload, ${values} sequence
+      FROM signal.crypto_market_events_v1 FINAL
+      WHERE channel IN ${sql.param('Array(String)', kind === 'bars' ? ['bars', 'updatedBars'] : [kind])}
+        AND has(${sql.param('Array(String)', cryptoMarketProfile.universe)}, symbol)`
+  }
+  const nativePayload = (request: IntradaySnapshotQuery) =>
+    request.feed === cryptoMarketProfile.feed ? sql`native_payload,` : sql``
   const symbols = (request: IntradaySnapshotQuery) => sql.param('Array(String)', intradaySnapshotSymbols(request))
   const bounds = (request: IntradaySnapshotQuery) => {
-    const session = request.calendar.sessions.find((candidate) => candidate.date === request.sessionDate)
+    const session = exchangeSessions(request.calendar).find((candidate) => candidate.date === request.sessionDate)
     return {
       start: sql.param('String', request.rangeStartAt),
       end: sql.param('String', request.rangeEndAt),
@@ -42,16 +76,14 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     }
   }
 
-  const afterCursorWhere = (cursor: IntradayArchivePageCursor | undefined, precision: 3 | 9) => {
+  const afterCursorWhere = (cursor: IntradayArchivePageCursor | undefined, eventTime = sql`event_ts`) => {
     if (cursor === undefined) return sql``
     const eventAt = sql.param('String', cursor.eventAt)
     const symbol = sql.param('String', cursor.symbol)
     const sourceTopic = sql.param('String', cursor.sourceTopic)
     const sourcePartition = sql.param('String', String(cursor.sourcePartition))
     const sourceOffset = sql.param('String', cursor.sourceOffset)
-    return precision === 3
-      ? sql`WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort(${eventAt}, 3, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
-      : sql`WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
+    return sql`WHERE tuple(${eventTime}, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
   }
 
   const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => {
@@ -63,17 +95,19 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
       toString(max(source_offset)) AS inclusive_last_offset
     FROM (
       SELECT source_topic, source_partition, source_offset
-      FROM signal.intraday_bars_1m_v2
+      FROM (${archiveSource(request, 'bars', false)})
       WHERE universe_id = ${sql.param('String', request.universeId)}
         AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
         AND event_ts >= parseDateTime64BestEffort(${time.open}, 3, 'UTC')
         AND event_ts <= parseDateTime64BestEffort(${time.close}, 3, 'UTC')
-        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 3, 'UTC')
+        AND ${barEventTime} >= parseDateTime64BestEffort(${time.open}, 9, 'UTC')
+        AND ${barEventTime} <= parseDateTime64BestEffort(${time.close}, 9, 'UTC')
+        AND ${barIngestionTime} <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
-      FROM signal.intraday_quotes_v1
+      FROM (${archiveSource(request, 'quotes', false)})
       WHERE universe_id = ${sql.param('String', request.universeId)}
         AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
         AND feed = ${sql.param('String', request.feed)}
@@ -83,7 +117,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
-      FROM signal.intraday_trades_v1
+      FROM (${archiveSource(request, 'trades', false)})
       WHERE universe_id = ${sql.param('String', request.universeId)}
         AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
         AND feed = ${sql.param('String', request.feed)}
@@ -103,6 +137,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     return sql`
       SELECT
         provider,
+        ${nativePayload(request)}
         universe_id,
         universe_symbol_hash,
         feed,
@@ -110,8 +145,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         market_session,
         delay_class,
         symbol,
-        concat(replaceOne(toString(event_ts), ' ', 'T'), 'Z') AS event_at,
-        concat(replaceOne(toString(ingest_ts), ' ', 'T'), 'Z') AS ingested_at,
+        concat(replaceOne(coalesce(toString(event_ts_exact), toString(event_ts)), ' ', 'T'), 'Z') AS event_at,
+        concat(replaceOne(coalesce(toString(ingest_ts_exact), toString(ingest_ts)), ' ', 'T'), 'Z') AS ingested_at,
         source_topic,
         toString(source_partition) AS source_partition,
         toString(source_offset) AS source_offset,
@@ -126,15 +161,17 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         toString(schema_version) AS schema_version
       FROM (
         SELECT *
-        FROM signal.intraday_bars_1m_v2
+        FROM (${archiveSource(request, 'bars', false)})
         WHERE universe_id = ${sql.param('String', request.universeId)}
           AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
           AND feed = ${sql.param('String', request.feed)}
           AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
           AND has(${symbols(request)}, symbol)
-          AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
-          AND event_ts < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
-          AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+          AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
+          AND event_ts <= parseDateTime64BestEffort(${time.end}, 3, 'UTC')
+          AND ${barEventTime} >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+          AND ${barEventTime} < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
+          AND ${barIngestionTime} <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
           AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
           AND source_offset <= ifNull(
             toUInt64OrNull(arrayElement(
@@ -143,11 +180,11 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             )),
             0
           )
-        ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC
-        LIMIT 1 BY universe_id, feed, symbol, event_ts
+        ORDER BY ${barIngestionTime} DESC, source_partition DESC, source_offset DESC
+        LIMIT 1 BY universe_id, feed, symbol, ${barEventTime}
       )
-      ${afterCursorWhere(after, 3)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ${afterCursorWhere(after, barEventTime)}
+      ORDER BY ${barEventTime}, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }
@@ -160,6 +197,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     return sql`
       SELECT
         provider,
+        ${nativePayload(request)}
         universe_id,
         universe_symbol_hash,
         feed,
@@ -187,7 +225,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             ) AS latest_candidate_rank
           FROM (
             SELECT *, max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts
-            FROM signal.intraday_quotes_v1 FINAL
+            FROM (${archiveSource(request, 'quotes', true)})
             WHERE universe_id = ${sql.param('String', request.universeId)}
               AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
               AND feed = ${sql.param('String', request.feed)}
@@ -209,8 +247,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         )
         WHERE latest_candidate_rank = 1
       )
-      ${afterCursorWhere(after, 9)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ${afterCursorWhere(after)}
+      ORDER BY event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }
@@ -221,6 +259,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     return sql`
       SELECT
         provider,
+        ${nativePayload(request)}
         universe_id,
         universe_symbol_hash,
         feed,
@@ -246,7 +285,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             ) AS latest_candidate_rank
           FROM (
             SELECT *, max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts
-            FROM signal.intraday_trades_v1 FINAL
+            FROM (${archiveSource(request, 'trades', true)})
             WHERE universe_id = ${sql.param('String', request.universeId)}
               AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
               AND feed = ${sql.param('String', request.feed)}
@@ -268,8 +307,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         )
         WHERE latest_candidate_rank = 1
       )
-      ${afterCursorWhere(after, 9)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ${afterCursorWhere(after)}
+      ORDER BY event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }

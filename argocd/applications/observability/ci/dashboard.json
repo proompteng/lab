@@ -1,0 +1,1851 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Image build timing from GitHub Actions. Typical is the median (p50); slow is p95. Counts use actual job completion times. Select a workflow and architecture before comparing durations. Runner details open from a build record.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 100,
+      "options": {
+        "content": "**Typical = median (p50). Slow = p95.** Totals cover the last hour. Compare the same workflow and architecture. Open a build record to inspect its GitHub job or runner. History fills in after installation.",
+        "mode": "markdown"
+      },
+      "title": "Image builds",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 3
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum(ci_jobs_active{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",state=\"in_progress\"}) or vector(0)",
+          "legendFormat": "running",
+          "refId": "A"
+        }
+      ],
+      "title": "Building",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 3
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum(ci_jobs_active{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",state!=\"in_progress\"}) or vector(0)",
+          "legendFormat": "queued",
+          "refId": "A"
+        }
+      ],
+      "title": "Waiting",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 3
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum(ci_jobs_completed{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\"}) or vector(0)",
+          "legendFormat": "jobs",
+          "refId": "A"
+        }
+      ],
+      "title": "Finished (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 3
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "(sum(ci_jobs_completed{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\",outcome=~\"failure|timed_out\"}) or vector(0)) / clamp_min(sum(ci_jobs_completed{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\"}), 1)",
+          "legendFormat": "failure fraction",
+          "refId": "A"
+        }
+      ],
+      "title": "Failure rate (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "Waiting for first update",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "time() - max(ci_observability_last_poll_timestamp_seconds > 0)",
+          "legendFormat": "age",
+          "refId": "A"
+        }
+      ],
+      "title": "Last GitHub update",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "max(ci_observability_pending_attempts)",
+          "legendFormat": "attempts",
+          "refId": "A"
+        }
+      ],
+      "title": "Runs waiting to be indexed",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (state, architecture) (ci_jobs_active{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\"})",
+          "legendFormat": "{{state}} {{architecture}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Running and waiting jobs",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Counts use actual GitHub completion times, including during historical backfill.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (outcome) (ci_jobs_completed{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\"})",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Finished jobs by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Successful jobs only. Rolling one-hour samples; cache classes and runner pools stay separate.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_percentile_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",outcome=\"success\",phase=\"execution\",window=\"1h\"}",
+          "legendFormat": "{{workflow}} {{job_family}} {{architecture}} {{cache_state}} p{{percentile}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Build job duration: typical and slow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Successful jobs only. Rolling one-hour samples; cache classes and runner pools stay separate.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_percentile_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",outcome=\"success\",phase=\"queue\",window=\"1h\"}",
+          "legendFormat": "{{workflow}} {{job_family}} {{architecture}} {{cache_state}} p{{percentile}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Time waiting for a runner: typical and slow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "The baseline excludes the most recent hour. Unknown cache evidence is explicit; changes are observational, not causal proof.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_percentile_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",outcome=\"success\",phase=\"execution\",percentile=\"50\"}",
+          "legendFormat": "{{workflow}} {{job_family}} {{architecture}} {{cache_state}} {{window}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Typical job duration: recent vs previous week",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_samples{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",outcome=\"success\",phase=\"execution\"}",
+          "legendFormat": "{{workflow}} {{job_family}} {{architecture}} {{cache_state}} {{window}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Builds behind each comparison",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Step names map to bounded phases. Unattributed time covers gaps between GitHub step timestamps. Build-and-publish steps remain combined where GitHub does not expose a split.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runner_setup"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Job setup"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "checkout"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Checkout"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "toolchain"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Tools"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "build"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Build"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "build_and_publish"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Build and publish"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "verify"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Checks"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "publish"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Publish"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "artifacts"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Artifacts"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cache"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cleanup"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cleanup"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unattributed"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Between steps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "other"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Other steps"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (phase) (ci_job_phase_total_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",window=\"1h\",phase!~\"execution|queue|buildkit_.*\"})",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Where build time goes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Exporter timings parsed from BuildKit logs. These can overlap main step durations and must not be added to the phase partition.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_percentile_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",window=\"1h\",phase=\"buildkit_cache_import\"}",
+          "legendFormat": "Cache download \u00b7 {{workflow}} \u00b7 {{job_family}} \u00b7 {{architecture}} \u00b7 p{{percentile}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_percentile_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",window=\"1h\",phase=\"buildkit_cache_export\"}",
+          "legendFormat": "Cache upload \u00b7 {{workflow}} \u00b7 {{job_family}} \u00b7 {{architecture}} \u00b7 p{{percentile}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_job_duration_percentile_seconds{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",cache_state=~\"$cache_state\",window=\"1h\",phase=\"buildkit_image_export\"}",
+          "legendFormat": "Image export \u00b7 {{workflow}} \u00b7 {{job_family}} \u00b7 {{architecture}} \u00b7 p{{percentile}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Time exporting images and cache",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "time() - (ci_observability_last_history_scan_timestamp_seconds > 0)",
+          "legendFormat": "history scan age",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_observability_oldest_loki_pending_seconds",
+          "legendFormat": "oldest unshipped record age",
+          "refId": "B"
+        }
+      ],
+      "title": "History and record delivery delays",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "collection errors"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_observability_github_rate_limit_remaining",
+          "legendFormat": "GitHub requests remaining",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_observability_collection_errors_total",
+          "legendFormat": "collection errors",
+          "refId": "B"
+        }
+      ],
+      "title": "GitHub quota and collection errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Loki timestamps are observation times; completed_at is GitHub completion time. Click the runner to view its historical resources. Raw job logs and credentials are not shipped.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_url"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "targetBlank": true,
+                    "title": "Open GitHub",
+                    "url": "${__value.raw}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "job_url"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "targetBlank": true,
+                    "title": "Open GitHub",
+                    "url": "${__value.raw}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runner_name"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "targetBlank": true,
+                    "title": "Runner resources during this job",
+                    "url": "${__data.fields[\"resource_url\"]}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "started_at_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "completed_at_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resource_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "completed_at"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Finished at"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "workflow"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Workflow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "architecture"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Architecture"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "job_name"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Job"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "outcome"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Result"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "queue_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Waiting"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "execution_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Job duration"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "build_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Build"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "publish_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Publishing"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_state"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cache"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runner_name"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Runner"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_url"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Workflow run"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "pattern": ".+",
+                      "result": {
+                        "text": "Open run"
+                      }
+                    },
+                    "type": "regex"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "job_url"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "GitHub job"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "pattern": ".+",
+                      "result": {
+                        "text": "Open job"
+                      }
+                    },
+                    "type": "regex"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_state"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "cold": {
+                        "text": "Cold"
+                      },
+                      "mixed": {
+                        "text": "Partly cached"
+                      },
+                      "nix_builds": {
+                        "text": "Nix built locally"
+                      },
+                      "nix_no_builds": {
+                        "text": "Nix reused builds"
+                      },
+                      "unknown": {
+                        "text": "Not reported"
+                      },
+                      "warm": {
+                        "text": "Warm"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{service=\"ci-observability\",kind=\"job\",workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\"} | json",
+          "maxLines": 200,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent builds \u2014 open the job or runner history",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "json",
+            "keepTime": false,
+            "replace": true,
+            "source": "Line"
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "completed_at",
+                "workflow",
+                "architecture",
+                "job_name",
+                "outcome",
+                "queue_seconds",
+                "execution_seconds",
+                "build_seconds",
+                "publish_seconds",
+                "cache_state",
+                "runner_name",
+                "resource_url",
+                "run_url",
+                "job_url"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "architecture": 2,
+              "build_seconds": 7,
+              "cache_state": 9,
+              "completed_at": 0,
+              "execution_seconds": 6,
+              "job_name": 3,
+              "job_url": 12,
+              "outcome": 4,
+              "publish_seconds": 8,
+              "queue_seconds": 5,
+              "resource_url": 13,
+              "run_url": 11,
+              "runner_name": 10,
+              "workflow": 1
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "desc": true,
+                "field": "completed_at"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "Choose a runner from a build record",
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 62
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"arc\",pod=~\"$runner_pod\",container=\"runner\"}[2m]))",
+          "legendFormat": "{{pod}} cores",
+          "refId": "A"
+        }
+      ],
+      "title": "Runner CPU use",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "Choose a runner from a build record",
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 62
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "container_memory_working_set_bytes{namespace=\"arc\",pod=~\"$runner_pod\",container=\"runner\"}",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Runner memory use",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "Choose a runner from a build record",
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "rate(container_cpu_cfs_throttled_periods_total{namespace=\"arc\",pod=~\"$runner_pod\",container=\"runner\"}[2m]) / clamp_min(rate(container_cpu_cfs_periods_total{namespace=\"arc\",pod=~\"$runner_pod\",container=\"runner\"}[2m]), 1)",
+          "legendFormat": "{{pod}} throttled fraction",
+          "refId": "A"
+        }
+      ],
+      "title": "Runner CPU throttling",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "The ratio covers Dockerfile RUN vertices with available log evidence, not all layers or cache transport.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 78
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (workflow, architecture) (ci_buildkit_run_instructions{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\",result=\"hit\"}) / clamp_min(sum by (workflow, architecture) (ci_buildkit_run_instructions{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\"}), 1)",
+          "legendFormat": "{{workflow}} {{job_family}} {{architecture}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Docker build steps reused from cache",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Counts from existing Nix cache summaries. Substitutions and local builds are distinct events, not a Docker layer-hit ratio.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attic_substitutions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Attic downloads"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nixos_substitutions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "NixOS downloads"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "local_builds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Built locally"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 78
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (kind) (ci_nix_cache_events{workflow=~\"$workflow\",architecture=~\"$architecture\",runner_pool=~\"$runner_pool\",job_role=~\"$job_role\",job_family=~\"$job_family\",event=~\"$event\",window=\"1h\"})",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Nix downloads and local builds",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "Includes queueing and dependencies within the selected attempt. Multi-architecture workflow totals are not filtered by a single job architecture.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 86
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "ci_workflow_duration_percentile_seconds{workflow=~\"$workflow\",event=~\"$event\",outcome=\"success\",window=\"1h\"}",
+          "legendFormat": "{{workflow}} p{{percentile}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Whole workflow duration: typical and slow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "noValue": "No matching jobs yet",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 86
+      },
+      "id": 25,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "sum by (outcome) (ci_workflows_completed{workflow=~\"$workflow\",event=~\"$event\",window=\"1h\"})",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Finished workflow attempts by outcome",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 42,
+  "tags": [
+    "ci",
+    "arc",
+    "builds"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Workflow",
+        "multi": true,
+        "name": "workflow",
+        "options": [],
+        "query": "label_values(ci_jobs_completed, workflow)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Architecture",
+        "multi": true,
+        "name": "architecture",
+        "options": [],
+        "query": "label_values(ci_jobs_completed, architecture)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "arc",
+          "value": "arc"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Runners",
+        "multi": true,
+        "name": "runner_pool",
+        "options": [],
+        "query": "label_values(ci_jobs_completed, runner_pool)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "build",
+          "value": "build"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Job type",
+        "multi": true,
+        "name": "job_role",
+        "options": [],
+        "query": "label_values(ci_jobs_completed, job_role)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Image target",
+        "multi": true,
+        "name": "job_family",
+        "options": [],
+        "query": "label_values(ci_jobs_completed, job_family)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "push",
+          "value": "push"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Trigger",
+        "multi": true,
+        "name": "event",
+        "options": [],
+        "query": "label_values(ci_jobs_completed, event)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "includeAll": true,
+        "label": "Cache evidence",
+        "multi": true,
+        "name": "cache_state",
+        "options": [],
+        "query": "label_values(ci_job_duration_samples, cache_state)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "description": "Select a runner from a build-record link, or enter its exact Pod name.",
+        "label": "Runner pod",
+        "name": "runner_pod",
+        "query": "",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CI Build Performance",
+  "uid": "ci-build-performance",
+  "version": 1,
+  "weekStart": ""
+}

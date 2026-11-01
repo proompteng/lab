@@ -1,0 +1,118 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: valkey-system
+namePrefix: chideat-
+
+resources:
+  # chideat/valkey-operator v2.1.0. Pin the source as well as the image.
+  - https://github.com/chideat/valkey-operator/config/default?ref=a854200742d48a7a1c278db77abeb9b85591d60d
+
+images:
+  - name: chideat/valkey-operator
+    newName: ghcr.io/chideat/valkey-operator
+    newTag: v2.1.0
+    digest: sha256:57b76e6f8a510e77c7061cac4e2bfd92dd235fd2509e74ef8b8776fee2d4ad8f
+
+patches:
+  # The manager uses its own HTTPS metrics certificate; this upstream
+  # Certificate is not mounted by the Deployment.
+  - target:
+      kind: Certificate
+      name: metrics-certs
+    patch: |-
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: metrics-certs
+      $patch: delete
+  # ApplicationSet owns the namespace and its retention policy.
+  - target:
+      kind: Namespace
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: valkey-system
+      $patch: delete
+  - target:
+      kind: CustomResourceDefinition
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Prune=false,Delete=false
+  - target:
+      kind: Deployment
+      name: valkey-operator
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: valkey-operator
+      spec:
+        replicas: 2
+        template:
+          metadata:
+            annotations:
+              operatorImageName: ghcr.io/chideat/valkey-operator
+              # Also parsed as semantic version for actor selection. Image
+              # digests belong in image references, never in this field.
+              operatorVersion: v2.1.0
+          spec:
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 65532
+              seccompProfile:
+                type: RuntimeDefault
+            affinity:
+              podAntiAffinity:
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    podAffinityTerm:
+                      labelSelector:
+                        matchLabels:
+                          app.kubernetes.io/name: valkey-operator
+                      topologyKey: kubernetes.io/hostname
+
+# The upstream replacements run before this overlay adds its collision-safe
+# prefix. Recompute certificate references and webhook DNS names afterwards.
+replacements:
+  - source:
+      kind: Certificate
+      name: serving-cert
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: MutatingWebhookConfiguration
+        fieldPaths:
+          - metadata.annotations.[cert-manager.io/inject-ca-from]
+        options:
+          delimiter: /
+          index: 1
+      - select:
+          kind: ValidatingWebhookConfiguration
+        fieldPaths:
+          - metadata.annotations.[cert-manager.io/inject-ca-from]
+        options:
+          delimiter: /
+          index: 1
+      - select:
+          kind: CustomResourceDefinition
+        fieldPaths:
+          - metadata.annotations.[cert-manager.io/inject-ca-from]
+        options:
+          delimiter: /
+          index: 1
+  - source:
+      kind: Service
+      name: webhook-service
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: Certificate
+          name: serving-cert
+        fieldPaths:
+          - spec.dnsNames.0
+          - spec.dnsNames.1
+        options:
+          delimiter: .
+          index: 0

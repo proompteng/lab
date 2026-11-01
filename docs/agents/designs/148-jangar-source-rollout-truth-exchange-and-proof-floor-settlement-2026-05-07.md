@@ -1,21 +1,14 @@
 # 148. Jangar Source Rollout Truth Exchange And Proof-Floor Settlement (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane resilience, source-to-rollout settlement, controller heartbeat authority, Torghut
 proof-floor consumption, validation, rollout, rollback, and engineer/deployer handoff.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
-
 Extends:
 
 - `146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`
-- `145-jangar-observation-epoch-tripwire-and-capital-contradiction-arbiter-2026-05-07.md`
-- `docs/torghut/design-system/v6/150-torghut-repair-dividend-order-book-and-capital-warrants-2026-05-07.md`
-- `docs/torghut/design-system/v6/149-torghut-profit-evidence-convergence-epochs-and-quant-stage-arbitrage-2026-05-07.md`
 
 ## Decision
 

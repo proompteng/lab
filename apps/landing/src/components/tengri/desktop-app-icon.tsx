@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 const APP_ICONS: Record<TengriApp, string> = {
   finder: '/tengri/icons/finder.png',
   chrome: '/tengri/icons/chrome.png',
+  tengri: '/tengri/icons/tengri.png',
   code: '/tengri/icons/code.png',
   terminal: '/tengri/icons/terminal.png',
   settings: '/tengri/icons/settings.png',

@@ -52,8 +52,8 @@ cleanup() {
   rm -f -- "${current}" "${expected}"
 }
 trap cleanup EXIT
-sudo tailscale serve status --json | jq --sort-keys . >"${current}"
-jq 'del(.version)' "${OMNI_DIR}/tailscale-serve.json" | jq --sort-keys . >"${expected}"
+sudo tailscale serve status --json | jq --sort-keys --arg host "${OMNI_HOST}" --from-file "${OMNI_DIR}/serve-owned.jq" >"${current}"
+jq --sort-keys --arg host "${OMNI_HOST}" --from-file "${OMNI_DIR}/serve-owned.jq" "${OMNI_DIR}/tailscale-serve.json" >"${expected}"
 cmp --silent "${current}" "${expected}" || die 'Tailscale Serve configuration drifted'
 
 printf 'Omni runtime verification passed\n'

@@ -57,8 +57,6 @@ configuration, or maintained docs. It is not the first source for live operation
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md` is the compact production topology baseline.
 - `docs/torghut/design-system/v6/index.md` indexes historical proof/capital design contracts. Treat those as context
   until verified against live GitOps, code, and runtime readback.
-- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` is retained as a historical
-  authority-map snapshot.
 
 When a design file says `Accepted`, `implementation-ready`, or `current`, read that as the status at the time the file
 was written unless the file explicitly points to current code, GitOps, runtime APIs, and validation evidence. Current

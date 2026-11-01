@@ -1,139 +1,10 @@
 import { Schema } from 'effect'
-
-import {
-  IsoDateSchema,
-  PositiveIntegerSchema,
-  PositiveMicrosSchema,
-  Sha256Schema,
-  StrictNonEmptyStringSchema,
-  SymbolSchema,
-  UnitIntervalSchema,
-  UtcInstantSchema,
-  UtcOrderTimestampSchema,
-  UnsignedMicrosSchema,
-} from '../schemas'
-import {
-  IntradayMomentumLegacyTargetPortfolioV2Schema,
-  IntradayMomentumTargetPortfolioSchema,
-} from './intraday-momentum/model'
-
-const LegacyRiskBalancedHorizonSchema = Schema.Struct({
-  horizonSessions: PositiveIntegerSchema,
-  return: Schema.Finite,
-  normalizedTrend: Schema.Finite,
-})
-
-const LegacyRiskBalancedSignalSchema = Schema.Struct({
-  symbol: SymbolSchema,
-  horizons: Schema.Array(LegacyRiskBalancedHorizonSchema).check(Schema.isMinLength(1)),
-  dailyVolatility: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-  annualizedVolatility: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-  compositeScore: Schema.Finite,
-  positiveScore: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-  eligible: Schema.Boolean,
-  uncappedWeight: UnitIntervalSchema,
-  cappedWeight: UnitIntervalSchema,
-  targetWeight: UnitIntervalSchema,
-})
-
-const LegacyRiskBalancedDecisionPlanSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decision-plan.v1'),
-  signalDate: IsoDateSchema,
-  covarianceWindow: Schema.Struct({
-    returnCount: PositiveIntegerSchema,
-    firstSession: IsoDateSchema,
-    lastSession: IsoDateSchema,
-    sessionsHash: Sha256Schema,
-  }),
-  estimatedAnnualizedPortfolioVolatility: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-  exposureScale: UnitIntervalSchema,
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  signals: Schema.Array(LegacyRiskBalancedSignalSchema).check(Schema.isMinLength(1)),
-})
-
-const LegacyOpeningDriveSignalSchema = Schema.Struct({
-  symbol: SymbolSchema,
-  openingPriceMicros: PositiveMicrosSchema,
-  rangeHighPriceMicros: PositiveMicrosSchema,
-  rangeLowPriceMicros: PositiveMicrosSchema,
-  bidPriceMicros: PositiveMicrosSchema,
-  askPriceMicros: PositiveMicrosSchema,
-  quoteObservedAt: UtcInstantSchema,
-  breakoutTradePriceMicros: PositiveMicrosSchema,
-  breakoutTradeObservedAt: UtcInstantSchema,
-  openingReturnBps: Schema.Int,
-  breakoutBps: Schema.Int,
-  rangeLocationPpm: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 })),
-  spreadBps: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 20_000 })),
-  openingDollarVolumeMicros: UnsignedMicrosSchema,
-  eligible: Schema.Boolean,
-  rejectionReasons: Schema.Array(
-    Schema.Literals([
-      'opening-return',
-      'breakout',
-      'range-location',
-      'spread',
-      'dollar-volume',
-      'displayed-liquidity',
-      'market-data-freshness',
-    ]),
-  ).check(Schema.isUnique()),
-  rank: Schema.NullOr(PositiveIntegerSchema),
-})
-
-const LegacyOpeningDriveTargetPortfolioSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.opening-drive.target.v1'),
-  strategy: Schema.Literal('opening-drive-momentum'),
-  sessionDate: IsoDateSchema,
-  snapshotId: Sha256Schema,
-  observedAt: UtcInstantSchema,
-  calendarHash: Sha256Schema,
-  selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  signals: Schema.Array(LegacyOpeningDriveSignalSchema).check(Schema.isMinLength(1)),
-})
-
-const LegacyIntradaySignalSchema = Schema.Struct({
-  symbol: SymbolSchema,
-  referencePriceMicros: PositiveMicrosSchema,
-  rangeHighPriceMicros: PositiveMicrosSchema,
-  rangeLowPriceMicros: PositiveMicrosSchema,
-  bidPriceMicros: PositiveMicrosSchema,
-  askPriceMicros: PositiveMicrosSchema,
-  bidSizeMicros: UnsignedMicrosSchema,
-  askSizeMicros: UnsignedMicrosSchema,
-  quoteObservedAt: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
-  confirmationTradePriceMicros: PositiveMicrosSchema,
-  confirmationTradeObservedAt: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
-  lookbackReturnBps: Schema.Int,
-  breakoutBps: Schema.Int,
-  rangeLocationPpm: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 })),
-  spreadBps: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 20_000 })),
-  eligible: Schema.Boolean,
-  rejectionReasons: Schema.Array(
-    Schema.Literals([
-      'lookback-return',
-      'breakout',
-      'range-location',
-      'spread',
-      'displayed-liquidity',
-      'market-data-freshness',
-    ]),
-  ).check(Schema.isUnique()),
-  rank: Schema.NullOr(PositiveIntegerSchema),
-})
-
-const LegacyIntradayTargetPortfolioSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-momentum.target.v1'),
-  strategy: Schema.Literal('intraday-momentum'),
-  sessionDate: IsoDateSchema,
-  snapshotId: Sha256Schema,
-  observedAt: UtcInstantSchema,
-  calendarHash: Sha256Schema,
-  selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  signals: Schema.Array(LegacyIntradaySignalSchema).check(Schema.isMinLength(1)),
-})
+import { IsoDateSchema, StrictNonEmptyStringSchema, SymbolSchema } from '../schemas'
+import { IntradayMomentumTargetPortfolioSchema } from './intraday-momentum/model'
+import { EntryAblationTargetSchema } from '../jev/entry-ablation'
+import { JevEntryTargetSchema } from '../jev/decision'
+import { JevExitTargetSchema } from '../jev/exit'
+import { RepeatedMomentumTargetSchema } from './repeated-momentum/decision'
 
 const FlatExecutionTargetBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-flat-target.v1'),
@@ -156,23 +27,23 @@ export const FlatExecutionTargetSchema = FlatExecutionTargetBase.check(
 )
 
 export const RuntimeStrategyDecisionSchema = Schema.Union([
+  JevEntryTargetSchema,
+  EntryAblationTargetSchema,
+  RepeatedMomentumTargetSchema,
+  JevExitTargetSchema,
   IntradayMomentumTargetPortfolioSchema,
   FlatExecutionTargetSchema,
 ])
 
 export type RuntimeStrategyDecision = typeof RuntimeStrategyDecisionSchema.Type
 
-/** Decoder-only compatibility for immutable decision rows. Active planning accepts RuntimeStrategyDecisionSchema only. */
-export const PersistedStrategyDecisionSchema = Schema.Union([
-  LegacyRiskBalancedDecisionPlanSchema,
-  LegacyOpeningDriveTargetPortfolioSchema,
-  LegacyIntradayTargetPortfolioSchema,
-  IntradayMomentumLegacyTargetPortfolioV2Schema,
-  RuntimeStrategyDecisionSchema,
-])
-
 export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision, strategyName: string): boolean => {
   switch (decision.schemaVersion) {
+    case 'bayn.jev-entry-target.v7':
+    case 'bayn.entry-ablation-target.v1':
+    case 'bayn.repeated-momentum-target.v1':
+    case 'bayn.jev-exit-target.v5':
+      return strategyName === 'jev'
     case 'bayn.intraday-momentum.target.v3':
       return strategyName === 'intraday-momentum'
     case 'bayn.execution-flat-target.v1':
@@ -180,4 +51,44 @@ export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision
   }
 }
 
-export const runtimeDecisionSessionDate = (decision: RuntimeStrategyDecision): string => decision.sessionDate
+export const isFlatExecutionTarget = (
+  decision: RuntimeStrategyDecision | undefined,
+): decision is Extract<
+  RuntimeStrategyDecision,
+  { readonly schemaVersion: 'bayn.execution-flat-target.v1' | 'bayn.jev-exit-target.v5' }
+> =>
+  decision?.schemaVersion === 'bayn.execution-flat-target.v1' || decision?.schemaVersion === 'bayn.jev-exit-target.v5'
+
+export type ChartEntryTarget = Extract<
+  RuntimeStrategyDecision,
+  {
+    readonly schemaVersion: 'bayn.jev-entry-target.v7' | 'bayn.entry-ablation-target.v1'
+  }
+>
+
+export const isChartEntryTarget = (decision: RuntimeStrategyDecision | undefined): decision is ChartEntryTarget =>
+  decision?.schemaVersion === 'bayn.jev-entry-target.v7' || decision?.schemaVersion === 'bayn.entry-ablation-target.v1'
+
+export type ProtectedEntryTarget = ChartEntryTarget | typeof RepeatedMomentumTargetSchema.Type
+
+export const isProtectedEntryTarget = (
+  decision: RuntimeStrategyDecision | undefined,
+): decision is ProtectedEntryTarget =>
+  isChartEntryTarget(decision) || decision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+
+export const protectedEntryBuyPriceCeilings = (
+  decision: RuntimeStrategyDecision | undefined,
+): Readonly<Record<string, bigint>> =>
+  isProtectedEntryTarget(decision)
+    ? Object.fromEntries(
+        Object.entries(decision.exitPolicy.plans).map(([symbol, plan]) => [
+          symbol,
+          BigInt(plan.levels.maximumEntryPriceMicros),
+        ]),
+      )
+    : {}
+
+export const protectedEntryExpiresAtMs = (target: ProtectedEntryTarget): number =>
+  isChartEntryTarget(target)
+    ? Date.parse(target.evidence.batchPlan.expiresAt)
+    : Date.parse(target.evidence.observation.observedAt) + target.policy.sharedProtocol.inferenceValidityMs

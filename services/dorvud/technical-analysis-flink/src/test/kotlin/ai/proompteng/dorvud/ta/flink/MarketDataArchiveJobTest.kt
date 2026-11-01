@@ -7,15 +7,18 @@ import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.graph.StreamGraphHasherV2
 import org.apache.flink.streaming.runtime.partitioner.KeyGroupStreamPartitioner
 import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.HexFormat
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class MarketDataArchiveJobTest {
   private val observationSymbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
@@ -35,6 +38,54 @@ class MarketDataArchiveJobTest {
         ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Trade),
       "bayn.market-data.overnight.bars.1m.v1" to ArchiveRoute("overnight", observationUniverse),
     )
+
+  @Test
+  fun `adding features retains raw source and sink savepoint identities`() {
+    fun hashes(
+      features: Boolean,
+      technical: Boolean = false,
+    ): Map<String, String> {
+      val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+      val variables = validEnvironment() + if (features) mapOf("ARCHIVE_FEATURES_TOPIC" to "torghut.market-features.v1") else emptyMap()
+      configureMarketDataArchiveJob(
+        environment,
+        MarketDataArchiveConfig.fromEnv(variables).copy(
+          technicalFeaturesTopic = if (technical) "torghut.technical-features.v1" else null,
+        ),
+      )
+      val graph = environment.streamGraph
+      val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
+      return graph.streamNodes
+        .filter { it.operatorName == "Source: market-data-bars-source" || it.operatorName.endsWith(": Writer") }
+        .associate { it.operatorName to hashes.getValue(it.id).contentToString() }
+    }
+    val existing = hashes(false)
+    val extended = hashes(true)
+    val technical = hashes(true, true)
+    extended.forEach { (name, hash) -> assertEquals(hash, technical[name], "technical archive preserves: $name") }
+    assertEquals(4, existing.size)
+    assertTrue(extended.size > existing.size)
+    existing.forEach { (name, hash) -> assertEquals(hash, extended[name], "savepoint operator: $name") }
+  }
+
+  @Test
+  fun `raw archive operators retain the deployed savepoint identities`() {
+    val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+    configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(validEnvironment()))
+    val graph = environment.streamGraph
+    val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
+    val expected =
+      mapOf(
+        "Source: market-data-bars-source" to "d618a97df21bbd4bb61c79cdeca965b4",
+        "signal-intraday-bars-archive: Writer" to "b44d1e67369ec08bf6e68aa027449b4b",
+        "signal-intraday-quotes-archive: Writer" to "e9779db5592ff21254bf256adf667700",
+        "signal-intraday-trades-archive: Writer" to "e8d2cf76684903e35fd2637619d8c5be",
+      )
+    expected.forEach { (name, hash) ->
+      val node = graph.streamNodes.single { it.operatorName == name }
+      assertEquals(hash, HexFormat.of().formatHex(hashes.getValue(node.id)), "deployed savepoint operator: $name")
+    }
+  }
 
   @Test
   fun `decodes enriched bars with source-offset lineage and cross-feed separation`() {
@@ -174,15 +225,46 @@ class MarketDataArchiveJobTest {
   }
 
   @Test
-  fun `rejects crossed quotes invalid trades and channel-topic mismatches`() {
-    assertFailsWith<IllegalArgumentException> {
-      decodeArchiveQuote(
-        quoteRecord(
-          "torghut.quotes.v1",
-          quoteEnvelope("sip", "real_time_consolidated", bidPrice = 101.0, askPrice = 100.0, symbol = "NVDA"),
-        ),
-        routes,
-      )
+  fun `retains withdrawn quote sides with their original source lineage`() {
+    listOf(279.67 to 0.0, 0.0 to 279.67, 0.0 to 0.0).forEach { (bid, ask) ->
+      val quote =
+        decodeArchiveQuote(
+          quoteRecord(
+            "torghut.quotes.v1",
+            quoteEnvelope(
+              "sip",
+              "real_time_consolidated",
+              bidPrice = bid,
+              askPrice = ask,
+              bidSize = if (bid == 0.0) 0.0 else 480.0,
+              askSize = if (ask == 0.0) 0.0 else 480.0,
+              symbol = "NVDA",
+            ),
+            partition = 4,
+            offset = 87886365,
+          ),
+          routes,
+        )
+      assertEquals(bid, quote.bidPrice)
+      assertEquals(ask, quote.askPrice)
+      assertEquals("torghut.quotes.v1", quote.sourceTopic)
+      assertEquals(4, quote.sourcePartition)
+      assertEquals(87886365, quote.sourceOffset)
+    }
+  }
+
+  @Test
+  fun `rejects negative or crossed quote prices invalid trades and channel-topic mismatches`() {
+    listOf(-1.0 to 100.0, 100.0 to -1.0, 101.0 to 100.0, 0.0 to 100.0, 100.0 to 0.0).forEach { (bid, ask) ->
+      assertFailsWith<IllegalArgumentException> {
+        decodeArchiveQuote(
+          quoteRecord(
+            "torghut.quotes.v1",
+            quoteEnvelope("sip", "real_time_consolidated", bidPrice = bid, askPrice = ask, symbol = "NVDA"),
+          ),
+          routes,
+        )
+      }
     }
     assertFailsWith<IllegalArgumentException> {
       decodeArchiveTrade(
@@ -202,6 +284,46 @@ class MarketDataArchiveJobTest {
         routes,
       )
     }
+  }
+
+  @Test
+  fun `quote recovery requires complete original records and binds the existing route`() {
+    val range = QuoteArchiveRecoveryRange("torghut.quotes.v1", 4, 87886364, 87886366)
+    val record =
+      quoteRecord(
+        range.topic,
+        quoteEnvelope("sip", "real_time_consolidated", bidPrice = 279.67, askPrice = 0.0, askSize = 0.0, symbol = "NVDA"),
+        partition = range.partition,
+        offset = range.firstOffset,
+      )
+    val records = listOf(record, record.copy(offset = range.firstOffset + 1))
+    val (manifest, quotes) = quoteArchiveRecoveryPlan(range, routes, records)
+    assertEquals(listOf(87886364L, 87886365L), manifest.records.map { it.offset })
+    assertEquals(records.map { it.offset }, quotes.map { it.sourceOffset })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askPrice })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askSize })
+    assertEquals("sip", manifest.feed)
+    assertEquals(coreUniverse.symbolHash, manifest.universeSymbolHash)
+    val hash = quoteArchiveRecoveryHash(manifest)
+    assertEquals(hash, quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, records).first))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(universeId = "other-universe")))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(records = manifest.records.reversed())))
+    listOf(
+      records.dropLast(1),
+      records.reversed(),
+      listOf(record, record),
+      records.map { it.copy(partition = 5) },
+      records.map { it.copy(value = "{}") },
+    ).forEach { changed ->
+      assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, routes, changed) }
+    }
+    val changed = records.map { it.copy(value = it.value.replace("279.67", "279.68")) }
+    assertTrue(hash != quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, changed).first))
+    assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, emptyMap(), records) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, -1, 0, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, -1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 0, 10001) }
   }
 
   @Test
@@ -245,7 +367,7 @@ class MarketDataArchiveJobTest {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
     }
     assertFailsWith<IllegalArgumentException> {
-      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10001"))
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "17"))
@@ -281,7 +403,17 @@ class MarketDataArchiveJobTest {
     }
   }
 
-  private fun validEnvironment(): Map<String, String> =
+  @Test
+  fun `retained quote recovery admits bounded ten thousand row batches`() {
+    val config =
+      MarketDataArchiveConfig.fromEnv(validEnvironment() + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10000"))
+    assertEquals(10_000, config.clickhouseBatchSize)
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(validEnvironment() + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10001"))
+    }
+  }
+
+  internal fun validEnvironment(): Map<String, String> =
     mapOf(
       "ARCHIVE_CORE_FEED" to "sip",
       "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",
@@ -370,6 +502,8 @@ class MarketDataArchiveJobTest {
     symbol: String = "SPY",
     bidPrice: Double = 100.0,
     askPrice: Double = 100.1,
+    bidSize: Double = 20.0,
+    askSize: Double = 30.0,
   ): Envelope<QuotePayload> {
     val eventTime = Instant.parse("2026-07-21T14:00:00Z")
     return Envelope(
@@ -379,7 +513,7 @@ class MarketDataArchiveJobTest {
       channel = channel,
       symbol = symbol,
       seq = 2,
-      payload = QuotePayload(bp = bidPrice, bs = 20.0, ap = askPrice, `as` = 30.0, t = eventTime),
+      payload = QuotePayload(bp = bidPrice, bs = bidSize, ap = askPrice, `as` = askSize, t = eventTime),
       provider = "alpaca",
       marketSession = "regular",
       delayClass = delayClass,

@@ -14,7 +14,10 @@ import {
   useSyncExternalStore,
 } from 'react'
 
-import { tengriAuthClient } from '@/lib/tengri/auth-client'
+import { signOutTengri } from '@/lib/tengri/auth-client'
+import { reportBrowserFailure } from '@/lib/observability/client'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
   APP_TITLES,
@@ -27,7 +30,8 @@ import {
   windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
-import { ChromeApp, useExternalPreviewLifecycle } from './chrome-app'
+import { ChromeApp } from './chrome-app'
+import { AgentChat } from './agent-chat'
 import {
   beginTengriLifecycleTransition,
   getTengriGuestOperationSnapshot,
@@ -68,6 +72,7 @@ type DesktopIdentityLease = {
 
 const MemoizedFinderApp = memo(FinderApp)
 const MemoizedChromeApp = memo(ChromeApp)
+const MemoizedAgentChat = memo(AgentChat)
 const MemoizedTerminalApp = memo(TerminalApp)
 const MemoizedSettingsApp = memo(SettingsApp)
 
@@ -90,7 +95,7 @@ const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
 const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
 
 function desktopLayoutStorageKey(agentId: string, desktopId: string) {
-  return `tengri:windows:${agentId}:${desktopId}`
+  return `tengri:windows:${agentId}:${desktopId}:v2`
 }
 
 function newDesktopId() {
@@ -250,9 +255,41 @@ export function ReadyDesktop({
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
-    initialWindowState(viewport, ['finder', 'chrome']),
+    initialWindowState(viewport, ['finder', 'tengri']),
   )
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
+  useEffect(() => {
+    if (busyAction !== null) return
+    const controller = new AbortController()
+    let pending = true
+    void renewWorkspaceConnections(agent.id, controller.signal).finally(() => {
+      pending = false
+    })
+    const renewActive = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId: agent.id },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        if (activeRuns.some((run) => run.agentId !== agent.id))
+          throw new Error('Active run belongs to another workspace')
+        if (activeRuns.some((run) => run.state.phase === 'running' || run.state.phase === 'recovering'))
+          await renewWorkspaceConnections(agent.id, controller.signal)
+      } catch {
+        if (!controller.signal.aborted) reportBrowserFailure('tengri.connection-renewal')
+      } finally {
+        pending = false
+      }
+    }
+    const timer = window.setInterval(() => void renewActive(), 60_000)
+    return () => {
+      controller.abort()
+      window.clearInterval(timer)
+    }
+  }, [agent.id, agent.runtimeEpoch, busyAction])
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
@@ -276,7 +313,6 @@ export function ReadyDesktop({
   }, [])
   const windowStateRef = useRef(windowState)
   const dirtyCodeWindowsRef = useRef(dirtyCodeWindows)
-  const openExternalPreview = useExternalPreviewLifecycle(agent.id, previewGatewayOrigin)
 
   useLayoutEffect(() => {
     windowStateRef.current = windowState
@@ -311,7 +347,7 @@ export function ReadyDesktop({
       x: 0,
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
-      height: rect?.height ?? Math.max(0, globalThis.innerHeight - 126),
+      height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
     }
   }, [])
 
@@ -365,13 +401,13 @@ export function ReadyDesktop({
       setHydratedDesktopId(null)
       dispatch({
         type: 'hydrate',
-        state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+        state: initialWindowState(measuredViewport, ['finder', 'tengri']),
         viewport: measuredViewport,
       })
       return
     }
 
-    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'chrome'])
+    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'tengri'])
     try {
       const persisted = sessionStorage.getItem(desktopLayoutStorageKey(agent.id, desktopId))
       if (persisted) state = JSON.parse(persisted) as WindowManagerState
@@ -424,8 +460,6 @@ export function ReadyDesktop({
   const handleCodeDirtyChange = useCallback((windowId: string, dirty: boolean) => {
     setDirtyCodeWindows((current) => updateDirtyCodeWindows(current, windowId, dirty))
   }, [])
-
-  const closeChromeWindow = useCallback((id: string) => closeWindow({ app: 'chrome', id }), [closeWindow])
 
   useEffect(() => {
     if (dirtyCodeWindows.size === 0) {
@@ -580,6 +614,7 @@ export function ReadyDesktop({
   const openApp = useCallback(
     (app: TengriApp) => {
       if (app === 'chrome') openChrome()
+      else if (app === 'tengri') void openDesktopApp('tengri')
       else if (app === 'finder') openFinder()
       else if (app === 'code') openCode()
       else if (app === 'terminal') openTerminal()
@@ -587,7 +622,7 @@ export function ReadyDesktop({
       setMenuOpen(null)
       setSpotlightOpen(false)
     },
-    [openChrome, openCode, openFinder, openSettings, openTerminal],
+    [openChrome, openCode, openFinder, openSettings, openTerminal, openDesktopApp],
   )
 
   const newActiveWindow = useCallback(() => {
@@ -621,7 +656,11 @@ export function ReadyDesktop({
         }
         await commitDesktopLifecycleAction({
           action,
-          request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
+          request: () =>
+            runTengriAction<TengriAgent | null>(
+              { action, agentId: agent.id, workspaceUid: agent.uid },
+              { principalId: user.id },
+            ),
           onCommitted: (committedAction) => {
             committed = true
             setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
@@ -651,7 +690,7 @@ export function ReadyDesktop({
         setBusyAction(null)
       }
     },
-    [agent.id, onChanged],
+    [agent.id, agent.uid, user.id, onChanged],
   )
 
   const signOut = useCallback(async () => {
@@ -674,8 +713,7 @@ export function ReadyDesktop({
         if (!(await guard(false))) throw new Error('Save or close every edited Code tab before signing out.')
       }
       await runTengriAction<null>({ action: 'revoke-editor-sessions' })
-      const result = await tengriAuthClient.signOut()
-      if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
+      await signOutTengri()
       committed = true
       setCommittedTransition('sign-out')
       await onChanged()
@@ -739,9 +777,9 @@ export function ReadyDesktop({
 
   if (!layoutReady) {
     return (
-      <main className="font-system relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
+      <main className="font-geist relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
         <DesktopWallpaper />
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-24 grid place-items-center">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
           <p className="flex items-center gap-2 text-sm text-white/62" role="status">
             <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
             Restoring desktop…
@@ -756,7 +794,7 @@ export function ReadyDesktop({
       <main
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-system relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white selection:bg-[#78a9ff]/35"
+        className="tengri-theme font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
@@ -778,7 +816,7 @@ export function ReadyDesktop({
           userName={user.name}
         />
 
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-24 overflow-visible">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-visible">
           {connectionWarning ? (
             <p
               role="status"
@@ -815,13 +853,14 @@ export function ReadyDesktop({
                 />
               ) : desktopWindow.app === 'chrome' ? (
                 <MemoizedChromeApp
-                  active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
-                  onCloseWindow={closeChromeWindow}
-                  onOpenExternalPreview={openExternalPreview}
-                  previewGatewayOrigin={previewGatewayOrigin}
+                  desktopId={desktopId}
                   windowId={desktopWindow.id}
+                  onFocus={() => dispatch({ type: 'focus', id: desktopWindow.id })}
+                  previewGatewayOrigin={previewGatewayOrigin}
                 />
+              ) : desktopWindow.app === 'tengri' ? (
+                <MemoizedAgentChat active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : desktopWindow.app === 'code' ? (
                 <MemoizedCodeEditor
                   key={JSON.stringify([user.id, agent.id, agent.createdAt])}
@@ -853,6 +892,7 @@ export function ReadyDesktop({
                   instanceId={desktopWindow.id}
                   lifecycleDisabled={guestOperationActive}
                   onDelete={openDeleteConfirmation}
+                  onChanged={onChanged}
                   onSignOut={handleSignOut}
                   onSleep={handleSleep}
                   user={user}
@@ -861,8 +901,23 @@ export function ReadyDesktop({
             </DesktopWindowFrame>
           ))}
         </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
-          <DesktopDock onOpenApp={openApp} windows={windowState.windows} />
+        <div
+          className={`pointer-events-none group/dock absolute inset-x-0 bottom-0 z-[1500] flex justify-center ${
+            activeWindow?.mode === 'maximized' ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
+          }`}
+        >
+          {activeWindow?.mode === 'maximized' ? (
+            <div aria-hidden="true" className="pointer-events-auto absolute inset-x-0 bottom-0 h-1" />
+          ) : null}
+          <div
+            className={`pb-3 ${
+              activeWindow?.mode === 'maximized'
+                ? 'translate-y-full transition-transform group-hover/dock:translate-y-0 group-focus-within/dock:translate-y-0 motion-reduce:transition-none'
+                : ''
+            }`}
+          >
+            <DesktopDock onOpenApp={openApp} windows={windowState.windows} />
+          </div>
         </div>
       </main>
 
@@ -916,7 +971,7 @@ function LifecycleTransitionScreen({
         : 'Tengri is closing this authenticated desktop session.'
 
   return (
-    <main className="font-system relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#142849] px-5 text-white">
+    <main className="font-geist relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#142849] px-5 text-white">
       <DesktopWallpaper />
       <header className="absolute inset-x-0 top-0 z-20 flex h-[30px] items-center border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-4 text-xs font-semibold text-white/90 backdrop-blur-2xl">
         <span className="mr-2">

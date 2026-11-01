@@ -113,7 +113,7 @@ Enforcement behavior:
 
 ## Security considerations
 
-- Prompt injection and output handling are MRM concerns (see `v1/security-threat-model.md`).
+- Prompt injection and output handling are MRM concerns.
 - API keys are high-value secrets; rotate regularly and restrict usage.
 
 ## Decisions (ADRs)

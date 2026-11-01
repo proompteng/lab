@@ -110,7 +110,7 @@ func (editor *editorSupervisor) run(run *editorRun) {
 		"--socket", socketPath, "--socket-mode", "0700", "--auth", "none",
 		"--config", filepath.Join(dataRoot, "config.yaml"),
 		"--user-data-dir", filepath.Join(dataRoot, "data"), "--extensions-dir", filepath.Join(dataRoot, "extensions"),
-		"--disable-telemetry", "--disable-update-check", "--disable-getting-started-override",
+		"--disable-telemetry", "--disable-update-check", "--disable-getting-started-override", "--disable-workspace-trust",
 		editor.workspace.realRoot)
 	command.Dir = editor.workspace.realRoot
 	command.Env = childEnvironment("HOME="+editor.home, "TENGRI_WORKSPACE_ROOT="+editor.workspace.realRoot)
@@ -211,16 +211,4 @@ func installEditorIntegration(root string) error {
 	defer settings.Close()
 	_, err = settings.WriteString(`{"workbench.colorTheme":"Default Dark Modern","workbench.startupEditor":"none","window.menuBarVisibility":"compact","workbench.secondarySideBar.defaultVisibility":"hidden","remote.extensionKind":{"vscode.typescript-language-features":["workspace","-web"]},"telemetry.telemetryLevel":"off","files.autoSave":"off","files.hotExit":"onExitAndWindowClose"}`)
 	return err
-}
-
-func (server *apiServer) handleOpenEditor(writer http.ResponseWriter, request *http.Request) {
-	if server.editor == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "VS Code is not installed in this guest. Sleep and resume the agent to install the current guest image.")
-		return
-	}
-	if err := server.editor.ensure(request.Context()); err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, err.Error())
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{"port": editorPort})
 }

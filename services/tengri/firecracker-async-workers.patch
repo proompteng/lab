@@ -1,0 +1,111 @@
+--- a/src/vmm/src/io_uring/mod.rs
++++ b/src/vmm/src/io_uring/mod.rs
+@@ -55,6 +55,8 @@
+     RegisterFileLimitExceeded,
+     /// Could not register restrictions: {0}
+     RegisterRestrictions(IOError),
++    /// Could not bound io_uring workers: {0}
++    RegisterWorkers(IOError),
+     /// Error calling io_uring_setup: {0}
+     Setup(IOError),
+     /// Error originating in the submission queue: {0}
+@@ -149,6 +151,20 @@
+         };
+-
++
+         instance.check_operations()?;
++        // Linux >= 5.15 attributes these workers to our cgroup. Bound both
++        // worker classes before enabling the ring; failure must prevent boot.
++        let mut workers = [4u32, 4u32];
++        SyscallReturnCode(unsafe {
++            libc::syscall(
++                libc::SYS_io_uring_register,
++                instance.fd.as_raw_fd(),
++                io_uring_register_op::IORING_REGISTER_IOWQ_MAX_WORKERS,
++                workers.as_mut_ptr(),
++                workers.len(),
++            )
++        })
++        .into_empty_result()
++        .map_err(IoUringError::RegisterWorkers)?;
+-
++
+         if let Some(eventfd) = eventfd {
+             instance.register_eventfd(eventfd)?;
+--- a/src/vmm/src/io_uring/operation/mod.rs
++++ b/src/vmm/src/io_uring/operation/mod.rs
+@@ -122,8 +122,14 @@
+     pub(crate) fn set_linked(&mut self) {
+         self.flags |= 1 << io_uring_sqe_flags_bit::IOSQE_IO_LINK_BIT;
+     }
+
++    /// Start this operation on an asynchronous worker.
++    pub(crate) fn force_async(mut self) -> Self {
++        self.flags |= 1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT;
++        self
++    }
++
+     /// Transform the operation into an `Sqe`.
+     /// Note: remember remove user_data from slab or it will leak.
+     pub(crate) fn into_sqe(self, slab: &mut slab::Slab<T>) -> Sqe {
+         // SAFETY:
+--- a/src/vmm/src/io_uring/restriction.rs
++++ b/src/vmm/src/io_uring/restriction.rs
+@@ -21,8 +21,10 @@
+ #[derive(Debug)]
+ pub enum Restriction {
+     /// Allow an operation.
+     AllowOpCode(OpCode),
++    /// Allow file writes to start on asynchronous workers.
++    AllowAsync,
+     /// Only allow operations on pre-registered fds.
+     RequireFixedFds,
+ }
+
+@@ -39,8 +41,15 @@
+                     u16::try_from(io_uring_register_restriction_op::IORING_RESTRICTION_SQE_OP)
+                         .unwrap();
+                 instance.__bindgen_anon_1.sqe_op = *opcode as u8;
+             }
++            AllowAsync => {
++                instance.opcode = u16::try_from(
++                    io_uring_register_restriction_op::IORING_RESTRICTION_SQE_FLAGS_ALLOWED,
++                )
++                .unwrap();
++                instance.__bindgen_anon_1.sqe_flags = 1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT;
++            }
+             RequireFixedFds => {
+                 instance.opcode = u16::try_from(
+                     io_uring_register_restriction_op::IORING_RESTRICTION_SQE_FLAGS_REQUIRED,
+                 )
+--- a/src/vmm/src/devices/virtio/block/virtio/io/async_io.rs
++++ b/src/vmm/src/devices/virtio/block/virtio/io/async_io.rs
+@@ -77,8 +77,9 @@
+             vec![file],
+             vec![
+                 // Make sure we only allow operations on pre-registered fds.
+                 Restriction::RequireFixedFds,
++                Restriction::AllowAsync,
+                 // Allowlist of opcodes.
+                 Restriction::AllowOpCode(OpCode::Read),
+                 Restriction::AllowOpCode(OpCode::Write),
+                 Restriction::AllowOpCode(OpCode::Fsync),
+@@ -173,15 +174,11 @@
+
+         let wrapped_user_data = WrappedRequest::new(req);
+
+         self.ring
+-            .push(Operation::write(
+-                0,
+-                buf as usize,
+-                count,
+-                offset,
+-                wrapped_user_data,
+-            ))
++            .push(
++                Operation::write(0, buf as usize, count, offset, wrapped_user_data).force_async(),
++            )
+             .map_err(|(io_uring_error, data)| RequestError {
+                 req: data.req,
+                 error: AsyncIoError::IoUring(io_uring_error),
+             })

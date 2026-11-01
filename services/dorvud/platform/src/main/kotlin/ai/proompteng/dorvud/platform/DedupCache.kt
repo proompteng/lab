@@ -2,8 +2,6 @@ package ai.proompteng.dorvud.platform
 
 import java.time.Duration
 import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * TTL + size bounded dedup cache. Returns true when the key is already present (i.e., duplicate).
@@ -12,21 +10,23 @@ class DedupCache<K>(
   private val ttl: Duration,
   private val maxEntries: Int,
 ) {
-  private val entries = ConcurrentHashMap<K, Instant>()
-  private val order = ConcurrentLinkedQueue<K>()
+  // Keep expiration and insertion order in one bounded store. A separate FIFO must
+  // not retain keys after their TTL expires or evict a newer incarnation of a key.
+  private val entries = LinkedHashMap<K, Instant>()
 
+  @Synchronized
   fun isDuplicate(
     key: K,
     now: Instant = Instant.now(),
   ): Boolean {
     evictExpired(now)
-    val existing = entries.putIfAbsent(key, now)
-    if (existing != null) return true
+    if (entries.containsKey(key)) return true
 
-    order.add(key)
+    entries[key] = now
     if (entries.size > maxEntries) {
-      val victim = order.poll()
-      if (victim != null) entries.remove(victim)
+      val oldest = entries.entries.iterator()
+      oldest.next()
+      oldest.remove()
     }
     return false
   }

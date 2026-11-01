@@ -14,7 +14,7 @@ export interface RestateInvocationCompletionOptions {
 export type RestateHttpRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
 export class RestateInvocationClientError extends Data.TaggedError('RestateInvocationClientError')<{
-  readonly operation: 'await' | 'send'
+  readonly operation: 'await' | 'call' | 'send'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -69,6 +69,30 @@ const readBoundedJson = async (response: Response, description: string): Promise
   }
   return JSON.parse(new TextDecoder().decode(bytes)) as unknown
 }
+
+export const callRestateInvocation = (
+  url: string,
+  body: unknown,
+  options: RestateInvocationRequestOptions,
+  request: RestateHttpRequest = fetch,
+): Effect.Effect<unknown, RestateInvocationClientError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await request(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...options.headers },
+        body: JSON.stringify(body),
+        signal: requestSignal(signal, options.timeoutMs),
+      })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`Restate invocation call returned HTTP ${response.status}`)
+      }
+      return readBoundedJson(response, 'Restate invocation call')
+    },
+    catch: (cause) =>
+      new RestateInvocationClientError({ operation: 'call', message: 'Restate invocation call failed', cause }),
+  })
 
 export const sendRestateInvocation = (
   url: string,

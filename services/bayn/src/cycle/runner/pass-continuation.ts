@@ -32,6 +32,7 @@ export const selectCyclePassContinuation = (result: CycleRunResult): CyclePassCo
       }
     case 'ALREADY_TERMINAL':
     case 'WINDOW_CLOSED':
+    case 'ADMISSION_WAITING':
       return { _tag: 'RETURN' }
   }
 }

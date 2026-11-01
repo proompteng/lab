@@ -1,6 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
+  "bootstrap-sha": "7bca4519e3e7e39a1a55c777e750eb5db7309210",
+  "commit-batch-size": 50,
   "packages": {
     "packages/temporal-bun-sdk": {
       "component": "temporal-bun-sdk",

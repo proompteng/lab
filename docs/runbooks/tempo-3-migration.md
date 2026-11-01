@@ -76,6 +76,34 @@ so routing back to Tempo 2 is not a complete rollback. Recover the Tempo 3
 read/write path without deleting Kafka records, buckets, or buffered traces.
 Never allow both compaction implementations to write to the bucket together.
 
+### Live-store Kafka reader recovery
+
+Tempo 3.0.3 can report `/ready` while its Kafka reader has stopped after
+exhausting initial offset-lookup retries. Check each live-store's
+`tempo_live_store_partition_owned` and record-processing counters together
+with `/ready`; a zero owned-partition gauge and no reader goroutines are
+evidence of this failure, even when the partition ring still shows `ACTIVE`.
+The [deployed reader implementation](https://github.com/grafana/tempo/blob/1900ed7bb5cad1a3edc285783d7d4ac4278337dc/modules/livestore/partition_reader.go)
+closes its Kafka client after failure, while the
+[live-store failure watcher](https://github.com/grafana/tempo/blob/1900ed7bb5cad1a3edc285783d7d4ac4278337dc/modules/livestore/live_store.go)
+does not watch that reader.
+
+Production enables native catch-up readiness with a positive target lag.
+The live-store liveness probe allows five minutes for replay, then restarts
+an unready container before the 30-minute native catch-up timeout can allow
+it to proceed. Publish and reconcile this configuration through GitOps;
+the StatefulSet rolls one replica at a time. Preserve Kafka records, the
+shared bucket, and query completeness enforcement. This guard covers a
+reader that fails before initial consumption; it does not replace checking
+consumer progress after startup.
+
+After recovery, require every live-store to own its partition, advance its
+processing counter, and publish current consumer-lag metrics. Verify all
+three Kafka partitions have full ISR, then read a fresh marked trace through
+the query frontend and run a recent TraceQL search without the
+`cannot guarantee complete results` error. A Kubernetes Ready condition
+alone does not establish recovery.
+
 Upstream contracts: [Tempo 3 migration](https://grafana.com/docs/tempo/latest/set-up-for-tracing/setup-tempo/migrate-to-3/)
 and [Tempo Vulture](https://grafana.com/docs/tempo/latest/operations/tempo-vulture/).
 

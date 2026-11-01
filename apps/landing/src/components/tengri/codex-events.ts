@@ -1,4 +1,8 @@
+import { codexToolText } from './codex-tool-text'
+import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
+import { codexAsyncQuestionRequest, codexEventAsyncQuestionRequest } from './codex-async-questions'
+import type { QuestionRequest } from './codex-question-model'
 
 const MAX_CODEX_EVENTS = 500
 const MAX_EVENT_TEXT_BYTES = 512 << 10
@@ -36,6 +40,8 @@ export type CodexTranscriptItem = {
   >
   text: string
   eventSequence?: number
+  activityTitle?: string
+  questionRequest?: QuestionRequest
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
@@ -47,19 +53,108 @@ type CodexTextSegment = {
   bytes: number
   previous?: CodexTextSegment
 }
-export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
+export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment; asyncQuestionResolved?: true }
+
+export function retireCodexAsyncQuestions(
+  current: CodexBufferedEvent[],
+  threadId: string,
+  answered: ReadonlySet<string>,
+) {
+  let changed = false
+  const next = current.map((event) => {
+    if (event.threadId !== threadId || event.asyncQuestionResolved) return event
+    const request = codexEventAsyncQuestionRequest(event)
+    if (!request || !request.fields.every((field) => answered.has(field.key))) return event
+    changed = true
+    return { ...event, asyncQuestionResolved: true as const }
+  })
+  return changed ? next : current
+}
+
+export type SubmittedPrompt = {
+  images?: readonly TengriCodexImage[]
+  id: string
+  threadId: string
+  text: string
+  previousItemIds: ReadonlySet<string>
+}
+
+export function reconcileSubmittedPrompts(
+  items: readonly { id: string; kind: TengriCodexEventKind; text: string }[],
+  submitted: readonly SubmittedPrompt[],
+) {
+  const acknowledged = new Set<string>()
+  const matchedItems = new Set<string>()
+  const matches = new Map<string, (typeof items)[number]>()
+  const pending: { prompt: SubmittedPrompt; beforeItemId: string | undefined }[] = []
+  const normalize = (text: string) => text.replace(/\[Local image: [^\]]*\]/g, '[Image]').trim()
+  for (const prompt of submitted) {
+    const match = items.find(
+      (item) =>
+        item.kind === 'user-message' &&
+        !prompt.previousItemIds.has(item.id) &&
+        !matchedItems.has(item.id) &&
+        normalize(item.text) === normalize(prompt.text),
+    )
+    if (match) {
+      acknowledged.add(prompt.id)
+      matchedItems.add(match.id)
+      matches.set(prompt.id, match)
+    } else {
+      pending.push({ prompt, beforeItemId: items.find((item) => !prompt.previousItemIds.has(item.id))?.id })
+    }
+  }
+  return { acknowledged, matchedItemIds: matchedItems, pending, matches }
+}
+
+export function retainSubmittedPromptImages(prompt: SubmittedPrompt, canonical?: { text: string }): SubmittedPrompt {
+  if (
+    !prompt.images?.length ||
+    !canonical ||
+    codexMessageAttachments(canonical.text).paths.length !== prompt.images.length
+  )
+    return prompt
+  return { ...prompt, text: canonical.text, images: undefined }
+}
 
 export function appendCodexEvent(
   current: CodexBufferedEvent[],
   event: CodexBufferedEvent,
   restoredPrefix = '',
 ): CodexBufferedEvent[] {
+  if (codexEventIsRuntimeError(event)) {
+    if (current.some((candidate) => codexEventIsRuntimeError(candidate) && candidate.sequence >= event.sequence))
+      return current
+    current = current.filter((candidate) => !codexEventIsRuntimeError(candidate))
+  } else if (codexEventConfirmsRuntimeReady(event)) {
+    current = current.filter((candidate) => !codexEventIsRuntimeError(candidate) || candidate.sequence > event.sequence)
+  }
   const resolvedApprovalId = codexResolvedApprovalId(event)
   if (resolvedApprovalId) {
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
     return next.length === current.length ? current : next
   }
+  if (event.method === 'turn/completed' && event.turnId) {
+    current = current.filter(
+      (candidate) =>
+        candidate.kind !== 'approval' || candidate.threadId !== event.threadId || candidate.turnId !== event.turnId,
+    )
+  }
   if (isRawReasoningDelta(event)) return current
+  if (event.kind === 'approval' && event.approvalId) {
+    const index = current.findIndex(
+      (candidate) =>
+        candidate.kind === 'approval' &&
+        candidate.approvalId === event.approvalId &&
+        candidate.threadId === event.threadId,
+    )
+    if (index >= 0) {
+      if (current[index]!.sequence >= event.sequence) return current
+      const next = [...current]
+      next[index] = { ...event, text: truncateEventText(event.text) }
+      return next
+    }
+  }
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
@@ -92,11 +187,13 @@ export function appendCodexEvent(
     return next
   }
 
-  const itemIdentity = codexEventItemIdentity(event)
-  const itemIndex = itemIdentity
+  const itemIndex = event.itemId
     ? current.findIndex(
         (candidate) =>
-          codexEventItemIdentity(candidate) === itemIdentity &&
+          candidate.threadId === event.threadId &&
+          candidate.turnId === event.turnId &&
+          candidate.itemId === event.itemId &&
+          candidate.kind === event.kind &&
           (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
       )
     : -1
@@ -107,12 +204,21 @@ export function appendCodexEvent(
     const next = [...current]
     next[itemIndex] = isDeltaEvent(event)
       ? appendTextSegment(previous, event, eventText)
-      : { ...event, text: truncateEventText(eventText || previous.text) }
+      : {
+          ...event,
+          ...(previous.asyncQuestionResolved ? { asyncQuestionResolved: true } : {}),
+          text: truncateEventText(eventText || previous.text),
+        }
     return next
   }
 
   return [
-    ...current.slice(-(MAX_CODEX_EVENTS - 1)),
+    ...current.filter(
+      (candidate, index) =>
+        index >= current.length - MAX_CODEX_EVENTS + 1 ||
+        candidate.kind === 'approval' ||
+        (!candidate.asyncQuestionResolved && Boolean(codexEventAsyncQuestionRequest(candidate))),
+    ),
     isDeltaEvent(event)
       ? {
           ...event,
@@ -194,20 +300,60 @@ export function parseCodexEvent(data: string): TengriCodexEvent | null {
   }
 }
 
+export function codexEventActivityTitle(event: TengriCodexEvent) {
+  if (event.kind !== 'tool-call' && event.kind !== 'tool-output') return undefined
+  return codexItemActivityTitle(record(record(parseRawEvent(event.rawJson).params).item))
+}
+
+function codexItemActivityTitle(item: Record<string, unknown>): string | undefined {
+  if (item.type === 'commandExecution') return commandText(item.command) || undefined
+  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
+    const name = [string(item.server) || string(item.namespace), string(item.tool)].filter(Boolean).join('/')
+    const input = item.arguments ?? item.input
+    const args = typeof input === 'string' ? record(parseRawEvent(input)) : record(input)
+    const target =
+      string(args.branch_name) ||
+      string(args.path) ||
+      (typeof args.pr_number === 'number' ? `#${args.pr_number}` : '') ||
+      string(args.url) ||
+      string(args.repository_full_name)
+    return name ? [name, target && target.replace(/\s+/g, ' ').slice(0, 160)].filter(Boolean).join(' · ') : undefined
+  }
+  return undefined
+}
+
 export function codexEventDisplayText(event: TengriCodexEvent) {
   if (isRawReasoningDelta(event)) return ''
   const raw = parseRawEvent(event.rawJson)
   const params = record(raw.params)
   const item = record(params.item)
 
-  if (event.kind === 'approval') return approvalDisplayText(params, event.text)
+  if (event.kind === 'user-message' && item.type === 'userMessage' && Array.isArray(item.content)) {
+    const text = item.content.map(userInputText).filter(Boolean).join('\n')
+    if (text) return text
+  }
+
+  if (event.kind === 'approval') {
+    const text = approvalDisplayText(params, event.text)
+    return raw.rawOmitted === true && event.method === 'mcpServer/elicitation/request'
+      ? `${text}\nArguments were omitted because the request is too large to display.`
+      : text
+  }
   if (event.kind === 'usage') return usageDisplayText(params) || event.text
+
+  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
+    if (event.kind === 'tool-call') return codexToolText(toolCallText(item) || event.text)
+    if (event.kind === 'tool-output')
+      return codexToolText(
+        toolResultText(item) || event.text || commandStatusText(string(item.status), number(item.exitCode)),
+      )
+  }
 
   const eventText =
     event.kind === 'tool-output' && isCommandExecutionEvent(event, item)
       ? decodeMaybeBase64Text(event.text)
       : event.text
-  if (eventText) return eventText
+  if (eventText) return event.kind === 'tool-output' ? codexToolText(eventText) : eventText
   if (event.kind === 'tool-call') return toolCallText(item)
   if (event.kind === 'tool-output') {
     return toolResultText(item) || commandStatusText(string(item.status), number(item.exitCode))
@@ -215,9 +361,28 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   return ''
 }
 
+export function codexApprovalTitle(event: TengriCodexEvent): string | undefined {
+  if (event.kind !== 'approval' || event.method !== 'mcpServer/elicitation/request') return undefined
+  const params = record(parseRawEvent(event.rawJson).params)
+  const meta = record(params._meta)
+  return params.serverName === 'tengri_browser' && meta.codex_approval_kind === 'mcp_tool_call'
+    ? 'Allow browser control?'
+    : undefined
+}
+
 export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDecision[] {
   if (event.kind !== 'approval') return []
   const params = record(parseRawEvent(event.rawJson).params)
+  if (event.method === 'item/tool/requestUserInput') return []
+  if (event.method === 'mcpServer/elicitation/request') {
+    if (params.mode === 'url' || Object.keys(record(record(params.requestedSchema).properties)).length > 0) return []
+    const meta = record(params._meta)
+    if (meta.codex_approval_kind !== 'mcp_tool_call') return []
+    const persist = meta.persist
+    return persist === 'session' || (Array.isArray(persist) && persist.includes('session'))
+      ? ['approve-once', 'approve-session', 'deny']
+      : ['approve-once', 'deny']
+  }
   const available = params.availableDecisions
   if (event.method.toLowerCase() !== 'item/commandexecution/requestapproval' || available == null) {
     return [...DEFAULT_CODEX_APPROVAL_DECISIONS]
@@ -245,8 +410,20 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
-function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
+export function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
   return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
+}
+
+export function codexEventIsRuntimeError(event: TengriCodexEvent) {
+  return event.kind === 'error' && event.method === 'error' && !event.threadId && !event.turnId && !event.itemId
+}
+
+export function codexEventConfirmsRuntimeReady(event: TengriCodexEvent) {
+  return (
+    event.method === 'tengri/runtimeReady' ||
+    (event.method === 'turn/started' && Boolean(event.turnId)) ||
+    (event.method === 'thread/started' && Boolean(event.threadId))
+  )
 }
 
 function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
@@ -260,6 +437,7 @@ export function codexEventShouldRender(
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
+  if (event.kind === 'usage' || event.method.toLowerCase() === 'deprecationnotice') return false
   if (codexEventIsIndependentOfThreadSnapshot(event)) return true
   if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
@@ -329,6 +507,7 @@ export function appendCodexEventAfterRestore(
   snapshotSequence: number,
   itemSequences?: ReadonlyMap<string, number>,
 ) {
+  if (codexEventIsRuntimeError(event) && event.sequence <= snapshotSequence) return current
   const restoredItem = restoredHistory.get(event.itemId)
   const itemSequence = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
   if (event.sequence <= itemSequence && !codexEventRequiresReplayAfterRestore(event)) {
@@ -348,33 +527,48 @@ export function codexResumeCommitIsCurrent(
   return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
 }
 
-export function codexCanStartNewConversation({
-  activeTurnId,
-  recovering,
-  submitting,
-  threadReady,
-}: {
-  activeTurnId: string
-  recovering: boolean
-  submitting: boolean
-  threadReady: boolean
-}) {
-  return !recovering && !submitting && (!activeTurnId || !threadReady)
-}
-
-export function codexActiveTurnIdFromThread(rawJson: string) {
+export function codexThreadTurnState(rawJson: string) {
+  const state: { activeTurnId: string; completedTurnIds: string[]; clientTurnIds: Map<string, string> } = {
+    activeTurnId: '',
+    completedTurnIds: [],
+    clientTurnIds: new Map(),
+  }
   try {
     const response = record(JSON.parse(rawJson))
     const thread = record(response.thread)
     const turns = Array.isArray(thread.turns) ? thread.turns : []
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const turn = record(turns[index])
-      if (string(turn.status) === 'inProgress') return boundedIdentifier(turn.id, 256)
+    for (const value of turns) {
+      const turn = record(value)
+      const id = boundedIdentifier(turn.id, 256)
+      if (!id) continue
+      for (const [clientId, turnId] of nativeClientTurnIds(id, turn.items)) state.clientTurnIds.set(clientId, turnId)
+      const status = string(turn.status)
+      if (status === 'inProgress') state.activeTurnId = id
+      else if (['completed', 'failed', 'interrupted'].includes(status)) state.completedTurnIds.push(id)
     }
   } catch {
-    // A malformed resume response cannot identify an active turn.
+    return { activeTurnId: '', completedTurnIds: [], clientTurnIds: new Map<string, string>() }
   }
-  return ''
+  return state
+}
+
+export function codexEventClientTurnIds(event: TengriCodexEvent) {
+  if (event.kind !== 'user-message' && event.method !== 'turn/started' && event.method !== 'turn/completed') return []
+  const params = record(parseRawEvent(event.rawJson).params)
+  const turn = record(params.turn)
+  return nativeClientTurnIds(event.turnId || boundedIdentifier(turn.id, 256), [
+    ...(Array.isArray(turn.items) ? turn.items : []),
+    params.item,
+  ])
+}
+
+function nativeClientTurnIds(turnId: string, items: unknown): Array<[string, string]> {
+  if (!turnId || !Array.isArray(items)) return []
+  return items.flatMap((value): Array<[string, string]> => {
+    const item = record(value)
+    const clientId = boundedIdentifier(item.clientId, 160)
+    return item.type === 'userMessage' && clientId ? [[clientId, turnId]] : []
+  })
 }
 
 export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns: ReadonlySet<string>) {
@@ -428,6 +622,8 @@ export function codexTranscriptFromThread(
         const item = record(itemValue)
         const transcriptItem = transcriptItemFromCodex(string(item.id), string(item.type), item)
         if (transcriptItem && !seen.has(transcriptItem.id)) {
+          const activityTitle = codexItemActivityTitle(item)
+          if (activityTitle) transcriptItem.activityTitle = activityTitle
           if (Object.hasOwn(itemEventSequences, transcriptItem.id)) {
             transcriptItem.eventSequence = itemEventSequences[transcriptItem.id]
           }
@@ -449,7 +645,12 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
     const content = Array.isArray(item.content) ? item.content : []
     return transcript(id, 'user-message', content.map(userInputText).filter(Boolean).join('\n'))
   }
-  if (type === 'agentMessage') return transcript(id, 'assistant-text', string(item.text))
+  if (type === 'agentMessage') {
+    const questionRequest = codexAsyncQuestionRequest(item)
+    return questionRequest
+      ? { id, kind: 'assistant-text', text: truncateEventText(string(item.text)), questionRequest }
+      : transcript(id, 'assistant-text', string(item.text))
+  }
   if (type === 'plan') return transcript(id, 'plan', string(item.text))
   if (type === 'reasoning') {
     const summary = stringArray(item.summary).join('\n')
@@ -457,7 +658,7 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
     return transcript(id, 'reasoning-summary', summary || content)
   }
   if (type === 'commandExecution') {
-    const output = decodeMaybeBase64Text(string(item.aggregatedOutput))
+    const output = codexToolText(decodeMaybeBase64Text(string(item.aggregatedOutput)))
     if (output) return transcript(id, 'tool-output', output)
     const status = commandStatusText(string(item.status), number(item.exitCode))
     if (status) return transcript(id, 'tool-output', status)
@@ -517,6 +718,22 @@ function userInputText(value: unknown) {
 }
 
 function approvalDisplayText(params: Record<string, unknown>, eventText: string) {
+  const meta = record(params._meta)
+  if (meta.codex_approval_kind === 'mcp_tool_call') {
+    const argumentsText = prettyJson(meta.tool_params)
+    const persist = meta.persist
+    const sessionScope = persist === 'session' || (Array.isArray(persist) && persist.includes('session'))
+    return truncateEventText(
+      [
+        string(params.message) || eventText,
+        string(meta.tool_description),
+        argumentsText && `Arguments:\n${argumentsText}`,
+        sessionScope && 'Session approval applies to this tool for the current session.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+  }
   const command = commandText(params.command)
   const reason = string(params.reason) || (!command ? eventText : '')
   const cwd = string(params.cwd)
@@ -624,7 +841,11 @@ function usageDisplayText(params: Record<string, unknown>) {
       rateLimitWindowText('Secondary', rateLimits.secondary),
     ].filter(Boolean)
     const credits = record(rateLimits.credits)
-    if (credits.balance !== undefined && credits.balance !== null) windows.push(`Credits: ${string(credits.balance)}`)
+    const balance =
+      typeof credits.balance === 'string' && credits.balance.trim() ? Number(credits.balance) : credits.balance
+    if (typeof balance === 'number' && Number.isFinite(balance) && balance >= 0) {
+      windows.push(`Credits: ${Math.ceil(balance).toLocaleString('en-US')}`)
+    }
     const reached = string(rateLimits.rateLimitReachedType)
     if (reached) windows.push(`Limit state: ${reached.replaceAll('_', ' ')}`)
     if (windows.length > 0) return windows.join(' · ')
@@ -644,8 +865,9 @@ function rateLimitWindowText(label: string, value: unknown) {
   const used = nonNegativeNumber(window.usedPercent)
   if (used === null) return ''
   const duration = nonNegativeNumber(window.windowDurationMins)
-  const durationLabel = duration === null ? label : `${formatDuration(duration)} window`
-  return `${durationLabel}: ${Math.min(100, used)}% used`
+  const durationLabel =
+    duration === 10_080 ? 'Weekly' : duration === null ? label : `${formatDuration(duration)} window`
+  return `${durationLabel} ${Math.floor(100 - Math.min(100, used))}% left`
 }
 
 function formatDuration(minutes: number) {
@@ -668,7 +890,8 @@ function toolCallText(item: Record<string, unknown>) {
   const server = string(item.server)
   const namespace = string(item.namespace)
   const tool = string(item.tool)
-  return [server || namespace, tool].filter(Boolean).join('/') || string(item.command)
+  const name = [server || namespace, tool].filter(Boolean).join('/') || string(item.command)
+  return [name, prettyJson(item.arguments ?? item.input)].filter(Boolean).join('\n')
 }
 
 function collaborationText(item: Record<string, unknown>) {
@@ -706,6 +929,7 @@ function fileChangesText(value: unknown) {
 }
 
 function toolResultText(item: Record<string, unknown>) {
+  if (item.type === 'imageGeneration' && typeof item.savedPath === 'string') return item.savedPath
   const error = string(record(item.error).message)
   if (error) return error
 
@@ -715,7 +939,10 @@ function toolResultText(item: Record<string, unknown>) {
   const content = contentItemsText(result.content)
   const structured = prettyJson(result.structuredContent ?? result.structured_content)
   const rawResult = typeof resultValue === 'string' ? resultValue : ''
-  return [dynamic, content, structured, rawResult].filter(Boolean).join('\n')
+  const output = [dynamic, content, structured, rawResult].filter(Boolean).join('\n')
+  if (!output) return ''
+  const name = [string(item.server) || string(item.namespace), string(item.tool)].filter(Boolean).join('/')
+  return [name, codexToolText(output)].filter(Boolean).join('\n')
 }
 
 function contentItemsText(value: unknown) {
@@ -938,6 +1165,8 @@ function isCommandExecutionEvent(event: TengriCodexEvent, item: Record<string, u
 }
 
 function truncateEventText(value: string) {
+  // UTF-8 uses at most three bytes per UTF-16 code unit, including lone surrogates.
+  if (value.length * 3 <= MAX_EVENT_TEXT_BYTES) return value
   const encoder = new TextEncoder()
   const encoded = encoder.encode(value)
   if (encoded.byteLength <= MAX_EVENT_TEXT_BYTES) return value
@@ -961,11 +1190,6 @@ function number(value: unknown) {
 
 function isDeltaEvent(event: TengriCodexEvent) {
   return !codexEventIsIndependentOfThreadSnapshot(event) && event.method.toLowerCase().endsWith('delta')
-}
-
-function codexEventItemIdentity(event: TengriCodexEvent) {
-  if (!event.itemId) return ''
-  return JSON.stringify([event.threadId, event.turnId, event.itemId, event.kind])
 }
 
 function isItemLifecycleTransition(previous: TengriCodexEvent, next: TengriCodexEvent) {
@@ -1032,11 +1256,11 @@ function isRawReasoningDelta(event: TengriCodexEvent) {
   return event.method.toLowerCase() === 'item/reasoning/textdelta'
 }
 
-function codexEventKey(event: TengriCodexEvent) {
+export function codexEventKey(event: TengriCodexEvent) {
   return `${event.sequence}:${event.method}:${event.threadId}:${event.turnId}:${event.itemId}:${event.approvalId}`
 }
 
-function codexResolvedApprovalId(event: TengriCodexEvent) {
+export function codexResolvedApprovalId(event: TengriCodexEvent) {
   if (event.method.toLowerCase() !== 'serverrequest/resolved') return ''
   const requestId = record(parseRawEvent(event.rawJson).params).requestId
   if (typeof requestId === 'string') return boundedIdentifier(requestId, 256)

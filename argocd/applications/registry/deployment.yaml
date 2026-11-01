@@ -20,6 +20,7 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      automountServiceAccountToken: false
       containers:
         - name: registry
           image: registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
@@ -90,6 +91,29 @@ spec:
               mountPath: /usr/local/etc/haproxy/haproxy.cfg
               subPath: haproxy.cfg
               readOnly: true
+        - name: registry-maintenance
+          image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+          command: ["sleep", "infinity"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          resources:
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+            requests:
+              cpu: "5m"
+              memory: "16Mi"
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+              readOnly: true
+            - name: registry-data
+              mountPath: /quarantine
+              subPath: docker/registry/v2/_gc_quarantine
       volumes:
         - name: registry-config
           configMap:

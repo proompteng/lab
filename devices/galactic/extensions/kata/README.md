@@ -51,6 +51,11 @@ authoritatively new volume. Successful initialization records the consumed token
 area; replayed tokens and occupied boot areas fail closed. Normal restart Pods must omit the token. This avoids unsafe
 reformatting and a synchronous full-volume scan during container creation.
 
+The r6 runtime patch resolves raw block devices from their OCI major and minor numbers before looking up an existing
+host path. A container restart reuses the attached device instead of allocating another ID for the same disk. The
+native device-manager regression makes the same pathless OCI request twice and requires one device and one ID.
+The build applies both source patches and runs this regression on both native architectures.
+
 Reproduce the patched components from an exact clean Kata checkout:
 
 ```bash
@@ -69,9 +74,13 @@ docker buildx build \
 ```
 
 The checked-in workflow validates both architectures on pull requests. On `main`, it publishes the extension and the
-three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. Ryzen installed and accepted its
-immutable r5 installer on 2026-08-30. Turin and Altra remain pinned to their accepted r4 GHCR receipts until each gets
-a separately authorized, one-node-at-a-time r5 rollout and live acceptance.
+three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. Publishing r6 does not change a
+running node. Galactic's Talos 1.14 Image Factory catalog must select the verified immutable extension before a
+scoped node rollout and runtime acceptance. The legacy 1.13.9 installers are not upgrade targets for Talos 1.14 nodes.
+
+Installer generation runs through `buildctl` and exports the archive directly from BuildKit. Set `BUILDKIT_HOST` to
+the native worker endpoint and provide Python 3. CI configures both through the shared BuildKit action and runner toolchain.
+The registry auth file, when present, is passed as a BuildKit secret.
 
 To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 

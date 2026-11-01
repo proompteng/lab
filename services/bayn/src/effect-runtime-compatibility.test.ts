@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { DateTime, Effect, Fiber, Option, Result, Schema, Semaphore } from 'effect'
 
-describe('Effect beta.102 runtime compatibility', () => {
+describe('Effect 4 stable runtime compatibility', () => {
   test('keeps deeply nested JSON validation stack safe', () => {
     let nested: Schema.Json = null
     for (let index = 0; index < 25_000; index += 1) nested = [nested]

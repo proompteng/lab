@@ -61,5 +61,5 @@
       }
     ]
   },
-  "include": ["src", "migrations"]
+  "include": ["src", "migrations", "tools"]
 }

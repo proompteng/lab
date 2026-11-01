@@ -128,6 +128,8 @@ active, Omni owns its loopback API ports and UDP `50180` on the expected tail IP
 directory is mounted from `/var/lib/omni/cluster-etcd-backups` on the NUC. Tailscale 1.102 no longer accepts the legacy
 Serve JSON through `serve set-config`; the deployment script treats that file as the desired route model and applies
 the three routes through the supported imperative CLI.
+The apply and verification scripts own only ports `443`, `8090` and `8100`. Other services, including the Ofz archive
+on `9444`, retain their routes. An explicitly requested replacement clears only Omni's ports.
 
 Host-originated connections to the NUC's own Tailscale address can bypass Tailscale Serve and reach another listener
 on the same host. Prove the actual tailnet route from a different peer after deployment:

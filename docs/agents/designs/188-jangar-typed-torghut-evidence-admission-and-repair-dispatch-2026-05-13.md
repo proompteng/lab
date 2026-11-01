@@ -1,22 +1,16 @@
 # 188. Jangar Typed Torghut Evidence Admission And Repair Dispatch (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar control-plane Torghut evidence intake, typed consumer evidence route binding, repair-bid admission,
 route-warrant dispatch custody, capital safety, rollout, rollback, and cross-stage handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
 
 Extends:
 
 - `187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
 - `186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
 - `186-jangar-route-warrant-dispatch-custody-and-dependency-verdicts-2026-05-13.md`
-- `../torghut/design-system/v6/191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
-- `../torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
 
 ## Decision
 
@@ -279,7 +273,6 @@ Deployer follow-up:
 
 Local validation for this PR:
 
-- `bunx oxfmt --check argocd/applications/agents/values.yaml services/jangar/src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts docs/agents/designs/188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md docs/torghut/design-system/v6/192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 - `bun test services/jangar/src/server/__tests__/control-plane-torghut-consumer-evidence.test.ts`
 - `git diff --check`
 

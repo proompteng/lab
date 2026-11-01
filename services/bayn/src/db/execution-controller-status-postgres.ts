@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import {
   ExecutionControllerOutcome,
@@ -21,9 +21,9 @@ const StatusRow = Schema.Struct({
   controller_key: ExecutionControllerKeySchema,
   plan_hash: Sha256Schema,
   active: Schema.Boolean,
-  epoch: Schema.BigIntFromString,
-  next_sequence: Schema.BigIntFromString,
-  last_sequence: Schema.NullOr(Schema.BigIntFromString),
+  epoch: Schema.BigInt,
+  next_sequence: Schema.BigInt,
+  last_sequence: Schema.NullOr(Schema.BigInt),
   last_outcome: Schema.NullOr(Schema.Enum(ExecutionControllerOutcome)),
   last_receipt_hash: Schema.NullOr(Sha256Schema),
   completed_at: Schema.NullOr(UtcInstantSchema),
@@ -232,20 +232,6 @@ const project = (
              AND EXCLUDED.next_sequence = execution_controller_status.next_sequence
              AND execution_controller_status.active = false
              AND EXCLUDED.active = true
-           )
-           OR (
-             EXCLUDED.epoch = execution_controller_status.epoch
-             AND EXCLUDED.next_sequence = execution_controller_status.next_sequence
-             AND execution_controller_status.plan_hash = repeat('0', 64)
-             AND EXCLUDED.plan_hash <> execution_controller_status.plan_hash
-             AND execution_controller_status.active = true
-             AND EXCLUDED.active = true
-             AND EXCLUDED.last_sequence IS NOT DISTINCT FROM execution_controller_status.last_sequence
-             AND EXCLUDED.last_outcome IS NOT DISTINCT FROM execution_controller_status.last_outcome
-             AND EXCLUDED.last_receipt_hash IS NOT DISTINCT FROM execution_controller_status.last_receipt_hash
-             AND EXCLUDED.completed_at IS NOT DISTINCT FROM execution_controller_status.completed_at
-             AND EXCLUDED.next_due_at IS NOT DISTINCT FROM execution_controller_status.next_due_at
-             AND EXCLUDED.last_pass IS NOT DISTINCT FROM execution_controller_status.last_pass
            )
         RETURNING controller_key
       `.pipe(

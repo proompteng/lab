@@ -1,0 +1,170 @@
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
+import { Result } from 'effect'
+import {
+  streamingFixture,
+  streamingFixtureFromRaw,
+} from '/bayn-frozen-control/services/bayn/src/testing/streaming-market-fixture'
+import {
+  retainedReplayFixture,
+  retainedReplayCaptureFixture,
+} from '/bayn-frozen-control/services/bayn/src/testing/retained-replay-fixture'
+import { historicalRawArrivals } from '/bayn-frozen-control/services/bayn/src/testing/historical-streaming-fixture'
+import { makeIntradayMomentumTestSnapshot } from '/bayn-frozen-control/services/bayn/src/strategy/intraday-momentum/test-support'
+import { normalizeMarketCalendarResult } from '/bayn-frozen-control/services/bayn/src/broker/alpaca/normalizers'
+import {
+  arrivalPosition,
+  compareArrivalPositions,
+} from '/bayn-frozen-control/services/bayn/src/market-data/streaming/historical'
+import {
+  backtestSourcePartitions,
+  validateBacktestSourceReceipt,
+} from '/bayn-frozen-control/services/bayn/src/intraday-replay/source'
+import { config } from '/bayn-frozen-control/services/bayn/src/testing/runtime-fixtures'
+import { canonicalHashV1Result, sha256 } from '/bayn-frozen-control/services/bayn/src/hash'
+const directory = process.argv[2]
+if (directory === undefined) throw Error('Output required')
+const count = Number(process.argv[3] ?? '1')
+const base = streamingFixture()
+const retained = retainedReplayFixture()
+const dates = Array.from({ length: count }, (_, i) =>
+  new Date(Date.UTC(2026, 10, 2 + i + Math.floor(i / 5) * 2)).toISOString().slice(0, 10),
+)
+const calendar = dates.map((date) => ({ date, open: '09:30', close: '10:10' }))
+const observation = Result.getOrThrow(normalizeMarketCalendarResult(calendar, { start: dates[0]!, end: dates.at(-1)! }))
+const arrivals: ReturnType<typeof historicalRawArrivals> = []
+const offsets = new Map<string, bigint>()
+const next = (topic: string) => {
+  const n = offsets.get(topic) ?? 0n
+  offsets.set(topic, n + 1n)
+  return String(n)
+}
+const at = (ms: number) => new Date(ms).toISOString()
+for (const session of observation.sessions) {
+  const open = Date.parse(session.openAt),
+    close = Date.parse(session.closeAt)
+  const request = {
+    ...base.query,
+    sessionDate: session.date,
+    calendar: observation,
+    rangeStartAt: session.openAt,
+    rangeEndAt: session.closeAt,
+    observedAt: at(close + 2000),
+  }
+  const raw = makeIntradayMomentumTestSnapshot(
+    base.protocol,
+    { ...request, archiveWatermarks: base.archive.manifest.archiveWatermarks },
+    { AAPL: 0.02, AMZN: 0.01 },
+  )
+  const bars = raw.bars.map((bar) => ({ ...bar, sourceOffset: next(bar.sourceTopic) }))
+  for (const bar of bars)
+    arrivals.push(...historicalRawArrivals({ bars: [bar], quotes: [], trades: [] }, Date.parse(bar.ingestedAt)))
+  for (let time = open - 2000; time <= close; time += 2000) {
+    const quotes = raw.quotes.map((q) => ({
+      ...q,
+      sourceOffset: next(q.sourceTopic),
+      eventAt: at(time),
+      ingestedAt: at(time),
+    }))
+    const trades = raw.trades.map((q) => ({
+      ...q,
+      sourceOffset: next(q.sourceTopic),
+      eventAt: at(time),
+      ingestedAt: at(time),
+    }))
+    arrivals.push(...historicalRawArrivals({ bars: [], quotes, trades }, time))
+    if ((time - open) % 60000 !== 2000 || time < open + 30 * 60000) continue
+    const end = time - 2000
+    const start = end - 30 * 60000
+    const snapshot = streamingFixtureFromRaw(
+      { bars: bars.filter((bar) => Date.parse(bar.eventAt) >= start && Date.parse(bar.eventAt) < end), quotes, trades },
+      { ...request, rangeStartAt: at(start), rangeEndAt: at(end), observedAt: at(time) },
+    )
+    for (const feature of [...snapshot.cut.projection.features.values()].flat())
+      arrivals.push({
+        availableAtMs: time,
+        record: {
+          topic: feature.topic,
+          partition: 0,
+          offset: next(feature.topic),
+          value: JSON.stringify(feature.value),
+        },
+      })
+  }
+}
+arrivals.sort((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
+const body = arrivals.map((row) => JSON.stringify(row)).join('\n') + '\n'
+const bytes = gzipSync(body)
+const positions = new Map<
+  string,
+  { topic: string; partition: number; startOffset: string; endOffsetExclusive: string }
+>()
+for (const { record } of arrivals) {
+  const key = record.topic + ':' + record.partition
+  const old = positions.get(key)
+  positions.set(key, {
+    topic: record.topic,
+    partition: record.partition,
+    startOffset: old?.startOffset ?? record.offset,
+    endOffsetExclusive: String(BigInt(record.offset) + 1n),
+  })
+}
+const incomplete = {
+  ...retained.manifest,
+  dataSha256: sha256(bytes),
+  recordCount: arrivals.length,
+  firstAvailableAtMs: arrivals[0]!.availableAtMs,
+  lastAvailableAtMs: arrivals.at(-1)!.availableAtMs,
+  coverageStartMs: Date.parse(observation.sessions[0]!.openAt) - 2000,
+  coverageEndMs: Date.parse(observation.sessions.at(-1)!.closeAt),
+  positions: [...positions.values()],
+}
+const manifest = {
+  ...incomplete,
+  positions: backtestSourcePartitions(incomplete).map(
+    ({ topic, partition }) =>
+      positions.get(topic + ':' + partition) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
+  ),
+}
+const capture = retainedReplayCaptureFixture(manifest)
+const { verification: _verification, ...build } = config.build
+const input = {
+  schemaVersion: 'bayn.frozen-control-replay.v1',
+  latencyStress: { p95FullBatchMs: 100 },
+  backtest: {
+    schemaVersion: 'bayn.backtest.v1',
+    replicate: 'instrumented-frozen-test-' + crypto.randomUUID(),
+    sessionDates: dates,
+    source: manifest,
+    openingCashMicros: '100000000000',
+    fractionalTrading: false,
+    calendar: [...calendar, { date: '2026-11-30', open: '09:30', close: '16:00' }],
+    assets: base.protocol.universe.map((symbol, i) => ({
+      id: `12345678-1234-4234-8234-${String(i).padStart(12, '0')}`,
+      symbol,
+      class: 'us_equity',
+      exchange: 'NASDAQ',
+      status: 'active',
+      tradable: true,
+      fractionable: false,
+    })),
+    assetObservationAt: at(Date.parse(observation.sessions[0]!.openAt) - 60000),
+    assetObservationPolicy: 'retained-as-of-session',
+    build,
+    assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+    cadence: {
+      pollIntervalMs: 30000,
+      reconciliationIntervalMs: 30000,
+      reconciliationPassTimeoutMs: 30000,
+      reconciliationStaleThresholdMs: 120000,
+    },
+  },
+}
+mkdirSync(directory, { recursive: true })
+writeFileSync(directory + '/protocol.json', JSON.stringify(base.protocol))
+writeFileSync(directory + '/input.json', JSON.stringify(input))
+writeFileSync(directory + '/arrivals.ndjson.gz', bytes)
+writeFileSync(directory + '/capture.json', capture.text ?? JSON.stringify(capture.value))
+process.stdout.write(
+  JSON.stringify({ records: arrivals.length, captureHash: capture.contentHash, keys: Object.keys(capture) }) + '\n',
+)

@@ -1,6 +1,6 @@
 # 50. Torghut Submission Parity Council and Options Bootstrap Escrow (2026-03-19)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Executive summary
 

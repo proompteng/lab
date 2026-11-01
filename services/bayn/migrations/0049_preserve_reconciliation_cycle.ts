@@ -1,5 +1,5 @@
 import { Effect } from 'effect'
-import { SqlClient } from 'effect/unstable/sql'
+import { SqlClient } from 'effect/sql'
 
 // The pre-v49 runtime discarded the transient restriction reason when it rotated back through OBSERVE. Do not infer
 // that lost reason from a generic terminal shape: this reviewed migration may repair only the one observed incident.

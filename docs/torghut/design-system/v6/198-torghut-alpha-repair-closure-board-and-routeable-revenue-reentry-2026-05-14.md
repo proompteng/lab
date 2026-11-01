@@ -1,6 +1,6 @@
 # 198. Torghut Alpha Repair Closure Board And Routeable Revenue Reentry (2026-05-14)
 
-Status: Accepted for Jangar engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

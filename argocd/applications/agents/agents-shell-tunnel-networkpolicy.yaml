@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-shell-tunnel-access
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agents-shell
+      app.kubernetes.io/instance: agents
+      app.kubernetes.io/component: agents-shell
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agents-shell-tunnel
+      ports:
+        - protocol: TCP
+          port: 8080

@@ -15,10 +15,21 @@ global:
 
 image:
   repository: docker.io/grafana/mimir
-  tag: 3.2.0
+  tag: 3.2.1
 
 mimir:
   structuredConfig:
+    ingest_storage:
+      enabled: true
+      kafka:
+        # Use the same internal listener as Tempo; port 9092 requires SCRAM.
+        address: kafka-kafka-bootstrap.kafka.svc.cluster.local:9093
+        topic: observability.mimir.ingest.v1
+        auto_create_topic_enabled: false
+        auto_create_topic_default_partitions: 3
+        # Kafka owns offsets; a new topic starts from its beginning. Never apply
+        # an offset file from another Kafka cluster to this topic.
+        consumer_group_offset_commit_file_enforced: false
     alertmanager:
       external_url: https://mimir.ide-newton.ts.net/alertmanager
     limits:
@@ -69,11 +80,12 @@ mimir:
     usage_stats:
       enabled: false
       installation_mode: helm
-  runtimeConfig:
-    overrides:
-      anonymous:
-        ingestion_rate: 20000
-        ingestion_burst_size: 400000
+runtimeConfig:
+  overrides:
+    anonymous:
+      ingestion_rate: 20000
+      ingestion_burst_size: 400000
+      max_global_series_per_user: 300000
 
 rollout_operator:
   enabled: false
@@ -83,6 +95,9 @@ admin_api:
 
 distributor:
   replicas: 2
+  extraArgs:
+    # Allow Kafka's existing 10s write budget and 2s overhead to complete before the caller expires.
+    distributor.remote-timeout: 15s
   resources:
     requests:
       cpu: 200m
@@ -110,6 +125,8 @@ query_scheduler:
 
 ruler:
   replicas: 1
+  extraArgs:
+    distributor.remote-timeout: 15s
 
 store_gateway:
   replicas: 1
@@ -139,7 +156,7 @@ alertmanager:
     enabled: false
   fallbackConfig: |
     # Real fallback config is rendered by External Secrets into the
-    # observability-alertmanager-email Secret and mounted over this file.
+    # observability-alertmanager-email-brevo Secret and mounted over this file.
     route:
       receiver: default-receiver
     receivers:
@@ -151,34 +168,19 @@ alertmanager:
     storageClass: null
     size: 1Gi
 
+gateway:
+  nginx:
+    config:
+      serverSnippet: |
+        location = /alertmanager {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
+        location = /alertmanager/ {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
+
 kafka:
-  image:
-    repository: apache/kafka
-    tag: 4.3.1
-  clusterId: 5L6g3nShT-eMCtK--X86sw
-  # Override the JVM image's nested VOLUME with this PVC's existing log data.
-  extraVolumeMounts:
-    - name: kafka-data
-      mountPath: /var/lib/kafka/data
-      subPath: data
-  terminationGracePeriodSeconds: 120
-  resources:
-    requests:
-      cpu: "1"
-      memory: 2Gi
-    limits:
-      memory: 4Gi
-  env:
-    - name: CLUSTER_ID
-      value: 5L6g3nShT-eMCtK--X86sw
-    - name: KAFKA_HEAP_OPTS
-      value: -Xms1g -Xmx1g
-    - name: LOG_DIR
-      value: /tmp/kafka-logs
-  persistence:
-    enabled: true
-    size: 20Gi
-    storageClassName: rook-ceph-block
+  enabled: false
 
 metaMonitoring:
   dashboards:

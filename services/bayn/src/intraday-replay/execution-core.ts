@@ -1,55 +1,86 @@
 import { Result, Schema } from 'effect'
 
-import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
+import { InstrumentSymbolSchema, instrumentMarket, type Instrument } from '../instruments'
 import { OrderSide } from '../execution/contracts'
-import { MICROS, notionalMicros } from '../execution-model'
+import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
-import type { IntradayReplayIocAssumptions } from './execution'
+
+export interface ReplayExecutionAssumptions {
+  readonly slippageBps: number
+  readonly availableLiquidityPpm: number
+}
 
 const BPS = 10_000n
 const PPM = 1_000_000n
 const U128_MAX = (1n << 128n) - 1n
 const isPositiveMicros = Schema.is(PositiveMicrosSchema)
-type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
+export const ReplayInstrumentsSchema = Schema.Record(
+  InstrumentSymbolSchema,
+  Schema.Struct({
+    minimumQuantityAtoms: PositiveMicrosSchema,
+    quantityIncrementAtoms: PositiveMicrosSchema,
+    priceIncrementAtoms: PositiveMicrosSchema,
+  }),
+)
 
-export interface IntradayReplayIocCoreOrder {
+export const replayInstrument = (
+  symbol: string,
+  instruments: typeof ReplayInstrumentsSchema.Type,
+): Result.Result<Instrument, ReplayExecutionFailure> => {
+  const terms = instruments[symbol]
+  if (terms === undefined) return Result.fail(invalid('instrument', symbol, 'invalid-execution-model'))
+  return Result.succeed({
+    symbol,
+    market: instrumentMarket(symbol),
+    minimumQuantityAtoms: BigInt(terms.minimumQuantityAtoms),
+    quantityIncrementAtoms: BigInt(terms.quantityIncrementAtoms),
+    priceIncrementAtoms: BigInt(terms.priceIncrementAtoms),
+  })
+}
+
+type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-instrument-rounding'
+
+export interface ReplayExecutionOrder {
   readonly side: OrderSide
-  readonly quantityMicros: bigint
+  readonly quantityAtoms: bigint
   readonly limitPriceMicros: bigint
 }
 
 /** Executable quote values selected from one event-time market snapshot. */
-export interface IntradayReplayIocCoreQuote {
+export interface ReplayExecutionQuote {
   readonly priceMicros: bigint
-  readonly displayedQuantityMicros: bigint
+  readonly displayedQuantityAtoms: bigint
 }
 
-export interface IntradayReplayIocCoreInput {
-  readonly order: IntradayReplayIocCoreOrder
-  readonly quote: IntradayReplayIocCoreQuote
+export interface ReplayExecutionInput {
+  readonly instrument: Instrument
+  readonly order: ReplayExecutionOrder
+  readonly quote: ReplayExecutionQuote
   readonly executionModel: IntradayMomentumProtocol['executionModel']
-  readonly assumptions: IntradayReplayIocAssumptions
+  readonly assumptions: ReplayExecutionAssumptions
 }
 
-export type IntradayReplayIocCoreOutcome =
+export type ReplayExecutionOutcome =
   | {
       readonly status: 'filled'
-      readonly requestedQuantityMicros: bigint
-      readonly filledQuantityMicros: bigint
+      readonly requestedQuantityAtoms: bigint
+      readonly filledQuantityAtoms: bigint
       readonly fillPriceMicros: bigint
       readonly fillNotionalMicros: bigint
-      readonly unfilledRemainder: 'none' | 'canceled'
+      readonly remainingQuantityAtoms: bigint
     }
   | {
-      readonly status: 'canceled'
-      readonly requestedQuantityMicros: bigint
-      readonly filledQuantityMicros: bigint
-      readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
-      readonly unfilledRemainder: 'canceled'
+      readonly status: 'unfilled'
+      readonly adversePriceMicros: bigint
+      readonly requestedQuantityAtoms: bigint
+      readonly filledQuantityAtoms: bigint
+      readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-instrument-rounding'
+      readonly remainingQuantityAtoms: bigint
     }
 
-export interface IntradayReplayIocCoreFailure {
+export interface ReplayExecutionFailure {
   readonly _tag: 'InvalidIntradayReplayCoreInput'
   readonly field: string
   readonly value: unknown
@@ -61,11 +92,12 @@ export interface IntradayReplayIocCoreFailure {
     | 'invalid-notional'
 }
 
-const invalid = (
-  field: string,
-  value: unknown,
-  reason: IntradayReplayIocCoreFailure['reason'],
-): IntradayReplayIocCoreFailure => ({ _tag: 'InvalidIntradayReplayCoreInput', field, value, reason })
+const invalid = (field: string, value: unknown, reason: ReplayExecutionFailure['reason']): ReplayExecutionFailure => ({
+  _tag: 'InvalidIntradayReplayCoreInput',
+  field,
+  value,
+  reason,
+})
 
 const modelQuantityIncrement = (value: string): bigint | undefined => {
   if (!isPositiveMicros(value)) return undefined
@@ -73,19 +105,22 @@ const modelQuantityIncrement = (value: string): bigint | undefined => {
   return parsed <= U128_MAX ? parsed : undefined
 }
 
-export const simulateIntradayReplayIocCore = (
-  input: IntradayReplayIocCoreInput,
-): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> => {
-  const { order, quote, assumptions, executionModel: model } = input
+export const simulateIntradayReplayExecution = (
+  input: ReplayExecutionInput,
+): Result.Result<ReplayExecutionOutcome, ReplayExecutionFailure> => {
+  const { order, quote, assumptions, executionModel: model, instrument } = input
+  const quantityIncrement = instrument.quantityIncrementAtoms
   if (
     (order.side !== OrderSide.Buy && order.side !== OrderSide.Sell) ||
-    order.quantityMicros <= 0n ||
-    order.quantityMicros % MICROS !== 0n ||
-    order.limitPriceMicros <= 0n
+    order.quantityAtoms <= 0n ||
+    quantityIncrement <= 0n ||
+    order.quantityAtoms % quantityIncrement !== 0n ||
+    order.limitPriceMicros <= 0n ||
+    (order.side === OrderSide.Buy && order.quantityAtoms < instrument.minimumQuantityAtoms)
   ) {
     return Result.fail(invalid('order', order, 'invalid-order'))
   }
-  if (quote.priceMicros <= 0n || quote.displayedQuantityMicros < 0n) {
+  if (quote.priceMicros <= 0n || quote.displayedQuantityAtoms < 0n) {
     return Result.fail(invalid('quote', quote, 'invalid-quote'))
   }
   if (
@@ -98,35 +133,47 @@ export const simulateIntradayReplayIocCore = (
   ) {
     return Result.fail(invalid('assumptions', assumptions, 'invalid-assumptions'))
   }
-  const quantityIncrement = modelQuantityIncrement(model.precision.quantityIncrementMicros)
+  const modelIncrement = modelQuantityIncrement(model.precision.quantityIncrementAtoms)
   if (
-    model.schemaVersion !== 'bayn.execution-model.v5' ||
-    model.venue !== 'alpaca-us-equity' ||
-    model.assetClass !== 'us-equity' ||
+    model.schemaVersion !== 'bayn.execution-model.v6' ||
+    model.venue !== 'alpaca-cash-spot' ||
+    model.assetClass !== 'cash-spot' ||
     model.order.type !== 'limit' ||
-    model.order.timeInForce !== 'ioc' ||
-    model.order.extendedHours !== false ||
-    quantityIncrement !== MICROS ||
+    model.order.timeInForce !== 'asset-session' ||
+    model.order.extendedHours !== 'equity-data-session' ||
+    modelIncrement !== 1n ||
+    quantityIncrement === undefined ||
     model.precision.priceIncrementMicros !== '100'
   ) {
     return Result.fail(invalid('executionModel', model, 'invalid-execution-model'))
   }
 
+  if (
+    instrument.priceIncrementAtoms <= 0n ||
+    (instrument.priceIncrementAtoms >= 1000n && instrument.priceIncrementAtoms % 1000n !== 0n)
+  )
+    return Result.fail(
+      invalid('instrument.priceIncrementAtoms', instrument.priceIncrementAtoms, 'invalid-execution-model'),
+    )
+  const priceIncrement = instrument.priceIncrementAtoms < 1000n ? 1n : instrument.priceIncrementAtoms / 1000n
   const slippage = BigInt(assumptions.slippageBps)
   const adverseNumerator = quote.priceMicros * (order.side === OrderSide.Buy ? BPS + slippage : BPS - slippage)
+  const quotedAdversePrice =
+    order.side === OrderSide.Buy
+      ? quantizeInstrumentPriceMicros(instrument.symbol, (adverseNumerator + BPS - 1n) / BPS, 'UP')
+      : quantizeInstrumentPriceMicros(instrument.symbol, adverseNumerator / BPS, 'DOWN')
   const adversePrice =
     order.side === OrderSide.Buy
-      ? quantizeAlpacaLimitPriceMicros((adverseNumerator + BPS - 1n) / BPS, 'UP')
-      : quantizeAlpacaLimitPriceMicros(adverseNumerator / BPS, 'DOWN')
-  const cancel = (
-    reason: CoreCancelReason,
-  ): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> =>
+      ? ((quotedAdversePrice + priceIncrement - 1n) / priceIncrement) * priceIncrement
+      : (quotedAdversePrice / priceIncrement) * priceIncrement
+  const cancel = (reason: CoreCancelReason): Result.Result<ReplayExecutionOutcome, ReplayExecutionFailure> =>
     Result.succeed({
-      status: 'canceled',
-      requestedQuantityMicros: order.quantityMicros,
-      filledQuantityMicros: 0n,
+      status: 'unfilled',
+      adversePriceMicros: adversePrice,
+      requestedQuantityAtoms: order.quantityAtoms,
+      filledQuantityAtoms: 0n,
       reason,
-      unfilledRemainder: 'canceled',
+      remainingQuantityAtoms: order.quantityAtoms,
     })
   if (
     (order.side === OrderSide.Buy && adversePrice > order.limitPriceMicros) ||
@@ -134,24 +181,24 @@ export const simulateIntradayReplayIocCore = (
   ) {
     return cancel('adverse-price-exceeds-limit')
   }
-  const liquidity = (quote.displayedQuantityMicros * BigInt(assumptions.availableLiquidityPpm)) / PPM
+  const liquidity = (quote.displayedQuantityAtoms * BigInt(assumptions.availableLiquidityPpm)) / PPM
   const fillQuantity = (liquidity / quantityIncrement) * quantityIncrement
-  const requestedOrAvailable = fillQuantity < order.quantityMicros ? fillQuantity : order.quantityMicros
+  const requestedOrAvailable = fillQuantity < order.quantityAtoms ? fillQuantity : order.quantityAtoms
   if (requestedOrAvailable === 0n) {
-    return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-whole-share-rounding')
+    return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-instrument-rounding')
   }
   return notionalMicros(requestedOrAvailable, adversePrice).pipe(
     Result.mapError(() =>
-      invalid('notional', { quantityMicros: requestedOrAvailable, priceMicros: adversePrice }, 'invalid-notional'),
+      invalid('notional', { quantityAtoms: requestedOrAvailable, priceMicros: adversePrice }, 'invalid-notional'),
     ),
     Result.map(
-      (fillNotionalMicros): IntradayReplayIocCoreOutcome => ({
+      (fillNotionalMicros): ReplayExecutionOutcome => ({
         status: 'filled',
-        requestedQuantityMicros: order.quantityMicros,
-        filledQuantityMicros: requestedOrAvailable,
+        requestedQuantityAtoms: order.quantityAtoms,
+        filledQuantityAtoms: requestedOrAvailable,
         fillPriceMicros: adversePrice,
         fillNotionalMicros,
-        unfilledRemainder: requestedOrAvailable < order.quantityMicros ? 'canceled' : 'none',
+        remainingQuantityAtoms: order.quantityAtoms - requestedOrAvailable,
       }),
     ),
   )

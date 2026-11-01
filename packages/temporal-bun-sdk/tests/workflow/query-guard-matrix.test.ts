@@ -8,7 +8,7 @@ import { defineWorkflow } from '../../src/workflow/definition'
 import type { WorkflowContext } from '../../src/workflow/context'
 import { WorkflowBlockedError } from '../../src/workflow/errors'
 import { WorkflowExecutor } from '../../src/workflow/executor'
-import { defineWorkflowQueries } from '../../src/workflow/inbound'
+import { defineWorkflowQueries, defineWorkflowSignals } from '../../src/workflow/inbound'
 import { WorkflowRegistry } from '../../src/workflow/registry'
 
 const queryHandles = defineWorkflowQueries({
@@ -132,3 +132,47 @@ test('workflow query rejects crypto.getRandomValues when available', async () =>
   expect(result?.result.resultType).toBe(QueryResultType.FAILED)
   expect(result?.result.errorMessage).toContain('crypto.getRandomValues')
 })
+
+for (const mode of ['query', 'workflow'] as const) {
+  for (const method of ['waitFor', 'on', 'drain'] as const) {
+    test(`${mode} task rejects signals.${method} in a resolver after replaying workflow signals`, async () => {
+      const signals = defineWorkflowSignals({ incoming: Schema.Unknown, stop: Schema.Unknown })
+      const registry = new WorkflowRegistry()
+      const executor = new WorkflowExecutor({
+        registry,
+        dataConverter: createDefaultDataConverter(),
+        workflowGuards: 'off',
+      })
+      let replayed: unknown
+      registry.register(
+        defineWorkflow('signalQueryWorkflow', Schema.Array(Schema.Unknown), (context) =>
+          Effect.gen(function* () {
+            yield* context.queries.register(queryHandles.probe, () =>
+              method === 'on'
+                ? context.signals.on(signals.incoming, () => Effect.void)
+                : context.signals[method](signals.incoming),
+            )
+            replayed = (yield* context.signals.waitFor(signals.incoming)).payload
+            yield* context.signals.waitFor(signals.stop)
+          }),
+        ),
+      )
+      const output = await executor.execute({
+        workflowType: 'signalQueryWorkflow',
+        workflowId: 'signal-query',
+        runId: 'signal-query-run',
+        namespace: 'default',
+        taskQueue: 'signal-query-queue',
+        arguments: [],
+        signalDeliveries: [{ name: 'incoming', args: ['historical'] }],
+        queryRequests: [{ id: 'probe', name: 'probe', args: [{}], source: mode === 'query' ? 'legacy' : 'multi' }],
+        mode,
+      })
+      expect(replayed).toBe('historical')
+      expect(output.completion).toBe('pending')
+      expect(output.commands).toHaveLength(0)
+      expect(output.queryResults[0]?.result.resultType).toBe(QueryResultType.FAILED)
+      expect(output.queryResults[0]?.result.errorMessage).toContain('cannot consume signals')
+    })
+  }
+}

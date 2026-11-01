@@ -1,3 +1,4 @@
+import { strictParseOptions } from './schemas'
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Result, Schema } from 'effect'
@@ -5,12 +6,10 @@ import { Effect, Exit, Result, Schema } from 'effect'
 import {
   FinalizedSnapshotProvenanceSchema,
   RunIdentitySchema,
-  decodeEvaluationBounds,
-  decodeFinalizedSnapshot,
-  decodeRunIdentity,
-  decodeRuntimeProvenance,
   makeRunIdentityResult,
   makeRuntimeProvenanceResult,
+  EvaluationBoundsSchema,
+  RuntimeProvenanceSchema,
 } from './contracts'
 import { makePersistedSnapshotFixture } from './testing/persisted-snapshot-fixture'
 import { fixtureProtocol, provenance } from './testing/runtime-fixtures'
@@ -24,14 +23,40 @@ describe('runtime contracts', () => {
   const snapshot = manifest.finalizedSnapshot
 
   test('accepts an exact persisted snapshot and rejects malformed identity material', async () => {
-    expect(await Effect.runPromise(decodeFinalizedSnapshot(snapshot))).toEqual(snapshot)
+    expect(
+      await Effect.runPromise(
+        Schema.decodeUnknownEffect(FinalizedSnapshotProvenanceSchema, strictParseOptions)(snapshot),
+      ),
+    ).toEqual(snapshot)
     expect(Schema.encodeSync(FinalizedSnapshotProvenanceSchema)(snapshot)).toEqual(snapshot)
-    expect(await Effect.runPromise(decodeEvaluationBounds(manifest.bounds))).toEqual(manifest.bounds)
+    expect(
+      await Effect.runPromise(Schema.decodeUnknownEffect(EvaluationBoundsSchema, strictParseOptions)(manifest.bounds)),
+    ).toEqual(manifest.bounds)
 
-    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, firstSession: '2026-08-30' }))
-    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, symbols: [...snapshot.symbols].reverse() }))
-    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, rowCount: snapshot.rowCount - 1 }))
-    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, futureField: true }))
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        FinalizedSnapshotProvenanceSchema,
+        strictParseOptions,
+      )({ ...snapshot, firstSession: '2026-08-30' }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        FinalizedSnapshotProvenanceSchema,
+        strictParseOptions,
+      )({ ...snapshot, symbols: [...snapshot.symbols].reverse() }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        FinalizedSnapshotProvenanceSchema,
+        strictParseOptions,
+      )({ ...snapshot, rowCount: snapshot.rowCount - 1 }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        FinalizedSnapshotProvenanceSchema,
+        strictParseOptions,
+      )({ ...snapshot, futureField: true }),
+    )
   })
 
   test('binds a run identity to the active intraday strategy, source, image, and snapshot', async () => {
@@ -52,12 +77,16 @@ describe('runtime contracts', () => {
     const replay = Result.getOrThrow(makeRunIdentityResult(structuredClone(material)))
 
     expect(replay).toEqual(baseline)
-    expect(await Effect.runPromise(decodeRunIdentity(baseline))).toEqual(baseline)
+    expect(
+      await Effect.runPromise(Schema.decodeUnknownEffect(RunIdentitySchema, strictParseOptions)(baseline)),
+    ).toEqual(baseline)
     expect(Schema.encodeSync(RunIdentitySchema)(baseline)).toEqual(baseline)
     expect(Result.getOrThrow(makeRunIdentityResult({ ...material, sourceRevision: 'f'.repeat(40) })).runId).not.toBe(
       baseline.runId,
     )
-    await expectFailure(decodeRunIdentity({ ...baseline, runId: '9'.repeat(64) }))
+    await expectFailure(
+      Schema.decodeUnknownEffect(RunIdentitySchema, strictParseOptions)({ ...baseline, runId: '9'.repeat(64) }),
+    )
   })
 
   test('accepts only well-formed runtime provenance at the public boundary', async () => {
@@ -70,8 +99,12 @@ describe('runtime contracts', () => {
         }),
       ),
     ).toEqual(provenance)
-    expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
-    await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
+    expect(
+      await Effect.runPromise(Schema.decodeUnknownEffect(RuntimeProvenanceSchema, strictParseOptions)(provenance)),
+    ).toEqual(provenance)
+    await expectFailure(
+      Schema.decodeUnknownEffect(RuntimeProvenanceSchema, strictParseOptions)({ ...provenance, futureField: true }),
+    )
 
     const invalid = makeRuntimeProvenanceResult({
       sourceRevision: 'not-a-revision',

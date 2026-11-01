@@ -5,6 +5,12 @@ This app deploys production Forgejo Actions runners in Kubernetes using a dual-a
 - `forgejo-runners-amd64` (`kubernetes.io/arch=amd64`)
 - `forgejo-runners-arm64` (`kubernetes.io/arch=arm64`)
 
+The AMD64 shard is pinned to Turin. Its Ceph PVC contains the persistent runner
+registration, so it does not qualify for Ryzen's compute/local-storage pool.
+GitHub ARC AMD64 runners use disposable Ryzen-local scratch instead. Follow the
+[placement rollout](../../../devices/galactic/scheduling/README.md) and the drain procedure below
+before moving the Forgejo runner. Preserve its registration, token, and PVC.
+
 Both shards run:
 
 - one registration init container (`forgejo-runner register --no-interactive`)

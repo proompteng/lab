@@ -1,27 +1,24 @@
+import { instrumentMarket, MarketKind } from '../instruments'
+import { quantityScale } from '../quantity'
 import { Result, pipe } from 'effect'
 
 import { AccountStatus, OrderStatus, ReconciliationStatus } from '../execution/contracts'
-import { legacyTargetPlannerInputV1SchemaVersion } from '../execution/legacy-wire'
-import { desiredQuantityMicros } from '../execution-model'
+import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import {
   TargetPlanReason,
   canonicalizePlannerInputFailure,
   deriveTargetsFailure,
-  quoteBoundTargetPlannerInputSchemaVersion,
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type TargetPlannerFailure,
   type TargetPlannerInput,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 const WEIGHT_SUM_TOLERANCE = 1e-12
 
-const compareTextDataFirst = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
-
-export const compareText = Pipeable.dual(2, compareTextDataFirst)
+export const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
 const isStrictlySorted = (values: readonly string[]): boolean =>
   values.every((value, index) => {
@@ -116,43 +113,32 @@ export const deriveTargetPlannerHashes = (
     ),
   })
 
-const parseTargetPlannerFactsDataFirst = (
-  input: TargetPlannerInput,
-  hashes: TargetPlannerHashes,
-): TargetPlannerFacts => {
+export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: TargetPlannerHashes): TargetPlannerFacts => {
   const targetSymbols = Object.keys(input.targetWeights).sort(compareText)
   const priceSymbols = Object.keys(input.referencePrices.priceMicros).sort(compareText)
   const prices = new Map(
     Object.entries(input.referencePrices.priceMicros).map(([symbol, price]) => [symbol, BigInt(price)]),
   )
   const bidPrices = new Map(
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-      ? Object.entries(input.referencePrices.bidPriceMicros).map(([symbol, price]) => [symbol, BigInt(price)] as const)
-      : [],
+    Object.entries(input.referencePrices.bidPriceMicros).map(([symbol, price]) => [symbol, BigInt(price)] as const),
   )
   const askPrices = new Map(
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-      ? Object.entries(input.referencePrices.askPriceMicros).map(([symbol, price]) => [symbol, BigInt(price)] as const)
-      : [],
+    Object.entries(input.referencePrices.askPriceMicros).map(([symbol, price]) => [symbol, BigInt(price)] as const),
   )
   const maximumBuyQuantities = new Map(
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-      ? Object.entries(input.executionTerms.maximumBuyQuantityMicros).map(
-          ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
-        )
-      : [],
+    Object.entries(input.executionTerms.maximumBuyQuantityAtoms).map(
+      ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
+    ),
   )
   const maximumSellQuantities = new Map(
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-      ? Object.entries(input.executionTerms.maximumSellQuantityMicros).map(
-          ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
-        )
-      : [],
+    Object.entries(input.executionTerms.maximumSellQuantityAtoms).map(
+      ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
+    ),
   )
-  const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityMicros))
+  const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityAtoms))
   const positionMarketValues = input.brokerState.positions.map((position) => BigInt(position.marketValueMicros))
   const positions = new Map(
-    input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)] as const),
+    input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityAtoms)] as const),
   )
   const equity = BigInt(input.brokerState.account.equityMicros)
   return {
@@ -180,27 +166,20 @@ const parseTargetPlannerFactsDataFirst = (
       ...input.brokerState.orders.map((order) => order.observedAt),
     ].map(Date.parse),
     priceIncrement: BigInt(input.precision.priceIncrementMicros),
-    quantityIncrement: BigInt(input.precision.quantityIncrementMicros),
+    quantityIncrement: BigInt(input.precision.quantityIncrementAtoms),
     minimumBuyNotional: BigInt(input.precision.minimumBuyNotionalMicros),
     equity,
-    allocationCapital:
-      input.schemaVersion === legacyTargetPlannerInputV1SchemaVersion ? equity : BigInt(input.allocationCapitalMicros),
+    allocationCapital: BigInt(input.allocationCapitalMicros),
     availableBuyingPower: BigInt(input.brokerState.account.buyingPowerMicros),
   }
 }
 
-export const parseTargetPlannerFacts = Pipeable.dual(2, parseTargetPlannerFactsDataFirst)
-
 const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
   const { input, priceSymbols, targetSymbols } = facts
   const accountId = input.accountId
-  const partialClose =
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
-    input.executionTerms.executionPurpose !== undefined
+  const partialClose = input.executionTerms.executionPurpose !== undefined
   return (
-    (targetSymbols.length > 0 ||
-      (input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
-        input.brokerState.positions.length === 0)) &&
+    (targetSymbols.length > 0 || input.brokerState.positions.length === 0) &&
     sameStrings(targetSymbols, priceSymbols) &&
     input.referencePrices.signalDate === input.signalDate &&
     input.signalDate <= input.referencePrices.observedAt.slice(0, 10) &&
@@ -255,8 +234,8 @@ const brokerStateIsCoherent = (facts: TargetPlannerFacts): boolean => {
     facts.allocationCapital <= facts.equity &&
     input.referencePrices.contentHash === facts.referencePriceHash &&
     Object.values(input.targetWeights).reduce((total, weight) => total + weight, 0) <= 1 + WEIGHT_SUM_TOLERANCE &&
-    [...prices.values(), ...bidPrices.values(), ...askPrices.values()].every(
-      (price) => price % priceIncrement === 0n,
+    [...prices.entries(), ...bidPrices.entries(), ...askPrices.entries()].every(
+      ([symbol, price]) => price % (instrumentMarket(symbol) === MarketKind.Crypto ? 1n : priceIncrement) === 0n,
     ) &&
     positionQuantities.every((quantity) => quantity % quantityIncrement === 0n)
   )
@@ -278,10 +257,8 @@ const brokerStateIsCurrent = (facts: TargetPlannerFacts): boolean => {
   )
 }
 
-const referenceNotionalDataFirst = (quantityMicros: bigint, priceMicros: bigint): bigint =>
-  (quantityMicros * priceMicros + 1_000_000n - 1n) / 1_000_000n
-
-export const referenceNotional = Pipeable.dual(2, referenceNotionalDataFirst)
+export const referenceNotional = (quantityAtoms: bigint, priceMicros: bigint): bigint =>
+  (quantityAtoms * priceMicros + 1_000_000_000n - 1n) / 1_000_000_000n
 
 export const derivePlannedTargetFacts = (
   facts: TargetPlannerFacts,
@@ -289,7 +266,7 @@ export const derivePlannedTargetFacts = (
   [...facts.prices.entries()]
     .sort(([left], [right]) => compareText(left, right))
     .reduce<Result.Result<ReadonlyArray<PlannedTargetFact>, TargetPlannerFailure>>(
-      (result, [symbol, referencePrice]) =>
+      (result, [symbol]) =>
         Result.flatMap(result, (targetFacts) => {
           const currentQuantity = facts.positions.get(symbol) ?? 0n
           const targetWeight = facts.input.targetWeights[symbol]
@@ -307,10 +284,13 @@ export const derivePlannedTargetFacts = (
           }
           const desiredAt = (price: bigint) =>
             Result.mapError(
-              desiredQuantityMicros(facts.allocationCapital, targetWeight, price, {
+              desiredQuantityAtoms(facts.allocationCapital, targetWeight, price, {
                 precision: {
                   ...facts.input.precision,
-                  quantityIncrementMicros: facts.quantityIncrement.toString(),
+                  quantityIncrementAtoms: (instrumentMarket(symbol) === MarketKind.Equity
+                    ? quantityScale
+                    : facts.quantityIncrement
+                  ).toString(),
                 },
               }),
               (cause) =>
@@ -328,9 +308,6 @@ export const derivePlannedTargetFacts = (
           const bidPrice = facts.bidPrices.get(symbol)
           const askPrice = facts.askPrices.get(symbol)
           const selectedTarget = (() => {
-            if (facts.input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
-              return Result.map(desiredAt(referencePrice), (quantity) => ({ referencePrice, quantity }))
-            }
             if (bidPrice === undefined || askPrice === undefined) {
               return Result.fail(
                 deriveTargetsFailure({
@@ -349,10 +326,7 @@ export const derivePlannedTargetFacts = (
           return Result.flatMap(selectedTarget, (selected) => {
             const desiredDelta = selected.quantity - currentQuantity
             const maximumBuyQuantity = facts.maximumBuyQuantities.get(symbol)
-            const buyLiquidityUnavailable =
-              facts.input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
-              desiredDelta > 0n &&
-              maximumBuyQuantity === 0n
+            const buyLiquidityUnavailable = desiredDelta > 0n && maximumBuyQuantity === 0n
             const buyLiquidityBlocked =
               buyLiquidityUnavailable && facts.positionQuantities.some((quantity) => quantity !== 0n)
             if (buyLiquidityUnavailable && !buyLiquidityBlocked) {
@@ -363,8 +337,8 @@ export const derivePlannedTargetFacts = (
                   facts: {
                     cycleId: facts.input.cycleId,
                     symbol,
-                    desiredQuantityMicros: selected.quantity.toString(),
-                    currentQuantityMicros: currentQuantity.toString(),
+                    desiredQuantityAtoms: selected.quantity.toString(),
+                    currentQuantityAtoms: currentQuantity.toString(),
                   },
                 }),
               )
@@ -384,8 +358,8 @@ export const derivePlannedTargetFacts = (
                   symbol,
                   targetWeight,
                   referencePriceMicros: selected.referencePrice.toString(),
-                  currentQuantityMicros: currentQuantity.toString(),
-                  targetQuantityMicros: targetQuantity.toString(),
+                  currentQuantityAtoms: currentQuantity.toString(),
+                  targetQuantityAtoms: targetQuantity.toString(),
                 },
               },
             ] as const)
@@ -407,9 +381,7 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
   if (input.brokerState.account.status !== AccountStatus.Active) return TargetPlanReason.AccountNotActive
   if (input.brokerState.unknownOrderCount > 0) return TargetPlanReason.UnknownOrder
   if (input.brokerState.orders.some((order) => isUnresolved(order.status))) return TargetPlanReason.UnresolvedOrder
-  const forcedClose =
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
-    input.executionTerms.executionPurpose !== undefined
+  const forcedClose = input.executionTerms.executionPurpose !== undefined
   if (!forcedClose && facts.positionQuantities.some((quantity) => quantity < 0n)) {
     return TargetPlanReason.ShortPositionNotAllowed
   }

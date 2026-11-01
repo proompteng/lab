@@ -1,19 +1,19 @@
 import { NodeRuntime } from '@effect/platform-node'
-import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Redacted, Result, Schema } from 'effect'
 
 import { loadApplicationPlan } from '../application-plan'
+import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 import { embeddedBuildMetadata } from '../build'
 import { executionControllerConfig } from '../composition/native-execution-runtime'
 import {
   decodeExecutionControllerState,
-  resolveOptionalExecutionControllerBinding,
-  type ExecutionControllerBinding,
+  executionControllerSuccessorPassCompleted,
   type ExecutionControllerState,
 } from '../execution/controller'
 import { sha256 } from '../hash'
 import {
-  executionBootstrapAuthorizationHash,
-  executionControllerBootstrapHandlerTimeouts,
+  executionActivationAuthorizationHash,
+  executionControllerDeploymentHandlerTimeouts,
 } from './restate-execution-controller'
 import {
   awaitRestateInvocation,
@@ -24,7 +24,7 @@ import {
   sendRestateInvocation,
   type RestateHttpRequest,
 } from './restate-invocation-client'
-import { GitSourceRevisionSchema, Sha256Schema } from '../schemas'
+import { Sha256Schema } from '../schemas'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from '../telemetry'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
@@ -55,47 +55,41 @@ export class RestateExecutionActivationError extends Data.TaggedError('RestateEx
 }> {}
 
 export interface RestateExecutionActivationConfig {
+  readonly activationAttemptId: string
   readonly activationGeneration: string
   readonly controllerKey: string
   readonly ingressOrigin: string
   readonly operationTimeoutMs: number
   readonly planHash: string
-  readonly previousBinding?: ExecutionControllerBinding
   readonly sourceRevision: string
 }
 
-const restateExecutionActivationTransportConfig = Config.all({
+export const restateExecutionActivationTransportConfig = Config.all({
+  activationAttemptId: Config.schema(Schema.String.check(Schema.isUUID(4)), 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID'),
   activationGeneration: Config.schema(Sha256Schema, 'BAYN_EXECUTION_ACTIVATION_GENERATION'),
-  bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
+  activationToken: Config.Redacted('BAYN_EXECUTION_ACTIVATION_TOKEN'),
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
     Config.withDefault('http://restate.restate.svc.cluster.local:8080'),
-  ),
-  previousPlanHash: Config.option(Config.schema(Sha256Schema, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH')),
-  previousSourceRevision: Config.option(
-    Config.schema(GitSourceRevisionSchema, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
   ),
 })
 
 export const restateExecutionActivationCompletionWindowMs = (operationTimeoutMs: number): number =>
-  executionControllerBootstrapHandlerTimeouts(operationTimeoutMs, true).inactivityTimeout
+  executionControllerDeploymentHandlerTimeouts(operationTimeoutMs).inactivityTimeout
 
 export const restateExecutionActivationIdempotencyKey = (
-  activationGeneration: string,
-  sourceRevision: string,
-  controllerKey: string,
-  planHash: string,
-  previousBinding?: ExecutionControllerBinding,
+  config: Pick<
+    RestateExecutionActivationConfig,
+    'activationAttemptId' | 'activationGeneration' | 'sourceRevision' | 'controllerKey' | 'planHash'
+  >,
 ): string =>
   `bayn-execution-${sha256(
     [
-      previousBinding === undefined
-        ? 'bayn.execution-controller-bootstrap.v2'
-        : 'bayn.execution-controller-bootstrap.v3',
-      activationGeneration,
-      sourceRevision,
-      controllerKey,
-      planHash,
-      ...(previousBinding === undefined ? [] : [previousBinding.sourceRevision, previousBinding.planHash]),
+      'bayn.execution-deployment-activation.v2',
+      config.activationGeneration,
+      config.activationAttemptId,
+      config.sourceRevision,
+      config.controllerKey,
+      config.planHash,
     ].join('\u0000'),
   )}`
 
@@ -106,24 +100,14 @@ export const restateExecutionActivationRequest = (config: RestateExecutionActiva
     sourceRevision: config.sourceRevision,
   }
   return {
-    path: '/restate/send/BaynExecutionBootstrap/start',
-    body:
-      config.previousBinding === undefined
-        ? { schemaVersion: 'bayn.execution-controller-bootstrap.v2' as const, ...binding }
-        : {
-            schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
-            ...binding,
-            previousBinding: config.previousBinding,
-          },
+    path: `/restate/send/BaynExecutionController/${encodeURIComponent(config.controllerKey)}/activateDeployment`,
+    body: {
+      schemaVersion: 'bayn.execution-deployment-activation.v2' as const,
+      ...binding,
+    },
     headers: {
       authorization: `Bearer ${token}`,
-      'idempotency-key': restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        config.controllerKey,
-        config.planHash,
-        config.previousBinding,
-      ),
+      'idempotency-key': restateExecutionActivationIdempotencyKey(config),
     },
     timeoutMs: restateInvocationAcceptTimeoutMs,
   }
@@ -144,12 +128,12 @@ export const verifyRestateExecutionActivation = (
     )
   }
   const state = decoded.success
-  return state.active &&
-    state.planHash === config.planHash &&
-    state.sourceRevision === config.sourceRevision &&
-    state.lastCompletion !== undefined &&
-    state.lastCompletion.sequence > state.initialSequence &&
-    state.nextSequence === state.lastCompletion.sequence + 1
+  return executionControllerSuccessorPassCompleted(state, {
+    epoch: state.epoch,
+    firstSequence: state.initialSequence,
+    planHash: config.planHash,
+    sourceRevision: config.sourceRevision,
+  })
     ? Result.succeed(state)
     : Result.fail(
         new RestateExecutionActivationError({
@@ -162,17 +146,17 @@ export const verifyRestateExecutionActivation = (
 
 export const activateRestateExecutionController = (
   config: RestateExecutionActivationConfig,
-  bootstrapToken: Redacted.Redacted<string>,
+  activationToken: Redacted.Redacted<string>,
   request: RestateHttpRequest = fetch,
 ): Effect.Effect<ExecutionControllerState, RestateExecutionActivationError> =>
   Effect.gen(function* () {
-    const token = Redacted.value(bootstrapToken)
-    yield* Effect.fromResult(executionBootstrapAuthorizationHash(token)).pipe(
+    const token = Redacted.value(activationToken)
+    yield* Effect.fromResult(executionActivationAuthorizationHash(token)).pipe(
       Effect.mapError(
         (cause) =>
           new RestateExecutionActivationError({
             operation: 'configuration',
-            message: 'native Restate bootstrap token is invalid',
+            message: 'native Restate activation token is invalid',
             cause,
           }),
       ),
@@ -192,6 +176,14 @@ export const activateRestateExecutionController = (
             cause,
           }),
       ),
+    )
+    yield* Effect.logInfo('Bayn native Restate execution controller activation accepted').pipe(
+      Effect.annotateLogs({
+        activationAttemptId: config.activationAttemptId,
+        activationInvocationId: receipt.invocationId,
+        sourceRevision: config.sourceRevision,
+        status: receipt.status,
+      }),
     )
     const output = yield* awaitRestateInvocation(
       config.ingressOrigin,
@@ -214,12 +206,26 @@ export const activateRestateExecutionController = (
           }),
       ),
     )
-    return yield* Effect.fromResult(verifyRestateExecutionActivation(config, output))
+    const state = yield* Effect.fromResult(verifyRestateExecutionActivation(config, output))
+    yield* Effect.logInfo('Bayn native Restate execution controller activation verified').pipe(
+      Effect.annotateLogs({
+        activationAttemptId: config.activationAttemptId,
+        activationInvocationId: receipt.invocationId,
+        controllerKey: config.controllerKey,
+        epoch: state.epoch,
+        nextSequence: state.nextSequence,
+        planHash: state.planHash,
+        sourceRevision: state.sourceRevision,
+      }),
+    )
+    return state
   }).pipe(withObservedSpan('bayn.execution.activate'))
 
 export const restateExecutionActivationProgram = Effect.gen(function* () {
-  const [{ activationGeneration, bootstrapToken, ingressOrigin, previousPlanHash, previousSourceRevision }, plan] =
-    yield* Effect.all([restateExecutionActivationTransportConfig, loadApplicationPlan])
+  const [{ activationAttemptId, activationGeneration, activationToken, ingressOrigin }, plan] = yield* Effect.all([
+    restateExecutionActivationTransportConfig,
+    loadApplicationPlan,
+  ])
   if (plan._tag !== 'AutonomousService') {
     return yield* new RestateExecutionActivationError({
       operation: 'configuration',
@@ -236,25 +242,11 @@ export const restateExecutionActivationProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const previousBinding = yield* Effect.fromResult(
-    resolveOptionalExecutionControllerBinding(
-      Option.getOrUndefined(previousPlanHash),
-      Option.getOrUndefined(previousSourceRevision),
-    ),
-  ).pipe(
-    Effect.mapError(
-      (cause) =>
-        new RestateExecutionActivationError({
-          operation: 'configuration',
-          message: cause,
-        }),
-    ),
-  )
   const configured: RestateExecutionActivationConfig = {
     ...controller,
+    activationAttemptId,
     activationGeneration,
     ingressOrigin,
-    ...(previousBinding === undefined ? {} : { previousBinding }),
   }
   const embeddedSourceRevision = embeddedBuildMetadata?.sourceRevision
   if (embeddedSourceRevision !== undefined && embeddedSourceRevision !== configured.sourceRevision) {
@@ -263,27 +255,19 @@ export const restateExecutionActivationProgram = Effect.gen(function* () {
       message: 'configured source revision does not match the immutable activation image',
     })
   }
-  const state = yield* activateRestateExecutionController(configured, bootstrapToken)
-  yield* Effect.logInfo('Bayn native Restate execution controller activation verified').pipe(
-    Effect.annotateLogs({
-      controllerKey: configured.controllerKey,
-      epoch: state.epoch,
-      nextSequence: state.nextSequence,
-      planHash: state.planHash,
-      sourceRevision: state.sourceRevision,
-    }),
-  )
+  yield* activateRestateExecutionController(configured, activationToken)
 })
 
 export const runFiniteLayer = <A, E, R>(layer: Layer.Layer<A, E, R>): Effect.Effect<void, E, R> =>
   Effect.scoped(Layer.build(layer)).pipe(Effect.asVoid)
 
 if (import.meta.main) {
+  initializeErrorTracking('bayn-execution-activate')
   NodeRuntime.runMain(
     runFiniteLayer(
       Layer.effectDiscard(
         restateExecutionActivationProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-activate' })),
       ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-activate'))),
-    ),
+    ).pipe(reportTerminalFailure('bayn-execution-activate')),
   )
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,32 +18,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
-
-func TestAPIRoutesRequireBootstrapToken(t *testing.T) {
-	t.Parallel()
-	server := testAPIServer(t)
-
-	unauthorized := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/files", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status = %d", unauthorized.Code)
-	}
-	if got := unauthorized.Header().Get(nanoagentAuthFailureHeader); got != nanoagentAuthFailureHeaderValue {
-		t.Fatalf("unauthorized %s = %q", nanoagentAuthFailureHeader, got)
-	}
-
-	authorizedRequest := httptest.NewRequest(http.MethodGet, "/v1/files", nil)
-	authorizedRequest.Header.Set("Authorization", "Bearer test-bootstrap-token")
-	authorized := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(authorized, authorizedRequest)
-	if authorized.Code != http.StatusOK {
-		t.Fatalf("authorized status = %d body = %s", authorized.Code, authorized.Body.String())
-	}
-	if got := authorized.Header().Get(nanoagentAuthFailureHeader); got != "" {
-		t.Fatalf("authorized response leaked %s = %q", nanoagentAuthFailureHeader, got)
-	}
-}
 
 func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 	tests := []struct {
@@ -52,7 +29,7 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 		method     string
 		params     json.RawMessage
 		err        json.RawMessage
-		wantStatus int
+		wantStatus codes.Code
 		wantError  string
 	}{
 		{
@@ -60,7 +37,7 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 			method:     "thread/resume",
 			params:     json.RawMessage(`{"threadId":"thread-1","cwd":"/workspace","runtimeWorkspaceRoots":["/workspace"],"approvalPolicy":"on-request","sandbox":"danger-full-access"}`),
 			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
-			wantStatus: http.StatusNotFound,
+			wantStatus: codes.NotFound,
 			wantError:  codexConversationNotFoundMessage,
 		},
 		{
@@ -68,7 +45,7 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 			method:     "thread/resume",
 			params:     json.RawMessage(`{"threadId":"thread-1"}`),
 			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-2"}`),
-			wantStatus: http.StatusBadGateway,
+			wantStatus: codes.Unavailable,
 			wantError:  `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id thread-2"}`,
 		},
 		{
@@ -76,7 +53,7 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 			method:     "thread/start",
 			params:     json.RawMessage(`{"threadId":"thread-1"}`),
 			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
-			wantStatus: http.StatusBadGateway,
+			wantStatus: codes.Unavailable,
 			wantError:  `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id thread-1"}`,
 		},
 		{
@@ -84,7 +61,7 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 			method:     "thread/resume",
 			params:     json.RawMessage(`{"threadId":"thread-1"}`),
 			err:        json.RawMessage(`{"code":-32602,"message":"invalid params"}`),
-			wantStatus: http.StatusBadGateway,
+			wantStatus: codes.Unavailable,
 			wantError:  `Codex app-server request failed: {"code":-32602,"message":"invalid params"}`,
 		},
 		{
@@ -92,7 +69,7 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 			method:     "thread/resume",
 			params:     json.RawMessage(`{"threadId":123}`),
 			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
-			wantStatus: http.StatusBadGateway,
+			wantStatus: codes.Unavailable,
 			wantError:  `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id thread-1"}`,
 		},
 	}
@@ -102,78 +79,48 @@ func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
 			server := testAPIServer(t)
 			supervisor, wire := readyCodexSupervisor(t)
 			server.codex = supervisor
-			body, err := json.Marshal(codexCallRequest{Method: test.method, Params: test.params})
-			if err != nil {
-				t.Fatalf("encode Codex call: %v", err)
-			}
-
-			responseCh := make(chan *httptest.ResponseRecorder, 1)
+			responseCh := make(chan error, 1)
 			go func() {
-				responseCh <- performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/codex/call", body)
+				_, err := (&guestRPCServer{api: server}).CodexCall(context.Background(), &pb.CodexRequest{Method: test.method, ParamsJson: test.params})
+				responseCh <- err
 			}()
+
 			request := readCodexWireRequest(t, wire)
 			respondToCodexWireRequest(t, supervisor, request, test.err)
 
-			var response *httptest.ResponseRecorder
+			var callErr error
 			select {
-			case response = <-responseCh:
+			case callErr = <-responseCh:
 			case <-time.After(time.Second):
-				t.Fatal("Codex call handler did not return after the RPC response")
+				t.Fatal("Codex call did not return")
 			}
-			if response.Code != test.wantStatus {
-				t.Fatalf("Codex call status = %d body = %q, want %d", response.Code, response.Body.String(), test.wantStatus)
+			if status.Code(callErr) != test.wantStatus || status.Convert(callErr).Message() != test.wantError {
+				t.Fatalf("Codex call = %v, want code %v message %q", callErr, test.wantStatus, test.wantError)
 			}
-			var payload struct {
-				Error string `json:"error"`
-			}
-			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-				t.Fatalf("decode Codex call error: %v", err)
-			}
-			if payload.Error != test.wantError {
-				t.Fatalf("Codex call error = %q, want %q", payload.Error, test.wantError)
-			}
+
 		})
 	}
 }
 
-func TestCodexCallKeepsTransportErrorsOnBadGateway(t *testing.T) {
-	t.Parallel()
+func TestCodexCallPreservesCancellation(t *testing.T) {
 	server := testAPIServer(t)
 	supervisor, _ := readyCodexSupervisor(t)
 	server.codex = supervisor
-	request := httptest.NewRequest(http.MethodPost, "/v1/codex/call", strings.NewReader(`{"method":"thread/resume","params":{"threadId":"thread-1"}}`))
-	requestContext, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	request = request.WithContext(requestContext)
-	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(response, request)
-	if response.Code != http.StatusBadGateway {
-		t.Fatalf("canceled Codex call status = %d body = %q", response.Code, response.Body.String())
-	}
-	var payload struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode canceled Codex call error: %v", err)
-	}
-	if payload.Error != "context canceled" {
-		t.Fatalf("canceled Codex call error = %q, want context canceled", payload.Error)
+	_, err := (&guestRPCServer{api: server}).CodexCall(ctx, &pb.CodexRequest{Method: "thread/resume", ParamsJson: []byte(`{"threadId":"thread-1"}`)})
+	if status.Code(err) != codes.Canceled {
+		t.Fatalf("canceled Codex call = %v", err)
 	}
 }
 
 func TestFileSearchStopsWhenRequestIsCanceled(t *testing.T) {
-	t.Parallel()
 	server := testAPIServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	request := httptest.NewRequest(http.MethodGet, "/v1/files/search?query=missing", nil).WithContext(ctx)
-	response := httptest.NewRecorder()
-
-	server.handleSearchFiles(response, request)
-	if response.Body.Len() != 0 {
-		t.Fatalf("canceled search response = %q, want no completed traversal response", response.Body.String())
+	_, err := (&guestRPCServer{api: server}).SearchFiles(ctx, &pb.FileSearch{Query: "missing", Path: "/workspace", Limit: 100})
+	if status.Code(err) != codes.Canceled {
+		t.Fatalf("canceled search = %v", err)
 	}
 }
 
@@ -196,20 +143,15 @@ func TestFileSearchSkipsHiddenRuntimeCachesAndPreservesVisibleDirectories(t *tes
 		}
 	}
 
-	response := performAuthorizedRequest(
-		server.authenticatedRoutes(),
-		http.MethodGet,
-		"/v1/files/search?query=needle&path=%2F",
-		nil,
-	)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.searchFiles(context.Background(), server.workspace.realRoot, "needle", 100, maxSearchVisitedEntries))
+	if response.Code != codes.OK {
 		t.Fatalf("search status = %d body = %s", response.Code, response.Body.String())
 	}
 	var result searchFilesResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode search response: %v", err)
 	}
-	if len(result.Entries) != 3 || result.Entries[0].Path != "/go/needle-go.txt" || result.Entries[1].Path != "/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/src/needle-project.txt" {
+	if len(result.Entries) != 3 || result.Entries[0].Path != "/workspace/go/needle-go.txt" || result.Entries[1].Path != "/workspace/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/workspace/src/needle-project.txt" {
 		t.Fatalf("search entries = %#v", result.Entries)
 	}
 	if result.Truncated {
@@ -241,18 +183,14 @@ func TestFileSearchStopsAtTraversalBudgetAndReportsTruncation(t *testing.T) {
 func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	handler := server.authenticatedRoutes()
 
-	writeBody, err := json.Marshal(writeFileRequest{
-		Path:             "/src/main.rs",
-		Content:          base64.StdEncoding.EncodeToString([]byte("fn main() {}\n")),
+	writeBody := fileWriteInput{
+		Path:             "/workspace/src/main.rs",
+		Content:          []byte("fn main() {}\n"),
 		ExpectedRevision: missingFileRevision,
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	writeResponse := performAuthorizedRequest(handler, http.MethodPut, "/v1/files/content", writeBody)
-	if writeResponse.Code != http.StatusOK {
+	writeResponse := fileResult(server.writeFile(writeBody))
+	if writeResponse.Code != codes.OK {
 		t.Fatalf("write status = %d body = %s", writeResponse.Code, writeResponse.Body.String())
 	}
 	var written writeFileResponse
@@ -260,140 +198,68 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 		t.Fatalf("decode write response: %v", err)
 	}
 	wantRevision := revisionForContent([]byte("fn main() {}\n"))
-	if written.Path != "/src/main.rs" || written.Size != int64(len("fn main() {}\n")) || written.Revision != wantRevision {
+	if written.Path != "/workspace/src/main.rs" || written.Size != int64(len("fn main() {}\n")) || written.Revision != wantRevision {
 		t.Fatalf("write response = %#v, want path/size/revision for saved content", written)
 	}
 
-	readResponse := performAuthorizedRequest(handler, http.MethodGet, "/v1/files/content?path=%2Fsrc%2Fmain.rs", nil)
-	if readResponse.Code != http.StatusOK || readResponse.Body.String() != "fn main() {}\n" {
+	readResponse := fileReadResult(server.readFileSnapshot("/workspace/src/main.rs"))
+	if readResponse.Code != codes.OK || readResponse.Body.String() != "fn main() {}\n" {
 		t.Fatalf("read response = status %d body %q", readResponse.Code, readResponse.Body.String())
 	}
-	if got := readResponse.Header().Get("ETag"); got != `"`+wantRevision+`"` {
+	if got := readResponse.Revision; got != wantRevision {
 		t.Fatalf("read ETag = %q, want strong content ETag", got)
 	}
 
-	listResponse := performAuthorizedRequest(handler, http.MethodGet, "/v1/files?path=%2Fsrc", nil)
-	if listResponse.Code != http.StatusOK {
+	listResponse := fileResult(server.listFiles("/workspace/src"))
+	if listResponse.Code != codes.OK {
 		t.Fatalf("list status = %d body = %s", listResponse.Code, listResponse.Body.String())
 	}
 	var listed fileList
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(listed.Entries) != 1 || listed.Entries[0].Path != "/src/main.rs" {
+	if len(listed.Entries) != 1 || listed.Entries[0].Path != "/workspace/src/main.rs" {
 		t.Fatalf("listed files = %#v", listed)
 	}
 }
 
-type blockingResponseWriter struct {
-	header       http.Header
-	body         bytes.Buffer
-	release      chan struct{}
-	writeStarted chan struct{}
-	status       int
-}
-
-func newBlockingResponseWriter() *blockingResponseWriter {
-	return &blockingResponseWriter{
-		header:       make(http.Header),
-		release:      make(chan struct{}),
-		writeStarted: make(chan struct{}),
-	}
-}
-
-func (writer *blockingResponseWriter) Header() http.Header {
-	return writer.header
-}
-
-func (writer *blockingResponseWriter) WriteHeader(status int) {
-	writer.status = status
-}
-
-func (writer *blockingResponseWriter) Write(content []byte) (int, error) {
-	close(writer.writeStarted)
-	<-writer.release
-	return writer.body.Write(content)
-}
-
-func TestFileAPIReadResponseDoesNotHoldMutationLockWhileWriting(t *testing.T) {
-	t.Parallel()
+func TestFileReadSnapshotRemainsConsistentDuringMutation(t *testing.T) {
 	server := testAPIServer(t)
-	server.syncDirectories = func(_ workspace, _ ...string) error { return nil }
 	if err := os.WriteFile(filepath.Join(server.workspace.root, "read.txt"), []byte("read snapshot"), 0o640); err != nil {
-		t.Fatalf("write read fixture: %v", err)
+		t.Fatal(err)
 	}
-
-	blocked := newBlockingResponseWriter()
-	releaseRead := func() {
-		select {
-		case <-blocked.release:
-		default:
-			close(blocked.release)
-		}
-	}
-	defer releaseRead()
-	readDone := make(chan struct{})
-	go func() {
-		server.handleReadFile(blocked, httptest.NewRequest(http.MethodGet, "/v1/files/content?path=%2Fread.txt", nil))
-		close(readDone)
-	}()
-	select {
-	case <-blocked.writeStarted:
-	case <-time.After(time.Second):
-		t.Fatal("read response did not reach the blocked writer")
-	}
-
-	body, err := json.Marshal(writeFileRequest{
-		Path:             "/write.txt",
-		Content:          base64.StdEncoding.EncodeToString([]byte("write completed")),
-		ExpectedRevision: missingFileRevision,
-	})
+	snapshot, err := server.readFileSnapshot("/workspace/read.txt")
 	if err != nil {
-		t.Fatalf("marshal write request: %v", err)
+		t.Fatal(err)
 	}
-	writeDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		writeDone <- performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-	}()
-	select {
-	case response := <-writeDone:
-		if response.Code != http.StatusOK {
-			t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
-		}
-		content, readErr := os.ReadFile(filepath.Join(server.workspace.root, "write.txt"))
-		if readErr != nil || string(content) != "write completed" {
-			t.Fatalf("write state = %q err=%v, want completed while read response is blocked", content, readErr)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("write remained blocked by stalled read response")
+	if !server.fileMutationMu.TryLock() {
+		t.Fatal("read snapshot retained the mutation lock")
 	}
-	releaseRead()
-	select {
-	case <-readDone:
-	case <-time.After(time.Second):
-		t.Fatal("read handler did not finish after response release")
+	server.fileMutationMu.Unlock()
+	if _, err := server.writeFile(fileWriteInput{Path: "/workspace/read.txt", Content: []byte("replacement"), ExpectedRevision: snapshot.revision}); err != nil {
+		t.Fatal(err)
+	}
+	if string(snapshot.content) != "read snapshot" || snapshot.revision != revisionForContent(snapshot.content) {
+		t.Fatal("mutation changed the captured read snapshot")
 	}
 }
 
 func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	id, events, err := server.fileWatcher.subscribe(0, "/", server.workspace.realRoot)
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace", server.workspace.realRoot)
 	if err != nil {
 		t.Fatalf("subscribe workspace: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
-	body, err := json.Marshal(writeFileRequest{
-		Path:             "/document.txt",
-		Content:          base64.StdEncoding.EncodeToString([]byte("saved")),
+	body := fileWriteInput{
+		Path:             "/workspace/document.txt",
+		Content:          []byte("saved"),
 		ExpectedRevision: missingFileRevision,
-	})
-	if err != nil {
-		t.Fatalf("marshal write request: %v", err)
 	}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.writeFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
 	}
 	deadline := time.NewTimer(2 * time.Second)
@@ -407,10 +273,10 @@ func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			if event.Kind == "reset" || strings.Contains(event.Path, "/.nanoagent-write-") {
+			if event.Kind == "reset" || strings.Contains(event.Path, "/workspace/.nanoagent-write-") {
 				t.Fatalf("atomic write leaked temporary filesystem event: %#v", event)
 			}
-			if event.Path == "/document.txt" {
+			if event.Path == "/workspace/document.txt" {
 				sawTarget = true
 				quiet.Reset(250 * time.Millisecond)
 			}
@@ -427,62 +293,28 @@ func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 func TestFileAPIAcceptsTheAdvertisedFourMiBPayload(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	body, err := json.Marshal(writeFileRequest{
-		Path:             "/large.bin",
-		Content:          base64.StdEncoding.EncodeToString(make([]byte, maxFileBytes)),
+	body := fileWriteInput{
+		Path:             "/workspace/large.bin",
+		Content:          make([]byte, maxFileBytes),
 		ExpectedRevision: missingFileRevision,
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
-	if len(body) > maxJSONBodyBytes {
-		t.Fatalf("encoded request = %d bytes, limit = %d", len(body), maxJSONBodyBytes)
 	}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.writeFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
 	}
 }
 
 func TestFileAPIRequiresValidExpectedRevision(t *testing.T) {
-	tests := []struct {
-		name     string
-		revision string
-		omit     bool
-	}{
-		{name: "missing field", omit: true},
-		{name: "empty", revision: ""},
-		{name: "short hash", revision: "abc123"},
-		{name: "uppercase hash", revision: strings.Repeat("A", fileRevisionLength)},
-		{name: "non hexadecimal hash", revision: strings.Repeat("g", fileRevisionLength)},
-		{name: "quoted hash", revision: `"` + strings.Repeat("a", fileRevisionLength) + `"`},
-		{name: "invalid missing marker", revision: "MISSING"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+	for _, revision := range []string{"", "abc123", strings.Repeat("A", fileRevisionLength), strings.Repeat("g", fileRevisionLength), `"` + strings.Repeat("a", fileRevisionLength) + `"`, "MISSING"} {
+		t.Run(revision, func(t *testing.T) {
 			server := testAPIServer(t)
-			var body []byte
-			var err error
-			if test.omit {
-				body = []byte(`{"path":"/invalid-revision.txt","content":""}`)
-			} else {
-				body, err = json.Marshal(writeFileRequest{
-					Path:             "/invalid-revision.txt",
-					Content:          "",
-					ExpectedRevision: test.revision,
-				})
-				if err != nil {
-					t.Fatalf("marshal request: %v", err)
-				}
-			}
-			response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-			if response.Code != http.StatusBadRequest {
-				t.Fatalf("invalid revision status = %d body = %s", response.Code, response.Body.String())
+			_, err := (&guestRPCServer{api: server}).WriteFile(context.Background(), &pb.FileWrite{Path: "/workspace/invalid-revision.txt", ExpectedRevision: revision})
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("invalid revision = %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(server.workspace.root, "invalid-revision.txt")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("invalid revision created a file: %v", err)
+				t.Fatalf("invalid revision created file: %v", err)
 			}
 		})
 	}
@@ -499,21 +331,18 @@ func TestFileAPIRejectsStaleAndCreateOnlyRevisions(t *testing.T) {
 		t.Fatalf("change document outside API: %v", err)
 	}
 
-	write := func(expectedRevision string, content string) *httptest.ResponseRecorder {
+	write := func(expectedRevision string, content string) *fileOperationResult {
 		t.Helper()
-		body, err := json.Marshal(writeFileRequest{
-			Path:             "/document.txt",
-			Content:          base64.StdEncoding.EncodeToString([]byte(content)),
+		body := fileWriteInput{
+			Path:             "/workspace/document.txt",
+			Content:          []byte(content),
 			ExpectedRevision: expectedRevision,
-		})
-		if err != nil {
-			t.Fatalf("marshal write request: %v", err)
 		}
-		return performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+		return fileResult(server.writeFile(body))
 	}
 
 	response := write(revisionForContent([]byte("before")), "replacement")
-	if response.Code != http.StatusConflict {
+	if response.Code != codes.Aborted {
 		t.Fatalf("stale write status = %d body = %s", response.Code, response.Body.String())
 	}
 	var conflict revisionConflictResponse
@@ -529,7 +358,7 @@ func TestFileAPIRejectsStaleAndCreateOnlyRevisions(t *testing.T) {
 	}
 
 	response = write(missingFileRevision, "create-only")
-	if response.Code != http.StatusConflict {
+	if response.Code != codes.Aborted {
 		t.Fatalf("create-only existing write status = %d body = %s", response.Code, response.Body.String())
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
@@ -540,16 +369,13 @@ func TestFileAPIRejectsStaleAndCreateOnlyRevisions(t *testing.T) {
 	}
 
 	missingTarget := filepath.Join(server.workspace.root, "new-document.txt")
-	body, err := json.Marshal(writeFileRequest{
-		Path:             "/new-document.txt",
-		Content:          base64.StdEncoding.EncodeToString([]byte("create")),
+	body := fileWriteInput{
+		Path:             "/workspace/new-document.txt",
+		Content:          []byte("create"),
 		ExpectedRevision: wantCurrent,
-	})
-	if err != nil {
-		t.Fatalf("marshal missing-target request: %v", err)
 	}
-	response = performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-	if response.Code != http.StatusConflict {
+	response = fileResult(server.writeFile(body))
+	if response.Code != codes.Aborted {
 		t.Fatalf("missing-target stale write status = %d body = %s", response.Code, response.Body.String())
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
@@ -573,7 +399,7 @@ func TestFileAPIConcurrentWritersUseOneMatchingRevision(t *testing.T) {
 	wantInitial := revisionForContent([]byte("base"))
 	type result struct {
 		content  string
-		response *httptest.ResponseRecorder
+		response *fileOperationResult
 		revision string
 	}
 	start := make(chan struct{})
@@ -581,17 +407,13 @@ func TestFileAPIConcurrentWritersUseOneMatchingRevision(t *testing.T) {
 	for _, content := range []string{"first writer", "second writer"} {
 		content := content
 		go func() {
-			body, err := json.Marshal(writeFileRequest{
-				Path:             "/concurrent.txt",
-				Content:          base64.StdEncoding.EncodeToString([]byte(content)),
+			body := fileWriteInput{
+				Path:             "/workspace/concurrent.txt",
+				Content:          []byte(content),
 				ExpectedRevision: wantInitial,
-			})
-			if err != nil {
-				results <- result{content: content, revision: "marshal error: " + err.Error()}
-				return
 			}
 			<-start
-			results <- result{content: content, response: performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)}
+			results <- result{content: content, response: fileResult(server.writeFile(body))}
 		}()
 	}
 	close(start)
@@ -603,12 +425,12 @@ func TestFileAPIConcurrentWritersUseOneMatchingRevision(t *testing.T) {
 			t.Fatalf("concurrent writer %q failed before request: %s", current.content, current.revision)
 		}
 		switch current.response.Code {
-		case http.StatusOK:
+		case codes.OK:
 			if winner.response != nil {
 				t.Fatalf("both concurrent writes succeeded: %#v and %#v", winner.response, current.response)
 			}
 			winner = current
-		case http.StatusConflict:
+		case codes.Aborted:
 			if loser.response != nil {
 				t.Fatalf("both concurrent writes conflicted: %#v and %#v", loser.response, current.response)
 			}
@@ -669,16 +491,13 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 			name: "write",
 			run: func(t *testing.T, server *apiServer) {
 				t.Helper()
-				body, err := json.Marshal(writeFileRequest{
-					Path:             "/written.txt",
-					Content:          base64.StdEncoding.EncodeToString([]byte("visible")),
+				body := fileWriteInput{
+					Path:             "/workspace/written.txt",
+					Content:          []byte("visible"),
 					ExpectedRevision: missingFileRevision,
-				})
-				if err != nil {
-					t.Fatalf("marshal write request: %v", err)
 				}
-				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-				if response.Code < http.StatusBadRequest {
+				response := fileResult(server.writeFile(body))
+				if response.Code == codes.OK {
 					t.Fatalf("write acknowledgement status = %d body = %s", response.Code, response.Body.String())
 				}
 				content, err := os.ReadFile(filepath.Join(server.workspace.root, "written.txt"))
@@ -691,9 +510,9 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 			name: "mkdir",
 			run: func(t *testing.T, server *apiServer) {
 				t.Helper()
-				body := []byte(`{"path":"/created/nested"}`)
-				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/directory", body)
-				if response.Code < http.StatusBadRequest {
+				body := pathRequest{Path: "/workspace/created/nested"}
+				response := fileResult(server.createDirectory(body))
+				if response.Code == codes.OK {
 					t.Fatalf("mkdir acknowledgement status = %d body = %s", response.Code, response.Body.String())
 				}
 				info, err := os.Stat(filepath.Join(server.workspace.root, "created", "nested"))
@@ -710,9 +529,9 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 				if err := os.WriteFile(source, []byte("moved"), 0o640); err != nil {
 					t.Fatalf("write move source: %v", err)
 				}
-				body := []byte(`{"sourcePath":"/source.txt","destinationPath":"/moved.txt"}`)
-				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
-				if response.Code < http.StatusBadRequest {
+				body := moveFileRequest{SourcePath: "/workspace/source.txt", DestinationPath: "/workspace/moved.txt"}
+				response := fileResult(server.moveFile(body))
+				if response.Code == codes.OK {
 					t.Fatalf("move acknowledgement status = %d body = %s", response.Code, response.Body.String())
 				}
 				content, err := os.ReadFile(filepath.Join(server.workspace.root, "moved.txt"))
@@ -732,9 +551,9 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 				if err := os.WriteFile(target, []byte("gone"), 0o640); err != nil {
 					t.Fatalf("write delete target: %v", err)
 				}
-				body := []byte(`{"path":"/deleted.txt","recursive":false}`)
-				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodDelete, "/v1/files", body)
-				if response.Code < http.StatusBadRequest {
+				body := deleteFileRequest{Path: "/workspace/deleted.txt", Recursive: false}
+				response := fileResult(server.deleteFile(body))
+				if response.Code == codes.OK {
 					t.Fatalf("delete acknowledgement status = %d body = %s", response.Code, response.Body.String())
 				}
 				if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
@@ -781,17 +600,14 @@ func TestFileAPIAtomicWritePreservesExecutableMode(t *testing.T) {
 	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 1\n"), 0o750); err != nil {
 		t.Fatalf("write executable fixture: %v", err)
 	}
-	body, err := json.Marshal(writeFileRequest{
-		Path:             "/script.sh",
-		Content:          base64.StdEncoding.EncodeToString([]byte("#!/bin/sh\nexit 0\n")),
+	body := fileWriteInput{
+		Path:             "/workspace/script.sh",
+		Content:          []byte("#!/bin/sh\nexit 0\n"),
 		ExpectedRevision: revisionForContent([]byte("#!/bin/sh\nexit 1\n")),
-	})
-	if err != nil {
-		t.Fatalf("marshal write request: %v", err)
 	}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.writeFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
 	}
 	info, err := os.Stat(target)
@@ -817,8 +633,8 @@ func TestFileAPIRejectsSymlinkEscape(t *testing.T) {
 		t.Fatalf("os.Symlink() error = %v", err)
 	}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodGet, "/v1/files/content?path=%2Fescape%2Fsecret", nil)
-	if response.Code != http.StatusForbidden {
+	response := fileReadResult(server.readFileSnapshot("/workspace/escape/secret"))
+	if response.Code != codes.PermissionDenied {
 		t.Fatalf("escape status = %d body = %s", response.Code, response.Body.String())
 	}
 }
@@ -840,26 +656,18 @@ func TestFileAPIRejectsSymlinkIntoInternalMetadata(t *testing.T) {
 		t.Fatalf("os.Symlink() error = %v", err)
 	}
 
-	readResponse := performAuthorizedRequest(
-		server.authenticatedRoutes(),
-		http.MethodGet,
-		"/v1/files/content?path=%2Fvisible%2Fauth.json",
-		nil,
-	)
-	if readResponse.Code != http.StatusNotFound {
+	readResponse := fileReadResult(server.readFileSnapshot("/workspace/visible/auth.json"))
+	if readResponse.Code != codes.NotFound {
 		t.Fatalf("internal symlink read status = %d body = %s", readResponse.Code, readResponse.Body.String())
 	}
 
-	writeBody, err := json.Marshal(writeFileRequest{
-		Path:             "/visible/injected.json",
-		Content:          base64.StdEncoding.EncodeToString([]byte("blocked")),
+	writeBody := fileWriteInput{
+		Path:             "/workspace/visible/injected.json",
+		Content:          []byte("blocked"),
 		ExpectedRevision: missingFileRevision,
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	writeResponse := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", writeBody)
-	if writeResponse.Code != http.StatusNotFound {
+	writeResponse := fileResult(server.writeFile(writeBody))
+	if writeResponse.Code != codes.NotFound {
 		t.Fatalf("internal symlink write status = %d body = %s", writeResponse.Code, writeResponse.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(internal, "injected.json")); !errors.Is(err, os.ErrNotExist) {
@@ -879,21 +687,18 @@ func TestFileAPIMoveReportsTheLogicalSymlinkEntryPath(t *testing.T) {
 	if err := os.Symlink("target.txt", filepath.Join(server.workspace.root, "link.txt")); err != nil {
 		t.Fatalf("create symlink: %v", err)
 	}
-	id, events, err := server.fileWatcher.subscribe(0, "/link.txt", "")
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace/link.txt", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
-	body, err := json.Marshal(moveFileRequest{SourcePath: "/link.txt", DestinationPath: "/moved-link.txt"})
-	if err != nil {
-		t.Fatalf("marshal move request: %v", err)
-	}
+	body := moveFileRequest{SourcePath: "/workspace/link.txt", DestinationPath: "/workspace/moved-link.txt"}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.moveFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
 	}
-	if event := <-events; event.Kind != "renamed" || event.PreviousPath != "/link.txt" || event.Path != "/moved-link.txt" {
+	if event := <-events; event.Kind != "renamed" || event.PreviousPath != "/workspace/link.txt" || event.Path != "/workspace/moved-link.txt" {
 		t.Fatalf("symlink move event = %#v, want logical entry paths", event)
 	}
 	info, err := os.Lstat(filepath.Join(server.workspace.root, "moved-link.txt"))
@@ -921,21 +726,18 @@ func TestFileAPIMoveCorrelatesRawEventsThroughSymlinkedParent(t *testing.T) {
 	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
 		t.Fatalf("create parent symlink: %v", err)
 	}
-	id, events, err := server.fileWatcher.subscribe(0, "/", actual)
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace", actual)
 	if err != nil {
 		t.Fatalf("subscribe canonical parent: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
-	body, err := json.Marshal(moveFileRequest{
-		SourcePath:      "/alias/source.txt",
-		DestinationPath: "/alias/moved.txt",
-	})
-	if err != nil {
-		t.Fatalf("marshal move request: %v", err)
+	body := moveFileRequest{
+		SourcePath:      "/workspace/alias/source.txt",
+		DestinationPath: "/workspace/alias/moved.txt",
 	}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.moveFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
 	}
 	paired := false
@@ -944,7 +746,7 @@ func TestFileAPIMoveCorrelatesRawEventsThroughSymlinkedParent(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			if event.Kind != "renamed" || event.PreviousPath != "/alias/source.txt" || event.Path != "/alias/moved.txt" {
+			if event.Kind != "renamed" || event.PreviousPath != "/workspace/alias/source.txt" || event.Path != "/workspace/alias/moved.txt" {
 				t.Fatalf("symlink-parent move event = %#v, want one logical paired rename", event)
 			}
 			if paired {
@@ -977,54 +779,43 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 		t.Fatalf("create parent symlink: %v", err)
 	}
 
-	streamServer := httptest.NewServer(server.authenticatedRoutes())
-	defer streamServer.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	client, _ := rpcTestClient(t, server)
+	ctx, cancel := context.WithCancel(rpcTestContext(t))
 	defer cancel()
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		streamServer.URL+"/v1/files/watch?path=%2Falias",
-		nil,
-	)
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace/alias", After: nil})
 	if err != nil {
-		t.Fatalf("create watch request: %v", err)
+		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
-	response, err := streamServer.Client().Do(request)
-	if err != nil {
-		t.Fatalf("watch files: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
+	if _, err := stream.Header(); err != nil {
+		t.Fatal(err)
 	}
 
-	body, err := json.Marshal(moveFileRequest{
-		SourcePath:      "/alias/source.txt",
-		DestinationPath: "/alias/moved.txt",
-	})
-	if err != nil {
-		t.Fatalf("marshal move request: %v", err)
+	body := moveFileRequest{
+		SourcePath:      "/workspace/alias/source.txt",
+		DestinationPath: "/workspace/alias/moved.txt",
 	}
-	moveResponse := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
-	if moveResponse.Code != http.StatusOK {
+	moveResponse := fileResult(server.moveFile(body))
+	if moveResponse.Code != codes.OK {
 		t.Fatalf("move status = %d body = %s", moveResponse.Code, moveResponse.Body.String())
 	}
 
 	result := make(chan struct {
-		event fileEvent
+		event *pb.FileEvent
 		err   error
 	}, 1)
 	go func() {
-		decoder := json.NewDecoder(response.Body)
 		for {
-			var event fileEvent
-			decodeErr := decoder.Decode(&event)
-			if decodeErr != nil || event.Kind != "reset" {
+			event, decodeErr := stream.Recv()
+			if decodeErr != nil {
 				result <- struct {
-					event fileEvent
+					event *pb.FileEvent
+					err   error
+				}{err: decodeErr}
+				return
+			}
+			if event.Kind != "reset" {
+				result <- struct {
+					event *pb.FileEvent
 					err   error
 				}{event: event, err: decodeErr}
 				return
@@ -1037,8 +828,8 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 			t.Fatalf("decode watch event: %v", decoded.err)
 		}
 		if decoded.event.Kind != "renamed" ||
-			decoded.event.PreviousPath != "/alias/source.txt" ||
-			decoded.event.Path != "/alias/moved.txt" {
+			decoded.event.PreviousPath != "/workspace/alias/source.txt" ||
+			decoded.event.Path != "/workspace/alias/moved.txt" {
 			t.Fatalf("watch event = %#v, want logical paired rename", decoded.event)
 		}
 	case <-time.After(time.Second):
@@ -1049,44 +840,30 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/historical.txt"})
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/workspace/historical.txt"})
 
-	streamServer := httptest.NewServer(server.authenticatedRoutes())
-	defer streamServer.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	client, _ := rpcTestClient(t, server)
+	ctx, cancel := context.WithCancel(rpcTestContext(t))
 	defer cancel()
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		streamServer.URL+"/v1/files/watch?path=%2F",
-		nil,
-	)
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace", After: nil})
 	if err != nil {
-		t.Fatalf("create watch request: %v", err)
+		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
-	response, err := streamServer.Client().Do(request)
-	if err != nil {
-		t.Fatalf("watch files: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
+	if _, err := stream.Header(); err != nil {
+		t.Fatal(err)
 	}
 
 	result := make(chan struct {
-		events []fileEvent
+		events []*pb.FileEvent
 		err    error
 	}, 1)
 	go func() {
-		decoder := json.NewDecoder(response.Body)
-		events := make([]fileEvent, 0, 2)
+		events := make([]*pb.FileEvent, 0, 2)
 		for range 2 {
-			var event fileEvent
-			if decodeErr := decoder.Decode(&event); decodeErr != nil {
+			event, decodeErr := stream.Recv()
+			if decodeErr != nil {
 				result <- struct {
-					events []fileEvent
+					events []*pb.FileEvent
 					err    error
 				}{events: events, err: decodeErr}
 				return
@@ -1094,11 +871,11 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 			events = append(events, event)
 		}
 		result <- struct {
-			events []fileEvent
+			events []*pb.FileEvent
 			err    error
 		}{events: events}
 	}()
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/current.txt"})
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/workspace/current.txt"})
 	select {
 	case decoded := <-result:
 		if decoded.err != nil {
@@ -1107,10 +884,10 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 		if len(decoded.events) != 2 {
 			t.Fatalf("watch events = %#v, want snapshot and current event", decoded.events)
 		}
-		if snapshot := decoded.events[0]; snapshot.Sequence != 1 || snapshot.Kind != "reset" || snapshot.Path != "/" {
+		if snapshot := decoded.events[0]; snapshot.Sequence != 1 || snapshot.Kind != "reset" || snapshot.Path != "/workspace" {
 			t.Fatalf("watch snapshot = %#v, want starting cursor 1", snapshot)
 		}
-		if current := decoded.events[1]; current.Sequence != 2 || current.Path != "/current.txt" {
+		if current := decoded.events[1]; current.Sequence != 2 || current.Path != "/workspace/current.txt" {
 			t.Fatalf("current watch event = %#v, want post-subscription event", current)
 		}
 	case <-time.After(time.Second):
@@ -1121,7 +898,7 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	id, events, err := server.fileWatcher.subscribeCurrent("/", server.workspace.realRoot)
+	id, events, err := server.fileWatcher.subscribeCurrent("/workspace", server.workspace.realRoot)
 	if err != nil {
 		t.Fatalf("subscribe from current sequence: %v", err)
 	}
@@ -1129,7 +906,7 @@ func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
 
 	select {
 	case event := <-events:
-		if event.Sequence != 0 || event.Kind != "reset" || event.Path != "/" {
+		if event.Sequence != 0 || event.Kind != "reset" || event.Path != "/workspace" {
 			t.Fatalf("initial watch snapshot = %#v, want zero starting cursor", event)
 		}
 	case <-time.After(time.Second):
@@ -1140,34 +917,25 @@ func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
 func TestWatchFilesExplicitZeroReplaysHistoricalEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/historical.txt"})
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/workspace/historical.txt"})
 
-	streamServer := httptest.NewServer(server.authenticatedRoutes())
-	defer streamServer.Close()
-	request, err := http.NewRequest(
-		http.MethodGet,
-		streamServer.URL+"/v1/files/watch?path=%2F&after=0",
-		nil,
-	)
+	client, _ := rpcTestClient(t, server)
+	ctx, cancel := context.WithCancel(rpcTestContext(t))
+	defer cancel()
+	zero := uint64(0)
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace", After: &zero})
 	if err != nil {
-		t.Fatalf("create watch request: %v", err)
+		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
-	response, err := streamServer.Client().Do(request)
-	if err != nil {
-		t.Fatalf("watch files: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
+	if _, err := stream.Header(); err != nil {
+		t.Fatal(err)
 	}
 
-	var event fileEvent
-	if err := json.NewDecoder(response.Body).Decode(&event); err != nil {
-		t.Fatalf("decode replay event: %v", err)
+	event, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if event.Sequence != 1 || event.Kind != "changed" || event.Path != "/historical.txt" {
+	if event.Sequence != 1 || event.Kind != "changed" || event.Path != "/workspace/historical.txt" {
 		t.Fatalf("replay event = %#v, want historical event at sequence 1", event)
 	}
 }
@@ -1191,21 +959,18 @@ func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
 	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
 		t.Fatalf("create parent symlink: %v", err)
 	}
-	id, events, err := server.fileWatcher.subscribe(0, "/", actual)
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace", actual)
 	if err != nil {
 		t.Fatalf("subscribe canonical parent: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
-	body, err := json.Marshal(moveFileRequest{
-		SourcePath:      "/alias/link.txt",
-		DestinationPath: "/alias/moved-link.txt",
-	})
-	if err != nil {
-		t.Fatalf("marshal move request: %v", err)
+	body := moveFileRequest{
+		SourcePath:      "/workspace/alias/link.txt",
+		DestinationPath: "/workspace/alias/moved-link.txt",
 	}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.moveFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
 	}
 	paired := false
@@ -1214,7 +979,7 @@ func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			if event.Kind != "renamed" || event.PreviousPath != "/alias/link.txt" || event.Path != "/alias/moved-link.txt" {
+			if event.Kind != "renamed" || event.PreviousPath != "/workspace/alias/link.txt" || event.Path != "/workspace/alias/moved-link.txt" {
 				t.Fatalf("combined-symlink move event = %#v, want one logical paired rename", event)
 			}
 			if paired {
@@ -1246,16 +1011,13 @@ func TestFileAPIMoveDoesNotDependOnSpareWatcherCapacity(t *testing.T) {
 	}
 	server.fileWatcher.mu.Lock()
 	for index := range fileWatchDirectoryLimit {
-		server.fileWatcher.watched[fmt.Sprintf("/already-watched/%03d", index)] = 1
+		server.fileWatcher.watched[fmt.Sprintf("/workspace/already-watched/%03d", index)] = 1
 	}
 	server.fileWatcher.mu.Unlock()
-	body, err := json.Marshal(moveFileRequest{SourcePath: "/source.txt", DestinationPath: "/destination/moved.txt"})
-	if err != nil {
-		t.Fatalf("marshal move request: %v", err)
-	}
+	body := moveFileRequest{SourcePath: "/workspace/source.txt", DestinationPath: "/workspace/destination/moved.txt"}
 
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
-	if response.Code != http.StatusOK {
+	response := fileResult(server.moveFile(body))
+	if response.Code != codes.OK {
 		t.Fatalf("move at watcher limit status = %d body = %s", response.Code, response.Body.String())
 	}
 	content, err := os.ReadFile(filepath.Join(server.workspace.root, "destination", "moved.txt"))
@@ -1279,8 +1041,8 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 	}{
 		{
 			name:        "previous destination becomes source",
-			source:      "/b.txt",
-			destination: "/c.txt",
+			source:      "/workspace/b.txt",
+			destination: "/workspace/c.txt",
 		},
 		{
 			name: "previous source becomes destination",
@@ -1290,8 +1052,8 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 					t.Fatalf("write replacement source: %v", err)
 				}
 			},
-			source:      "/c.txt",
-			destination: "/a.txt",
+			source:      "/workspace/c.txt",
+			destination: "/workspace/a.txt",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1309,30 +1071,27 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 			if err := os.WriteFile(filepath.Join(server.workspace.root, "a.txt"), []byte("original"), 0o640); err != nil {
 				t.Fatalf("write initial source: %v", err)
 			}
-			move := func(source string, destination string) *httptest.ResponseRecorder {
+			move := func(source string, destination string) *fileOperationResult {
 				t.Helper()
-				body, err := json.Marshal(moveFileRequest{SourcePath: source, DestinationPath: destination})
-				if err != nil {
-					t.Fatalf("marshal move request: %v", err)
-				}
-				return performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+				body := moveFileRequest{SourcePath: source, DestinationPath: destination}
+				return fileResult(server.moveFile(body))
 			}
 
-			if response := move("/a.txt", "/b.txt"); response.Code != http.StatusOK {
+			if response := move("/workspace/a.txt", "/workspace/b.txt"); response.Code != codes.OK {
 				t.Fatalf("initial move status = %d body = %s", response.Code, response.Body.String())
 			}
 			if test.prepare != nil {
 				test.prepare(t, server)
 			}
-			if response := move(test.source, test.destination); response.Code != http.StatusOK {
+			if response := move(test.source, test.destination); response.Code != codes.OK {
 				t.Fatalf("follow-up move status = %d body = %s", response.Code, response.Body.String())
 			}
-			content, err := os.ReadFile(filepath.Join(server.workspace.root, strings.TrimPrefix(test.destination, "/")))
+			content, err := os.ReadFile(filepath.Join(server.workspace.root, strings.TrimPrefix(test.destination, "/workspace/")))
 			if err != nil {
 				t.Fatalf("read follow-up destination: %v", err)
 			}
 			want := "original"
-			if test.source == "/c.txt" {
+			if test.source == "/workspace/c.txt" {
 				want = "replacement"
 			}
 			if string(content) != want {
@@ -1349,16 +1108,40 @@ func TestFileAPIHidesTengriAndCodexMetadata(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(server.workspace.root, name), 0o700); err != nil {
 			t.Fatalf("create metadata directory: %v", err)
 		}
-		response := performAuthorizedRequest(
-			server.authenticatedRoutes(),
-			http.MethodGet,
-			"/v1/files/content?path=%2F"+name+"%2Fconfig.json",
-			nil,
-		)
-		if response.Code != http.StatusNotFound {
+		response := fileReadResult(server.readFileSnapshot("/workspace/" + name + "/config.json"))
+		if response.Code != codes.NotFound {
 			t.Fatalf("%s read status = %d body = %s", name, response.Code, response.Body.String())
 		}
 	}
+}
+
+type revisionConflictResponse struct {
+	Error           string `json:"error"`
+	CurrentRevision string `json:"currentRevision,omitempty"`
+}
+
+type fileOperationResult struct {
+	Code     codes.Code
+	Body     *bytes.Buffer
+	Revision string
+}
+
+func fileResult[T any](value T, err error) *fileOperationResult {
+	result := &fileOperationResult{Code: codes.OK, Body: new(bytes.Buffer)}
+	if err != nil {
+		failure := workspaceFailure(err)
+		result.Code = status.Code(rpcOperationError(err))
+		_ = json.NewEncoder(result.Body).Encode(revisionConflictResponse{Error: failure.message, CurrentRevision: failure.currentRevision})
+		return result
+	}
+	_ = json.NewEncoder(result.Body).Encode(value)
+	return result
+}
+func fileReadResult(value fileReadSnapshot, err error) *fileOperationResult {
+	if err != nil {
+		return fileResult(value, err)
+	}
+	return &fileOperationResult{Code: codes.OK, Body: bytes.NewBuffer(value.content), Revision: value.revision}
 }
 
 func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
@@ -1400,6 +1183,9 @@ func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
 	target := "/v1/preview/43210/hello?mode=full"
 	request := httptest.NewRequest(http.MethodGet, target, nil)
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	request.Header.Set("Connection", "keep-alive, X-Internal")
 	request.Header.Set("Forwarded", "for=203.0.113.7")
 	request.Header.Set("Keep-Alive", "timeout=5")
@@ -1411,7 +1197,7 @@ func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
 	request.Header.Set("X-Forwarded-Proto", "https")
 	request.Header.Set("X-Internal", "private")
 	response := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(response, request)
+	server.previewRoutes().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Body.String() != "guest:/hello?mode=full" {
 		t.Fatalf("preview response = status %d body %q", response.Code, response.Body.String())
 	}
@@ -1433,10 +1219,13 @@ func TestBeginShutdownCancelsActivePreviewRequests(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/preview/43210/events", nil)
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	response := httptest.NewRecorder()
 	handled := make(chan struct{})
 	go func() {
-		server.authenticatedRoutes().ServeHTTP(response, request)
+		server.previewRoutes().ServeHTTP(response, request)
 		close(handled)
 	}()
 
@@ -1461,7 +1250,7 @@ func TestBeginShutdownCancelsActivePreviewRequests(t *testing.T) {
 	}
 
 	rejected := performAuthorizedRequest(
-		server.authenticatedRoutes(),
+		server.previewRoutes(),
 		http.MethodGet,
 		"/v1/preview/43210/events",
 		nil,
@@ -1485,7 +1274,7 @@ func TestPreviewApplicationCannotSpoofNanoagentAuthenticationFailure(t *testing.
 	})
 
 	response := performAuthorizedRequest(
-		server.authenticatedRoutes(),
+		server.previewRoutes(),
 		http.MethodGet,
 		"/v1/preview/43210/private",
 		nil,
@@ -1501,8 +1290,8 @@ func TestPreviewApplicationCannotSpoofNanoagentAuthenticationFailure(t *testing.
 func TestPreviewRejectsReservedAndPrivilegedPorts(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	for _, port := range []string{"0", "22", "8080", "65536", "not-a-port"} {
-		response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodGet, "/v1/preview/"+port+"/", nil)
+	for _, port := range []string{"0", "22", "8080", "8443", "65536", "not-a-port"} {
+		response := performAuthorizedRequest(server.previewRoutes(), http.MethodGet, "/v1/preview/"+port+"/workspace", nil)
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("preview port %q status = %d body = %q", port, response.Code, response.Body.String())
 		}
@@ -1544,18 +1333,21 @@ func TestPreviewProxiesWebSocketUpgradesToGuestLoopback(t *testing.T) {
 	upstreamOrigin = upstreamURL.Scheme + "://" + upstreamURL.Host
 
 	server := testAPIServer(t)
-	nanoagent := httptest.NewServer(server.authenticatedRoutes())
+	nanoagent := httptest.NewServer(server.previewRoutes())
 	t.Cleanup(nanoagent.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	previewRequest := httptest.NewRequest(http.MethodGet, "/v1/preview/"+upstreamURL.Port()+"/hmr", nil)
+	previewRequest.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	previewRequest.Header.Set("Origin", "https://tengri-session.proompteng.ai")
+	if err := signFixturePreview(previewRequest, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	connection, response, err := websocket.Dial(
 		ctx,
 		"ws"+strings.TrimPrefix(nanoagent.URL, "http")+"/v1/preview/"+upstreamURL.Port()+"/hmr",
 		&websocket.DialOptions{
-			HTTPHeader: http.Header{
-				"Authorization": []string{"Bearer test-bootstrap-token"},
-				"Origin":        []string{"https://tengri-session.proompteng.ai"},
-			},
+			HTTPHeader:   previewRequest.Header,
 			Subprotocols: []string{"vite-hmr"},
 		},
 	)
@@ -1591,8 +1383,11 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 func performAuthorizedRequest(handler http.Handler, method string, target string, body []byte) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, target, bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, body, nil); err != nil {
+		panic(err)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(fixtureDeadlineRecorder{response}, request)
 	return response
 }

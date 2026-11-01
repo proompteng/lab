@@ -11,32 +11,20 @@ For current truth, start with:
 - `services/torghut/**`
 - live `/readyz`, `/trading/status`, `/trading/revenue-repair`, and `/trading/consumer-evidence` responses
 
-## Foundational Contracts
+## Retained Contract Entry Points
 
-- `01-beyond-tsmom-system-architecture-and-latency-model.md`
-- `02-regime-adaptive-expert-router-design.md`
-- `03-dspy-llm-decision-layer-over-jangar.md`
-- `04-alpha-discovery-and-autonomous-improvement-pipeline.md`
-- `05-evaluation-benchmark-and-contamination-control-standard.md`
-- `06-production-rollout-operations-and-governance.md`
-- `07-hmm-regime-state-and-autonomous-llm-control-plane-2026-02-28.md`
 - `08-profitability-research-validation-execution-governance-system.md`
-- `09-external-benchmark-parity-suite-ai-trader-fev-gift.md`
-- `10-timesfm-foundation-model-router-parity.md`
-- `11-deeplob-bdlob-microstructure-intelligence.md`
-- `13-production-gap-closure-master-plan-2026-03-03.md`
+- `14-legacy-gap-disposition-map-2026-03-03.md`
+- `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 
-These files describe the original v6 program. Their status language is historical unless current source, GitOps, tests,
-and runtime evidence independently confirm it.
+These contracts remain referenced by the implementation or tests. Their dated decisions and status language require
+current source, GitOps, tests, and runtime evidence before use in an operational decision. The legacy disposition
+table links to removed proposals at their last retained Git revision.
 
 ## Retained Evidence Maps
 
 - `29-completion-matrix-2026-03-07.yaml` is machine-consumed by Torghut completion-trace tests and must remain aligned
   with the runtime matrix.
-- `30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md` records the program's historical
-  disposition and rollout gates.
-- `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md` records the historical integrated-system
-  design.
 
 ## Later Design Records
 

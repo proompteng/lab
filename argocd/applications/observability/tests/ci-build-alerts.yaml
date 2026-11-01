@@ -1,0 +1,234 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: a sustained queue fires and recovery clears it
+    interval: 1m
+    input_series:
+      - series: up{job="ci-observability"}
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_oldest_queue_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build"}
+        values: 900+0x8 0+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiBuildQueueDelay",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname="CiBuildQueueDelay",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="CiBuildQueueDelay",alertstate="firing"}) or vector(0)
+        eval_time: 15m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: stale observations cannot produce queue alerts
+    interval: 1m
+    input_series:
+      - series: up{job="ci-observability"}
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+0x30
+      - series: ci_job_oldest_queue_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build"}
+        values: 900+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiBuildQueueDelay",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname="CiObservabilityCollectionStale",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+  - name: a well sampled matched median regression fires
+    interval: 1m
+    input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_duration_percentile_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="warm",percentile="50",window="1h"}
+        values: 500+0x30
+      - series: ci_job_duration_percentile_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="warm",percentile="50",window="7d_baseline"}
+        values: 100+0x30
+      - series: ci_job_duration_samples{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="warm",window="1h"}
+        values: 5+0x30
+      - series: ci_job_duration_samples{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="warm",window="7d_baseline"}
+        values: 20+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiBuildDurationRegression",alertstate="firing"}) or vector(0)
+        eval_time: 9m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname="CiBuildDurationRegression",alertstate="firing"}) or vector(0)
+        eval_time: 11m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+  - name: one cold build cannot satisfy the sample gate
+    interval: 1m
+    input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_duration_percentile_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="cold",percentile="50",window="1h"}
+        values: 1200+0x30
+      - series: ci_job_duration_percentile_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="cold",percentile="50",window="7d_baseline"}
+        values: 100+0x30
+      - series: ci_job_duration_samples{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="cold",window="1h"}
+        values: 1+0x30
+      - series: ci_job_duration_samples{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="cold",window="7d_baseline"}
+        values: 20+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiBuildDurationRegression",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: missing scraping and delayed fresh attempts have independent alerts
+    interval: 1m
+    input_series:
+      - series: ci_observability_oldest_live_pending_seconds
+        values: 0+60x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiObservabilityUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="CiObservabilityCompletionDelayed",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+  - name: initial history progress is healthy and a stalled reader fires then recovers
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_history_scan_timestamp_seconds
+        values: 0+0x50
+      - series: ci_observability_last_history_progress_timestamp_seconds
+        values: 0+60x15 900+0x20 2220+60x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiObservabilityHistoryScanStale",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname="CiObservabilityHistoryScanStale",alertstate="firing"}) or vector(0)
+        eval_time: 32m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="CiObservabilityHistoryScanStale",alertstate="firing"}) or vector(0)
+        eval_time: 38m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: workflow changes retain one runner pool incident
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_poll_timestamp_seconds
+        values: 0+60x30
+      - series: ci_job_oldest_queue_seconds{namespace="arc",workflow="first.yml",architecture="arm64",runner_pool="arc",job_role="build"}
+        values: 900+0x7 stale
+      - series: ci_job_oldest_queue_seconds{namespace="arc",workflow="second.yml",architecture="arm64",runner_pool="arc",job_role="build"}
+        values: 0+0x6 1000+0x10 stale
+      - series: ci_job_oldest_queue_seconds{namespace="arc",workflow="publish.yml",architecture="amd64",runner_pool="hosted",job_role="publish"}
+        values: 1200+0x30
+    promql_expr_test:
+      - expr: ALERTS{alertname="CiBuildQueueDelay",alertstate="firing"}
+        eval_time: 12m
+        exp_samples:
+          - labels: 'ALERTS{alertname="CiBuildQueueDelay",alertstate="firing",namespace="arc",service="ci-observability",architecture="arm64",runner_pool="arc",severity="warning",team="platform",notify="email"}'
+            value: 1
+      - expr: count(ALERTS{alertname="CiBuildQueueDelay",alertstate="firing"}) or vector(0)
+        eval_time: 24m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: a saturated metric tenant pages before downstream telemetry disappears
+    interval: 1m
+    input_series:
+      - series: cortex_discarded_samples_total{job="mimir-ingester",reason="per_user_series_limit",pod="one"}
+        values: 0+10x20
+      - series: cortex_ingester_memory_series{job="mimir-ingester",pod="one"}
+        values: 50000+0x20
+      - series: cortex_ingester_memory_series{job="mimir-ingester",pod="two"}
+        values: 50000+0x20
+      - series: cortex_ingester_memory_series{job="mimir-ingester",pod="three"}
+        values: 50000+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="MimirSeriesLimitExceeded",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="MimirIngestionObservationUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: live series allowance warns without inventing a rejected sample
+    interval: 1m
+    input_series:
+      - series: cortex_ingester_memory_series{job="mimir-ingester",pod="one"}
+        values: 45000+0x20
+      - series: cortex_ingester_local_limits{job="mimir-ingester",pod="one",limit="max_global_series_per_user",user="anonymous"}
+        values: 50000+0x20
+      - series: cortex_discarded_samples_total{job="mimir-ingester",reason="per_user_series_limit",pod="one"}
+        values: 0+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="MimirSeriesCapacityHigh",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="MimirSeriesLimitExceeded",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: API replica changes remain one runtime incident
+    interval: 1m
+    input_series:
+      - series: bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn",instance="first"}
+        values: 0+0x3 1+0x20
+      - series: bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn",instance="second"}
+        values: 1+0x2 0+0x3 1+0x20
+      - series: bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn",instance="first"}
+        values: 1+0x30
+      - series: bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn",instance="second"}
+        values: 1+0x30
+      - series: bayn_cycle_condition{job="bayn",namespace="bayn",service="bayn",instance="first",condition="stalled"}
+        values: 0+0x30
+      - series: bayn_cycle_condition{job="bayn",namespace="bayn",service="bayn",instance="second",condition="stalled"}
+        values: 0+0x30
+      - series: bayn_cycle_condition{job="bayn",namespace="bayn",service="bayn",instance="first",condition="failed"}
+        values: 0+0x30
+      - series: bayn_cycle_condition{job="bayn",namespace="bayn",service="bayn",instance="second",condition="failed"}
+        values: 0+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="BaynRuntimeDegraded",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="BaynRuntimeDegraded",alertstate="firing",instance!=""}) or vector(0)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname="BaynRuntimeDegraded",alertstate="firing"}) or vector(0)
+        eval_time: 14m
+        exp_samples:
+          - labels: '{}'
+            value: 0

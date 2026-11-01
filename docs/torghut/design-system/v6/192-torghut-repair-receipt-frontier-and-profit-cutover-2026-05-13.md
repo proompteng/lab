@@ -1,6 +1,6 @@
 # 192. Torghut Repair Receipt Frontier And Profit Cutover (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

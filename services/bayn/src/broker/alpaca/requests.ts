@@ -10,11 +10,11 @@ import {
   assetObservationSource,
   defaultFillActivitiesPageSize,
   type FillActivitiesQuery,
+  type FeeActivitiesQuery,
   type MarketCalendarQuery,
   type OrdersQuery,
   type ReadEvidence,
 } from './model'
-import { Pipeable } from '../../pipeable'
 
 export const accountConfigurationRequestMaterial = {
   schemaVersion: accountConfigurationObservationSchemaVersion,
@@ -38,12 +38,10 @@ export const accountConfigurationUrl = (connection: BrokerConnection): URL =>
 
 export const positionsUrl = (connection: BrokerConnection): URL => new URL('/v2/positions', connection.baseUrl)
 
-const assetBySymbolUrlDataFirst = (connection: BrokerConnection, requestedSymbol: string): URL =>
+export const assetBySymbolUrl = (connection: BrokerConnection, requestedSymbol: string): URL =>
   new URL(assetRequestMaterial(requestedSymbol).path, connection.baseUrl)
 
-export const assetBySymbolUrl = Pipeable.dual(2, assetBySymbolUrlDataFirst)
-
-const marketCalendarUrlDataFirst = (connection: BrokerConnection, query: MarketCalendarQuery): URL => {
+export const marketCalendarUrl = (connection: BrokerConnection, query: MarketCalendarQuery): URL => {
   const url = new URL('/v2/calendar', connection.baseUrl)
   url.searchParams.set('start', query.start)
   url.searchParams.set('end', query.end)
@@ -51,10 +49,9 @@ const marketCalendarUrlDataFirst = (connection: BrokerConnection, query: MarketC
   return url
 }
 
-export const marketCalendarUrl = Pipeable.dual(2, marketCalendarUrlDataFirst)
-
-const ordersUrlDataFirst = (connection: BrokerConnection, query: OrdersQuery): URL => {
+export const ordersUrl = (connection: BrokerConnection, query: OrdersQuery): URL => {
   const url = new URL('/v2/orders', connection.baseUrl)
+  url.searchParams.set('nested', 'true')
   if (query.status !== undefined) url.searchParams.set('status', query.status)
   if (query.limit !== undefined) url.searchParams.set('limit', String(query.limit))
   if (query.after !== undefined) url.searchParams.set('after', query.after)
@@ -65,34 +62,26 @@ const ordersUrlDataFirst = (connection: BrokerConnection, query: OrdersQuery): U
   return url
 }
 
-export const ordersUrl = Pipeable.dual(2, ordersUrlDataFirst)
-
 export const submitOrderUrl = (connection: BrokerConnection): URL => new URL('/v2/orders', connection.baseUrl)
 
-const orderByIdUrlDataFirst = (connection: BrokerConnection, orderId: string): URL =>
+export const orderByIdUrl = (connection: BrokerConnection, orderId: string): URL =>
   new URL(`/v2/orders/${encodeURIComponent(orderId)}`, connection.baseUrl)
 
-export const orderByIdUrl = Pipeable.dual(2, orderByIdUrlDataFirst)
+export const cancelOrderUrl = (connection: BrokerConnection, orderId: string): URL => orderByIdUrl(connection, orderId)
 
-const cancelOrderUrlDataFirst = (connection: BrokerConnection, orderId: string): URL =>
-  orderByIdUrl(connection, orderId)
-
-export const cancelOrderUrl = Pipeable.dual(2, cancelOrderUrlDataFirst)
-
-const orderByClientIdUrlDataFirst = (connection: BrokerConnection, clientOrderId: string): URL => {
+export const orderByClientIdUrl = (connection: BrokerConnection, clientOrderId: string): URL => {
   const url = new URL('/v2/orders:by_client_order_id', connection.baseUrl)
   url.searchParams.set('client_order_id', clientOrderId)
+  url.searchParams.set('nested', 'true')
   return url
 }
-
-export const orderByClientIdUrl = Pipeable.dual(2, orderByClientIdUrlDataFirst)
 
 export interface FillActivitiesRequest {
   readonly url: URL
   readonly pageSize: number
 }
 
-const fillActivitiesRequestDataFirst = (
+export const fillActivitiesRequest = (
   connection: BrokerConnection,
   query: FillActivitiesQuery,
 ): FillActivitiesRequest => {
@@ -107,9 +96,17 @@ const fillActivitiesRequestDataFirst = (
   return { url, pageSize }
 }
 
-export const fillActivitiesRequest = Pipeable.dual(2, fillActivitiesRequestDataFirst)
+export const feeActivitiesRequest = (
+  connection: BrokerConnection,
+  query: FeeActivitiesQuery,
+): FillActivitiesRequest => {
+  const request = fillActivitiesRequest(connection, query)
+  request.url.pathname = '/v2/account/activities'
+  request.url.searchParams.set('activity_types', 'FEE,CFEE')
+  return request
+}
 
-const responseEvidenceResultDataFirst = (
+export const responseEvidenceResult = (
   headers: typeof ResponseHeadersSchema.Type,
   status: number,
   contentHash: string,
@@ -150,5 +147,3 @@ const responseEvidenceResultDataFirst = (
     ...(rateLimit === undefined ? {} : { rateLimit }),
   })
 }
-
-export const responseEvidenceResult = Pipeable.dual(4, responseEvidenceResultDataFirst)

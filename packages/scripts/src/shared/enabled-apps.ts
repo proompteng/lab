@@ -60,7 +60,9 @@ const earlyNixImageApps = new Set([
   'jangar',
   'oirat',
   'olden',
+  'opencode',
   'proompteng',
+  'relay',
   'sag',
   'symphony',
   'symphony-jangar',
@@ -84,7 +86,9 @@ const appToNixAttr = new Map<string, string>([
   ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],
+  ['opencode', 'opencode-image'],
   ['proompteng', 'proompteng-image'],
+  ['relay', 'relay-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
   ['symphony-jangar', 'symphony-image'],
@@ -98,7 +102,6 @@ const appToNixAttr = new Map<string, string>([
 ])
 
 const appToBuildScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/build-image.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/build-image.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
@@ -107,8 +110,6 @@ const appToBuildScriptPath = new Map<string, string>([
 ])
 
 const appToDeployScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
-  ['bayn', 'packages/scripts/src/bayn/update-manifests.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
@@ -117,6 +118,12 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
+  ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
+  ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
+  ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
+  ['opencode', ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo']],
+  ['relay', ['.github/workflows/relay.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
@@ -153,12 +160,33 @@ type KargoImageContract = {
   reason: string
   repositories: string[]
   workflowPaths: string[]
-}
+} & ({ kind: 'pinned' } | { kind: 'promotion-template'; bootstrapReferences: string[] })
 
 const kargoImageApps = new Map<string, KargoImageContract>([
   [
+    'ofz',
+    {
+      kind: 'promotion-template',
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/ofz:unpromoted'],
+      reason: 'The Ofz API and audit exporter share one verified CI image promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/ofz'],
+      workflowPaths: ['.github/workflows/ofz.yaml', 'argocd/applications/kargo'],
+    },
+  ],
+  [
+    'devbox',
+    {
+      kind: 'promotion-template',
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/codex-devbox:unpublished'],
+      reason: 'The Dragonball development image is built and signed in CI, then promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/codex-devbox'],
+      workflowPaths: ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo'],
+    },
+  ],
+  [
     'tengri',
     {
+      kind: 'pinned',
       reason:
         'Tengri and Nanoagent are built and signed together, then promoted automatically by Kargo after the image workflow succeeds',
       repositories: ['registry.ide-newton.ts.net/lab/nanoagent', 'registry.ide-newton.ts.net/lab/tengri'],
@@ -209,6 +237,51 @@ const listYamlFiles = (dir: string): string[] => {
     }
   }
   return entries.sort()
+}
+
+const listApplicationYamlFiles = (dir: string, visited = new Set<string>()): string[] => {
+  if (!existsSync(dir) || visited.has(dir)) return []
+  visited.add(dir)
+  const kustomization = ['kustomization.yaml', 'kustomization.yml', 'Kustomization']
+    .map((name) => join(dir, name))
+    .find((path) => existsSync(path))
+  if (!kustomization) return listYamlFiles(dir)
+
+  const files = new Set(
+    readdirSync(dir)
+      .map((name) => join(dir, name))
+      .filter((path) => statSync(path).isFile() && /\.(ya?ml)$/.test(path)),
+  )
+  files.add(kustomization)
+  for (const document of readYamlDocuments(kustomization)) {
+    if (!isRecord(document)) continue
+    const paths: unknown[] = [
+      ...(['resources', 'bases', 'components', 'patchesStrategicMerge'] as const).flatMap((field) =>
+        Array.isArray(document[field]) ? document[field] : [],
+      ),
+      ...(['patches', 'patchesJson6902'] as const).flatMap((field) =>
+        Array.isArray(document[field]) ? document[field].flatMap((entry) => (isRecord(entry) ? [entry.path] : [])) : [],
+      ),
+      ...(Array.isArray(document.helmCharts)
+        ? document.helmCharts.flatMap((chart) =>
+            isRecord(chart)
+              ? [chart.valuesFile, ...(Array.isArray(chart.additionalValuesFiles) ? chart.additionalValuesFiles : [])]
+              : [],
+          )
+        : []),
+    ]
+    for (const path of paths) {
+      if (typeof path !== 'string' || /^(?:https?:\/\/|git::)/.test(path)) continue
+      const absolute = resolve(dir, path)
+      if (!existsSync(absolute)) continue
+      if (statSync(absolute).isDirectory()) {
+        for (const input of listApplicationYamlFiles(absolute, visited)) files.add(input)
+      } else if (/\.(ya?ml)$/.test(absolute)) {
+        files.add(absolute)
+      }
+    }
+  }
+  return [...files].sort()
 }
 
 const isEnabledValue = (value: unknown): boolean => {
@@ -358,6 +431,12 @@ const hasCompleteKargoImageOwnership = (entry: EnabledAppInventoryEntry, contrac
     contract.repositories.every((repository) => {
       const referencePrefix = `${repository}@sha256:`
       return entry.repoImages.some((reference) => {
+        if (
+          contract.kind === 'promotion-template' &&
+          imageRepository(reference) === repository &&
+          contract.bootstrapReferences.includes(reference)
+        )
+          return true
         if (!reference.startsWith(referencePrefix)) return false
         const digest = reference.slice(referencePrefix.length)
         return sha256HexPattern.test(digest) && digest !== zeroSha256Hex
@@ -372,7 +451,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
   }
 
   const absolutePath = resolve(root, entry.path)
-  const yamlFiles = listYamlFiles(absolutePath)
+  const yamlFiles = listApplicationYamlFiles(absolutePath)
   const repoImages = new Set<string>()
   let hasHelmChart = false
 

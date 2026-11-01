@@ -79,6 +79,7 @@ const torghutCoBuildPaths = [
   'nix/images/bun-workspace-service.nix',
   'nix/images/bun-workspace-deps-source.nix',
   'nix/images/bun-workspace-deps-source.test.sh',
+  'nix/images/prune-bun-dependency-metadata.sh',
   'nix/check-bun-dependency-closure.sh',
   '.github/workflows/nix-bun-dependency-closure.yml',
   'services/torghut/uv.lock',
@@ -91,6 +92,7 @@ const torghutCoBuildPaths = [
   'patches/**',
   'package.json',
   '.github/workflows/nix-oci-build-common.yml',
+  '.github/workflows/torghut-ta-build-push.yaml',
   '.github/workflows/torghut-post-deploy-verify.yml',
   'nix/oci-push.sh',
   'argocd/applications/torghut/**',
@@ -348,7 +350,7 @@ describe('torghut build-push workflow', () => {
     const landingStep = pullRequestWorkflow.indexOf('- name: Run landing validation')
     const validationStep = pullRequestWorkflow.indexOf('- name: Run selected validation')
     const landingValidation = pullRequestWorkflow.slice(landingStep, validationStep)
-    const browserInstall = landingValidation.indexOf('bunx playwright install --with-deps chromium')
+    const browserInstall = landingValidation.indexOf('node .github/scripts/install-tengri-chromium.mjs')
     const accessibilitySuite = landingValidation.indexOf('bun run --cwd apps/landing test:e2e')
 
     expect(landingStep).toBeGreaterThan(-1)

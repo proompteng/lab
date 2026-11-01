@@ -4,6 +4,9 @@ namespace: local-path-storage
 resources:
   - github.com/rancher/local-path-provisioner/deploy?ref=v0.0.37
   - storageclasses-turin-nvme.yaml
+  - storageclass-ryzen.yaml
+  - storageclass-ci-amd64.yaml
+  - compute-local-admission.yaml
 images:
   - name: rancher/local-path-provisioner
     newName: docker.io/rancher/local-path-provisioner

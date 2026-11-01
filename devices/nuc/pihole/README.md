@@ -34,11 +34,15 @@ Files:
   - web UI ports/theme
   - Tailscale-safe DNS listener mode (`listeningMode = 'ALL'` with firewall restriction)
 - `99-kubernetes-split-dns.conf` contains the Kubernetes and tailnet forwarding rules.
+- `10-galactic-resolver-owner.conf` restores the systemd-resolved uplink symlink before each Tailscale start.
+  The NUC disables resolved's port-53 stub for Pi-hole. Tailscale uses direct mode with the existing uplink DNS
+  servers; resetting the symlink prevents a stale Tailscale header from being mistaken for openresolv after a crash.
 - Pi-hole v6 requires `misc.etc_dnsmasq_d = true` in `pihole.toml` or it will ignore files in `/etc/dnsmasq.d/`.
 - `apply.sh` installs both `pihole.toml` and `99-kubernetes-split-dns.conf`, enables `tailscale --accept-routes`, opens DNS on `tailscale0`, and restarts Pi-hole.
 - `apply-split-dns.sh --check` validates only the forwarding rules and current NUC prerequisites. Its `--apply` mode
   backs up and installs those rules, opens the bounded provider-LAN DNS rules, restarts Pi-hole, and requires public,
-  registry, and Kubernetes A-record answers. Failure restores the previous forwarding file. It preserves the existing
+  registry, and Kubernetes A-record answers, plus NXDOMAIN for absent tailnet A/AAAA names. It also installs the
+  resolver-owner drop-in for the next Tailscale start. Failure restores both files. It preserves the existing
   Pi-hole settings, DHCP leases, credentials, databases, and Tailscale preferences.
 - `apply-dns-firewall.sh --check` verifies the NUC identity and current Tailscale chains. Its `--apply` mode backs up
   the firewall state, installs the service, and changes only Tailscale's netfilter mode to `nodivert`. It preserves
@@ -61,12 +65,13 @@ scp devices/nuc/pihole/pihole.toml kalmyk@192.168.1.130:~/pihole/pihole.toml
 scp devices/nuc/pihole/99-kubernetes-split-dns.conf kalmyk@192.168.1.130:~/pihole/99-kubernetes-split-dns.conf
 scp devices/nuc/pihole/apply.sh kalmyk@192.168.1.130:~/pihole/apply.sh
 scp devices/nuc/pihole/apply-split-dns.sh kalmyk@192.168.1.130:~/pihole/apply-split-dns.sh
+scp devices/nuc/pihole/10-galactic-resolver-owner.conf kalmyk@192.168.1.130:~/pihole/
 scp devices/nuc/pihole/apply-dns-firewall.sh devices/nuc/pihole/galactic-dns-firewall.service kalmyk@192.168.1.130:~/pihole/
 ssh kalmyk@192.168.1.130 'chmod +x ~/pihole/apply*.sh && sudo ~/pihole/apply.sh'
 ```
 
-For the Talos 1.14 maintenance repair, copy the committed forwarding file, both narrow helpers, and the firewall
-service. Run `apply-dns-firewall.sh --check`, then `--apply`, followed by `apply-split-dns.sh --check` and `--apply`.
+For the Talos 1.14 maintenance repair, copy the committed forwarding file, resolver-owner drop-in, both narrow helpers,
+and the firewall service. Run `apply-dns-firewall.sh --check`, then `--apply`, followed by `apply-split-dns.sh --check` and `--apply`.
 Verify public, private registry, and Kubernetes names from a cluster node over the
 provider LAN before syncing the Omni `ResolverConfig`. Repeat the probes through each CoreDNS replica and from a
 pod on each node afterward; require a real registry push from CI. This keeps CoreDNS under Talos ownership.
@@ -84,6 +89,29 @@ over live Docker or UFW changes; the saved snapshots are audit evidence.
 
 The provider subnet is inside `100.64.0.0/10`, so an ordinary UFW allow is insufficient while Tailscale's automatic
 input hook runs first. See [Tailscale netfilter modes](https://tailscale.com/docs/reference/netfilter-modes).
+
+## Recover a stale Tailscale resolver owner
+
+On 2026-10-12, Tailscale 1.102.3 started in `openresolv` mode because `/etc/resolv.conf` retained its own
+`resolvconf-overwrite` header. Ubuntu's `/usr/sbin/resolvconf` is a `resolvectl` compatibility shim; it cannot supply
+the openresolv snippets. Tailscale reported `no upstream resolvers set`, while known MagicDNS hosts still resolved.
+Absent tailnet names returned SERVFAIL. ARC's `ndots:5` and tailnet search suffix made c-ares fail GitHub and Docker
+Hub requests before trying their valid public names. This matches [Tailscale issue 19062](https://github.com/tailscale/tailscale/issues/19062).
+
+Back up `/etc/resolv.conf` and `/etc/resolv.pre-tailscale-backup.conf`, verify the native uplink DNS servers with
+`resolvectl dns`, then restore the owner and restart Tailscale:
+
+```bash
+sudo ln -sfn /run/systemd/resolve/resolv.conf /etc/resolv.conf
+sudo systemctl restart tailscaled
+```
+
+The restart briefly interrupts NUC tailnet connectivity. Keep the current Tailscale identity, accepted routes,
+firewall integration, and DNS preferences. Require `direct` mode with the native public upstreams, the same private
+registry answer, and NXDOMAIN for `github.com.ide-newton.ts.net` in both A and AAAA queries. Then verify Git fetch and
+Docker Hub access from an existing runner using its normal resolver. A successful public A lookup alone missed this
+failure. Install the committed resolver-owner drop-in through `apply-split-dns.sh --apply` to repeat the owner repair
+before future Tailscale starts; validate it with `systemd-analyze verify tailscaled.service`.
 
 ## Verify on NUC
 

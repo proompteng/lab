@@ -6,6 +6,11 @@ resources:
   - tailscale-service.yaml
   - ingressroute-feature-flags-k8s-private.yaml
 
+configMapGenerator:
+  - name: feature-flags-git-cache-repair
+    files:
+      - repair-git-cache.sh
+
 helmCharts:
   - name: flipt-v2
     repo: https://helm.flipt.io

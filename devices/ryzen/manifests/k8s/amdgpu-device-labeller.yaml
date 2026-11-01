@@ -50,6 +50,10 @@ spec:
         lab.proompteng.ai/amdgpu: 'true'
       priorityClassName: system-node-critical
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: CriticalAddonsOnly
           operator: Exists
       containers:

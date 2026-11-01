@@ -9,7 +9,7 @@
 # - `full/` contains the full pruned source tree
 # - `tsconfig.base.json` is copied into the context root by the build script
 # - `skills/` is present at the context root for Codex CLI skills
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG OPENVSCODE_VERSION=1.106.3
 ARG GH_VERSION=2.83.2
@@ -19,8 +19,6 @@ ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
 ARG NATSCLI_VERSION=v0.4.0
 ARG NEOVIM_VERSION=stable
-ARG DOCKER_CLI_VERSION=29.1.2
-ARG BUILDX_VERSION=0.30.1
 ARG GO_VERSION=1.25.5
 ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
 ARG TEMURIN25_JDK_VERSION=25.0.1_8
@@ -40,8 +38,6 @@ ARG KN_VERSION
 ARG CNPG_VERSION
 ARG NATSCLI_VERSION
 ARG NEOVIM_VERSION
-ARG DOCKER_CLI_VERSION
-ARG BUILDX_VERSION
 ARG GO_VERSION
 ARG TEMURIN25_JDK_TAG
 ARG TEMURIN25_JDK_VERSION
@@ -359,38 +355,6 @@ RUN set -eux; \
 alias k=kubectl
 PROFILE
 
-# Install Docker CLI (client only; daemon runs in sidecar)
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
-  case "$ARCH" in \
-  amd64|x86_64) DOCKER_ARCH=x86_64 ;; \
-  arm64|aarch64) DOCKER_ARCH=aarch64 ;; \
-  *) echo "Unsupported arch for docker cli: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
-    -o /tmp/docker.tgz; \
-  tar -xzf /tmp/docker.tgz -C /tmp; \
-  install /tmp/docker/docker /usr/local/bin/docker; \
-  rm -rf /tmp/docker.tgz /tmp/docker; \
-  docker --version
-
-# Install docker buildx
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
-  case "$ARCH" in \
-  amd64|x86_64) BUILDX_ARCH=linux-amd64 ;; \
-  arm64|aarch64) BUILDX_ARCH=linux-arm64 ;; \
-  *) echo "Unsupported arch for buildx: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  VERSION="${BUILDX_VERSION#v}"; \
-  mkdir -p /usr/lib/docker/cli-plugins; \
-  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "https://github.com/docker/buildx/releases/download/v${VERSION}/buildx-v${VERSION}.${BUILDX_ARCH}" \
-    -o /usr/lib/docker/cli-plugins/docker-buildx; \
-  chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
-  /usr/lib/docker/cli-plugins/docker-buildx version
-
 # Install Codex CLI with Bun so the app-server binary is available at runtime
 RUN --mount=type=cache,id=bun-install-cache-codex-cli,target=/root/.bun/install/cache \
   bun add -g "@openai/codex@${CODEX_VERSION}"
@@ -459,7 +423,6 @@ RUN --mount=type=cache,id=bun-install-cache-workspace-tools,target=/root/.bun/in
     --filter @proompteng/agent-contracts \
     --filter @proompteng/codex \
     --filter @proompteng/otel \
-    --filter @proompteng/temporal-bun-sdk \
     --filter @proompteng/cx-tools
 
 FROM workspace-tools-deps AS agent-contracts-build
@@ -476,13 +439,6 @@ FROM workspace-tools-deps AS otel-build
 WORKDIR /app
 COPY full/packages/otel ./packages/otel
 RUN bun --cwd=packages/otel run build
-
-FROM workspace-tools-deps AS temporal-bun-sdk-build
-WORKDIR /app
-COPY full/packages/otel ./packages/otel
-COPY full/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
-COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM workspace-tools-deps AS cx-tools-build
 WORKDIR /app
@@ -539,7 +495,6 @@ WORKDIR /app
 RUN rm -rf /app/packages /app/services
 COPY full/ .
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 WORKDIR /app/services/jangar
 ARG JANGAR_BUILD_NODE_OPTIONS="--max-old-space-size=2048"
 ARG JANGAR_BUILD_MINIFY=0
@@ -562,7 +517,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar \
+  && mkdir -p services/bumba/node_modules services/jangar/node_modules
 
 # Control-plane-only runtime image.
 #
@@ -583,8 +539,6 @@ COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/pac
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
 COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
@@ -609,8 +563,9 @@ COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/n
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
-RUN rm -rf /app/services/bumba/node_modules \
-  && ln -s /app/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/bumba/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/jangar/node_modules /app/services/jangar/node_modules
+RUN bun /app/services/bumba/scripts/verify-temporal-runtime.ts /app/services/bumba /app/services/jangar
 WORKDIR /app/services/jangar
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
@@ -638,8 +593,6 @@ COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/pac
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
 COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
@@ -666,8 +619,9 @@ COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/n
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
-RUN rm -rf /app/services/bumba/node_modules \
-  && ln -s /app/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/bumba/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/jangar/node_modules /app/services/jangar/node_modules
+RUN bun /app/services/bumba/scripts/verify-temporal-runtime.ts /app/services/bumba /app/services/jangar
 WORKDIR /app/services/jangar
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \

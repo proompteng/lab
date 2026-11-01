@@ -219,8 +219,6 @@ Any red breach triggers:
 - `services/torghut/app/trading/scheduler.py`
 - `services/torghut/app/trading/tca.py`
 - `services/torghut/scripts/run_autonomous_lane.py`
-- `docs/torghut/design-system/v3/full-loop/10-audit-compliance-evidence-spec.md`
-- `docs/torghut/design-system/v3/full-loop/13-research-ledger-promotion-evidence-spec.md`
 - `argocd/applications/torghut/autonomy-gate-policy-configmap.yaml`
 
 ## AgentRun Lane Contract

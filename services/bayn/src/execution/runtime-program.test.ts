@@ -1,6 +1,8 @@
+import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Option, Result } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -13,10 +15,12 @@ import {
   type Position,
   type ReadEvidence,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
+import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
+import { ReplayBrokerFailure } from '../intraday-replay/broker'
+import { makeReplayInferenceTiming } from '../intraday-replay/inference-timing'
 import { BrokerMode, type Policy } from '../risk'
 import {
   BrokerAccess,
@@ -37,9 +41,39 @@ import {
   type Intent,
   type RiskDecision,
 } from './contracts'
-import type { StoredIntent } from './intents'
-import { authorizeFinalBrokerSubmit, makeExecutionProgram, type ExecutionProgramDependencies } from './runtime-program'
+import type { StoredIntent } from './intents/domain'
+import {
+  authorizeFinalBrokerSubmit as authorizeCachedFinalBrokerSubmit,
+  makeExecutionProgram,
+  type ExecutionProgramDependencies,
+} from './runtime-program'
+import {
+  brokerAssetFixture,
+  cachedBrokerStateFixture,
+  nativeBrokerStateFixture,
+  submissionProjectionFixture,
+} from './broker-state-cache.fixture'
+import { makeBrokerStateCache } from './broker-state-cache'
 import { WriterFenceError } from './writer-fence'
+
+const authorizeFinalBrokerSubmit = <A, E, R>(
+  authority: Parameters<typeof makeExecutionProgram>[0] & { brokerAccess: BrokerAccess.Mutation },
+  intent: Intent,
+  transmit: Effect.Effect<A, E, R>,
+  deps: ExecutionProgramDependencies,
+) =>
+  authorizeCachedFinalBrokerSubmit(authority, intent, transmit, {
+    ...deps,
+    brokerRead: submissionProjectionFixture(deps.brokerRead),
+    brokerStateCache: {
+      ...deps.brokerStateCache,
+      take: () =>
+        Effect.all([deps.brokerRead.positions, deps.brokerRead.orders()]).pipe(
+          Effect.orDie,
+          Effect.map(([positions, orders]) => cachedBrokerStateFixture(brokerAccount(), positions.value, orders.value)),
+        ),
+    },
+  })
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
@@ -51,11 +85,11 @@ const strategy: ExecutionStrategyIdentity = {
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
 const riskPolicy: Policy = {
-  schemaVersion: 'bayn.paper-risk-policy.v2',
+  schemaVersion: 'bayn.execution-risk-policy.v4',
   accountId,
   brokerMode: BrokerMode.Execution,
   allowedSymbols: ['AMD'],
-  allowedOrderTypes: [OrderType.Market],
+  allowedOrderTypes: [OrderType.Limit],
   allowedTimeInForce: [TimeInForce.Day],
   maxOrderNotionalMicros: '10000000000',
   maxSymbolExposureMicros: '25000000000',
@@ -83,6 +117,13 @@ const identity = (environment: BrokerEnvironment) =>
   )
 
 const dependencies = (label: string): ExecutionProgramDependencies => ({
+  brokerStateCache: {
+    record: () => Effect.void,
+    invalidate: Effect.void,
+    take: () => Effect.succeed(cachedBrokerStateFixture(brokerAccount())),
+  },
+  verifyBrokerStateVersion: (_version, _intentId, requireCryptoEntryFeeBound) =>
+    Effect.succeed(requireCryptoEntryFeeBound ? 25 : null),
   brokerRead: stableBrokerRead(),
   brokerMutation: {
     submit: () => Effect.die(new Error(`${label} submit must not run during composition proof`)),
@@ -110,6 +151,11 @@ const readEvidence: ReadEvidence = {
 }
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
 const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
+  cryptoStatus: null,
+  cryptoFeeTier: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -130,8 +176,9 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
   exchange: AssetExchange.Nasdaq,
   assetClass: AssetClass.UsEquity,
   side: PositionSide.Long,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
+  costBasisMicros: '100000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
   unrealizedPnlMicros: '0',
@@ -141,17 +188,18 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
 
 const stableBrokerRead = (positions: readonly Position[] = [], account: Account = brokerAccount()): BrokerReadShape => {
   const unusedRead = Effect.die(new Error('stable broker fixture used an unrelated broker read'))
-  return {
+  return submissionProjectionFixture({
     account: Effect.succeed(readResult(account)),
     accountConfiguration: unusedRead,
-    assetBySymbol: () => unusedRead,
+    assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
     positions: Effect.succeed(readResult(positions)),
     orders: () => Effect.succeed(readResult([])),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
+    feeActivities: () => unusedRead,
     fillActivities: () => unusedRead,
     marketCalendar: () => unusedRead,
-  }
+  })
 }
 
 const finalLiveFixture = () => {
@@ -187,7 +235,7 @@ const finalLiveFixture = () => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
   const riskDecisionId = '6'.repeat(64)
   const intent: Intent = {
-    schemaVersion: 'bayn.paper-intent.v3',
+    schemaVersion: 'bayn.execution-intent.v5',
     intentId: '5'.repeat(64),
     authorityGenerationHash,
     riskDecisionId,
@@ -199,10 +247,11 @@ const finalLiveFixture = () => {
     clientOrderId: `b1_${'C'.repeat(43)}`,
     symbol: 'AMD',
     side: OrderSide.Buy,
-    orderType: OrderType.Market,
+    orderType: OrderType.Limit,
     timeInForce: TimeInForce.Day,
-    quantityMicros: '1000000',
+    quantityAtoms: '1000000000',
     notionalLimitMicros: '100000000',
+    limitPriceMicros: '100000000',
     state: IntentState.IoStarted,
     createdAt: '2026-07-28T07:59:00.000Z',
   }
@@ -613,13 +662,20 @@ describe('same-code execution program composition', () => {
     if (sandboxAuthority.brokerAccess !== BrokerAccess.Mutation) {
       throw new Error('fixture requires sandbox mutation authority')
     }
-    const brokerObservedAt = '2026-07-28T08:00:00.010Z'
     const expiresAt = '2026-07-28T08:00:00.020Z'
-    const instants = [observedAt, brokerObservedAt, expiresAt]
-    let instantReads = 0
+    let measuredNow = observedAt
+    let brokerReads = 0
     let posts = 0
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('execution-window-expiry-during-refresh'),
+      brokerRead: {
+        ...stableBrokerRead(),
+        account: Effect.sync(() => {
+          brokerReads += 1
+          measuredNow = expiresAt
+          return readResult(brokerAccount())
+        }),
+      },
       intentStore: {
         read: () => Effect.succeed(Option.some(fixture.stored)),
       } as unknown as ExecutionProgramDependencies['intentStore'],
@@ -627,7 +683,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { check: Effect.void, transaction: (effect) => effect },
-      currentUtcInstant: Effect.sync(() => instants[instantReads++] ?? expiresAt),
+      currentUtcInstant: Effect.sync(() => measuredNow),
       entrySubmitExpiresAt: expiresAt,
       isCloseOnlyIntent: () => Effect.succeed(false),
     }
@@ -644,7 +700,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(finalAuthorizationFailureTag(exit)).toBe('ExecutionWindowExpired')
-    expect(instantReads).toBe(3)
+    expect(brokerReads).toBe(1)
     expect(posts).toBe(0)
   })
 
@@ -925,7 +981,7 @@ describe('same-code execution program composition', () => {
               assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
               symbol: 'NVDA',
               side: PositionSide.Short,
-              quantityMicros: '-2000000',
+              quantityAtoms: '-2000000000',
               marketValueMicros: '-200000000',
             }),
           ]),
@@ -1039,7 +1095,7 @@ describe('same-code execution program composition', () => {
     const intentId = 'a'.repeat(64)
     const decisionId = 'b'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v5',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1051,10 +1107,11 @@ describe('same-code execution program composition', () => {
       clientOrderId: `b1_${'A'.repeat(43)}`,
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
     }
@@ -1081,6 +1138,8 @@ describe('same-code execution program composition', () => {
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('final-risk'),
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('final risk proof must not commit')),
         read: () =>
           Effect.sync(() => {
@@ -1102,7 +1161,7 @@ describe('same-code execution program composition', () => {
             locks += 1
           }).pipe(Effect.andThen(TestClock.setTime(Date.parse(expiresAt))), Effect.as(grantedCapitalAuthority(grant))),
       },
-      currentUtcInstant: Effect.succeed(observedAt),
+      currentUtcInstant: Clock.currentTimeMillis.pipe(Effect.map((instant) => new Date(instant).toISOString())),
     }
 
     const exit = await Effect.runPromise(
@@ -1138,7 +1197,7 @@ describe('same-code execution program composition', () => {
         return readResult(brokerAccount())
       }),
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
       positions: Effect.sync(() => {
         trace.push('positions')
         positionReads += 1
@@ -1151,6 +1210,7 @@ describe('same-code execution program composition', () => {
         }),
       orderById: () => unusedRead,
       orderByClientId: () => unusedRead,
+      feeActivities: () => unusedRead,
       fillActivities: () => unusedRead,
       marketCalendar: () => unusedRead,
     }
@@ -1158,6 +1218,8 @@ describe('same-code execution program composition', () => {
       ...dependencies('post-lock-position'),
       brokerRead,
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-lock position proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1186,7 +1248,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(finalAuthorizationFailureTag(exit)).toBe('BrokerPositionSnapshotChanged')
-    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'account'])
     expect(posts).toBe(0)
   })
 
@@ -1201,7 +1263,7 @@ describe('same-code execution program composition', () => {
         return readResult(brokerAccount())
       }),
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
       positions: Effect.sync(() => {
         trace.push('positions')
         return readResult([])
@@ -1213,6 +1275,7 @@ describe('same-code execution program composition', () => {
         }),
       orderById: () => unusedRead,
       orderByClientId: () => unusedRead,
+      feeActivities: () => unusedRead,
       fillActivities: () => unusedRead,
       marketCalendar: () => unusedRead,
     }
@@ -1221,6 +1284,8 @@ describe('same-code execution program composition', () => {
       ...dependencies('post-lock-quote'),
       brokerRead,
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1249,7 +1314,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(exit._tag).toBe('Success')
-    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'positions', 'orders', 'account'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'account'])
     expect(posts).toBe(1)
   })
 
@@ -1268,7 +1333,7 @@ describe('same-code execution program composition', () => {
     const intentId = '7'.repeat(64)
     const decisionId = '8'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v5',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1280,10 +1345,11 @@ describe('same-code execution program composition', () => {
       clientOrderId: `b1_${'B'.repeat(43)}`,
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
     }
@@ -1313,6 +1379,8 @@ describe('same-code execution program composition', () => {
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('post-transmit'),
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1348,5 +1416,445 @@ describe('same-code execution program composition', () => {
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
     })
+  })
+})
+
+for (const delay of ['writer fence', 'broker read', 'restart'] as const) {
+  test(`honors a persisted ten-second entry deadline after ${delay} with zero broker posts`, async () => {
+    const fixture = finalLiveFixture()
+    if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
+    const expiresAt = '2026-07-28T08:00:10.000Z'
+    const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
+    const broker = stableBrokerRead()
+    let posts = 0
+    let brokerReads = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('entry-quote-expiry'),
+      brokerRead: {
+        ...broker,
+        account: Effect.sync(() => {
+          brokerReads += 1
+        }).pipe(
+          Effect.andThen(delay === 'broker read' ? TestClock.setTime(Date.parse(expiresAt)) : Effect.void),
+          Effect.andThen(broker.account),
+        ),
+      },
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: {
+        check: Effect.void,
+        transaction: (effect) =>
+          (delay === 'writer fence' ? TestClock.setTime(Date.parse(expiresAt)) : Effect.void).pipe(
+            Effect.andThen(effect),
+          ),
+      },
+      persistedCapitalGrants: {
+        read: () => Effect.die(new Error('expected locked grant read')),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+      currentUtcInstant: Clock.currentTimeMillis.pipe(Effect.map((instant) => new Date(instant).toISOString())),
+    }
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(delay === 'restart' ? expiresAt : observedAt))
+        return yield* authorizeFinalBrokerSubmit(
+          fixture.authority,
+          fixture.intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          testDependencies,
+        ).pipe(Effect.exit)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(finalAuthorizationFailureTag(exit)).toBe('ExpiredRiskDecision')
+    expect(posts).toBe(0)
+    expect(brokerReads).toBe(delay === 'broker read' ? 1 : 0)
+  })
+}
+
+test('final risk authorization uses the measured execution time after inference processing', async () => {
+  const fixture = finalLiveFixture()
+  if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
+  const expiresAt = '2026-07-28T08:00:10.000Z'
+  const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
+  let posts = 0
+  let measuredNow = observedAt
+  const base = dependencies('measured-final-authorization')
+  const testDependencies: ExecutionProgramDependencies = {
+    ...base,
+    intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(stored)) },
+    mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.void },
+    writerFence: {
+      check: Effect.void,
+      transaction: (effect) =>
+        Effect.sync(() => {
+          measuredNow = expiresAt
+        }).pipe(Effect.andThen(effect)),
+    },
+    persistedCapitalGrants: {
+      read: () => Effect.die('expected locked grant read'),
+      lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+    },
+    currentUtcInstant: Effect.sync(() => measuredNow),
+    entrySubmitExpiresAt: '2026-07-28T08:01:00.000Z',
+  }
+  const exit = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(observedAt))
+      return yield* authorizeFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts++
+        }),
+        testDependencies,
+      ).pipe(Effect.exit)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(posts).toBe(0)
+  expect(finalAuthorizationFailureTag(exit)).toBe('ExpiredRiskDecision')
+})
+
+for (const phase of [
+  'writer fence',
+  'grant lock',
+  'broker refresh',
+  'risk context',
+  'clock synchronization',
+  'clock unavailable',
+  'unexpired',
+] as const) {
+  test(`measured replay time governs final submission after ${phase}`, async () => {
+    const fixture = finalLiveFixture()
+    if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
+    const expiresAt = phase === 'clock synchronization' ? '2026-07-28T08:00:11.000Z' : '2026-07-28T08:00:10.000Z'
+    const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
+    const base = dependencies('measured-replay-final-authorization')
+    let posts = 0
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const providerClock = yield* TestClock.make()
+        const marketClock = yield* TestClock.make()
+        const providerStart = Date.parse('2026-09-21T12:00:00.000Z')
+        yield* providerClock.setTime(providerStart)
+        yield* marketClock.setTime(Date.parse(observedAt))
+        let clockUnavailable = false
+        const delay = (at: typeof phase) => (phase === at ? providerClock.setTime(providerStart + 10_000) : Effect.void)
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
+          measureDatabaseTime: (operation) => operation,
+          providerClock,
+          providers: {
+            jev: { evaluate: () => Effect.die('final authorization must not call Jev') },
+            chart: chartProviderFixture,
+          },
+          advanceTo: (atMs) =>
+            clockUnavailable
+              ? Effect.fail(new ReplayBrokerFailure({ message: 'Timeline source unavailable' }))
+              : marketClock
+                  .setTime(atMs)
+                  .pipe(Effect.andThen(phase === 'clock synchronization' ? providerClock.adjust(2000) : Effect.void)),
+          advanceDeadlineTo: (atMs) => marketClock.setTime(atMs),
+          excludedSourceMillis: Effect.succeed(0),
+          retain: () => Effect.void,
+        }).pipe(Effect.provideService(Clock.Clock, marketClock))
+        const testDependencies: ExecutionProgramDependencies = {
+          ...base,
+          intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(stored)) },
+          mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.void },
+          writerFence: {
+            check: Effect.void,
+            transaction: (effect) =>
+              Effect.sync(() => {
+                clockUnavailable = phase === 'clock unavailable'
+              }).pipe(Effect.andThen(delay('writer fence')), Effect.andThen(effect)),
+          },
+          persistedCapitalGrants: {
+            read: () => Effect.die('expected locked grant read'),
+            lockForSubmit: () => delay('grant lock').pipe(Effect.as(grantedCapitalAuthority(fixture.grant))),
+          },
+          brokerRead: {
+            ...base.brokerRead,
+            account: delay('broker refresh').pipe(Effect.andThen(base.brokerRead.account)),
+          },
+          readFinalExecutionRiskContext: (at) =>
+            delay('risk context').pipe(Effect.andThen(base.readFinalExecutionRiskContext(at))),
+          currentUtcInstant: timing.currentUtcInstant,
+          entrySubmitExpiresAt: '2026-07-28T08:01:00.000Z',
+        }
+        const exit = yield* timing
+          .run(
+            authorizeFinalBrokerSubmit(
+              fixture.authority,
+              fixture.intent,
+              Effect.sync(() => {
+                posts += 1
+              }),
+              testDependencies,
+            ),
+          )
+          .pipe(Effect.exit)
+        return { exit, marketNow: yield* marketClock.currentTimeMillis }
+      }).pipe(Effect.scoped),
+    )
+    if (phase === 'unexpired') {
+      expect(Exit.isSuccess(result.exit)).toBe(true)
+      expect(posts).toBe(1)
+      expect(result.marketNow).toBe(Date.parse(observedAt))
+    } else if (phase === 'clock unavailable') {
+      expect(finalAuthorizationFailureTag(result.exit)).toBe('ReplayBrokerFailure')
+      expect(posts).toBe(0)
+    } else {
+      expect(finalAuthorizationFailureTag(result.exit)).toBe('ExpiredRiskDecision')
+      expect(posts).toBe(0)
+      expect(result.marketNow).toBeGreaterThanOrEqual(Date.parse(expiresAt))
+    }
+  })
+}
+
+describe('execution with the native reconciliation cache', () => {
+  const setup = () => {
+    const fixture = finalLiveFixture()
+    const cache = makeBrokerStateCache(accountId, authorityGenerationHash)
+    const base = dependencies('native-cache')
+    const deps: ExecutionProgramDependencies = {
+      ...base,
+      brokerStateCache: cache,
+      intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(fixture.stored)) },
+      mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.void },
+      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      persistedCapitalGrants: {
+        ...base.persistedCapitalGrants,
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+    }
+    return { fixture, cache, deps }
+  }
+  test.each([false, true])('checks the fee tier at the final transport clock: reset crossed %s', async (crossReset) => {
+    const { fixture, cache, deps } = setup()
+    const beforeReset = '2026-07-28T07:59:59.900Z'
+    const account = brokerAccount({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: 4,
+      nonMarginableBuyingPowerMicros: '1000000000',
+      observedAt: beforeReset,
+    })
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(account))))
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Live),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: grantedCapitalAuthority(fixture.grant),
+        strategy,
+        observedAt: beforeReset,
+      }),
+    )
+    const intent: Intent = {
+      ...fixture.intent,
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('Expected mutation authority')
+    const readAt = <A>(value: A): ReadResult<A> => ({ value, evidence: { ...readEvidence, observedAt: beforeReset } })
+    let riskContextRead = false
+    let snapshotClockRead = false
+    let posts = 0
+    const exit = await Effect.runPromiseExit(
+      authorizeCachedFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...deps,
+          intentStore: { ...deps.intentStore, read: () => Effect.succeed(Option.some({ ...fixture.stored, intent })) },
+          verifyBrokerStateVersion: (_version, _intentId, required) => {
+            expect(required).toBe(true)
+            return Effect.succeed(18)
+          },
+          brokerRead: submissionProjectionFixture({
+            ...deps.brokerRead,
+            account: Effect.succeed(readAt(account)),
+            positions: Effect.succeed(readAt([])),
+            orders: () => Effect.succeed(readAt([])),
+            assetBySymbol: (symbol) => Effect.succeed(readAt(brokerAssetFixture(symbol, beforeReset))),
+          }),
+          readFinalExecutionRiskContext: (at) =>
+            deps.readFinalExecutionRiskContext(at).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  riskContextRead = true
+                }),
+              ),
+            ),
+          currentUtcInstant: Effect.sync(() => {
+            if (!riskContextRead) return beforeReset
+            if (!snapshotClockRead) {
+              snapshotClockRead = true
+              return beforeReset
+            }
+            return crossReset ? observedAt : beforeReset
+          }),
+        },
+      ),
+    )
+    expect(posts).toBe(crossReset ? 0 : 1)
+    expect(Exit.isSuccess(exit)).toBe(!crossReset)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('exceeds the sealed entry estimate')
+  })
+  test.each(['empty', 'stale', 'changed-version'])(
+    'denies %s cache before broker confirmation or transmission',
+    async (scenario) => {
+      const { fixture, cache, deps } = setup()
+      let reads = 0
+      let posts = 0
+      if (scenario !== 'empty')
+        await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+      const changed: ExecutionProgramDependencies = {
+        ...deps,
+        ...(scenario === 'stale' ? { riskPolicy: { ...riskPolicy, maxBrokerStateAgeMs: 1 } } : {}),
+        currentUtcInstant: Effect.succeed(scenario === 'stale' ? '2026-07-28T08:00:01.000Z' : observedAt),
+        verifyBrokerStateVersion: () =>
+          scenario === 'changed-version' ? Effect.fail({ _tag: 'ChangedVersion' }) : Effect.succeed(null),
+        brokerRead: {
+          ...deps.brokerRead,
+          positions: Effect.sync(() => {
+            reads += 1
+            return readResult([])
+          }),
+        },
+      }
+      // The stale bound is part of the intent's verified policy, so bind the updated policy hash too.
+      const policyHash = Result.getOrThrow(canonicalHashV1Result(changed.riskPolicy))
+      const intent = { ...fixture.intent, policyHash }
+      if (fixture.stored.decision === undefined) throw new Error('missing risk approval')
+      const stored = { ...fixture.stored, intent, decision: { ...fixture.stored.decision, policyHash } }
+      const exit = await Effect.runPromiseExit(
+        authorizeCachedFinalBrokerSubmit(
+          fixture.authority,
+          intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          { ...changed, intentStore: { ...changed.intentStore, read: () => Effect.succeed(Option.some(stored)) } },
+        ),
+      )
+      expect(finalAuthorizationFailureTag(exit)).toBe(
+        scenario === 'changed-version' ? 'ChangedVersion' : 'BrokerStateCacheUnavailable',
+      )
+      expect(reads).toBe(0)
+      expect(posts).toBe(0)
+    },
+  )
+  test.each(['cash', 'positions'])('rejects external %s drift from the reconciled cut', async (source) => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let posts = 0
+    const exit = await Effect.runPromiseExit(
+      authorizeCachedFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...deps,
+          brokerRead: stableBrokerRead(
+            source === 'positions' ? [brokerPosition()] : [],
+            brokerAccount(source === 'cash' ? { cashMicros: '900000000' } : {}),
+          ),
+        },
+      ),
+    )
+    expect(finalAuthorizationFailureTag(exit)).toBe(
+      source === 'cash' ? 'BrokerAccountSnapshotChanged' : 'BrokerPositionSnapshotChanged',
+    )
+    expect(posts).toBe(0)
+    expect(Exit.isFailure(await Effect.runPromiseExit(cache.take(observedAt, 1000)))).toBe(true)
+  })
+  test('normal final submission never calls the direct broker reader', async () => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let directReads = 0
+    const direct = stableBrokerRead([], brokerAccount())
+    const read = {
+      ...direct,
+      projection: {
+        fresh: {
+          ...direct,
+          account: Effect.sync(() => {
+            directReads += 1
+          }).pipe(Effect.andThen(direct.account)),
+          positions: Effect.sync(() => {
+            directReads += 1
+          }).pipe(Effect.andThen(direct.positions)),
+          orders: (query: Parameters<typeof direct.orders>[0]) =>
+            Effect.sync(() => {
+              directReads += 1
+            }).pipe(Effect.andThen(direct.orders(query))),
+        },
+        invalidate: Effect.void,
+        withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        snapshot: Effect.die('not used by this final confirmation fixture'),
+        submissionSnapshot: () =>
+          Effect.succeed({
+            account: readResult(brokerAccount()),
+            positions: readResult([]),
+            openOrders: readResult([]),
+          }),
+      },
+    }
+    await Effect.runPromise(
+      authorizeCachedFinalBrokerSubmit(fixture.authority, fixture.intent, Effect.void, { ...deps, brokerRead: read }),
+    )
+    expect(directReads).toBe(0)
+  })
+  test('interrupting confirmation cancels the broker read and keeps the reservation consumed', async () => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let cancelled = false
+    let posts = 0
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const attempt = yield* authorizeCachedFinalBrokerSubmit(
+          fixture.authority,
+          fixture.intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          {
+            ...deps,
+            brokerRead: {
+              ...deps.brokerRead,
+              projection: {
+                ...submissionProjectionFixture(deps.brokerRead).projection!,
+                submissionSnapshot: () =>
+                  Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        cancelled = true
+                      }),
+                    ),
+                  ),
+              },
+            },
+          },
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(attempt)
+        expect(Exit.isFailure(yield* cache.take(observedAt, 1000).pipe(Effect.exit))).toBe(true)
+      }).pipe(Effect.scoped),
+    )
+    expect(cancelled).toBe(true)
+    expect(posts).toBe(0)
   })
 })

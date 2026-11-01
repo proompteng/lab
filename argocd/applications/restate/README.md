@@ -70,13 +70,58 @@ Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-m
 and require all 24 partitions archived before replication changes. In Restate 1.7.9, `ARCHIVED=0` is the invalid-LSN
 sentinel and must be treated as no snapshot; the bootstrap retries only missing/invalid partitions until every partition
 has a positive archived LSN. RGW stores snapshots only; metadata/Raft and logs stay on
-RBD. Host anti-affinity/`DoNotSchedule`, `minAvailable: 3`, and 60s/90s shutdown windows bound disruption; the PDB
-therefore permits zero voluntary evictions until a separately reviewed post-rollout relaxation.
+RBD. Preferred host anti-affinity and `ScheduleAnyway` spreading keep three replicas schedulable on Altra and Turin
+when Ryzen is reserved for compute and local storage. This leaves two physical failure domains; losing the host with
+two replicas can remove Raft quorum. The `minAvailable: 3` PDB and 60s/90s shutdown windows bound disruption, so the PDB
+permits zero voluntary evictions until a separately reviewed post-rollout relaxation. Follow the
+[placement migration](../../../devices/galactic/scheduling/README.md) before moving retained Ceph clients.
 `restate-replication-migration` requires three ready nodes, one identical three-member Raft set, and archived snapshots
 before `restatectl config set --replication 2 --yes`; it rejects mixed state and waits for all 24 logs plus two active
 processors per partition. `default-replication` is initial-provisioning only.
 
 Official contracts: [HA](https://docs.restate.dev/server/deploy/ha), [metadata](https://docs.restate.dev/server/deploy/metadata), and [snapshots](https://docs.restate.dev/server/deploy/snapshots).
+
+### Software responsiveness and failure detection
+
+The runtime retains upstream Restate 1.7.9 and its storage format. The [runtime build](../../../services/restate/README.md)
+changes one metadata write-dispatch argument to `IoMode::AlwaysBackground`. Log-server and partition writes use their
+existing `always-commit-in-background` options. Each write still awaits completion with the original WAL and fsync
+requirements. Slow successful writes therefore use the existing background I/O executor instead of occupying an async
+worker. This corrects a scheduling hazard; it does not establish how much of the historical 38-second pause it caused.
+
+The liveness settings are coordinated:
+
+| Setting | Value | Purpose |
+| --- | --- | --- |
+| Metadata election | 450 ticks at 100ms | Base election deadline 45s; Raft randomizes each election attempt over 45–90s |
+| Gossip failure | 450 ticks at 100ms | Avoid declaring a peer dead during the tested 38s interruption |
+| Gossip loneliness | 600 ticks at 100ms | Allow 60s before a node considers itself isolated |
+| Gossip message age | 5s | Accept the tested 3s one-way message delay |
+| Peer connect, handshake and HTTP/2 keep-alive timeout | 10s each | Keep transport deadlines above the tested 6s round trip |
+| Metadata-client connect and keep-alive timeout | 10s each | Apply the same envelope to the separate metadata-client transport |
+
+Metadata heartbeats remain two ticks apart. A lost leader takes longer to replace; Bayn may restrict itself at its
+existing 30s pass deadline and must use its normal settlement/recovery process. Disk latency, volumes, replication,
+durability, placement, PDB, broker authority and alert thresholds retain their settings. Delays beyond this tested
+envelope can still cause failover. See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.7.9/crates/metadata-server/src/raft/server/member.rs),
+[gossip options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/gossip.rs) and
+[networking options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/networking.rs).
+
+The container runtime fault-injection fixture has been removed. CI no longer establishes the delayed-message,
+process-pause or node-loss acceptance behavior described by the runtime settings above.
+
+The `Restate images` workflow builds both native architectures and runs the metadata regression during the image build. PR runs publish
+no images. After a reviewed `main` merge, the workflow uploads proof, publishes both built platform images, validates
+and signs the final index, uploads its receipt, then exposes its immutable run-qualified Kargo alias. Warehouse and
+Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` Kustomize input on `kargo/restate`.
+The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).
+
+Before rollout, verify three caught-up members in the same Raft set, replication two and positive archived LSNs for all
+24 partitions. Argo replaces one retained StatefulSet member at a time. Verify the promoted digest, each replacement's
+membership, distributed dashboard queries, consecutive Bayn ticks with fresh exact reconciliation, both Bayn status
+replicas, and resolution of the existing alerts. An empty query, a healthy Application or a build alone is insufficient.
+Use the prior verified Kargo Freight for a targeted image rollback. Configuration recovery is a reviewed Git revert
+and a normal new image promotion; preserve node identities and all retained data.
 
 The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
 was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
@@ -162,7 +207,7 @@ fully qualified `ts.net` URL for TLS validation; the certificate is provisioned 
 
 ## Post-sync verification
 
-After Argo reconciles this app from `main`, verify the core application and generated Tailscale resources:
+After Argo reconciles this app from `kargo/restate`, verify the core application and generated Tailscale resources:
 
 ```sh
 kubectl get application -n argocd restate -o wide

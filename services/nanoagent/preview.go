@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 )
 
 var dangerousForwardHeaders = []string{
@@ -19,6 +21,13 @@ var dangerousForwardHeaders = []string{
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
 	"X-Forwarded-Proto",
+	guestauth.ContextHeader,
+	guestauth.SignatureHeader,
+	guestClaimUIDHeader,
+	guestClaimEpochHeader,
+	guestRuntimeEpochHeader,
+	"X-Tengri-Leader-Owner",
+	"X-Tengri-Leader-Generation",
 }
 
 type previewRequestTracker struct {
@@ -73,7 +82,7 @@ func (tracker *previewRequestTracker) close() {
 
 func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http.Request) {
 	port, err := strconv.Atoi(request.PathValue("port"))
-	if err != nil || validatePreviewPort(port) != nil {
+	if err != nil || (port != browserPort && validatePreviewPort(port) != nil) {
 		writeAPIError(writer, http.StatusBadRequest, "invalid preview port")
 		return
 	}
@@ -106,6 +115,14 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 	}
 	defer release()
 	request = request.WithContext(previewContext)
+	if port == browserPort {
+		if server.browser == nil {
+			writeAPIError(writer, http.StatusServiceUnavailable, "Chromium is unavailable")
+			return
+		}
+		server.browser.serve(writer, request, path)
+		return
+	}
 	target, _ := url.Parse(fmt.Sprintf("http://%s", loopbackAddress(port)))
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = server.previewTransport

@@ -1,6 +1,6 @@
 # 176. Jangar Resource-Pressure Escrow And Runner QoS Gates (2026-05-08)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-08
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar runner resource pressure, node eviction debt, schedule launch safety, status latency, database projection
@@ -13,8 +13,6 @@ Companion Torghut contract:
 Extends:
 
 - `175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
-- `174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
-- `173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
 - `docs/torghut/design-system/v6/179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
 
 ## Decision

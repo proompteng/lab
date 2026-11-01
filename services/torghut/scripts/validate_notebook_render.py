@@ -244,11 +244,23 @@ def _validate_singleuser_values(values: YamlObject) -> None:
     assert _at(singleuser, "cloudMetadata", "blockWithIptables") is False
     extra_env = _mapping_at(singleuser, "extraEnv")
     assert extra_env["TORGHUT_NOTEBOOK_DATA_MODE"] == "live"
-    assert extra_env["PGOPTIONS"] == (
-        "-c default_transaction_read_only=on -c statement_timeout=30000"
+    assert extra_env["CLICKHOUSE_URL"] == (
+        "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
     )
-    assert _string_at(extra_env, "TORGHUT_STATUS_URL").endswith("/trading/status")
+    assert extra_env["CLICKHOUSE_DATABASE"] == "torghut"
+    assert extra_env["CLICKHOUSE_USER"] == "torghut_notebook"
+    assert _at(extra_env, "CLICKHOUSE_PASSWORD", "valueFrom", "secretKeyRef") == {
+        "name": "torghut-notebook-clickhouse",
+        "key": "password",
+    }
     forbidden_env = {
+        "PGHOST",
+        "PGPORT",
+        "PGDATABASE",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGOPTIONS",
+        "TORGHUT_STATUS_URL",
         "APCA_API_KEY_ID",
         "APCA_API_SECRET_KEY",
         "KAFKA_BOOTSTRAP_SERVERS",

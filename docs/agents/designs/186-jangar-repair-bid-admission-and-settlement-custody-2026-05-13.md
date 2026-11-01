@@ -1,20 +1,10 @@
 # 186. Jangar Repair-Bid Admission And Settlement Custody (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar control-plane resilience, Torghut repair-bid settlement consumption, zero-notional dispatch custody,
 duplicate-run suppression, rollout proof, merge/deploy readiness, validation, rollback, and cross-stage handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-
-Extends:
-
-- `185-jangar-clock-settled-repair-dispatch-and-rollout-custody-2026-05-12.md`
-- `184-jangar-rollout-evidence-escrow-and-proof-repair-admission-2026-05-12.md`
-- `../torghut/design-system/v6/188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
 
 ## Decision
 

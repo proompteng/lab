@@ -1,6 +1,10 @@
 import { Effect, Result, Schema } from 'effect'
+import { entryAblationBehaviorHash, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
+import { jevBehaviorHash } from '../jev/protocol'
+import { makeRepeatedMomentumPolicy, repeatedMomentumBehaviorHash } from '../strategy/repeated-momentum/policy'
+import { BrokerEnvironment } from '../broker/identity'
 import type { AutonomousCycleDriverStartup } from '../app'
-import { makeCycleExecutionPolicyFromModel } from '../cycle'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { AuthorityGenerationStore } from '../db/execution-store'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
@@ -8,7 +12,12 @@ import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { defaultIntradayMomentumProtocolDocument, strategyDefinition, type StrategyRuntime } from '../strategy'
+import {
+  loadActiveStrategyProtocol,
+  loadStrategyTradingProtocol,
+  strategyDefinition,
+  type StrategyRuntime,
+} from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -17,7 +26,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
-import { loadExecutionRiskPolicy } from './decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { validateMutationExecutionProgram } from './execution-cycle'
 import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
 
@@ -25,12 +34,12 @@ export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
   const definition = strategyDefinition(input.strategy)
-  if (definition.name !== 'intraday-momentum' || definition.holdingPeriod !== 'INTRADAY') {
+  if (definition.name !== 'jev' || definition.holdingPeriod !== 'INTRADAY') {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-policy',
-        message: 'autonomous execution requires the active intraday-momentum strategy',
+        message: 'autonomous execution requires the active Jev strategy',
       }),
     )
   }
@@ -45,9 +54,13 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const parameterSchemaVersion = (definition.parameters as { readonly schemaVersion?: unknown }).schemaVersion
+  const parameterSchemaVersion = definition.parameters.schemaVersion
+  const ablation = parameterSchemaVersion === 'bayn.entry-ablation-policy.v1'
+  const momentum = parameterSchemaVersion === 'bayn.repeated-momentum-policy.v1'
   if (
     definition.name !== input.strategy.provenance.strategy.name ||
+    input.strategy.provenance.strategy.behaviorHash !==
+      (momentum ? repeatedMomentumBehaviorHash : ablation ? entryAblationBehaviorHash : jevBehaviorHash) ||
     parameterSchemaVersion !== input.strategy.provenance.strategy.parameterSchemaVersion ||
     parameterHash.success !== input.strategy.provenance.strategy.parameterHash
   ) {
@@ -59,13 +72,19 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash = canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
+  const sourceProtocolHash = loadActiveStrategyProtocol().pipe(
+    Result.flatMap((protocol) =>
+      canonicalHashV1Result(
+        momentum ? makeRepeatedMomentumPolicy(protocol) : ablation ? makeEntryAblationPolicy(protocol) : protocol,
+      ),
+    ),
+  )
   if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-policy',
-        message: 'intraday-momentum autonomous execution requires the source-controlled protocol',
+        message: 'Jev autonomous execution requires the source-controlled protocol',
         ...(Result.isFailure(sourceProtocolHash) ? { cause: sourceProtocolHash.failure } : {}),
       }),
     )
@@ -73,7 +92,7 @@ export const prepareObserveStartup = (
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v5') {
+  if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
     return Result.fail(
       operationalError({
         component: 'strategy',
@@ -119,10 +138,11 @@ export const prepareObserveStartup = (
 
 export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
   Result.mapError(
-    Schema.decodeUnknownResult(
-      CycleExecutionModelSchema,
-      strictParseOptions,
-    )((strategyDefinition(strategy).parameters as { readonly executionModel?: unknown }).executionModel),
+    loadStrategyTradingProtocol(strategy).pipe(
+      Result.flatMap((protocol) =>
+        Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)(protocol.executionModel),
+      ),
+    ),
     (cause) =>
       operationalError({
         component: 'strategy',
@@ -132,11 +152,33 @@ export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
       }),
   )
 
-export const loadStrategyExecutionRiskPolicy = (accountId: string, strategy: StrategyRuntime) =>
-  Effect.fromResult(decodeStrategyExecutionModel(strategy)).pipe(
-    Effect.flatMap((executionModel) =>
-      loadExecutionRiskPolicy(accountId, strategyDefinition(strategy).parameters.universe, executionModel),
-    ),
+export const loadStrategyExecutionRiskPolicy = (
+  accountId: string,
+  strategy: StrategyRuntime,
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
+  riskPolicyHash?: string,
+) =>
+  Effect.gen(function* () {
+    yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
+    const symbols = (yield* Effect.fromResult(loadStrategyTradingProtocol(strategy))).universe
+    const retainedPolicy = yield* Effect.fromResult(makeExecutionRiskPolicy(accountId, symbols))
+    if (
+      riskPolicyHash === undefined ||
+      riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
+    )
+      return retainedPolicy
+    if (brokerEnvironment === BrokerEnvironment.Sandbox) {
+      const paperPolicy = yield* Effect.fromResult(
+        makeExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox),
+      )
+      if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
+    }
+    return yield* operationalError({
+      component: 'strategy',
+      operation: 'risk-policy',
+      message: 'bound execution risk policy is not approved for this broker environment',
+    })
+  }).pipe(
     Effect.mapError((cause) =>
       cause instanceof OperationalError
         ? cause
@@ -193,7 +235,12 @@ export const makeObserveAutonomousCycleStartup =
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
-      const policy = yield* loadStrategyExecutionRiskPolicy(input.accountId, input.strategy)
+      const policy = yield* loadStrategyExecutionRiskPolicy(
+        input.accountId,
+        input.strategy,
+        input.brokerEnvironment,
+        input.riskPolicyHash,
+      )
       yield* initializeObserveAuthority(input)
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(
@@ -217,7 +264,12 @@ export const makeMutationAutonomousCycleStartup =
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
-      const policy = yield* loadStrategyExecutionRiskPolicy(input.accountId, input.strategy)
+      const policy = yield* loadStrategyExecutionRiskPolicy(
+        input.accountId,
+        input.strategy,
+        input.brokerEnvironment,
+        input.riskPolicyHash,
+      )
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(
           input,
@@ -226,7 +278,7 @@ export const makeMutationAutonomousCycleStartup =
           policy,
           executionMode === 'RecoveryOnly'
             ? { _tag: 'RecoveryOnly' }
-            : { _tag: 'Mutation', executionProgram: input.executionProgram },
+            : { _tag: executionMode, executionProgram: input.executionProgram },
           mutationDecisionBuilder(input, preparation, policy),
           'mutation autonomous cycle loop',
         ),

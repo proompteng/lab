@@ -13,6 +13,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Helm implementation contract: `agents-helm-chart-implementation.md`
 - Installation, upgrade, and incident operations: `runbooks.md`
 - Control-plane UI: `control-plane-ui.md`
+- Shell tool and command activity: `agents-shell-activity.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
 - Codex MCP integration: `codex-mcp-agents.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`
@@ -43,8 +44,9 @@ design contract never outranks current source or runtime evidence.
 - Distribution: `market-readiness-and-distribution.md`
 - Version-control providers: `version-control-provider-design.md`
 
-The `designs/**` tree contains only contracts still referenced by code, configuration, tests, current documentation, or
-another retained contract. Start with `designs/README.md`; do not treat the directory as an exhaustive current catalog.
+The `designs/**` tree contains contracts still referenced by code, configuration, tests, or maintained current
+documentation. References from another historical design do not justify retention. Start with `designs/README.md`;
+do not treat the directory as an exhaustive current catalog.
 
 ## Common Change Flows
 

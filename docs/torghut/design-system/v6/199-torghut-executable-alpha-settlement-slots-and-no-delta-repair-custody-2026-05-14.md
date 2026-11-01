@@ -1,6 +1,6 @@
 # 199. Torghut Executable Alpha Settlement Slots And No-Delta Repair Custody (2026-05-14)
 
-Status: Accepted for Jangar engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

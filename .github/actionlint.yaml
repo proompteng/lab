@@ -2,6 +2,7 @@ self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
     - arc-amd64
+    - arc-amd64-publish
     - arc-arm64
 
 # Configuration variables in array of strings defined in your repository or
@@ -17,5 +18,9 @@ config-variables: null
 # "ignore" is an array of regular expression patterns. Matched error messages
 # are ignored. This is similar to the "-ignore" command line option.
 paths:
-#  .github/workflows/**/*.yml:
-#    ignore: []
+  .github/workflows/temporal-bun-sdk.yml:
+    # GitHub supports queue: max; actionlint has not implemented it yet.
+    # https://github.com/rhysd/actionlint/issues/657
+    # temporal-static-libraries-workflow.test.ts checks these concurrency settings.
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'

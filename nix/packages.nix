@@ -148,23 +148,23 @@ let
     };
   };
 
-  kubectlVersion = "1.29.4";
+  kubectlVersion = "1.37.0";
   kubectlSource = sourceFor "kubectl" {
     x86_64-linux.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/linux/amd64/kubectl";
-      hash = "sha256-EONDhhw8sAEBYecDMHupB63Sru6v/GREd5rZFfmInIg=";
+      hash = "sha256-YSk1n04fOEilVyzLCybPKLjKCM7zjJWnZbL2SiyWGi8=";
     };
     aarch64-linux.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/linux/arm64/kubectl";
-      hash = "sha256-YVN0CO7crQZNczQ4Su1Qioqh6nhjEbh7UFRWouBTXTY=";
+      hash = "sha256-ki3yjfJIzACp4CX5R3BPHRSC3mTs5Uz+V+YfGerx7vM=";
     };
     x86_64-darwin.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/darwin/amd64/kubectl";
-      hash = "sha256-evm4ojPEmtXuy1kARxngvAeXJJK2dOu84pGeUzJrVbI=";
+      hash = "sha256-1SdsD0/ed/xEYHApDzRZRKfx/aFT32uWDl/ek7epvM0=";
     };
     aarch64-darwin.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/darwin/arm64/kubectl";
-      hash = "sha256-s6iB5iCKpBJ1qXSBZ2qMijwWKC8817RBsX8ligVAEvE=";
+      hash = "sha256-WDvu2uvkIucdPxqWrO+LH++G6i8JpFrQGqbJzih8E4A=";
     };
   };
 
@@ -260,34 +260,34 @@ let
     };
   };
 
-  bunVersion = "1.4.0";
+  bunVersion = "1.4.2";
   bunSource = sourceFor "bun" {
     x86_64-linux = {
       sourceRoot = "bun-linux-x64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64.zip";
-        hash = "sha256-LQP7X7g6yLVnrKCigbLOGhoZ1Ij1bClo2Iw/Jekv5FI=";
+        hash = "sha256-NjaPrvdSeHXV/6UuU81IAhdB8qg+tiCKjdZAaNQiqRM=";
       };
     };
     aarch64-linux = {
       sourceRoot = "bun-linux-aarch64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-aarch64.zip";
-        hash = "sha256-SxozLuhhmD65O8/m93D/+U4+MbLDiL2uo8jtNeWO7Q4=";
+        hash = "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=";
       };
     };
     x86_64-darwin = {
       sourceRoot = "bun-darwin-x64-baseline";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-x64-baseline.zip";
-        hash = "sha256-2pufG0unZsbymXEfON+qmGI+HtnECJaqU9uAPFLsH6A=";
+        hash = "sha256-utW71s8U0JgNEV9ZVMn/kE32GdXplNLaH/zNPzFjALA=";
       };
     };
     aarch64-darwin = {
       sourceRoot = "bun-darwin-aarch64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-aarch64.zip";
-        hash = "sha256-xmnpf2Fk4cluBwF0jbmN+ndJKQjL2DlMdVcTSnNd44E=";
+        hash = "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=";
       };
     };
   };

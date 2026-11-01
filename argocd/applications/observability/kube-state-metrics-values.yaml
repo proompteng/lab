@@ -21,6 +21,13 @@ collectors:
 rbac:
   extraRules:
     - apiGroups:
+        - kargo.akuity.io
+      resources:
+        - stages
+      verbs:
+        - list
+        - watch
+    - apiGroups:
         - argoproj.io
       resources:
         - applications
@@ -49,6 +56,30 @@ customResourceState:
     kind: CustomResourceStateMetrics
     spec:
       resources:
+        - groupVersionKind:
+            group: kargo.akuity.io
+            version: v1alpha1
+            kind: Stage
+          metricNamePrefix: kube_kargo
+          labelsFromPath:
+            namespace: [metadata, namespace]
+            stage: [metadata, name]
+          metrics:
+            - name: stage_last_promotion_info
+              help: The terminal phase of a Stage's last promotion.
+              each:
+                type: Info
+                info:
+                  path: [status, lastPromotion, status]
+                  labelsFromPath:
+                    phase: [phase]
+            - name: stage_current_promotion_started_at
+              help: Current promotion start timestamp in Unix seconds; absent when no promotion is active.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, currentPromotion, status, startedAt]
+                  nilIsZero: false
         - groupVersionKind:
             group: argoproj.io
             version: v1alpha1
@@ -154,6 +185,27 @@ customResourceState:
                   path:
                     - spec
                     - replicas
+            - name: deployment_status_ready_replicas
+              help: Ready pods of the updated RestateDeployment revision, excluding retained revisions.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, readyReplicas]
+                  nilIsZero: false
+            - name: deployment_metadata_generation
+              help: Desired RestateDeployment object generation.
+              each:
+                type: Gauge
+                gauge:
+                  path: [metadata, generation]
+                  nilIsZero: false
+            - name: deployment_status_observed_generation
+              help: RestateDeployment generation observed by its controller.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, observedGeneration]
+                  nilIsZero: false
 
 resources:
   requests:

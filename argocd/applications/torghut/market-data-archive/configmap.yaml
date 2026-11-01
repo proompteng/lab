@@ -4,6 +4,12 @@ metadata:
   name: market-data-archive-config
   namespace: torghut
 data:
+  ARCHIVE_CRYPTO_TOPIC: "bayn.market-data.crypto.v1"
+  ARCHIVE_CRYPTO_FEATURES_TOPIC: "bayn.market-data.crypto.features.v1"
+  ARCHIVE_CRYPTO_LOCATION: "us"
+  ARCHIVE_CRYPTO_SYMBOLS: "BTC/USD,ETH/USD,SOL/USD"
+  ARCHIVE_TECHNICAL_FEATURES_TOPIC: "torghut.technical-features.v1"
+  ARCHIVE_FEATURES_TOPIC: "torghut.market-features.v1"
   ARCHIVE_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
   ARCHIVE_KAFKA_SECURITY: "SASL_PLAINTEXT"
   ARCHIVE_KAFKA_SASL_MECH: "SCRAM-SHA-512"
@@ -29,6 +35,6 @@ data:
   # ClickHouse JDBC v2 forwards server settings only with the clickhouse_setting_ prefix.
   ARCHIVE_CLICKHOUSE_URL: "jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?clickhouse_setting_insert_quorum_parallel=1"
   ARCHIVE_CLICKHOUSE_USERNAME: "signal_publisher"
-  ARCHIVE_CLICKHOUSE_BATCH_SIZE: "1000"
+  ARCHIVE_CLICKHOUSE_BATCH_SIZE: "10000"
   ARCHIVE_CLICKHOUSE_FLUSH_MS: "1000"
   ARCHIVE_CLICKHOUSE_MAX_RETRIES: "3"

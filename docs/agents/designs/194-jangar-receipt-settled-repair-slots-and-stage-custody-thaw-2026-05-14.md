@@ -1,6 +1,6 @@
 # 194. Jangar Receipt-Settled Repair Slots And Stage-Custody Thaw (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar stage credit, material reentry, Torghut executable-alpha repair admission, no-delta debt, rollout

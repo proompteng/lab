@@ -50,10 +50,16 @@ describe('clearDeletedDesktopState', () => {
     session.setItem('tengri:windows:agent-a:desktop-a', '{}')
     session.setItem('tengri:terminal:agent-a:desktop-a:terminal-1', '{}')
     session.setItem('tengri:desktop:agent-b', 'desktop-b')
+    session.setItem('tengri-resources:agent-a', '{"tabs":[],"activePath":null}')
+    session.setItem('tengri-resources:agent-b', '{"tabs":[],"activePath":null}')
     local.setItem('tengri-thread:agent-a', 'thread-a')
+    local.setItem('tengri-conversations:agent-a', '[{"id":"thread-a","title":"Hello","updatedAt":1}]')
     local.setItem('tengri:spotlight:agent-a:recents', '["app:chrome"]')
     local.setItem('tengri-thread:agent-b', 'thread-b')
+    local.setItem('tengri-conversations:agent-b', '[{"id":"thread-b","title":"Other","updatedAt":1}]')
     local.setItem('tengri:spotlight:agent-b:recents', '["app:finder"]')
+    local.setItem('tengri-resource-pins:agent-a', '[]')
+    local.setItem('tengri-resource-pins:agent-b', '[]')
     Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: session })
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: local })
 
@@ -63,15 +69,22 @@ describe('clearDeletedDesktopState', () => {
     expect(session.getItem('tengri:windows:agent-a:desktop-a')).toBeNull()
     expect(session.getItem('tengri:terminal:agent-a:desktop-a:terminal-1')).toBeNull()
     expect(session.getItem('tengri:desktop:agent-b')).toBe('desktop-b')
+    expect(session.getItem('tengri-resources:agent-a')).toBeNull()
+    expect(session.getItem('tengri-resources:agent-b')).not.toBeNull()
     expect(local.getItem('tengri-thread:agent-a')).toBeNull()
+    expect(local.getItem('tengri-conversations:agent-a')).toBeNull()
     expect(local.getItem('tengri:spotlight:agent-a:recents')).toBeNull()
     expect(local.getItem('tengri-thread:agent-b')).toBe('thread-b')
+    expect(local.getItem('tengri-conversations:agent-b')).toBe('[{"id":"thread-b","title":"Other","updatedAt":1}]')
     expect(local.getItem('tengri:spotlight:agent-b:recents')).toBe('["app:finder"]')
+    expect(local.getItem('tengri-resource-pins:agent-a')).toBeNull()
+    expect(local.getItem('tengri-resource-pins:agent-b')).toBe('[]')
   })
 
   test('clears local agent state when sessionStorage is unavailable', () => {
     const local = new MemoryStorage()
     local.setItem('tengri-thread:agent-a', 'thread-a')
+    local.setItem('tengri-conversations:agent-a', '[{"id":"thread-a","title":"Hello","updatedAt":1}]')
     local.setItem('tengri:spotlight:agent-a:recents', '["app:chrome"]')
     Object.defineProperty(globalThis, 'sessionStorage', {
       configurable: true,
@@ -86,6 +99,7 @@ describe('clearDeletedDesktopState', () => {
     clearDeletedDesktopState('agent-a')
 
     expect(local.getItem('tengri-thread:agent-a')).toBeNull()
+    expect(local.getItem('tengri-conversations:agent-a')).toBeNull()
     expect(local.getItem('tengri:spotlight:agent-a:recents')).toBeNull()
   })
 })

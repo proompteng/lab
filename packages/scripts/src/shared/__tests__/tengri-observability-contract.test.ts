@@ -28,7 +28,7 @@ const tengriRules = (): readonly MimirRule[] => {
   return group.rules
 }
 
-test('cluster Alloy collects only bounded Tengri control-plane metrics', () => {
+test('cluster Alloy collects bounded Tengri control-plane and supervisor metrics', () => {
   const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const deployment = YAML.parse(
     readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml'),
@@ -38,10 +38,19 @@ test('cluster Alloy collects only bounded Tengri control-plane metrics', () => {
   )
 
   expect(alloy).toContain('prometheus.scrape "tengri"')
-  expect(alloy).toContain('tengri-gateway.tengri.svc.cluster.local:8080')
+  expect(alloy).not.toContain('tengri-gateway.tengri.svc.cluster.local:8080')
+  expect(alloy).toContain('discovery.kubernetes "tengri_controllers"')
+  expect(alloy).toContain('targets  = discovery.relabel.tengri_controllers.output')
+  expect(alloy).toContain('app.kubernetes.io/name=tengri,app.kubernetes.io/component=control-plane')
+  expect(alloy).toContain('regex         = "tengri;gateway"')
   expect(alloy).toContain('job_name = "tengri"')
+  expect(alloy).toContain('discovery.kubernetes "tengri_slots"')
+  expect(alloy).toContain('app.kubernetes.io/name=tengri-slot')
+  expect(alloy).toContain('regex         = "supervisor;health"')
+  expect(alloy).toContain('job_name        = "tengri-slot-supervisor"')
   expect(alloy).toContain('regex         = "up|tengri_.*"')
   expect(alloy).toContain('forward_to      = [prometheus.relabel.tengri_metrics.receiver]')
+  expect(alloy).toContain('|kube_pod_status_ready|')
   expect(alloy).not.toMatch(/owner_hash|agent_id|terminal_id|session_id/)
   expect(deployment.spec.template.metadata.annotations['observability.proompteng.ai/config-sha256']).toBe(
     createHash('sha256').update(alloy).digest('hex'),
@@ -60,6 +69,18 @@ test('cluster Alloy collects only bounded Tengri control-plane metrics', () => {
     ],
     ports: [{ protocol: 'TCP', port: 8080 }],
   })
+  const slotPolicy = policies.find(
+    (policy) => policy.kind === 'NetworkPolicy' && policy.metadata?.name === 'tengri-slots',
+  )
+  expect(slotPolicy?.spec.ingress).toContainEqual({
+    from: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'observability' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'observability-cluster-metrics-alloy' } },
+      },
+    ],
+    ports: [{ protocol: 'TCP', port: 8080 }],
+  })
 })
 
 test('Mimir alerts on Tengri availability, failed guests, latency, and quota pressure', () => {
@@ -69,10 +90,15 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
     'tengri_rollout_enabled',
     'TengriArgoApplicationDegraded',
     'TengriMetricsUnavailable',
+    'TengriSlotPodsMissing',
+    'TengriSlotPoolUnavailable',
     'TengriAgentFailed',
     'TengriGuestFailureBurst',
     'TengriBootLatencyHigh',
     'TengriResumeLatencyHigh',
+    'TengriInventoryStale',
+    'TengriTerminalHeartbeatLatencyHigh',
+    'TengriGuestConnectLatencyHigh',
     'TengriQuotaRejections',
   ])
 
@@ -83,10 +109,17 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
   const expressions = Object.fromEntries(alerts.map((rule) => [rule.alert, rule.expr]))
   expect(expressions.TengriArgoApplicationDegraded).toContain('argocd_app_info')
   expect(expressions.TengriMetricsUnavailable).toContain('tengri_rollout_enabled == 1')
+  expect(expressions.TengriSlotPodsMissing).toContain('kube_pod_info')
+  expect(expressions.TengriSlotPoolUnavailable).toContain('kube_pod_status_ready')
   expect(expressions.TengriAgentFailed).toContain('state="failed"')
   expect(expressions.TengriGuestFailureBurst).toContain('tengri_guest_failures_total')
   expect(expressions.TengriBootLatencyHigh).toContain('tengri_agent_boot_latency_seconds_count')
   expect(expressions.TengriResumeLatencyHigh).toContain('tengri_agent_resume_latency_seconds_count')
+  expect(expressions.TengriBootLatencyHigh).toContain('histogram_quantile(0.95')
+  expect(expressions.TengriResumeLatencyHigh).toContain('histogram_quantile(0.95')
+  expect(expressions.TengriInventoryStale).toContain('tengri_inventory_last_success_timestamp_seconds')
+  expect(expressions.TengriTerminalHeartbeatLatencyHigh).toContain('tengri_terminal_heartbeat_seconds_bucket')
+  expect(expressions.TengriGuestConnectLatencyHigh).toContain('tengri_guest_connect_seconds_bucket')
   expect(expressions.TengriQuotaRejections).toContain('tengri_quota_rejections_total')
   expect(alerts.map(({ expr }) => expr).join('\n')).not.toMatch(/owner_hash|agent_id|terminal_id|session_id/)
 })

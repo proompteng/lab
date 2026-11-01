@@ -11,9 +11,9 @@
 
 ## Effect baseline
 
-- `package.json` is authoritative for the Effect version. Bayn uses the exact Effect 4 beta cohort; keep `effect` and
-  `@effect/platform-node` on the same version. Verify APIs against installed sources and `~/github.com/effect` only when
-  its package versions match. APIs under `effect/unstable/**` may change between betas, so never use floating ranges.
+- `package.json` is authoritative for the Effect version. Bayn uses the exact Effect 4 stable cohort; keep `effect`,
+  `@effect/platform-node`, `@effect/sql-pg`, and `@effect/sql-clickhouse` on the same version. Verify APIs against installed
+  sources and `~/github.com/effect` only when its package versions match. Never use floating ranges for this cohort.
 - Return a plain value from total pure code. Use `Result` only for eager, in-memory validation, parsing, or decisions that
   can fail; once data is validated, keep downstream construction plain instead of wrapping it in `Result<_, never>`.
 - Use `Effect` for lazy work involving I/O, services, async execution, time, concurrency, resources, interruption,
@@ -41,7 +41,7 @@
 - Expected operational failures use the typed error channel and domain `Data.TaggedError` values that retain the cause.
   Defects are reserved for violated invariants and programming bugs. Do not erase causes into generic strings.
 - Never use JavaScript `try/catch` to handle a yielded Effect. Use `Effect.try` for throwing synchronous APIs,
-  `Effect.tryPromise` for rejecting Promise APIs, and `catchTag`, `mapError`, or `tapErrorCause` for recovery/reporting.
+  `Effect.tryPromise` for rejecting Promise APIs, and `catchTag`, `mapError`, or `tapCause` for recovery/reporting.
 - A Promise adapter must forward Effect's `AbortSignal` when supported. Otherwise supply an explicit cancellation action
   that actually stops the operation. A timeout without cancellation is not complete.
 - Use `Clock`, `Duration`, `Schedule`, and `TestClock` instead of ambient time and hand-written timers. Retries must be
@@ -58,7 +58,7 @@
 - Do not use non-null assertions in production code. Narrow or validate the value and fail with a useful invariant.
 - Use `Effect.log*`, `Effect.annotateLogs`, and log spans. Production logs use `Logger.consoleJson`. Do not call `console.*`
   inside an Effect; direct console output is only an emergency before the runtime exists. Never log credentials.
-- Effect 4 HTTP lives under `effect/unstable/http`; use it with `@effect/platform-node` instead of hand-written Node
+- Effect 4 HTTP lives under `effect/http`; use it with `@effect/platform-node` instead of hand-written Node
   request, signal, or shutdown plumbing. For ClickHouse, prefer `@effect/sql-clickhouse` when its exact Effect cohort is
   compatible. Keep SQL explicit and parameterized; Effect SQL replaces plumbing, not SQL. Use a thin scoped adapter
   only when no official integration exists, as with TigerBeetle.
@@ -71,6 +71,9 @@
   candidates may proceed. Required benchmark and execution-pricing evidence still fail the whole observation;
   malformed, premature, mixed-contract, ordering, and watermark failures always remain global. Preserve the raw
   excluded rows and reproduce exclusions when verifying immutable snapshot evidence.
+- During the configured close window, retryable archive unavailability may use the existing reconciled-position
+  liquidation binding after fresh reconciliation. Preserve exact identity, quantity bounds, unresolved-order and
+  mutation checks, and the close deadline. This exception never supplies evidence for an entry.
 - Inspect finalized manifest and calendar before candidate bars, then acquire the immutable qualification lock. Commit
   the evaluation graph and terminal result together; never retry or bypass an opened-incomplete lock.
 - TigerBeetle writes remain deterministic and idempotent. Existing IDs must be verified against the complete expected

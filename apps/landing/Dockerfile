@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 
 FROM node:lts-alpine AS deps
 ARG BUN_VERSION
@@ -36,6 +36,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/.next/standalone /ap
 COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/.next/static /app/apps/landing/.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/public /app/apps/landing/public
 COPY --from=builder --chown=nextjs:nodejs /app/services/tengri/proto /app/services/tengri/proto
+COPY --from=builder --chown=nextjs:nodejs /app/services/tengri/migrations /app/services/tengri/migrations
 
 USER nextjs
 

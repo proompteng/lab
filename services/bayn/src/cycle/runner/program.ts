@@ -1,77 +1,65 @@
-import { Effect, Option, pipe } from 'effect'
+import { isChartEntryTarget } from '../../strategy/runtime-decision'
+import { continuousMarketHours, type MarketHours } from '../../market-hours'
+import { canonicalHashV1Result } from '../../hash'
+import { Cause, Effect, Option, pipe, Schema } from 'effect'
 
-import { BrokerRead } from '../../broker/alpaca'
+import { BrokerRead } from '../../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
+import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
-import { CycleState, type AutonomousCycle } from '../model'
-import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
-import { CycleStore, type CycleDecisionBindingEvidence } from '../store'
+import { withObservedStage } from '../../telemetry'
+import { IsoDateSchema } from '../../schemas'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
+import { selectCycleRecovery } from './recovery-selection'
+import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
+import { CycleStore } from '../store/model'
 import { isTerminalCycleState } from '../transitions'
+import { canRearmUnusedCycle } from './calendar-decisions'
+import { calendarQueryFailureError } from './errors'
+import { finishRecoveryResult } from './pass-decisions'
 import {
-  calendarQueryFailureError,
-  finishRecoveryResult,
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
+  nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
-  selectCyclePassContinuation,
-  type CyclePassProgress,
-} from './decisions'
+  firstIntradayObservationAtMs,
+} from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
+import { DecisionReadinessReason } from './readiness'
 
-const currentIsoTime = currentUtcInstant
+const hashCalendar = (hours: MarketHours) =>
+  Effect.fromResult(canonicalHashV1Result(hours)).pipe(
+    Effect.mapError((cause) =>
+      runnerError({
+        operation: 'build-cycle',
+        failure: 'contract',
+        message: 'market calendar cannot be canonicalized',
+        cause,
+      }),
+    ),
+  )
 
-const discoverIntradayCyclePass = <R>(
+export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
-  const candidate =
-    context.strategyName === 'intraday-momentum' &&
-    context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-      ? {
-          cycleBindingId: context.cycleBindingId,
-          strategyName: context.strategyName,
-          strategyProtocolHash: context.strategyProtocolHash,
-          accountId: context.accountId,
-          executionPolicy: context.executionPolicy,
-        }
-      : undefined
-  if (candidate === undefined) {
-    return Effect.fail(
-      runnerError({
-        operation: 'configure',
-        failure: 'invalid-config',
-        message: 'intraday discovery requires an exact strategy and session-relative execution-policy pairing',
-      }),
-    )
+  const candidate = {
+    cycleBindingId: context.cycleBindingId,
+    strategyName: context.strategyName,
+    strategyProtocolHash: context.strategyProtocolHash,
+    accountId: context.accountId,
+    executionPolicy: context.executionPolicy,
   }
   return Effect.gen(function* () {
-    const observedAt = yield* currentIsoTime
+    const observedAt = yield* currentUtcInstant
     const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
       Effect.mapError(calendarQueryFailureError),
     )
-    const broker = yield* BrokerRead
-    const calendar = yield* broker.marketCalendar(query).pipe(
-      Effect.mapError((cause) =>
-        runnerError({
-          operation: 'market-calendar',
-          failure: 'calendar-read',
-          message: 'authoritative broker calendar read failed',
-          cause,
-        }),
-      ),
-    )
-    const executionSession = selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
-    if (executionSession === undefined) {
-      return yield* runnerError({
-        operation: 'select-session',
-        failure: 'calendar-unavailable',
-        message: 'broker calendar has no session whose intraday entry cutoff remains open',
-      })
-    }
-    const draft = yield* Effect.fromResult(makeIntradayCycleDraft(candidate, calendar.value, executionSession)).pipe(
+    const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(query.start).pipe(
       Effect.mapError((cause) =>
         runnerError({
           operation: 'build-cycle',
           failure: 'contract',
-          message: 'intraday autonomous cycle draft construction failed',
+          message: 'current admission date is invalid',
           cause,
         }),
       ),
@@ -81,7 +69,7 @@ const discoverIntradayCyclePass = <R>(
       .readAuthoritySlot({
         qualificationRunId: context.cycleBindingId,
         accountId: context.accountId,
-        executionSessionDate: draft.identity.executionSessionDate,
+        executionSessionDate: sessionDate,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -93,11 +81,130 @@ const discoverIntradayCyclePass = <R>(
           }),
         ),
       )
-    if (Option.isSome(existing)) {
+    let hours: MarketHours = continuousMarketHours
+    let hoursReadHash = yield* hashCalendar(continuousMarketHours)
+    // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
+    if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
+      const broker = yield* BrokerRead
+      const calendar = yield* broker.marketCalendar(query).pipe(
+        Effect.timeoutOrElse({
+          duration: 5_000,
+          orElse: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation: 'market-calendar',
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: 'Equity calendar discovery exceeded its five-second read budget',
+              }),
+            ),
+        }),
+        Effect.catchTag('BrokerReadError', (cause) =>
+          cause.operation === 'market-calendar' &&
+          cause.retryable &&
+          [
+            BrokerReadErrorKind.Timeout,
+            BrokerReadErrorKind.Transport,
+            BrokerReadErrorKind.RateLimited,
+            BrokerReadErrorKind.Server,
+          ].includes(cause.kind)
+            ? Effect.logWarning(
+                'Equity discovery excluded unavailable calendar; continuous discovery remains eligible',
+              ).pipe(Effect.annotateLogs({ operation: cause.operation, kind: cause.kind }), Effect.as(null))
+            : Effect.fail(cause),
+        ),
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'market-calendar',
+            failure: 'calendar-read',
+            message: 'authoritative equity calendar read failed',
+            cause,
+          }),
+        ),
+      )
+      const session =
+        calendar === null
+          ? undefined
+          : selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
+      if (
+        calendar !== null &&
+        session !== undefined &&
+        firstIntradayObservationAtMs(session, candidate.executionPolicy) <= Date.parse(observedAt)
+      ) {
+        hours = calendar.value
+        hoursReadHash = calendar.evidence.contentHash
+      }
+    }
+    const executionSession = selectIntradayExecutionSession(hours, candidate.executionPolicy, observedAt)
+    if (executionSession === undefined) {
+      return yield* runnerError({
+        operation: 'select-session',
+        failure: 'calendar-unavailable',
+        message: 'broker calendar has no session whose intraday entry cutoff remains open',
+      })
+    }
+    const firstAttemptDraft = yield* Effect.fromResult(
+      makeIntradayCycleDraft(candidate, hours, executionSession, 1),
+    ).pipe(
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'build-cycle',
+          failure: 'contract',
+          message: 'intraday autonomous cycle draft construction failed',
+          cause,
+        }),
+      ),
+    )
+    let recoveredBlockedCycle = false
+    if (
+      Option.isSome(existing) &&
+      existing.value.state === CycleState.Blocked &&
+      context.authorityGenerationHash !== undefined
+    ) {
+      const prior = yield* store.readDecisionDocument(existing.value.identity.cycleId).pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'read-authority-slot',
+            failure: 'store',
+            message: 'blocked cycle authority binding read failed',
+            cause,
+          }),
+        ),
+      )
+      recoveredBlockedCycle = Option.isNone(prior)
+        ? canRearmUnusedCycle(existing.value, candidate, hours, executionSession, observedAt)
+        : prior.value.mode === Authority.Execution &&
+          prior.value.contentHash === existing.value.bindings.decisionHash &&
+          prior.value.bindings.authorityGenerationHash !== context.authorityGenerationHash
+    }
+    const entryAttemptOrdinal = Option.isSome(existing)
+      ? nextIntradayEntryAttemptOrdinal(
+          existing.value,
+          observedAt,
+          firstAttemptDraft.window.submissionCutoffAt,
+          recoveredBlockedCycle,
+        )
+      : 1
+    if (Option.isSome(existing) && entryAttemptOrdinal === undefined) {
       return isTerminalCycleState(existing.value.state)
         ? ({ outcome: 'ALREADY_TERMINAL', observedAt, cycle: existing.value } as const)
         : ({ outcome: 'ALREADY_ACQUIRED', observedAt, cycle: existing.value } as const)
     }
+    const draft =
+      entryAttemptOrdinal === 1
+        ? firstAttemptDraft
+        : yield* Effect.fromResult(
+            makeIntradayCycleDraft(candidate, hours, executionSession, entryAttemptOrdinal),
+          ).pipe(
+            Effect.mapError((cause) =>
+              runnerError({
+                operation: 'build-cycle',
+                failure: 'contract',
+                message: 'intraday autonomous cycle rearm construction failed',
+                cause,
+              }),
+            ),
+          )
     const receipt = yield* store.acquire(draft, observedAt).pipe(
       Effect.mapError((cause) =>
         runnerError({
@@ -112,16 +219,12 @@ const discoverIntradayCyclePass = <R>(
       outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
       executionSessionDate: executionSession.date,
       observedAt,
-      calendarResponseHash: calendar.value.normalizedResponseHash,
-      calendarReadContentHash: calendar.evidence.contentHash,
+      calendarResponseHash: yield* hashCalendar(hours),
+      calendarReadContentHash: hoursReadHash,
       receipt,
     } as const
   })
 }
-
-export const discoverAutonomousCyclePass = <R>(
-  context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => discoverIntradayCyclePass(context)
 
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
   Effect.fromResult(selectCycleRecovery(state)).pipe(
@@ -188,6 +291,7 @@ const recoverCycle = <R>(
       return Effect.succeed({
         outcome: 'RECOVERED',
         action: 'WAITING',
+        waitReason: 'AWAITING_SUBMISSION_OPEN',
         observedAt: selection.observedAt,
         cycle: selection.cycle,
       })
@@ -196,10 +300,15 @@ const recoverCycle = <R>(
         Effect.matchEffect({
           onFailure: (cause) =>
             cause.failure === 'not-ready'
-              ? currentIsoTime.pipe(
+              ? currentUtcInstant.pipe(
                   Effect.map((observedAt) => ({
                     outcome: 'RECOVERED' as const,
                     action: 'WAITING' as const,
+                    readiness: cause.readiness ?? {
+                      reason: DecisionReadinessReason.DecisionPending,
+                      message: cause.message,
+                    },
+                    ...(cause.entryAbstention === undefined ? {} : { entryAbstention: cause.entryAbstention }),
                     observedAt,
                     cycle: selection.cycle,
                   })),
@@ -213,7 +322,7 @@ const recoverCycle = <R>(
                   }),
                 ),
           onSuccess: (document) =>
-            (context.buildDecisionEvidence?.(document) ?? Effect.succeed<CycleDecisionBindingEvidence>({})).pipe(
+            context.buildDecisionEvidence(document).pipe(
               Effect.mapError((cause) =>
                 runnerError({
                   operation: 'build-decision',
@@ -224,20 +333,61 @@ const recoverCycle = <R>(
               ),
               Effect.flatMap((evidence) =>
                 pipe(
-                  currentIsoTime,
+                  currentUtcInstant,
                   Effect.flatMap((bindObservedAt) =>
                     pipe(
                       CycleStore,
-                      Effect.flatMap((store) =>
-                        store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence),
-                      ),
-                      Effect.mapError((cause) =>
-                        runnerError({
-                          operation: 'recover-cycle',
-                          failure: 'store',
-                          message: 'durable shadow decision binding failed',
-                          cause,
-                        }),
+                      Effect.flatMap((store) => {
+                        const binding = store
+                          .bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence)
+                          .pipe(
+                            Effect.catchCause((cause) => {
+                              const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined
+                              return reason !== undefined &&
+                                Cause.isFailReason(reason) &&
+                                reason.error.failure === 'entry-expired'
+                                ? currentUtcInstant.pipe(
+                                    Effect.flatMap((expiredAt) =>
+                                      store.block(
+                                        selection.cycle.identity.cycleId,
+                                        CycleTerminalReason.UnusedEntryExpired,
+                                        expiredAt,
+                                      ),
+                                    ),
+                                  )
+                                : Effect.failCause(cause)
+                            }),
+                          )
+                        const target = 'strategyDecision' in document ? document.strategyDecision : undefined
+                        if (!isChartEntryTarget(target)) return binding
+                        const timingAttributes = {
+                          'bayn.entry_timing.decision_hash': document.contentHash,
+                          'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,
+                          'bayn.entry_timing.batch_completed_at': target.evidence.batchResult.completedAt,
+                        }
+                        return binding.pipe(
+                          Effect.tap((receipt) =>
+                            Effect.annotateCurrentSpan({
+                              'bayn.entry_timing.binding_changed': receipt.changed,
+                              'bayn.entry_timing.binding_accepted':
+                                receipt.cycle.bindings.decisionHash === document.contentHash,
+                            }),
+                          ),
+                          Effect.annotateSpans(timingAttributes),
+                          withObservedStage('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
+                        )
+                      }),
+                      Effect.catchCause((failure) =>
+                        Effect.failCause(
+                          Cause.map(failure, (cause) =>
+                            runnerError({
+                              operation: 'recover-cycle',
+                              failure: 'store',
+                              message: 'durable shadow decision binding failed',
+                              cause,
+                            }),
+                          ),
+                        ),
                       ),
                       Effect.map(
                         (binding): CycleRunResult => ({
@@ -268,7 +418,7 @@ const recoverCycle = <R>(
         ),
         Effect.flatMap((document) =>
           pipe(
-            currentIsoTime,
+            currentUtcInstant,
             Effect.flatMap((decisionObservedAt) =>
               pipe(
                 chooseRecovery({
@@ -304,78 +454,17 @@ const recoverCycle = <R>(
 
 export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
+  cycle: AutonomousCycle | undefined,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  pipe(
-    CycleStore,
-    Effect.flatMap((store) =>
-      store.readOldestUnfinished({
-        qualificationRunId: context.cycleBindingId,
+  currentUtcInstant.pipe(
+    Effect.flatMap((observedAt) =>
+      chooseRecovery({
+        cycleBindingId: context.cycleBindingId,
         accountId: context.accountId,
+        strategyProtocolHash: context.strategyProtocolHash,
+        observedAt,
+        cycle,
       }),
     ),
-    Effect.mapError((cause) =>
-      runnerError({
-        operation: 'read-oldest-unfinished',
-        failure: 'store',
-        message: 'oldest unfinished autonomous cycle read failed',
-        cause,
-      }),
-    ),
-    Effect.flatMap((unfinished) =>
-      pipe(
-        currentIsoTime,
-        Effect.flatMap((observedAt) =>
-          pipe(
-            chooseRecovery({
-              cycleBindingId: context.cycleBindingId,
-              accountId: context.accountId,
-              strategyProtocolHash: context.strategyProtocolHash,
-              observedAt,
-              cycle: Option.getOrUndefined(unfinished),
-            }),
-            Effect.flatMap((selection) => recoverCycle(selection, context)),
-          ),
-        ),
-      ),
-    ),
+    Effect.flatMap((selection) => recoverCycle(selection, context)),
   )
-
-const cycleProgressKey = (cycle: AutonomousCycle): string =>
-  `${cycle.identity.cycleId}:${cycle.state}:${cycle.stateVersion}`
-
-const continueAutonomousCyclePass = <R>(
-  context: CycleRunContext<R>,
-  completedProgress: ReadonlySet<CyclePassProgress>,
-  previousProgressKey?: string,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  runAutonomousCyclePass(context).pipe(
-    Effect.flatMap((result) => {
-      const continuation = selectCyclePassContinuation(result)
-      if (continuation._tag === 'RETURN') return Effect.succeed(result)
-      const progressKey = cycleProgressKey(continuation.cycle)
-      if (progressKey === previousProgressKey) {
-        return Effect.fail(
-          runnerError({
-            operation: 'recover-cycle',
-            failure: 'contract',
-            message: `autonomous cycle pass repeated ${continuation.progress} without durable progress`,
-          }),
-        )
-      }
-      if (completedProgress.has(continuation.progress)) {
-        return Effect.fail(
-          runnerError({
-            operation: 'recover-cycle',
-            failure: 'contract',
-            message: `autonomous cycle pass repeated ${continuation.progress} after durable progress`,
-          }),
-        )
-      }
-      return continueAutonomousCyclePass(context, new Set([...completedProgress, continuation.progress]), progressKey)
-    }),
-  )
-
-export const runAutonomousCycleUntilSettled = <R>(
-  context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  continueAutonomousCyclePass(context, new Set())

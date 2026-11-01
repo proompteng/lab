@@ -1,6 +1,6 @@
 # 197. Torghut Executable Alpha Repair Receipts And Zero-Notional Reentry (2026-05-13)
 
-Status: Accepted for Jangar engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

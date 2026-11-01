@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "bayn.valkey-hot-path-baseline.v1",
+  "selection": "purposive postclose Tempo traces and 30-minute threshold logs; nested spans are not additive; not an open-market latency distribution",
+  "liveSourceRevision": "0c5b11691596ae68382799518a431268ca820f83",
+  "retainedTraceRequests": 48,
+  "unavailableTraceResponses": 4,
+  "brokerPayloadBytes": 768935,
+  "originalClientMaximumCharacters": 262144,
+  "postcloseSpans": [
+    {
+      "span": "bayn.reconciliation.broker-snapshot",
+      "count": 11,
+      "p50Ms": 33.975,
+      "p95Ms": 43.171
+    },
+    {
+      "span": "bayn.postgres.commit",
+      "count": 11,
+      "p50Ms": 1189.049,
+      "p95Ms": 4819.911
+    },
+    {
+      "span": "bayn.reconciliation.persist",
+      "count": 11,
+      "p50Ms": 2888.906,
+      "p95Ms": 7497.456
+    },
+    {
+      "span": "bayn.broker.observation.capture",
+      "count": 10,
+      "p50Ms": 1399.714,
+      "p95Ms": 2016.908
+    },
+    {
+      "span": "bayn.broker.observation.publish",
+      "count": 10,
+      "p50Ms": 944.417,
+      "p95Ms": 1659.885
+    }
+  ],
+  "postgres": {
+    "version": "18.6",
+    "sharedBuffersBytes": 536870912,
+    "synchronousCommit": "on",
+    "requiredSynchronousStandbys": 1,
+    "extensions": ["plpgsql"],
+    "pgStatStatementsAvailable": false
+  },
+  "interpretation": "Durable reconciliation and commits dominate. Move repeated broker payload transfer, decoding and JSONB publication out of PostgreSQL; compact state consumers avoid complete order/fill history. Retain all trading and accounting fences. No whole-controller performance improvement is inferred."
+}

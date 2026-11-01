@@ -8,81 +8,129 @@
 }:
 
 let
+  openCode = import ./opencode-cli.nix { inherit pkgs lib; };
+  frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.intraday-momentum.behavior.v11, verified by the production executable.
-  strategyBehaviorHash = "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285";
-  # Canonical hash of the compiled bayn.intraday-momentum.protocol.v2 document.
-  strategyParameterHash = "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797";
-  strategyName = "intraday-momentum";
+  # SHA-256 identity for bayn.chart-first-entry.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
+  # Canonical hash of the compiled bayn.jev.protocol.v35 document.
+  strategyParameterHash = "f9e6e142d22de772dca147cae29c07e17010026ee7c156874c1f6a1cccc32878";
+  strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "28582fcf9c63d0409a06d27abf53c05286d1b785374f33e228b88696b990ab40";
-  # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
-  # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
-  executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
+  strategyProtocolHash = "224be13842b21f731e6ac0e97fd390dccb12c71149c3c44ca9dc5f7511a8c69f";
+  # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  # This records availability; runtime separately selects and verifies the account-bound activation policy.
+  executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
-  intradayReplayCommand = pkgs.writeShellScriptBin "bayn-intraday-replay" ''
+  inferenceCostCommand = pkgs.writeShellScriptBin "bayn-inference-cost" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/intraday-replay-command.js" "$@"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
   '';
-  vendorIntradayReplayCommand = pkgs.writeShellScriptBin "bayn-vendor-intraday-replay" ''
+  researchCommand = pkgs.writeShellScriptBin "bayn-research" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/vendor-intraday-replay-command.js" "$@"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
+  '';
+  evaluationCommand = pkgs.writeShellScriptBin "bayn-jev-evaluate" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-evaluation-command.js" "$@"
+  '';
+  backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
+  '';
+  frozenControlCommand = pkgs.writeShellScriptBin "bayn-frozen-control-backtest" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/frozen-control-command.js" "$@"
+  '';
+  controlCommand = pkgs.writeShellScriptBin "bayn-control-study" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
+  '';
+  gepaPython = pkgs.python312.withPackages (ps: [
+    ps.boto3
+    (ps.buildPythonPackage {
+      pname = "gepa";
+      version = "0.1.4";
+      pyproject = true;
+      src = pkgs.fetchurl {
+        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
+      };
+      build-system = [ ps.setuptools ps.wheel ps.build ];
+      pythonImportsCheck = [ "gepa.optimize_anything" ];
+      doCheck = false;
+    })
+  ]);
+  gepaCommand = pkgs.writeShellScriptBin "bayn-gepa" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    export PATH="$root/bin:$PATH"
+    exec ${gepaPython}/bin/python "$root/app/services/bayn/gepa/runner.py" "$@"
+  '';
+  gepaNativeCommand = pkgs.writeShellScriptBin "bayn-gepa-native" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    export PATH="$root/bin:$PATH"
+    exec ${gepaPython}/bin/python "$root/app/services/bayn/gepa/native.py" "$@"
   '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
+  buildDefines = lib.concatStringsSep " " [
+    (buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision)
+    (buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository)
+    (buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash)
+    (buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash)
+  ];
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
-  depsHash = {
-    x86_64-linux = "sha256-Cw9ZS/ZLSaAXgTPkNzTGBLspoWMp2GXJE+qvBnbc6Fk=";
-    aarch64-linux = "sha256-7eHkNniN0mAv9vp0Ia7UidpKFOolvEcDyziUqNuQuvk=";
-  };
+  depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
-    (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
-      + "--external tigerbeetle-node --entry-naming '[name].js' --outdir=dist "
-      + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
-      + " "
-      + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash
-      + " "
-      + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
-    )
+    "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
+    "bun --cwd=services/bayn run build ${buildDefines}"
+    "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
+    "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
+    "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/jev-evaluation-command.js --help"
+    "node services/bayn/dist/backtest-command.js --help"
+    "node services/bayn/dist/frozen-control-command.js --help"
+    "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/intraday-replay-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/vendor-intraday-replay-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-research-server.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyParameterHash} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyName} services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg strategyProtocolHash} services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg executionRiskPolicyHash} services/bayn/dist/verify-build-contract.js"
+    "rm services/bayn/dist/verify-build-contract.js"
   ];
   runtimeInstallPhase = ''
-    mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
-    cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/intraday-replay-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/vendor-intraday-replay-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
+    mkdir -p "$out/app/services/bayn/dist"
+    cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
+    rm "$out/app/services/bayn/dist/opencode-command.js"
+    cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
+    cp "$TMPDIR/work/services/bayn/dist/frozen-control-compiler.json" "$out/app/services/bayn/dist/frozen-control-compiler.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
-    cp -R -L "$TMPDIR/work/services/bayn/node_modules/tigerbeetle-node/." \
-      "$out/app/services/bayn/node_modules/tigerbeetle-node/"
+    mkdir -p "$out/app/services/bayn/gepa"
+    cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"
+    node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
+      "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
   runtimeRoot = import ./bayn-runtime-root.nix {
     inherit
@@ -99,7 +147,14 @@ let
   };
 in
 import ./bun-workspace-service.nix {
-  inherit pkgs lib bun nodejs depsHash runtimeRoot;
+  inherit
+    pkgs
+    lib
+    bun
+    nodejs
+    depsHash
+    runtimeRoot
+    ;
   repoRoot = dependencySource;
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
@@ -120,8 +175,18 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.cacert
     forwardPerformanceCommand
-    intradayReplayCommand
-    vendorIntradayReplayCommand
+    inferenceCostCommand
+    researchCommand
+    gepaCommand
+    gepaNativeCommand
+    bun
+    pkgs.git
+    evaluationCommand
+    backtestCommand
+    frozenControlCommand
+    controlCommand
+    gepaPython
+    pkgs.go-containerregistry
   ];
   exposedPorts = {
     "8080/tcp" = { };

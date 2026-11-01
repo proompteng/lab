@@ -1,6 +1,6 @@
 # 201. Torghut Alpha Closure Settlement And Feature Replay Market (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 
@@ -352,7 +352,6 @@ M5: Add Jangar slot-governor enforcement.
 
 Architecture PR validation:
 
-- `bunx oxfmt --check docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md docs/torghut/design-system/v6/201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 - `git diff --check`
 
 Engineer validation:

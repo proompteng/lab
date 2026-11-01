@@ -1,6 +1,6 @@
 # 71. Torghut Whitepaper Autoresearch Profit-Target Strategy Factory (2026-04-21)
 
-Status: Ready for implementation
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Executive Summary
 

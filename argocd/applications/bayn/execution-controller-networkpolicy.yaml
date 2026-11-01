@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: bayn-execution-controller
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: bayn-execution-controller
     app.kubernetes.io/part-of: bayn
@@ -24,6 +26,27 @@ spec:
         - port: restate
           protocol: TCP
   egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kafka
+          podSelector:
+            matchLabels:
+              strimzi.io/cluster: kafka
+      ports:
+        - port: 9092
+          protocol: TCP
     - to:
         - namespaceSelector:
             matchLabels:
@@ -52,6 +75,18 @@ spec:
               kubernetes.io/metadata.name: observability
           podSelector:
             matchLabels:
+              app.kubernetes.io/instance: observability-mimir
+              app.kubernetes.io/name: mimir
+              app.kubernetes.io/component: gateway
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
               app.kubernetes.io/name: tempo
               app.kubernetes.io/component: distributor
       ports:
@@ -68,6 +103,9 @@ spec:
         - podSelector:
             matchLabels:
               cnpg.io/cluster: bayn-db
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: bayn-native-arrival-db
       ports:
         - port: 5432
           protocol: TCP

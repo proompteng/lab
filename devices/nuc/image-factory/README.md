@@ -6,7 +6,7 @@ for per-machine Talos schematics. The factory is reachable only on the Elauwit p
 Compose network.
 
 The factory serves the signed Talos `v1.14.0` catalog pinned in `release.json`. It contains every official Sidero Labs
-extension plus the existing signed Kata `4.1.0-r5` image. The accepted r4 catalog at
+extension plus the signed Kata `4.1.0-r6` image. The accepted r4 catalog at
 `ghcr.io/proompteng/talos-extensions:v1.13.9` remains available for recovery. This is the supported community path: the separate
 `enterprise.extraExtensions` feature is not required.
 

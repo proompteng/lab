@@ -1,17 +1,17 @@
 import { Effect } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { CycleRunnerError } from '../cycle/runner'
-import { CycleStoreError } from '../cycle/store'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
+import { CycleRunnerError } from '../cycle/runner/model'
+import { CycleStoreError } from '../cycle/store/model'
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { OperationalError } from '../errors'
-import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations'
+import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
 import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
-import { Pipeable } from '../pipeable'
 
 export type ExecutionMutationExecutor<E, R> = {
   readonly submit?: (
@@ -23,7 +23,7 @@ export type ExecutionMutationExecutor<E, R> = {
   readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, E, R>
 }
 
-export const mutationConsistencyDelayMs = 1_000
+export { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 
 export interface MutationRunnerErrorInput {
   readonly operation?: CycleRunnerError['operation']
@@ -55,7 +55,7 @@ export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): bool
     error.failure !== 'store' ||
     !isTransientCycleStoreFailure(error.cause))
 
-const restrictMutationAuthorityDataFirst = (
+export const restrictMutationAuthority = (
   subject: string,
   reason: string,
 ): Effect.Effect<void, CycleRunnerError, AuthorityRestrictionStore | WriterFence> =>
@@ -75,8 +75,6 @@ const restrictMutationAuthorityDataFirst = (
         ),
       )
   })
-
-export const restrictMutationAuthority = Pipeable.dual(2, restrictMutationAuthorityDataFirst)
 
 export const restrictMutationLoopFailure = (
   error: CycleRunnerError,
@@ -187,7 +185,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
   })
 }
 
-const executeMutationIntentDataFirst = (
+export const executeMutationIntent = (
   executionProgram: ExecutionProgram,
   intentId: string,
   action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
@@ -204,12 +202,3 @@ const executeMutationIntentDataFirst = (
     submitExpiresAt,
     now: currentUtcInstant,
   })
-
-export const executeMutationIntent = Pipeable.by<
-  (
-    intentId: string,
-    action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
-    submitExpiresAt?: string,
-  ) => (executionProgram: ExecutionProgram) => ReturnType<typeof executeMutationIntentDataFirst>,
-  typeof executeMutationIntentDataFirst
->((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, executeMutationIntentDataFirst)

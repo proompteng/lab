@@ -4,6 +4,28 @@ import { Result } from 'effect'
 import { parseForwardPerformanceCommandArgs } from './forward-performance-command'
 
 describe('forward-performance command arguments', () => {
+  test('supports prospective registration, immutable source capture, assessment, and a scoped report receipt', () => {
+    for (const [flag, tag] of [
+      ['--system-history', 'SystemHistory'],
+      ['--system-register', 'SystemRegister'],
+      ['--system-assess', 'SystemAssess'],
+      ['--system-capture-replay', 'SystemCaptureReplay'],
+    ] as const)
+      expect(Result.getOrThrow(parseForwardPerformanceCommandArgs([flag ?? '', '/private/evidence.json']))).toEqual({
+        _tag: tag,
+        path: '/private/evidence.json',
+      })
+    expect(Result.getOrThrow(parseForwardPerformanceCommandArgs(['--system-capture', 'a'.repeat(64)]))).toEqual({
+      _tag: 'SystemCapture',
+      registrationHash: 'a'.repeat(64),
+    })
+    expect(
+      Result.getOrThrow(
+        parseForwardPerformanceCommandArgs(['--authority-generation', 'a'.repeat(64), '--assessment', 'b'.repeat(64)]),
+      ),
+    ).toEqual({ _tag: 'Run', options: { authorityGenerationHash: 'a'.repeat(64), assessmentHash: 'b'.repeat(64) } })
+    expect(Result.isFailure(parseForwardPerformanceCommandArgs(['--system-capture', 'latest']))).toBe(true)
+  })
   test('allows an exact authority generation without widening to account history', () => {
     const authorityGenerationHash = 'a'.repeat(64)
     const result = parseForwardPerformanceCommandArgs(['--authority-generation', authorityGenerationHash])
@@ -13,9 +35,19 @@ describe('forward-performance command arguments', () => {
     }
   })
 
-  test('preserves explicit help and the existing account-history invocation', () => {
+  test('requires explicit persistence opt-in alongside an exact authority generation', () => {
+    const authorityGenerationHash = 'a'.repeat(64)
+    expect(
+      Result.getOrThrow(
+        parseForwardPerformanceCommandArgs(['--authority-generation', authorityGenerationHash, '--persist-receipt']),
+      ),
+    ).toEqual({ _tag: 'Run', options: { authorityGenerationHash, persistReceipt: true } })
+    expect(Result.isFailure(parseForwardPerformanceCommandArgs(['--persist-receipt']))).toBe(true)
+  })
+
+  test('preserves explicit help and rejects an unbounded account-history invocation', () => {
     expect(Result.getOrThrow(parseForwardPerformanceCommandArgs(['--help']))).toEqual({ _tag: 'Help' })
-    expect(Result.getOrThrow(parseForwardPerformanceCommandArgs([]))).toEqual({ _tag: 'Run', options: {} })
+    expect(Result.isFailure(parseForwardPerformanceCommandArgs([]))).toBe(true)
   })
 
   test('the command rejects a malformed generation before loading runtime configuration', () => {

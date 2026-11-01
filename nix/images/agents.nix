@@ -12,6 +12,32 @@ let
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+  pstackVersion = "0.9.30";
+  pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
+
+  pstackArchive = pkgs.fetchurl {
+    url = "https://github.com/michael-denyer/pstack-claude/archive/${pstackCommit}.tar.gz";
+    hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0=";
+  };
+
+  pstackBundle = pkgs.stdenvNoCC.mkDerivation {
+    pname = "agents-shell-pstack";
+    version = pstackVersion;
+    src = pstackArchive;
+    sourceRoot = "pstack-claude-${pstackCommit}";
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out/opt/agents-shell"
+      cp -R plugins/pstack "$out/opt/agents-shell/pstack"
+      test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/SKILL.md"
+      test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/references/codex-tools.md"
+      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54
+      test "$(find "$out/opt/agents-shell/pstack/.codex-plugin/prompts" -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+      runHook postInstall
+    '';
+  };
 
   mkPyWheel =
     {
@@ -253,8 +279,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-rk1b7miFB29BjPgaaH05JOh0GTzhO0ExeMrK4Vt8QNE=";
-    aarch64-linux = "sha256-44mLcU9/jic/sZu65msdK+yvfMLAGLmxoXQE5UP5cdA=";
+    x86_64-linux = "sha256-PJrwaZJ85F4d2yuNpXwh6fY74/pTaJUzuOAeMQSRm2Y=";
+    aarch64-linux = "sha256-Hqwak/lLZpO7BbCFuHFTu0KiRqXXztNmS/YFBT2FKBk=";
   };
 
   installFilters = [
@@ -343,13 +369,14 @@ let
 
     linkBunIsolatedPackage() {
       local package_name="$1"
-      local target_path="$2"
+      local package_version="$2"
+      local target_path="$3"
       local package_path
       local relative_package_path
 
-      package_path="$(find "$out/app/node_modules/.bun" -path "*/node_modules/$package_name" -type d -print -quit)"
-      if [ -z "$package_path" ]; then
-        echo "Bun isolated package not found in runtime image: $package_name" >&2
+      package_path="$out/app/node_modules/.bun/$package_name@$package_version/node_modules/$package_name"
+      if [ ! -d "$package_path" ]; then
+        echo "Bun isolated package not found in runtime image: $package_name@$package_version" >&2
         exit 1
       fi
       relative_package_path="$(realpath --relative-to="$(dirname "$target_path")" "$package_path")"
@@ -371,9 +398,16 @@ let
     cp -R "$TMPDIR/work/services/agents/.output" "$out/app/services/agents/.output"
     copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"
 
-    chmod +x "$out/app/services/agents/scripts/agents-shell-entrypoint.sh"
+    chmod +x \
+      "$out/app/services/agents/scripts/agents-shell-entrypoint.sh" \
+      "$out/app/services/agents/scripts/install-agents-shell-pstack.sh"
     mkdir -p "$out/app/packages/agent-contracts/node_modules"
-    linkBunIsolatedPackage "effect" "$out/app/packages/agent-contracts/node_modules/effect"
+    contracts_effect_version="$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).dependencies.effect)' "$out/app/packages/agent-contracts/package.json")"
+    linkBunIsolatedPackage "effect" "$contracts_effect_version" "$out/app/packages/agent-contracts/node_modules/effect"
+    bun -e 'const fs = require("node:fs"); const root = process.argv[1]; const expected = JSON.parse(fs.readFileSync(root + "/package.json", "utf8")).dependencies.effect; const actual = JSON.parse(fs.readFileSync(root + "/node_modules/effect/package.json", "utf8")).version; if (actual !== expected) throw new Error("agent-contracts Effect runtime mismatch")' "$out/app/packages/agent-contracts"
+    bun "$out/app/packages/temporal-bun-sdk/scripts/verify-promise-consumer.ts" \
+      "$out/app/services/agents" --compiled
+    bun "$out/app/services/agents/scripts/verify-built-server.ts" "$out/app/services/agents"
   '';
 
   scriptWrapper =
@@ -407,13 +441,24 @@ let
     yq
   ] ++ cxTools;
 
+  # Repo-installed CLI shims commonly use #!/usr/bin/env. Nix store PATH entries alone
+  # do not provide the absolute interpreter path required by the kernel.
+  agentsShellInterpreterCompat = pkgs.runCommand "agents-shell-interpreter-compat" { } ''
+    mkdir -p "$out/usr/bin"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+    "$out/usr/bin/env" --version >/dev/null
+  '';
+
   agentsShellContents = commonContents ++ [
+    agentsShellInterpreterCompat
     applyPatch
+    pstackBundle
     pkgs.gh
     pkgs.openssh
     pkgs.procps
     pkgs.python3
     pkgs.ripgrep
+    pkgs.tini
     pkgs.uv
     pkgs.wget
   ];
@@ -631,6 +676,9 @@ in
     serviceName = "agents-shell";
     imageName = "agents-shell";
     command = [
+      "tini"
+      "-g"
+      "--"
       "bash"
       "./scripts/agents-shell-entrypoint.sh"
     ];
@@ -640,7 +688,7 @@ in
       "AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true"
       "AGENTS_RUNTIME_SERVICE=agents-shell"
       "AGENTS_SHELL_WORKSPACE_ROOT=/workspace"
-      "AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl"
+      "AGENTS_SHELL_AUDIT_LOG_PATH="
       "AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai"
       "AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master"
       "AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents"

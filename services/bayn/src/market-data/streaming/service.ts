@@ -1,0 +1,123 @@
+import { Effect, Layer, Result } from 'effect'
+import { PgClient } from '@effect/sql-pg'
+
+import { operationalError } from '../../errors'
+import { canonicalHashV1Result } from '../../hash'
+import { marketDataOperationError } from '../errors'
+import {
+  IntradayMarketData,
+  IntradaySnapshotPurpose,
+  type IntradayMarketDataService,
+  type IntradaySnapshotQuery,
+} from '../intraday/model'
+import { persistIntradayRecordRows } from '../intraday/verification'
+import { KafkaMarketProjection } from './kafka'
+import {
+  recoverStreamingSnapshotReference,
+  streamingSnapshotReference,
+  type StreamingVerifiedSnapshotReference,
+} from './reference'
+import { reproduceStreamingSnapshot } from './replay'
+import { constructStreamingSnapshot } from './snapshot'
+import { snapshotFailureMeasurement } from './telemetry'
+
+const snapshotHash = (snapshot: Parameters<IntradayMarketDataService['verifyReference']>[0]) =>
+  canonicalHashV1Result({
+    manifest: snapshot.manifest,
+    bars: snapshot.bars,
+    quotes: snapshot.quotes,
+    trades: snapshot.trades,
+    latestQuotes: snapshot.latestQuotes,
+  }).pipe(Result.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot is not canonical', cause)))
+
+const copyReference = (reference: StreamingVerifiedSnapshotReference): StreamingVerifiedSnapshotReference =>
+  Object.freeze({ ...reference, manifest: structuredClone(reference.manifest) })
+
+export const StreamingIntradayMarketDataLive = Layer.effect(
+  IntradayMarketData,
+  Effect.gen(function* () {
+    const kafka = yield* KafkaMarketProjection
+    const postgres = yield* PgClient.PgClient
+    const observed = new Map<
+      string,
+      { readonly reference: StreamingVerifiedSnapshotReference; readonly snapshotHash: string }
+    >()
+    const loadSnapshot = (query: IntradaySnapshotQuery) =>
+      Effect.gen(function* () {
+        const cut = yield* (
+          query.purpose === IntradaySnapshotPurpose.Liquidation ? kafka.readForLiquidation : kafka.read
+        ).pipe(
+          Effect.mapError((cause) => marketDataOperationError('load', 'Kafka market projection is not ready', cause)),
+        )
+        const snapshot = yield* Effect.fromResult(constructStreamingSnapshot(cut, query)).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning('Streaming market snapshot rejected').pipe(
+              Effect.annotateLogs(snapshotFailureMeasurement(cause, query, cut.projection)),
+            ),
+          ),
+          Effect.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot verification failed', cause)),
+        )
+        const capturedHash = yield* Effect.fromResult(snapshotHash(snapshot))
+        observed.set(snapshot.manifest.snapshotId, {
+          reference: copyReference(streamingSnapshotReference(snapshot)),
+          snapshotHash: capturedHash,
+        })
+        if (observed.size > 32) {
+          const oldest = observed.keys().next()
+          if (oldest.done !== true) observed.delete(oldest.value)
+        }
+        return snapshot
+      })
+    const verifyReference: IntradayMarketDataService['verifyReference'] = (snapshot) =>
+      Effect.gen(function* () {
+        const manifest = snapshot.manifest
+        if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1')
+          return yield* operationalError({
+            component: 'market-data',
+            operation: 'load',
+            message: 'Live market data requires a captured Kafka snapshot',
+          })
+        const cached = observed.get(manifest.snapshotId)
+        if (cached !== undefined) {
+          const suppliedHash = yield* Effect.fromResult(snapshotHash(snapshot))
+          if (cached.snapshotHash === suppliedHash) return copyReference(cached.reference)
+        }
+        const replay = persistIntradayRecordRows(snapshot).pipe(
+          Result.flatMap((rows) => reproduceStreamingSnapshot(manifest, rows)),
+        )
+        if (Result.isFailure(replay))
+          return yield* operationalError({
+            component: 'market-data',
+            operation: 'load',
+            message: 'Streaming snapshot evidence does not reproduce its recorded cut',
+            cause: replay.failure,
+          })
+        if (cached !== undefined && cached.reference.manifest.contentHash === snapshot.manifest.contentHash)
+          return copyReference(cached.reference)
+        return yield* recoverStreamingSnapshotReference(manifest).pipe(
+          Effect.provideService(PgClient.PgClient, postgres),
+        )
+      })
+    return {
+      check: kafka.read.pipe(
+        Effect.asVoid,
+        Effect.tapError((cause) =>
+          kafka.status.pipe(
+            Effect.flatMap((status) =>
+              Effect.logWarning('Execution market projection check failed', {
+                epoch: status.epoch,
+                ready: status.ready,
+                sequence: status.sequence,
+                operation: cause.operation,
+                reason: cause.message,
+              }),
+            ),
+          ),
+        ),
+        Effect.mapError((cause) => marketDataOperationError('check', 'Kafka projection is rebuilding', cause)),
+      ),
+      loadSnapshot,
+      verifyReference,
+    } satisfies IntradayMarketDataService
+  }),
+)

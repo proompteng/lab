@@ -1,0 +1,2023 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-cache-performance-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Trading
+data:
+  bayn-cache-performance.json: |
+    {
+      "uid": "bayn-cache-performance",
+      "title": "Bayn performance",
+      "schemaVersion": 41,
+      "version": 3,
+      "tags": [
+        "bayn",
+        "valkey",
+        "postgresql"
+      ],
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": {
+        "from": "now-30m",
+        "to": "now"
+      },
+      "editable": true,
+      "links": [
+        {
+          "title": "Trading operations",
+          "url": "/d/bayn-cycle-operations",
+          "type": "link",
+          "targetBlank": false
+        },
+        {
+          "title": "Broker traces",
+          "url": "/explore?schemaVersion=1&panes=%7B%22broker-traces%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.version%20%3D%20%5C%22$source_revision%5C%22%20%26%26%20name%20%3D%20%5C%22bayn.broker.observation.poll%5C%22%20%7D%22%2C%22limit%22%3A20%2C%22tableType%22%3A%22traces%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22$__from%22%2C%22to%22%3A%22$__to%22%7D%7D%7D",
+          "type": "link",
+          "targetBlank": true
+        }
+      ],
+      "templating": {
+        "list": [
+          {
+            "name": "source_revision",
+            "label": "Source",
+            "type": "query",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prom"
+            },
+            "query": {
+              "query": "query_result(max by(source_revision) (bayn_operation_metrics_expected{job=\"bayn\",namespace=\"bayn\"}))",
+              "refId": "StandardVariableQuery"
+            },
+            "regex": "/source_revision=\"(?<value>(?<text>[0-9a-f]{8})[0-9a-f]{32})\"/",
+            "refresh": 2,
+            "includeAll": false,
+            "multi": false
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 103,
+          "title": "API data",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 6,
+            "h": 3
+          },
+          "description": "API processes with a heartbeat newer than 90 seconds. Expected 2. A partial rollout remains visible. Heartbeats more than five seconds ahead of the collector clock are rejected.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 0,
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "0 / 2",
+                      "color": "red"
+                    },
+                    "1": {
+                      "text": "1 / 2",
+                      "color": "red"
+                    },
+                    "2": {
+                      "text": "2 / 2",
+                      "color": "green"
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "count((bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"} > time() - 90) and (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"} <= time() + 5))",
+              "legendFormat": "API data",
+              "range": false,
+              "instant": true,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "orientation": "auto",
+            "textMode": "value",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true,
+            "text": {
+              "valueSize": 28
+            }
+          }
+        },
+        {
+          "id": 104,
+          "title": "Worker data",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 6,
+            "y": 0,
+            "w": 6,
+            "h": 3
+          },
+          "description": "Execution workers with a heartbeat newer than 90 seconds. Expected 2. Heartbeats more than five seconds ahead of the collector clock are rejected.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 0,
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "0 / 2",
+                      "color": "red"
+                    },
+                    "1": {
+                      "text": "1 / 2",
+                      "color": "red"
+                    },
+                    "2": {
+                      "text": "2 / 2",
+                      "color": "green"
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "count((bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} > time() - 90) and (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} <= time() + 5))",
+              "legendFormat": "Worker data",
+              "range": false,
+              "instant": true,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "orientation": "auto",
+            "textMode": "value",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true,
+            "text": {
+              "valueSize": 28
+            }
+          }
+        },
+        {
+          "id": 132,
+          "title": "Age / limit",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 6,
+            "h": 3
+          },
+          "description": "Age of the latest complete position snapshot as a fraction of the configured reconciliation freshness limit. 100% exhausts that limit. Uses healthy API scrapes from the selected source; missing or future-dated snapshots remain unknown.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 1,
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "Unknown",
+                      "color": "gray",
+                      "index": 0
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.75
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "max((((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) / on(instance) (bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} > 0)) and on(instance) bayn_build_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"} and on(instance) (up{job=\"bayn\",namespace=\"bayn\"} == 1))",
+              "legendFormat": "Broker freshness budget used",
+              "range": false,
+              "instant": true,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "orientation": "auto",
+            "textMode": "value",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true,
+            "text": {
+              "valueSize": 28
+            }
+          }
+        },
+        {
+          "id": 133,
+          "title": "Cycles / min",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 18,
+            "y": 0,
+            "w": 6,
+            "h": 3
+          },
+          "description": "Successful top-level execution-cycle operations per minute. This measures controller work, not orders or fills. An absent series remains unknown.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              },
+              "decimals": 2,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "sum(rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=\"bayn.execution.cycle-pass\",outcome=\"succeeded\"}[$__rate_interval])) * 60",
+              "legendFormat": "Completed execution cycles / min",
+              "range": false,
+              "instant": true,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "orientation": "auto",
+            "textMode": "value",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true,
+            "text": {
+              "valueSize": 28
+            }
+          }
+        },
+        {
+          "id": 107,
+          "title": "Critical-path latency · p95",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 3,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Successful top-level execution-cycle and broker-refresh wall time. Child stages are deliberately excluded from this comparison. Histogram estimates need traffic; compare with outcomes per minute.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 4,
+                "showPoints": "never",
+                "spanNulls": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "axisBorderShow": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=\"bayn.execution.cycle-pass\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Execution cycle",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=\"bayn.broker.observation.poll\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Broker refresh",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 134,
+          "title": "Critical-path outcomes / min",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 3,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Successful, failed and interrupted top-level execution cycles and broker refreshes. Child operations are excluded to avoid counting one failure multiple times. Counters begin with their first event; absent series are not zero-filled.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 4,
+                "showPoints": "never",
+                "spanNulls": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "axisBorderShow": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Execution cycle · succeeded"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "blue"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Broker refresh · succeeded"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".* · failed"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".* · interrupted"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "sum by(outcome) (rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=\"bayn.execution.cycle-pass\"}[$__rate_interval])) * 60",
+              "legendFormat": "Execution cycle · {{outcome}}",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "sum by(outcome) (rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=\"bayn.broker.observation.poll\"}[$__rate_interval])) * 60",
+              "legendFormat": "Broker refresh · {{outcome}}",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 109,
+          "title": "Cache access latency · p95",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 11,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Read includes queueing and reconnect. Write includes SET and the full replica acknowledgement loop. SET and replica acknowledgement are separate child measurements. Do not add nested durations. Percentiles are histogram estimates and need enough traffic.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 4,
+                "showPoints": "never",
+                "spanNulls": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "axisBorderShow": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Read",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Write + replica",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "C",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Replica acknowledgement",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "D",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "SET command",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 110,
+          "title": "Durable write latency · p95",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 11,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Compare writer coordination, transaction commit and reconciliation. Reconciliation includes child database work. Expand PostgreSQL details for index, waits and replication evidence. Percentiles are histogram estimates and need enough traffic.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "noValue": "Unknown",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 4,
+                "showPoints": "never",
+                "spanNulls": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "axisBorderShow": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Writer fence",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Commit",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "C",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "Reconciliation",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            }
+          ],
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 114,
+          "type": "row",
+          "title": "Broker and cache details",
+          "description": "Required cache replication, broker refresh components and dependency failures.",
+          "collapsed": true,
+          "gridPos": {
+            "x": 0,
+            "y": 19,
+            "w": 24,
+            "h": 1
+          },
+          "panels": [
+            {
+              "id": 101,
+              "title": "Cache servers",
+              "type": "stat",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 20,
+                "w": 12,
+                "h": 3
+              },
+              "description": "Both Valkey servers must be up. Expected 2. Missing telemetry is unknown.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "decimals": 0,
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "0 / 2",
+                          "color": "red"
+                        },
+                        "1": {
+                          "text": "1 / 2",
+                          "color": "red"
+                        },
+                        "2": {
+                          "text": "2 / 2",
+                          "color": "green"
+                        }
+                      }
+                    }
+                  ],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "red",
+                        "value": null
+                      },
+                      {
+                        "color": "green",
+                        "value": 2
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "sum(redis_up{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"})",
+                  "legendFormat": "Cache servers",
+                  "range": false,
+                  "instant": true,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "reduceOptions": {
+                  "values": false,
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": ""
+                },
+                "orientation": "auto",
+                "textMode": "value",
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "wideLayout": true,
+                "text": {
+                  "valueSize": 28
+                }
+              }
+            },
+            {
+              "id": 102,
+              "title": "Replica link",
+              "type": "stat",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 20,
+                "w": 12,
+                "h": 3
+              },
+              "description": "Connected requires a healthy replica link and at least one replica observed by the primary, with healthy scrapes. Cache writes also wait for an acknowledgement. Missing observations remain unknown.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "decimals": 0,
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "Disconnected",
+                          "color": "red"
+                        },
+                        "1": {
+                          "text": "Connected",
+                          "color": "green"
+                        }
+                      }
+                    }
+                  ],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "text",
+                        "value": null
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "min(redis_master_link_up{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"}) * clamp_max(max(redis_connected_slaves{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"}), 1)",
+                  "legendFormat": "Replica link",
+                  "range": false,
+                  "instant": true,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "reduceOptions": {
+                  "values": false,
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": ""
+                },
+                "orientation": "auto",
+                "textMode": "value",
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "wideLayout": true,
+                "text": {
+                  "valueSize": 28
+                }
+              }
+            },
+            {
+              "id": 131,
+              "title": "Broker refresh components · p95",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 23,
+                "w": 24,
+                "h": 7
+              },
+              "description": "95% of successful operations finish within this duration. Broker refresh includes capture and publication. These nested durations must not be added. Percentiles are histogram estimates and need enough traffic.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.poll\",outcome=\"succeeded\"}[$__rate_interval])))",
+                  "legendFormat": "Broker refresh",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                },
+                {
+                  "refId": "B",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture\",outcome=\"succeeded\"}[$__rate_interval])))",
+                  "legendFormat": "Fetch broker data",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                },
+                {
+                  "refId": "C",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.publish\",outcome=\"succeeded\"}[$__rate_interval])))",
+                  "legendFormat": "Publish observation",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 111,
+              "title": "Cache reads per second",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 30,
+                "w": 12,
+                "h": 7
+              },
+              "description": "Successful GET responses, split into hit and miss. A miss does not trigger a fallback. Failed requests are shown separately.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ops",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "sum by(outcome) (rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+                  "legendFormat": "{{outcome}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 112,
+              "title": "Cache failures per second",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 30,
+                "w": 12,
+                "h": 7
+              },
+              "description": "Failure counters start when an event occurs. An empty chart means no samples were reported, not proof that the exporter is healthy. Check the telemetry counts above.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ops",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "sum by(operation,category,cause_category) (rate(bayn_valkey_failures_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+                  "legendFormat": "{{operation}} · {{category}} · {{cause_category}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                },
+                {
+                  "refId": "B",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "sum(rate(bayn_valkey_unacknowledged_waits_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+                  "legendFormat": "Replica not yet acknowledged",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 8,
+              "title": "Read cached observation · p95",
+              "type": "timeseries",
+              "description": "Full snapshot versus compact state includes GET, JSON decoding, schema checks and content hashing.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 37,
+                "w": 12,
+                "h": 7
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
+                  "legendFormat": "{{operation}}",
+                  "range": true,
+                  "interval": "30s"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 9,
+              "title": "Cached payload size · p95",
+              "type": "timeseries",
+              "description": "",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 37,
+                "w": 12,
+                "h": 7
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "histogram_quantile(0.95, sum by(le,kind) (rate(bayn_broker_materialization_bytes_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval])))",
+                  "legendFormat": "{{kind}}",
+                  "range": true,
+                  "interval": "30s"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 15,
+              "title": "Memory use and limit",
+              "type": "timeseries",
+              "description": "Memory limit is 512MiB and policy is noeviction. High memory can reject new publications.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 44,
+                "w": 12,
+                "h": 7
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "redis_memory_used_bytes{job=\"bayn-valkey\",namespace=\"bayn\"}",
+                  "legendFormat": "{{pod}} · used",
+                  "range": true
+                },
+                {
+                  "refId": "B",
+                  "expr": "redis_memory_max_bytes{job=\"bayn-valkey\",namespace=\"bayn\"}",
+                  "legendFormat": "{{pod}} · limit",
+                  "range": true
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 16,
+              "title": "Expired and evicted keys per second",
+              "type": "timeseries",
+              "description": "",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 44,
+                "w": 12,
+                "h": 7
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "rate(redis_expired_keys_total{job=\"bayn-valkey\",namespace=\"bayn\"}[$__rate_interval])",
+                  "legendFormat": "{{pod}} · expired",
+                  "range": true,
+                  "interval": "30s"
+                },
+                {
+                  "refId": "B",
+                  "expr": "rate(redis_evicted_keys_total{job=\"bayn-valkey\",namespace=\"bayn\"}[$__rate_interval])",
+                  "legendFormat": "{{pod}} · evicted",
+                  "range": true,
+                  "interval": "30s"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ops",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 130,
+              "title": "Operation failures per second",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 51,
+                "w": 24,
+                "h": 8
+              },
+              "description": "Failed and interrupted named operations, grouped by dependency. Parent and child failures can describe the same request. Counters begin with their first event. Check freshness above when the chart has no samples.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ops",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "sum by(dependency,outcome) (rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",outcome=~\"failed|interrupted\"}[$__rate_interval]))",
+                  "legendFormat": "{{dependency}} · {{outcome}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 117,
+          "type": "row",
+          "title": "PostgreSQL details",
+          "description": "Index validity, blocking waits and synchronous replication evidence.",
+          "collapsed": true,
+          "gridPos": {
+            "x": 0,
+            "y": 20,
+            "w": 24,
+            "h": 1
+          },
+          "panels": [
+            {
+              "id": 19,
+              "title": "Generation index status",
+              "type": "timeseries",
+              "description": "Catalog evidence for the exact generation expression index. Zero includes absence; missing telemetry is unknown.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 21,
+                "w": 12,
+                "h": 8
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "cnpg_bayn_generation_index_valid{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "Valid",
+                  "range": true
+                },
+                {
+                  "refId": "B",
+                  "expr": "cnpg_bayn_generation_index_ready{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "Ready",
+                  "range": true
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bool",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 20,
+              "title": "Generation index activity per second",
+              "type": "timeseries",
+              "description": "Cluster-wide index activity since statistics reset. Zero scans can be correct when no eligible restricted generation exists. This does not prove one statement used the index.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 21,
+                "w": 12,
+                "h": 8
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "rate(cnpg_bayn_generation_index_scans_total{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}[$__rate_interval])",
+                  "legendFormat": "Scans",
+                  "range": true,
+                  "interval": "30s"
+                },
+                {
+                  "refId": "B",
+                  "expr": "rate(cnpg_bayn_generation_index_tuples_read_total{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}[$__rate_interval])",
+                  "legendFormat": "Tuples read",
+                  "range": true,
+                  "interval": "30s"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ops",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 21,
+              "title": "Database I/O and lock waits",
+              "type": "timeseries",
+              "description": "Sampled backends waiting for I/O, locks, buffer pins or inter-process coordination. Idle clients and normal background loops are excluded. A wait shorter than five seconds can be missed.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 29,
+                "w": 12,
+                "h": 8
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "cnpg_bayn_waits_backends{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\",wait_event_type=~\"IO|Lock|LWLock|IPC|BufferPin\"}",
+                  "legendFormat": "{{wait_event_type}} · {{wait_event}}",
+                  "range": true
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 22,
+              "title": "Standby flush lag and reply age",
+              "type": "timeseries",
+              "description": "Flush lag can be absent when idle. Interpret with streaming standby and measured-lag counts on the existing database metrics.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 29,
+                "w": 12,
+                "h": 8
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "cnpg_bayn_replication_max_flush_lag_seconds{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "Flush lag",
+                  "range": true
+                },
+                {
+                  "refId": "B",
+                  "expr": "cnpg_bayn_replication_max_reply_age_seconds{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "Last standby reply",
+                  "range": true
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 115,
+              "title": "Streaming and synchronous standbys",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 37,
+                "w": 12,
+                "h": 8
+              },
+              "description": "Expected one streaming synchronous standby. Flush lag can be absent while idle, so compare the measured-lag count before interpreting it.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "cnpg_bayn_replication_streaming_standbys{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "Streaming",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                },
+                {
+                  "refId": "B",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "cnpg_bayn_replication_synchronous_standbys{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "Synchronous",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                },
+                {
+                  "refId": "C",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "cnpg_bayn_replication_measured_flush_lag_standbys{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+                  "legendFormat": "With a measured flush lag",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 13,
+              "title": "Generation settlement · p95",
+              "type": "timeseries",
+              "description": "Conditional operation. No samples are expected until a generation needs settlement. This is statement time and excludes the surrounding commit.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 12,
+                "y": 37,
+                "w": 12,
+                "h": 8
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
+                  "legendFormat": "{{operation}}",
+                  "range": true,
+                  "interval": "30s"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "spanNulls": false
+                  },
+                  "noValue": "Unknown"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 118,
+          "type": "row",
+          "title": "Logs",
+          "description": "Valkey server and exporter logs can be quiet during normal operation.",
+          "collapsed": true,
+          "gridPos": {
+            "x": 0,
+            "y": 21,
+            "w": 24,
+            "h": 1
+          },
+          "panels": [
+            {
+              "id": 23,
+              "title": "Valkey server and exporter logs",
+              "type": "logs",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 22,
+                "w": 24,
+                "h": 10
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "{namespace=\"bayn\",service=\"bayn-valkey\",container=~\"valkey|exporter\"}",
+                  "queryType": "range"
+                }
+              ],
+              "options": {
+                "showTime": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+              },
+              "description": "Server and exporter logs can be quiet during normal operation. Use the Broker traces link above for application latency attribution."
+            }
+          ]
+        }
+      ],
+      "description": "Bayn critical-path activity, failures and duration for the selected running source. Expand dependency diagnostics after identifying the affected path. Missing evidence remains unknown."
+    }
