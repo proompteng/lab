@@ -344,11 +344,18 @@ def main():
     actual["supervisor"] = rust_routes(supervisor, "forward")
     actual["supervisor"].add("* {*forward}")
     computer = (ROOT / "services/nanoagent/browser_cua.go").read_text()
-    browser_mcp = computer[computer.index("func runBrowserMCP") :]
+    browser_source = (ROOT / "services/nanoagent/browser_mcp.go").read_text()
+    browser_mcp = browser_source[browser_source.index("func browserMCPResponse") :]
     browser_mcp = browser_mcp[: browser_mcp.index("\n}") + 2]
     actual["browser_mcp"] = operation_cases(
         browser_mcp, "request.Method", r'failure\s*=\s*errors\.New\("[^"\\]*"\)'
     )
+    http_mcp = browser_source[browser_source.index("func (browser *browserSupervisor) serveMCP") :]
+    http_mcp = http_mcp[: http_mcp.index("\n}")]
+    actual["browser_mcp_http"] = {
+        f"{method.upper()} /mcp"
+        for method in re.findall(r"\bhttp\.Method(\w+)\b", without_comments(http_mcp))
+    }
     actions = computer[computer.index("func validateComputerAction") :]
     actions = actions[: actions.index("\n}")]
     actual["browser_action"] = operation_cases(
