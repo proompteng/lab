@@ -52,6 +52,7 @@ import {
 } from './batch'
 import { evaluateJevBatch, recoverPendingJevBatches } from './batch-evaluation'
 import { JevContractError } from './contract'
+import { JevAvailabilityReason, jevAvailabilityMessage } from './evidence'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './decision'
 import {
   decideJevExit,
@@ -272,10 +273,11 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
     )
     yield* Effect.logInfo(candidateObservationLog(observation))
     const decidedAt = yield* currentUtcInstant
-    if (
-      saved.result === null ||
-      Result.isFailure(usableEntryBatchInferences(saved.plan, saved.result, Date.parse(decidedAt), planVersion))
-    ) {
+    const availability =
+      saved.result === null
+        ? null
+        : usableEntryBatchInferences(saved.plan, saved.result, Date.parse(decidedAt), planVersion)
+    if (saved.result === null || availability === null || Result.isFailure(availability)) {
       // Explain verified source exclusions without reclassifying expired or corrupt evidence.
       // This remains a failed observation and cannot authorize a no-entry decision or an order.
       const sourceExclusions = batchPlan.candidates.flatMap((candidate) =>
@@ -303,7 +305,13 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             : DecisionReadinessReason.SnapshotStale,
         })
       return yield* new JevAwaitingEvidence({
-        message: 'The complete committed Jev batch is not usable within its deadline',
+        message: jevAvailabilityMessage(
+          availability === null
+            ? JevAvailabilityReason.NotCommitted
+            : Result.isFailure(availability)
+              ? (availability.failure.availabilityReason ?? JevAvailabilityReason.InvalidEvidence)
+              : JevAvailabilityReason.NotCommitted,
+        ),
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     }
