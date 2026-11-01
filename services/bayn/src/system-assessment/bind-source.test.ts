@@ -148,8 +148,8 @@ describe('immutable source binding', () => {
       const assessment = Result.getOrThrow(
         assessSession(session, input.registration, definition, input.asOf, bound.verifiedSources),
       )
-      expect(assessment.qualificationPnlMicros).toBeNull()
-      expect(assessment.missing).toContain('INCOMPLETE_INFERENCE_USAGE')
+      expect(assessment.qualificationPnlMicros).toBe(assessment.netEconomicPnlMicros)
+      expect(assessment.missing).toContain('INCOMPLETE_COST_ATTRIBUTION')
       expect(assessment.numerical.status).toBe('UNRESOLVED')
     }
   })

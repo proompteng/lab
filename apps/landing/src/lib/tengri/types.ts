@@ -15,6 +15,7 @@ export type TengriErrorCode =
   | 'runtime_upgrade_required'
   | 'connection_access_denied'
   | 'connection_scope_changed'
+  | 'provider_reconnect_required'
 
 export type TengriCondition = {
   type: string
