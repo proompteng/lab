@@ -77,6 +77,22 @@ fn route(endpoint: &reqwest::Url, path: &str) -> anyhow::Result<reqwest::Url> {
     Ok(url)
 }
 
+pub(crate) fn client(ca: Option<&str>) -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(10));
+    if let Some(path) = ca {
+        let bytes = std::fs::read(path)?;
+        anyhow::ensure!(bytes.len() <= 131_072, "HTTP CA exceeds its byte budget");
+        builder = builder.tls_certs_only([reqwest::Certificate::from_pem(&bytes)?]);
+    }
+    Ok(builder.build()?)
+}
+
 impl Http {
     pub fn new(
         id: String,
@@ -87,18 +103,7 @@ impl Http {
     ) -> anyhow::Result<Self> {
         validate(endpoint, ca, bearer_token_file.as_deref(), &operations)?;
         let endpoint = reqwest::Url::parse(endpoint)?;
-        let mut builder = reqwest::Client::builder()
-            .no_proxy()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(10));
-        if let Some(path) = ca {
-            let bytes = std::fs::read(path)?;
-            anyhow::ensure!(bytes.len() <= 131_072, "HTTP CA exceeds its byte budget");
-            builder = builder.tls_certs_only([reqwest::Certificate::from_pem(&bytes)?]);
-        }
+        let client = client(ca)?;
         let mut registered = BTreeMap::new();
         for entry in operations {
             let operation = RegisteredOperation::new(entry.operation)?;
@@ -109,7 +114,7 @@ impl Http {
         }
         Ok(Self {
             id,
-            client: builder.build()?,
+            client,
             bearer_token_file,
             operations: registered,
         })
@@ -184,13 +189,10 @@ impl Connector for Http {
             Method::Post => self.client.post(url.clone()).json(&prepared.arguments),
         };
         if let Some(path) = &self.bearer_token_file {
-            let token = tokio::fs::read(path)
+            let token = crate::credentials::read_file(path)
                 .await
-                .map_err(|_| failure(Status::unavailable("HTTP credential unavailable"), 0))?;
-            let token = std::str::from_utf8(&token)
-                .map_err(|_| failure(Status::unavailable("invalid HTTP credential"), 0))?
-                .trim();
-            if token.is_empty() || token.len() > 16_384 || token.chars().any(char::is_control) {
+                .map_err(|status| failure(status, 0))?;
+            if token.chars().any(char::is_control) {
                 return Err(failure(Status::unavailable("invalid HTTP credential"), 0));
             }
             request = request.bearer_auth(token);

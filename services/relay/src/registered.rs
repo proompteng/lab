@@ -72,6 +72,10 @@ impl RegisteredOperation {
         &self.definition.name
     }
 
+    pub(crate) fn input_schema(&self) -> &Value {
+        &self.definition.input_schema
+    }
+
     fn resource(&self) -> PlatformResource {
         PlatformResource {
             kind: self.definition.target.kind.clone(),

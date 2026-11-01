@@ -29,6 +29,11 @@ pub enum Connector {
         id: String,
         operations: Vec<crate::cli::CliOperation>,
     },
+    Mcp {
+        id: String,
+        transport: crate::mcp::Transport,
+        operations: Vec<crate::mcp::McpOperation>,
+    },
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +68,7 @@ impl Config {
                 Connector::Kubernetes { id, .. }
                 | Connector::Http { id, .. }
                 | Connector::Cli { id, .. } => id,
+                Connector::Mcp { id, .. } => id,
             };
             if !identifier(id) || id.contains('.') || !connectors.insert(id) {
                 return Err(Status::invalid_argument(
@@ -125,6 +131,15 @@ impl Config {
                 Connector::Cli { operations, .. } => {
                     crate::cli::validate(operations).map_err(|_| {
                         Status::invalid_argument("invalid CLI connector registration")
+                    })?;
+                }
+                Connector::Mcp {
+                    transport,
+                    operations,
+                    ..
+                } => {
+                    crate::mcp::validate(transport, operations).map_err(|_| {
+                        Status::invalid_argument("invalid upstream MCP registration")
                     })?;
                 }
             }

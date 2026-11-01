@@ -6,7 +6,6 @@ use platform_client::{authz::PlatformConnectionScope, relay::ConnectorOperation}
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
     process::Stdio,
     time::Duration,
 };
@@ -17,13 +16,7 @@ use tonic::Status;
 #[serde(deny_unknown_fields)]
 pub struct CliOperation {
     pub operation: Operation,
-    pub program: String,
-    pub arguments: Vec<String>,
-    pub directory: String,
-    #[serde(default)]
-    pub environment: BTreeMap<String, String>,
-    #[serde(default)]
-    pub secret_files: BTreeMap<String, String>,
+    pub process: crate::process::Profile,
 }
 
 pub struct Cli {
@@ -40,38 +33,10 @@ pub(crate) fn validate(operations: &[CliOperation]) -> anyhow::Result<()> {
     for entry in operations {
         let operation = RegisteredOperation::new(entry.operation.clone())?;
         anyhow::ensure!(
-            names.insert(operation.name().to_owned())
-                && Path::new(&entry.program).is_absolute()
-                && Path::new(&entry.directory).is_absolute()
-                && entry.arguments.len() <= 64
-                && entry
-                    .arguments
-                    .iter()
-                    .all(|v| v.len() <= 4096 && !v.contains('\0'))
-                && entry.environment.len() + entry.secret_files.len() <= 32
-                && entry
-                    .environment
-                    .keys()
-                    .chain(entry.secret_files.keys())
-                    .all(|key| !key.is_empty()
-                        && key.len() <= 128
-                        && key
-                            .bytes()
-                            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'))
-                && entry
-                    .environment
-                    .values()
-                    .all(|v| v.len() <= 16_384 && !v.contains('\0'))
-                && entry
-                    .secret_files
-                    .values()
-                    .all(|path| Path::new(path).is_absolute())
-                && entry
-                    .secret_files
-                    .keys()
-                    .all(|key| !entry.environment.contains_key(key)),
-            "invalid CLI process registration"
+            names.insert(operation.name().to_owned()),
+            "duplicate CLI operation"
         );
+        entry.process.validate()?;
     }
     Ok(())
 }
@@ -88,17 +53,6 @@ impl Cli {
             id,
             operations: registered,
         })
-    }
-}
-
-// The adapter owns the entire process group, including descendants, across cancellation and timeouts.
-struct ProcessGroup(u32);
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        // A child created with process_group(0) has its PID as the process-group ID.
-        unsafe {
-            libc::kill(-(self.0 as i32), libc::SIGKILL);
-        }
     }
 }
 
@@ -149,35 +103,8 @@ impl Connector for Cli {
                 upstream_status: 0,
             })?;
         let result = async {
-            let mut command = tokio::process::Command::new(&profile.program);
-            command
-                .args(&profile.arguments)
-                .current_dir(&profile.directory)
-                .env_clear()
-                .envs(&profile.environment)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-            command.as_std_mut().process_group(0);
-            for (name, path) in &profile.secret_files {
-                let value = tokio::fs::read(path)
-                    .await
-                    .map_err(|_| Status::unavailable("CLI credential unavailable"))?;
-                let value = std::str::from_utf8(&value)
-                    .ok()
-                    .filter(|value| value.len() <= 16_384 && !value.contains('\0'))
-                    .ok_or_else(|| Status::unavailable("invalid CLI credential"))?;
-                command.env(name, value.trim_end());
-            }
-            let mut child = command
-                .spawn()
-                .map_err(|_| Status::unavailable("registered CLI could not start"))?;
-            let _group = ProcessGroup(
-                child
-                    .id()
-                    .ok_or_else(|| Status::internal("CLI process ID missing"))?,
-            );
+            let mut running = profile.process.spawn(Stdio::piped()).await?;
+            let child = &mut running.child;
             let mut stdin = child.stdin.take().expect("piped stdin");
             let mut input = serde_json::to_vec(&prepared.arguments)
                 .map_err(|_| Status::internal("encode CLI arguments"))?;
@@ -222,5 +149,3 @@ impl Connector for Cli {
             })
     }
 }
-
-use std::os::unix::process::CommandExt;

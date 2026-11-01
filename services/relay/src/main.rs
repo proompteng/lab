@@ -61,6 +61,17 @@ async fn main() -> anyhow::Result<()> {
                     operations.clone(),
                 )?));
             }
+            Connector::Mcp {
+                id,
+                transport,
+                operations,
+            } => {
+                adapters.push(Box::new(relay::mcp::Mcp::new(
+                    id.clone(),
+                    transport.clone(),
+                    operations.clone(),
+                )?));
+            }
         }
     }
     let service = Service::new(enrollment.relay_clients, adapters, channel)?;

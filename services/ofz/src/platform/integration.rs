@@ -1627,18 +1627,22 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .output()
         .unwrap();
     assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap().trim().to_owned();
     let cli = relay::cli::Cli::new(
         "fixture".into(),
         vec![relay::cli::CliOperation {
             operation: operation.clone(),
-            program: String::from_utf8(python.stdout).unwrap().trim().into(),
-            arguments: vec![
-                "-c".into(),
-                "import json,sys; json.load(sys.stdin); print(json.dumps('second adapter'))".into(),
-            ],
-            directory: config_dir.to_str().unwrap().into(),
-            environment: Default::default(),
-            secret_files: Default::default(),
+            process: relay::process::Profile {
+                program: python.clone(),
+                arguments: vec![
+                    "-c".into(),
+                    "import json,sys; json.load(sys.stdin); print(json.dumps('second adapter'))"
+                        .into(),
+                ],
+                directory: config_dir.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
         }],
     )
     .unwrap();
@@ -1648,15 +1652,55 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         Some(config_dir.join("ca.crt").to_str().unwrap()),
         Some(token_file.to_str().unwrap().into()),
         vec![relay::http::HttpOperation {
-            operation,
+            operation: operation.clone(),
             method: relay::http::Method::Get,
             path: "/fixture/status".into(),
         }],
     )
     .unwrap();
+    let mcp_script = config_dir.join("upstream-mcp.py");
+    std::fs::write(
+        &mcp_script,
+        include_str!("../../../relay/tests/fixtures/mcp.py"),
+    )
+    .unwrap();
+    let mcp_schema = config_dir.join("upstream-mcp-schema.json");
+    std::fs::write(
+        &mcp_schema,
+        serde_json::to_vec(&operation.input_schema).unwrap(),
+    )
+    .unwrap();
+    let mcp_calls = config_dir.join("upstream-mcp-calls.jsonl");
+    let mcp = relay::mcp::Mcp::new(
+        "fixture-mcp".into(),
+        relay::mcp::Transport::Stdio {
+            process: relay::process::Profile {
+                program: python,
+                arguments: vec![
+                    mcp_script.to_str().unwrap().into(),
+                    mcp_schema.to_str().unwrap().into(),
+                    "normal".into(),
+                    mcp_calls.to_str().unwrap().into(),
+                ],
+                directory: config_dir.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
+        },
+        vec![relay::mcp::McpOperation {
+            operation,
+            tool: "fixture_read".into(),
+        }],
+    )
+    .unwrap();
     let relay = relay::service::Service::new(
         clients,
-        vec![Box::new(adapter), Box::new(cli), Box::new(http)],
+        vec![
+            Box::new(adapter),
+            Box::new(cli),
+            Box::new(http),
+            Box::new(mcp),
+        ],
         channel,
     )
     .unwrap();
@@ -1774,7 +1818,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         provider_requests
     );
 
-    for connector in ["fixture", "fixture-http"] {
+    for connector in ["fixture", "fixture-http", "fixture-mcp"] {
         let before = requests.load(std::sync::atomic::Ordering::SeqCst);
         let fixture_payload = ExecutionPayload {
             operation_id: Uuid::new_v4().to_string(),
@@ -1799,10 +1843,19 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .extensions_mut()
             .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
         let fixture_output = relay.execute(fixture_request).await.unwrap().into_inner();
-        assert_eq!(
-            serde_json::from_slice::<String>(&fixture_output.result).unwrap(),
-            "second adapter"
-        );
+        if connector == "fixture-mcp" {
+            let output: serde_json::Value = serde_json::from_slice(&fixture_output.result).unwrap();
+            assert_eq!(output["content"][0]["text"], "{}");
+            assert_eq!(
+                std::fs::read_to_string(&mcp_calls).unwrap().lines().count(),
+                1
+            );
+        } else {
+            assert_eq!(
+                serde_json::from_slice::<String>(&fixture_output.result).unwrap(),
+                "second adapter"
+            );
+        }
         assert_eq!(
             relay
                 .get_execution(workload_lookup(

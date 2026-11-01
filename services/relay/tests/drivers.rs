@@ -63,14 +63,282 @@ fn cli(directory: &Directory, script: &str) -> Cli {
         "fixture".into(),
         vec![CliOperation {
             operation: operation(),
-            program: python(),
-            arguments: vec![script],
-            directory: directory.0.to_str().unwrap().into(),
-            environment: Default::default(),
-            secret_files: Default::default(),
+            process: relay::process::Profile {
+                program: python(),
+                arguments: vec![script],
+                directory: directory.0.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
         }],
     )
     .unwrap()
+}
+
+fn mcp(directory: &Directory, mode: &str) -> relay::mcp::Mcp {
+    let script = directory.file("mcp.py", include_str!("fixtures/mcp.py"));
+    let schema = directory.file(
+        "schema.json",
+        &serde_json::to_string(&operation().input_schema).unwrap(),
+    );
+    relay::mcp::Mcp::new(
+        "fixture".into(),
+        relay::mcp::Transport::Stdio {
+            process: relay::process::Profile {
+                program: python(),
+                arguments: vec![
+                    script,
+                    schema,
+                    mode.into(),
+                    directory.0.join("calls.jsonl").to_str().unwrap().into(),
+                ],
+                directory: directory.0.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: Default::default(),
+            },
+        },
+        vec![relay::mcp::McpOperation {
+            operation: operation(),
+            tool: "fixture_read".into(),
+        }],
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn upstream_mcp_stdio_uses_only_registered_metadata_and_preserves_the_exact_arguments() {
+    for mode in ["normal", "unannotated"] {
+        let directory = Directory::new();
+        let adapter = mcp(&directory, mode);
+        assert!(adapter.operations(Some(&[])).is_empty());
+        let operations = adapter.operations(None);
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].description, "Read fixture records");
+        let request = adapter
+            .normalize("read", br#"{"query":"literal; $(no shell)"}"#)
+            .unwrap();
+        let result = adapter
+            .execute(&request)
+            .await
+            .unwrap_or_else(|f| panic!("{}", f.status));
+        let body: serde_json::Value = serde_json::from_slice(&result.bytes).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(body["content"][0]["text"].as_str().unwrap())
+                .unwrap(),
+            json!({"query":"literal; $(no shell)"})
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.0.join("calls.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn upstream_mcp_rejects_tool_changes_before_dispatch_and_never_repeats_a_lost_call() {
+    for mode in [
+        "changed",
+        "effectful",
+        "destructive",
+        "lost",
+        "error",
+        "oversized",
+    ] {
+        let directory = Directory::new();
+        let adapter = mcp(&directory, mode);
+        let result = failure(
+            adapter
+                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .await,
+        );
+        assert!(!result.status.message().contains("PRIVATE_PROVIDER_TOKEN"));
+        let calls = std::fs::read_to_string(directory.0.join("calls.jsonl")).unwrap_or_default();
+        if matches!(mode, "changed" | "effectful" | "destructive") {
+            assert_eq!(result.status.code(), Code::FailedPrecondition);
+            assert!(calls.is_empty());
+        } else {
+            assert_eq!(calls.lines().count(), 1, "{mode}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn upstream_mcp_cancellation_terminates_the_server_and_its_children() {
+    let directory = Directory::new();
+    let adapter = mcp(&directory, "hang");
+    let task = tokio::spawn(async move {
+        adapter
+            .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !directory.0.join("calls.jsonl").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    task.abort();
+    assert!(matches!(task.await,Err(error) if error.is_cancelled()));
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(!directory.0.join("calls.escaped").exists());
+}
+
+async fn mcp_http_fixture(
+    mode: &'static str,
+) -> (HttpFixture, Arc<std::sync::atomic::AtomicUsize>) {
+    let effects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls = effects.clone();
+    let fixture=HttpFixture::serve(move |raw| {
+        let response=|status:u16,content_type:&str,body:String,session:bool,known_length:bool| {
+            let length=if known_length { format!("Content-Length: {}\r\n",body.len()) } else {String::new()};
+            let session=if session {"Mcp-Session-Id: fixture-session\r\n"} else {""};
+            format!("HTTP/1.1 {status} Fixture\r\nContent-Type: {content_type}\r\n{length}{session}Connection: close\r\n\r\n{body}")
+        };
+        if raw.starts_with("GET ") { return response(405,"application/json",String::new(),false,true); }
+        if raw.starts_with("DELETE ") { return response(204,"application/json",String::new(),false,true); }
+        if mode=="auth-expired" { return response(401,"application/json","{}".into(),false,true); }
+        if mode=="provider-denied" { return response(403,"application/json","{}".into(),false,true); }
+        let input:serde_json::Value=serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+        if input.get("id").is_none() { return response(202,"application/json",String::new(),false,true); }
+        let method=input["method"].as_str().unwrap();
+        let result=match method {
+            "initialize"=>json!({"protocolVersion":input["params"]["protocolVersion"],"capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}),
+            "tools/list"=>{
+                let mut schema=operation().input_schema;
+                if mode=="changed" { schema["additionalProperties"]=json!(true); }
+                json!({"tools":[{"name":"fixture_read","inputSchema":schema,"annotations":{"readOnlyHint":true}}]})
+            },
+            "tools/call"=>{
+                calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+                if mode=="lost" { return String::new(); }
+                if mode=="expired" { return response(404,"application/json","{}".into(),false,true); }
+                json!({"isError":false,"content":[{"type":"text","text":if mode.starts_with("oversized") { "x".repeat(262145) } else {input["params"]["arguments"].to_string()}}]})
+            },
+            _=>panic!("unexpected MCP method {method}"),
+        };
+        let message=json!({"jsonrpc":"2.0","id":input["id"],"result":result}).to_string();
+        let sse=mode=="sse"||mode=="oversized-sse";
+        let body=if sse {format!("event: message\ndata: {message}\n\n")} else {message};
+        response(200,if sse {"text/event-stream"} else {"application/json"},body,true,mode!="oversized-stream")
+    }).await;
+    (fixture, effects)
+}
+
+fn mcp_http(fixture: &HttpFixture, token: Option<String>) -> relay::mcp::Mcp {
+    relay::mcp::Mcp::new(
+        "fixture".into(),
+        relay::mcp::Transport::Http {
+            endpoint: fixture.endpoint.clone(),
+            ca_file: Some(
+                fixture
+                    .directory
+                    .0
+                    .join("cert.pem")
+                    .to_str()
+                    .unwrap()
+                    .into(),
+            ),
+            bearer_token_file: token,
+        },
+        vec![relay::mcp::McpOperation {
+            operation: operation(),
+            tool: "fixture_read".into(),
+        }],
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn upstream_mcp_http_handles_json_and_sse_and_rotates_projected_credentials() {
+    for mode in ["normal", "sse"] {
+        let (fixture, effects) = mcp_http_fixture(mode).await;
+        let token = fixture.directory.file("token", "first");
+        let adapter = mcp_http(&fixture, Some(token.clone()));
+        for value in ["first", "second"] {
+            std::fs::write(&token, value).unwrap();
+            let output = adapter
+                .execute(
+                    &adapter
+                        .normalize(
+                            "read",
+                            br#"{"query":"literal&url=https://attacker.invalid/"}"#,
+                        )
+                        .unwrap(),
+                )
+                .await
+                .unwrap_or_else(|f| panic!("{mode}: {}", f.status));
+            let body: serde_json::Value = serde_json::from_slice(&output.bytes).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(
+                    body["content"][0]["text"].as_str().unwrap()
+                )
+                .unwrap()["query"],
+                "literal&url=https://attacker.invalid/"
+            );
+        }
+        assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let requests = fixture.requests.lock().unwrap().clone();
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.contains("authorization: Bearer first"))
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.contains("authorization: Bearer second"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn upstream_mcp_http_bounds_json_and_sse_and_never_replays_expired_or_lost_calls() {
+    for mode in [
+        "changed",
+        "expired",
+        "lost",
+        "oversized",
+        "oversized-stream",
+        "oversized-sse",
+    ] {
+        let (fixture, effects) = mcp_http_fixture(mode).await;
+        let adapter = mcp_http(&fixture, None);
+        let error = failure(
+            adapter
+                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .await,
+        );
+        if mode == "changed" {
+            assert_eq!(error.status.code(), Code::FailedPrecondition);
+        }
+        assert_eq!(
+            effects.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(mode != "changed"),
+            "{mode}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn upstream_mcp_provider_authentication_and_permission_failures_remain_distinct() {
+    for (mode, code) in [
+        ("auth-expired", Code::FailedPrecondition),
+        ("provider-denied", Code::PermissionDenied),
+    ] {
+        let (fixture, effects) = mcp_http_fixture(mode).await;
+        let adapter = mcp_http(&fixture, None);
+        let error = failure(
+            adapter
+                .execute(&adapter.normalize("read", br#"{"query":"ok"}"#).unwrap())
+                .await,
+        );
+        assert_eq!(error.status.code(), code, "{mode}: {}", error.status);
+        assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 }
 
 #[test]
@@ -210,14 +478,16 @@ async fn cli_rotates_projected_credentials_without_changing_operation_identity()
         "fixture".into(),
         vec![CliOperation {
             operation: operation(),
-            program: python(),
-            arguments: vec![script],
-            directory: directory.0.to_str().unwrap().into(),
-            environment: Default::default(),
-            secret_files: std::collections::BTreeMap::from([(
-                "FIXTURE_TOKEN".into(),
-                token.clone(),
-            )]),
+            process: relay::process::Profile {
+                program: python(),
+                arguments: vec![script],
+                directory: directory.0.to_str().unwrap().into(),
+                environment: Default::default(),
+                secret_files: std::collections::BTreeMap::from([(
+                    "FIXTURE_TOKEN".into(),
+                    token.clone(),
+                )]),
+            },
         }],
     )
     .unwrap();
@@ -247,6 +517,17 @@ impl Drop for HttpFixture {
 }
 impl HttpFixture {
     async fn new(status: u16, body: String, headers: &str, known_length: bool) -> Self {
+        let length = if known_length {
+            format!("Content-Length: {}\r\n", body.len())
+        } else {
+            String::new()
+        };
+        let response = format!(
+            "HTTP/1.1 {status} Fixture\r\n{length}Content-Type: application/json\r\nConnection: close\r\n{headers}\r\n{body}"
+        );
+        Self::serve(move |_| response.clone()).await
+    }
+    async fn serve(respond: impl Fn(&str) -> String + Send + 'static) -> Self {
         let directory = Directory::new();
         let cert = directory.0.join("cert.pem");
         let key = directory.0.join("key.pem");
@@ -291,14 +572,6 @@ impl HttpFixture {
         );
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        let length = if known_length {
-            format!("Content-Length: {}\r\n", body.len())
-        } else {
-            String::new()
-        };
-        let response = format!(
-            "HTTP/1.1 {status} Fixture\r\n{length}Content-Type: application/json\r\nConnection: close\r\n{headers}\r\n{body}"
-        );
         let task = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let mut socket = acceptor.accept(socket).await.unwrap();
@@ -325,10 +598,9 @@ impl HttpFixture {
                 let mut body = vec![0; content_length];
                 socket.read_exact(&mut body).await.unwrap();
                 request.extend(body);
-                captured
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
+                let request = String::from_utf8(request).unwrap();
+                captured.lock().unwrap().push(request.clone());
+                let response = respond(&request);
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.shutdown().await;
             }

@@ -8,7 +8,7 @@ the configured cluster API using Relay's projected service-account credential. P
 inline environment values. Logs are plain text. The client cannot supply a URL, credential, HTTP method, exec command,
 watch, or arbitrary Kubernetes path. Effectful operations require a separate execution contract and are rejected.
 
-Registered HTTP and CLI adapters use the same authorization, discovery and receipt path. Each operation binds one
+Registered HTTP, CLI and upstream MCP adapters use the same authorization, discovery and receipt path. Each operation binds one
 fixed resource, a catalog action and a reviewed JSON input schema. Its target is derived from the registration;
 arguments cannot select another account, destination or command. These adapters support approved read operations.
 An HTTP POST may represent a read, such as a search; the operator must verify the provider operation before enrollment.
@@ -117,14 +117,31 @@ For example, after enrolling `inventory.account` and `inventory.items.read` in O
 }
 ```
 
-A CLI connector uses `type: "cli"`, an `id` and `operations`. Each entry contains the same `operation` definition,
-an absolute `program`, fixed `arguments`, and an absolute working `directory`. Optional `environment` values and
+A CLI connector uses `type: "cli"`, an `id` and `operations`. Each entry contains the same `operation` definition
+and a `process` with an absolute `program`, fixed `arguments`, and an absolute working `directory`. Optional `environment` values and
 `secret_files` map environment names to fixed values or absolute projected-file paths. The process inherits no
 ambient environment. Arguments arrive as validated JSON on stdin; they are never interpolated into a shell command
 or argv. Stdout must be JSON. Stdout and stderr each have a 256 KiB limit; stderr and raw process errors are not
 returned. Cancellation, output overflow and the ten-second deadline terminate the process group. Programs are trusted,
 operator-installed code, not a sandbox for uploaded commands; include their binaries and dependencies in the reviewed
 image. Credentials are reread for every invocation.
+
+An upstream MCP connector uses `type: "mcp"`, an `id`, a `transport` and `operations`. Each operation maps the reviewed
+`operation` definition to its fixed upstream `tool` name. It does not expose arbitrary discovered tools.
+
+- HTTP transport uses `{ "type": "http", "endpoint": "https://provider.example.com/mcp" }`, with optional `ca_file`
+  and `bearer_token_file` absolute paths. It supports JSON and SSE responses with verified TLS and bounded bodies.
+- Stdio transport uses `{ "type": "stdio", "process": { ... } }`, with the same fixed process profile, cleared
+  environment, projected credentials and process-group lifetime as CLI operations. Provider stderr is discarded.
+
+The maintained MCP SDK owns protocol negotiation, message correlation and tool calls. Registration requires an
+operator-reviewed read operation. Relay checks the upstream tool's exact input schema before dispatch and rejects
+explicit effectful or destructive hints. Optional MCP annotations do not grant authority. A changed or missing tool
+requires reviewing the registration; provider descriptions and instructions cannot replace the approved catalog. An MCP tool error
+remains a failed execution. The complete invocation has a ten-second deadline, and JSON messages, HTTP bodies and
+SSE streams have a 256 KiB limit. Automatic session reinitialization, SSE reconnection, redirects and HTTP retries
+are disabled. A lost reply or expired provider session cannot repeat a tool call. Provider credentials are reread
+for each invocation. Provider OAuth lifecycle and account onboarding remain separate from this file credential option.
 
 Input schemas must describe an object with `additionalProperties: false`. External network and filesystem schema
 retrievers are disabled. Discovery omits each unapproved operation and its resource name and schema.
@@ -140,10 +157,10 @@ bash services/relay/test-client.sh
 ```
 
 The integration fixture uses real PostgreSQL and SpiceDB plus an isolated TLS Kubernetes API. It adds a third client
-and policy through fixture definitions, and executes actual HTTP and CLI adapters with the same authority and receipt
+and policy through fixture definitions, and executes actual HTTP, CLI and upstream MCP adapters with the same authority and receipt
 checks. Driver tests cover TLS, argument injection, credential rotation, upstream errors, output budgets, cancellation
-and child-process termination. The shared connector
-type contains opaque adapter-owned prepared bytes. HTTP paths and query parameters belong to the Kubernetes adapter.
+and child-process termination. The shared connector type contains opaque adapter-owned prepared bytes. Provider
+request paths and query parameters stay inside each adapter.
 The fixture never uses production credentials or grants. The MCP fixture runs the actual Rust client with an isolated
 Workload API and verifies the expected peer, rejection of a trusted certificate bearing another SPIFFE identity, and
 lookup after lost responses without another execution. Production cluster acceptance is a distinct rollout gate.
