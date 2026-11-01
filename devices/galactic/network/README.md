@@ -6,12 +6,19 @@ Both versions and the configuration were verified after reboot. The script was i
 [crs504-bench.rsc](crs504-bench.rsc) configures the CRS504-4XQ-IN on a direct Mac Ethernet connection.
 It preserves `192.168.88.1/24` on `ether1` and removes management from the storage bridge.
 
-| Port                   | Intended connection | Configuration                |
+| Port                   | Verified connection | Configuration                |
 | ---------------------- | ------------------- | ---------------------------- |
 | `ether1`               | Mac USB Ethernet    | Management `192.168.88.1/24` |
-| QSFP28 1, `qsfp28-1-1` | Altra NIC port 1    | 100G DAC, RS-FEC, MTU 1500   |
-| QSFP28 2, `qsfp28-2-1` | Turin NIC port 1    | 100G DAC, RS-FEC, MTU 1500   |
+| QSFP28 1, `qsfp28-1-1` | Turin NIC port 1    | 100G DAC, RS-FEC, MTU 1500   |
+| QSFP28 2, `qsfp28-2-1` | Altra NIC port 1    | 100G DAC, RS-FEC, MTU 1500   |
 | QSFP28 3 and 4         | Unused              | Disabled                     |
+
+The storage-port mapping above was verified on 2026-11-01 UTC by matching each host's `storage0` MAC
+to `/interface bridge host print detail without-paging`. The live port comments and retained bench script
+still label the hosts in reverse. Verify learned MAC addresses before selecting a port; do not use those
+comments as identity evidence or reimport the bench script as a diagnostic step.
+The [NIC and switch receive-path investigation](../../../docs/incidents/2026-11-01-altra-nic-and-switch-receive-path.md)
+records the PCIe tests, disabled switch RX flow control, fresh counter deltas, and remaining maintenance gates.
 
 1. Connect the Mac to `ether1`. Set its Ethernet adapter to `192.168.88.2/24`, with no router.
 2. Sign in at `http://192.168.88.1/`. Set the admin password yourself. Keep credentials out of Git.
