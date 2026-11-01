@@ -6,7 +6,7 @@ use tokio_postgres::Client;
 use tonic::Status;
 use uuid::Uuid;
 
-use super::{authorization, catalog, connections, onboarding, workspaces};
+use super::{authorization, catalog, connections, onboarding, requests, workspaces};
 use crate::{
     decision,
     native::{Native, Relationship, Update},
@@ -22,6 +22,9 @@ pub enum Command {
     Create(proto::CreatePlatformDelegationRequest),
     Activate(proto::ActivatePlatformDelegationRequest),
     Revoke(proto::RevokePlatformDelegationRequest),
+    RequestAccess(proto::CreatePlatformAccessRequestRequest),
+    ReviewAccess(proto::ReviewPlatformAccessRequestRequest),
+    CancelAccess(proto::CancelPlatformAccessRequestRequest),
 }
 impl Command {
     fn session(&self) -> Option<&proto::PlatformHumanSession> {
@@ -32,6 +35,9 @@ impl Command {
             Self::Create(r) => r.issuer.as_ref(),
             Self::Activate(r) => r.issuer.as_ref(),
             Self::Revoke(r) => r.issuer.as_ref(),
+            Self::RequestAccess(r) => r.requester.as_ref(),
+            Self::ReviewAccess(r) => r.administrator.as_ref(),
+            Self::CancelAccess(r) => r.requester.as_ref(),
         }
     }
     fn operation(&self) -> &str {
@@ -42,6 +48,9 @@ impl Command {
             Self::Create(r) => &r.operation_id,
             Self::Activate(r) => &r.operation_id,
             Self::Revoke(r) => &r.operation_id,
+            Self::RequestAccess(r) => &r.operation_id,
+            Self::ReviewAccess(r) => &r.operation_id,
+            Self::CancelAccess(r) => &r.operation_id,
         }
     }
     fn action(&self) -> &str {
@@ -52,6 +61,9 @@ impl Command {
             Self::Create(_) => "ofz.delegations.create",
             Self::Activate(_) => "ofz.delegations.activate",
             Self::Revoke(_) => "ofz.delegations.revoke",
+            Self::RequestAccess(_) => "ofz.access_requests.create",
+            Self::ReviewAccess(_) => "ofz.access_requests.review",
+            Self::CancelAccess(_) => "ofz.access_requests.cancel",
         }
     }
     fn fingerprint(&self) -> Result<Vec<u8>, Status> {
@@ -64,6 +76,25 @@ impl Command {
             if let Some(binding) = &mut request.binding {
                 binding.generation.clear();
             }
+        }
+        match &mut intent {
+            Self::RequestAccess(request) => {
+                if let Some(session) = &mut request.requester {
+                    session.session_id.clear();
+                }
+                request.actions.sort();
+            }
+            Self::ReviewAccess(request) => {
+                if let Some(session) = &mut request.administrator {
+                    session.session_id.clear();
+                }
+            }
+            Self::CancelAccess(request) => {
+                if let Some(session) = &mut request.requester {
+                    session.session_id.clear();
+                }
+            }
+            _ => {}
         }
         Ok(Sha256::digest(
             serde_json::to_vec(&intent)
@@ -102,7 +133,10 @@ fn identity(
     let service = registry::configured()?
         .service(peer)
         .ok_or_else(|| Status::permission_denied("registered service required"))?;
-    let role = if matches!(command, Command::Relationships(_)) {
+    let role = if matches!(
+        command,
+        Command::Relationships(_) | Command::ReviewAccess(_)
+    ) {
         "platform.administration"
     } else {
         "relay.client"
@@ -242,6 +276,21 @@ pub async fn execute(
     let mut credential = String::new();
     let validation:Result<(),Status>=async {
     match &command {
+        Command::RequestAccess(request) => {
+            prepared.workspace_id = request.workspace_id.clone();
+            requests::prepare_create(client, native, caller, request).await?;
+        }
+        Command::ReviewAccess(request) => {
+            prepared.workspace_id = request.workspace_id.clone();
+            workspaces::manage(native, &request.workspace_id, &session.human_id).await?;
+            prepared.changes = requests::prepare_review(client, native, request).await?;
+            if !prepared.changes.is_empty() {
+                authorization::human_context(database, session, command.operation(), true).await?;
+            }
+        }
+        Command::CancelAccess(request) => {
+            prepared.workspace_id = requests::prepare_cancel(client, caller, request).await?;
+        }
         Command::Relationships(request) => {
             if request.expected_policy_version != current.version {
                 return Err(Status::aborted("policy version conflict"));
@@ -525,6 +574,18 @@ async fn apply(
     };
     let tx = client.transaction().await.map_err(sql_error)?;
     match &prepared.command {
+        Command::RequestAccess(r) => {
+            let resource = r.resource.as_ref().ok_or_else(|| Status::internal("prepared resource missing"))?;
+            let caller = registry::configured()?.service(&prepared.peer).ok_or_else(|| Status::internal("prepared client missing"))?;
+            tx.execute("INSERT INTO ofz.platform_access_requests(id,issuer_id,client_service,workspace_id,resource,actions,scope_hash,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", &[&operation, &r.requester.as_ref().ok_or_else(|| Status::internal("prepared requester missing"))?.human_id, &caller.id, &decision::parse_uuid(&prepared.workspace_id)?, &store::encode(resource)?, &store::encode(&r.actions)?, &requests::scope_hash(resource, &r.actions)?, &r.reason]).await.map_err(sql_error)?;
+        }
+        Command::ReviewAccess(r) => {
+            let state: i16 = if r.decision == proto::PlatformAccessRequestDecision::Approve as i32 { proto::PlatformAccessRequestState::Approved as i16 } else { proto::PlatformAccessRequestState::Declined as i16 };
+            if tx.execute("UPDATE ofz.platform_access_requests SET state=$2,decision_reason=$3,updated_at_ms=ofz.now_ms() WHERE id=$1 AND state=1", &[&decision::parse_uuid(&r.request_id)?, &state, &r.reason]).await.map_err(sql_error)? != 1 { return Err(Status::aborted("access request changed")); }
+        }
+        Command::CancelAccess(r) => {
+            if tx.execute("UPDATE ofz.platform_access_requests SET state=4,updated_at_ms=ofz.now_ms() WHERE id=$1 AND state=1", &[&decision::parse_uuid(&r.request_id)?]).await.map_err(sql_error)? != 1 { return Err(Status::aborted("access request changed")); }
+        }
         Command::PutConnection(r) => {
             let id = decision::parse_uuid(&r.connection_id)?;
             let issuer = &r
@@ -586,6 +647,8 @@ async fn apply(
         &operation.to_string(),
         match &prepared.command {
             Command::Relationships(request) => &request.reason,
+            Command::RequestAccess(request) => &request.reason,
+            Command::ReviewAccess(request) => &request.reason,
             _ => "platform policy command",
         },
     );
