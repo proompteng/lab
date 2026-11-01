@@ -17,6 +17,7 @@ service PlatformAuthorizationService {
   rpc GetPlatformWorkspace(GetPlatformWorkspaceRequest) returns (GetPlatformWorkspaceResponse);
   rpc ReadWorkspaceActivity(ReadWorkspaceActivityRequest) returns (ReadWorkspaceActivityResponse);
   rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
+  rpc DiscoverPlatformAccess(DiscoverPlatformAccessRequest) returns (DiscoverPlatformAccessResponse);
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
   rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
   rpc ReadPolicyRelationships(ReadPolicyRelationshipsRequest) returns (ReadPolicyRelationshipsResponse);
@@ -219,6 +220,20 @@ message PlatformSubject {
   string client_service = 4;
 }
 
+message DiscoverPlatformAccessRequest {
+  PlatformSubject subject = 1;
+}
+message DiscoverPlatformAccessResponse {
+  repeated PlatformConnectionScope scopes = 1;
+}
+message PlatformConnectionScope {
+  string workspace_id = 1;
+  string workspace_name = 2;
+  PlatformResource resource = 3;
+  string resource_name = 4;
+  repeated string actions = 5;
+}
+
 message PlatformBinding {
   string service = 1;
   string id = 2;
@@ -319,6 +334,7 @@ message ListPlatformConnectionsRequest {
 message ListPlatformConnectionsResponse {
   repeated PlatformConnection connections = 1;
   uint64 recovery_generation = 2;
+  repeated PlatformConnectionScope available_scopes = 3;
 }
 message PutPlatformConnectionRequest {
   string operation_id = 1;

@@ -26,7 +26,10 @@ impl relay::connector::Connector for FixtureConnector {
     fn id(&self) -> &str {
         "fixture"
     }
-    fn operations(&self) -> Vec<wire::ConnectorOperation> {
+    fn operations(
+        &self,
+        access: Option<&[sdk::PlatformConnectionScope]>,
+    ) -> Vec<wire::ConnectorOperation> {
         vec![wire::ConnectorOperation {
             connector_id: "fixture".into(),
             name: "read".into(),
@@ -44,6 +47,15 @@ impl relay::connector::Connector for FixtureConnector {
             }],
             read_only: true,
         }]
+        .into_iter()
+        .filter(|operation| {
+            operation.targets.iter().all(|target| {
+                target.resource.as_ref().is_some_and(|resource| {
+                    relay::connector::allows_operation(access, &operation.action, resource)
+                })
+            })
+        })
+        .collect()
     }
     fn normalize(
         &self,
@@ -481,6 +493,19 @@ async fn workspace_administration(
         "workload",
         &policy::workload_object_id(OPENCODE),
     );
+    let registry = crate::registry::configured().unwrap();
+    let opencode = registry.by_id("opencode").unwrap();
+    assert!(
+        !super::discovery::scopes(
+            native,
+            opencode,
+            "workload",
+            &policy::workload_object_id(OPENCODE)
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     native
         .apply(
             &Uuid::new_v4().to_string(),
@@ -505,6 +530,17 @@ async fn workspace_administration(
         .allowed
     );
     onboarding::execute(owner, native).await.unwrap();
+    assert!(
+        super::discovery::scopes(
+            native,
+            opencode,
+            "workload",
+            &policy::workload_object_id(OPENCODE)
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     assert!(
         !authorization::check(
             database,
@@ -1624,10 +1660,16 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         kube_endpoint,
         config_dir.join("ca.crt").to_str().unwrap(),
         token_file.to_str().unwrap().into(),
-        vec![relay::config::Namespace {
-            name: "fixture".into(),
-            uid: namespace.clone(),
-        }],
+        vec![
+            relay::config::Namespace {
+                name: "fixture".into(),
+                uid: namespace.clone(),
+            },
+            relay::config::Namespace {
+                name: "private-workspace".into(),
+                uid: "33333333-3333-4333-8333-333333333333".into(),
+            },
+        ],
     )
     .unwrap();
     let clients =
@@ -1661,6 +1703,55 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         }
     });
     use wire::relay_service_server::RelayService;
+    for (client, peer, identity, expected) in [
+        (
+            "opencode",
+            OPENCODE,
+            sdk::platform_subject::Identity::WorkloadId(OPENCODE.into()),
+            vec!["status"],
+        ),
+        (
+            "tengri-web",
+            policy::BFF_ID,
+            sdk::platform_subject::Identity::Human(sdk::PlatformHumanSession {
+                human_id: humans[0].0.clone(),
+                session_id: humans[0].1.to_string(),
+                origin: "https://proompteng.ai".into(),
+            }),
+            vec!["logs", "status"],
+        ),
+    ] {
+        let mut request = platform_client::request(wire::ListOperationsRequest {
+            subject: Some(sdk::PlatformSubject {
+                client_service: client.into(),
+                identity: Some(identity),
+            }),
+        });
+        request
+            .extensions_mut()
+            .insert(platform_client::tls::Peer(peer.into()));
+        let catalog = relay.list_operations(request).await.unwrap().into_inner();
+        let mut operations: Vec<_> = catalog
+            .operations
+            .iter()
+            .filter(|operation| operation.connector_id == "galactic")
+            .map(|operation| operation.name.as_str())
+            .collect();
+        operations.sort();
+        assert_eq!(operations, expected);
+        for operation in &catalog.operations {
+            assert_eq!(operation.targets.len(), 1);
+            assert_eq!(
+                operation.targets[0].resource.as_ref().unwrap().id,
+                resource_id
+            );
+            assert!(
+                !String::from_utf8_lossy(&operation.input_schema_json)
+                    .contains("private-workspace")
+            );
+        }
+    }
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
     let payload = ExecutionPayload {
         operation_id: Uuid::new_v4().to_string(),
         client_service: "opencode".into(),
@@ -1830,6 +1921,63 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         relay.get_execution(wrong_purpose).await.unwrap_err().code(),
         Code::Unauthenticated
     );
+    let log_permission = Relationship::new(
+        "kubernetes_namespace",
+        &resource_id,
+        "log_reader",
+        "human",
+        &humans[0].0,
+    );
+    for allowed in [true, false, true] {
+        native
+            .apply(
+                &Uuid::new_v4().to_string(),
+                database.state().await.unwrap().version,
+                &[if allowed {
+                    Update::touch(log_permission.clone())
+                } else {
+                    Update::delete(log_permission.clone())
+                }],
+            )
+            .await
+            .unwrap();
+        connection
+            .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+            .await
+            .unwrap();
+        let snapshot = connections::list(
+            &database,
+            &native,
+            policy::BFF_ID,
+            p::ListPlatformConnectionsRequest {
+                issuer: create.issuer.clone(),
+                client_service: create.client_service.clone(),
+                binding: create.binding.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            snapshot
+                .connections
+                .iter()
+                .find(|connection| connection.id == create.connection_id)
+                .unwrap()
+                .credential_active,
+            allowed
+        );
+        assert_eq!(
+            snapshot.available_scopes.iter().any(|scope| scope
+                .resource
+                .as_ref()
+                .is_some_and(|resource| resource.id == resource_id)
+                && scope
+                    .actions
+                    .iter()
+                    .any(|action| action == "kubernetes.logs.read")),
+            allowed
+        );
+    }
     let before_denials = requests.load(std::sync::atomic::Ordering::SeqCst);
     connection
         .execute(

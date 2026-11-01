@@ -1,3 +1,4 @@
+import { platformSession } from '@/lib/platform/auth'
 import { relayCall } from '@/lib/platform/relay'
 import { RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
 import { noStoreHeaders, requireSameOriginGet, requirePlatformIdentity, platformRouteError } from '@/lib/platform/http'
@@ -6,10 +7,10 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
     requireSameOriginGet(request)
-    await requirePlatformIdentity(request)
+    const identity = await requirePlatformIdentity(request)
     const response = await relayCall(
       RelayService.method.listOperations,
-      { clientService: 'tengri-web' },
+      { subject: { clientService: 'tengri-web', identity: { case: 'human', value: platformSession(identity) } } },
       request.signal,
     )
     return Response.json(

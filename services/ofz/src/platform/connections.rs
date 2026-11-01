@@ -129,7 +129,7 @@ pub(crate) async fn list(
             "invalid connection binding filter",
         ));
     }
-    let connections = {
+    let mut connections = {
         let connection = database
             .pool
             .get()
@@ -192,6 +192,22 @@ pub(crate) async fn list(
             })
             .collect::<Result<Vec<_>, Status>>()?
     };
+    let available_scopes =
+        super::discovery::scopes(native, client, "human", &issuer.human_id).await?;
+    for connection in &mut connections {
+        connection.credential_active &= connection.resources.iter().all(|resource| {
+            available_scopes.iter().any(|scope| {
+                scope.workspace_id == connection.workspace_id
+                    && scope.resource.as_ref().is_some_and(|allowed| {
+                        allowed.kind == resource.kind && allowed.id == resource.id
+                    })
+                    && connection
+                        .actions
+                        .iter()
+                        .all(|action| scope.actions.contains(action))
+            })
+        });
+    }
     let (_, current, _) = authorization::human_context(database, &issuer, &trace, false).await?;
     if current.version != initial.version
         || current.recovery_generation != initial.recovery_generation
@@ -205,5 +221,6 @@ pub(crate) async fn list(
     Ok(proto::ListPlatformConnectionsResponse {
         connections,
         recovery_generation: current.recovery_generation,
+        available_scopes,
     })
 }

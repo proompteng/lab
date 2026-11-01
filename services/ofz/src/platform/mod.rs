@@ -10,4 +10,5 @@ pub mod workspaces;
 #[cfg(test)]
 mod integration;
 
+pub mod discovery;
 pub mod proof;

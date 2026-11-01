@@ -158,7 +158,16 @@ void mock.module('../platform/ofz', () => ({
   },
 }))
 void mock.module('../platform/relay', () => ({
-  relayCall: async () => {
+  relayCall: async (_method: unknown, input: unknown) => {
+    expect(input).toEqual({
+      subject: {
+        clientService: 'tengri-web',
+        identity: {
+          case: 'human',
+          value: { humanId: 'github:7', sessionId: workspace, origin: 'https://proompteng.ai' },
+        },
+      },
+    })
     events.push({ name: 'catalog', body: {} })
     return { operations: catalog }
   },

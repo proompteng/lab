@@ -1,6 +1,8 @@
 # Platform connections and workspace administration
 
-Status: implementation in progress. The gateway, workspace policy and portal changes are implemented and locally qualified; deployment and the remaining connector/client acceptance work are pending.
+Status: implementation in progress. Gateway isolation, workspace policy, the admin portal, approved tool discovery
+and one-action Kubernetes Connect are implemented locally. Deployment, additional drivers/provider connections and
+the remaining client/run acceptance work are pending.
 
 Research date: 2026-11-01, America/Los_Angeles. Source findings were checked against `origin/main` at
 `64a848f4b91e73070f836f5a36b4ae2bf04f79e1`. Source and runtime evidence take precedence over this proposal.

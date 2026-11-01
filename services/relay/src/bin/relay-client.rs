@@ -84,7 +84,10 @@ async fn handle(
         Some("tools/list") => {
             let operations = client
                 .list_operations(request(ListOperationsRequest {
-                    client_service: service.into(),
+                    subject: Some(PlatformSubject {
+                        client_service: service.into(),
+                        identity: Some(platform_subject::Identity::WorkloadId(identity.into())),
+                    }),
                 }))
                 .await?
                 .into_inner()
@@ -102,7 +105,10 @@ async fn handle(
                 .ok_or_else(|| anyhow::anyhow!("tool name required"))?;
             let operations = client
                 .list_operations(request(ListOperationsRequest {
-                    client_service: service.into(),
+                    subject: Some(PlatformSubject {
+                        client_service: service.into(),
+                        identity: Some(platform_subject::Identity::WorkloadId(identity.into())),
+                    }),
                 }))
                 .await?
                 .into_inner()

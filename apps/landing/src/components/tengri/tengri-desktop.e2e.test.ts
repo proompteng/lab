@@ -11028,9 +11028,9 @@ for (const { verificationStatus, failedStart } of [
   { verificationStatus: 200, failedStart: false },
   { verificationStatus: 401, failedStart: false },
   { verificationStatus: 428, failedStart: false },
-  { verificationStatus: 428, failedStart: true },
+  { verificationStatus: 401, failedStart: true },
 ]) {
-  test(`connects selected tools and resumes only required verification: ${verificationStatus}, failed start ${failedStart}`, async ({
+  test(`connects approved tools in one action and only resumes an expired sign-in: ${verificationStatus}, failed start ${failedStart}`, async ({
     page,
   }) => {
     await mockTengri(page)
@@ -11099,17 +11099,22 @@ for (const { verificationStatus, failedStart } of [
     await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
     const settings = page.getByRole('region', { name: 'Settings window', exact: true })
     await openSettingsPane(settings, 'Connections')
+    await expect(settings.getByText('production', { exact: false }).first()).toBeVisible()
     await settings.getByRole('button', { name: 'Connect', exact: true }).click()
-    await settings.getByRole('checkbox', { name: 'production', exact: true }).check()
-    await settings.getByRole('button', { name: 'Back to connections', exact: true }).click()
-    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
-    await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
-    if (verificationStatus === 200) await settings.screenshot({ path: test.info().outputPath('connection-setup.png') })
-    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (verificationStatus === 428) {
+      await expect(settings.getByRole('alert')).toHaveText('Verify before connecting.')
+      expect(signInStarts).toBe(0)
+      expect(verifications).toBe(0)
+      expect(saves).toHaveLength(1)
+      await settings.getByRole('button', { name: 'Finish setup', exact: true }).click()
+      await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
+      return
+    }
     if (failedStart) {
       await expect(settings.getByRole('alert')).toHaveText(
-        'Verification could not start. Your choices are saved. Try again when you’re ready.',
+        'Sign-in could not start. Your choices are saved. Try again when you’re ready.',
       )
+      await settings.getByRole('button', { name: 'Finish setup', exact: true }).click()
       await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
       await settings.getByRole('button', { name: 'Try again', exact: true }).click()
     }
@@ -11136,6 +11141,89 @@ for (const { verificationStatus, failedStart } of [
     }
   })
 }
+
+test('uses only common approved operations and keeps each connection in one workspace', async ({ page }) => {
+  await mockTengri(page)
+  const saves: SaveConnection[] = []
+  const target = (name: string) => ({ name, resource: { kind: 'kubernetes.namespace', id: 'galactic/' + name } })
+  const alpha = target('alpha')
+  const beta = target('beta')
+  await page.route('**/api/platform/connectors', (route) =>
+    route.fulfill({
+      json: {
+        operations: [
+          {
+            connectorId: 'galactic',
+            name: 'status',
+            action: 'kubernetes.status.read',
+            description: 'Read pod status',
+            readOnly: true,
+            targets: [alpha, beta],
+          },
+          {
+            connectorId: 'galactic',
+            name: 'logs',
+            action: 'kubernetes.logs.read',
+            description: 'Read bounded pod logs',
+            readOnly: true,
+            targets: [alpha],
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/tengri/connections**', (route) => {
+    if (route.request().method() === 'POST') {
+      const request = connectionRequestSchema.parse(route.request().postDataJSON())
+      if (request.kind === 'save') saves.push(request)
+      return route.fulfill({
+        status: 403,
+        json: { error: 'Recorded the selected access.', code: 'connection_access_denied' },
+      })
+    }
+    return route.fulfill({
+      json: {
+        connections: [],
+        recoveryGeneration: '1',
+        availableScopes: [
+          {
+            workspaceId: '11111111-1111-4111-8111-111111111111',
+            workspaceName: 'First workspace',
+            resource: alpha.resource,
+            resourceName: alpha.name,
+            actions: ['kubernetes.status.read', 'kubernetes.logs.read'],
+          },
+          {
+            workspaceId: '22222222-2222-4222-8222-222222222222',
+            workspaceName: 'Second workspace',
+            resource: beta.resource,
+            resourceName: beta.name,
+            actions: ['kubernetes.status.read'],
+          },
+        ],
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Connections')
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await settings.getByRole('checkbox', { name: 'alpha', exact: true }).check()
+  await expect(settings.getByText('First workspace', { exact: true })).toBeVisible()
+  await expect(settings.getByText('Read bounded pod logs', { exact: true })).toBeVisible()
+  await settings.getByRole('checkbox', { name: 'beta', exact: true }).check()
+  await expect(settings.getByText('Read bounded pod logs', { exact: true })).toHaveCount(0)
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('Choose resources from one workspace.')
+  expect(saves).toHaveLength(0)
+  await settings.getByRole('checkbox', { name: 'alpha', exact: true }).uncheck()
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('Recorded the selected access.')
+  expect(saves).toHaveLength(1)
+  expect(saves[0]?.operations).toEqual(['status'])
+  expect(saves[0]?.targets).toEqual([beta.resource])
+})
 
 test('managing a Viewer preserves their exact saved scope and identifies diagnostic agents', async ({ page }) => {
   await mockTengri(page)

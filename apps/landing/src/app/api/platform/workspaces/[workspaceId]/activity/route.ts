@@ -1,6 +1,7 @@
 import { toJson } from '@bufbuild/protobuf'
 import { z } from 'zod'
-import { platformSession, requireAdminIdentity } from '@/lib/platform/admin'
+import { requireAdminIdentity } from '@/lib/platform/admin'
+import { platformSession } from '@/lib/platform/auth'
 import { noStoreHeaders, requireSameOriginGet, platformRouteError } from '@/lib/platform/http'
 import { ofzCall } from '@/lib/platform/ofz'
 import {

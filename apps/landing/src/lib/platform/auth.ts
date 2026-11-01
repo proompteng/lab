@@ -20,6 +20,14 @@ export type PlatformIdentity = {
   session: Session
 }
 
+export function platformSession(identity: PlatformIdentity) {
+  return {
+    humanId: identity.session.humanId,
+    sessionId: identity.session.id,
+    origin: new URL(process.env.PLATFORM_WEB_ORIGIN || '').origin,
+  }
+}
+
 function environment() {
   const base = new URL(process.env.PLATFORM_WEB_ORIGIN?.trim() || '')
   const issuer = new URL(process.env.PLATFORM_OIDC_ISSUER?.trim() || 'https://auth.proompteng.ai/realms/tengri')

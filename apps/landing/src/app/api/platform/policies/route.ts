@@ -7,7 +7,8 @@ import {
   WritePolicyRelationshipsResponseSchema,
   ReadPolicyRelationshipsResponseSchema,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
-import { platformSession, requireAdminIdentity } from '@/lib/platform/admin'
+import { requireAdminIdentity } from '@/lib/platform/admin'
+import { platformSession } from '@/lib/platform/auth'
 import {
   noStoreHeaders,
   readPlatformJsonBody,

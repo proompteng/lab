@@ -1178,6 +1178,12 @@
   },
   {
     "surface": "ofz_platform",
+    "operation": "DiscoverPlatformAccess",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Attested client and current human or workload; native resource and workspace checks before catalog disclosure; durable audit"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "CheckPlatformAccess",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"

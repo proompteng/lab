@@ -49,7 +49,11 @@ export async function listConnections(identity: PlatformIdentity, agentId: strin
 export async function saveConnection(identity: PlatformIdentity, request: SaveConnection, signal?: AbortSignal) {
   const context = await authority(identity, request.agentId, signal)
   requireReady(context)
-  const catalog = await relayCall(RelayService.method.listOperations, { clientService: 'tengri-web' }, signal)
+  const catalog = await relayCall(
+    RelayService.method.listOperations,
+    { subject: { clientService: 'tengri-web', identity: { case: 'human', value: context.issuer } } },
+    signal,
+  )
   let scope: ReturnType<typeof selectConnectionScope>
   try {
     scope = selectConnectionScope(catalog.operations, request)
@@ -118,7 +122,11 @@ async function reconcile(context: Authority) {
         !installationMatches(connection, guest)),
   )
   const catalog = renew.length
-    ? await relayCall(RelayService.method.listOperations, { clientService: 'tengri-web' }, context.signal)
+    ? await relayCall(
+        RelayService.method.listOperations,
+        { subject: { clientService: 'tengri-web', identity: { case: 'human', value: context.issuer } } },
+        context.signal,
+      )
     : undefined
   const failures: { service: string; error: unknown }[] = []
   for (const connection of snapshot.connections) {

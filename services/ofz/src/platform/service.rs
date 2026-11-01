@@ -340,6 +340,19 @@ impl PlatformAuthorizationService for Service {
             ),
         }))
     }
+    async fn discover_platform_access(
+        &self,
+        request: Request<proto::DiscoverPlatformAccessRequest>,
+    ) -> Result<Response<proto::DiscoverPlatformAccessResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        super::discovery::discover(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
     async fn list_platform_connections(
         &self,
         request: Request<proto::ListPlatformConnectionsRequest>,

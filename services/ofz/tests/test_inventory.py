@@ -479,7 +479,7 @@ class InventoryTests(unittest.TestCase):
     def test_new_identity_or_administration_handler_requires_classification(self):
         read_text = Path.read_text
         for suffix, anchor in [
-            ("api/tengri/access/route.ts", "case 'membership':"),
+            ("api/tengri/access/route.ts", "case 'grant':"),
             ("lib/platform/auth.ts", "case 'POST /api/auth/login':"),
         ]:
             with self.subTest(suffix=suffix):
@@ -487,6 +487,7 @@ class InventoryTests(unittest.TestCase):
                 def inject(path, *args, **kwargs):
                     content = read_text(path, *args, **kwargs)
                     if str(path).endswith(suffix):
+                        assert anchor in content, f"missing inventory test anchor: {anchor}"
                         content = content.replace(
                             anchor, "case 'POST /api/auth/bypass':" + anchor, 1
                         )

@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { platformSession, requireAdminIdentity } from '@/lib/platform/admin'
+import { requireAdminIdentity } from '@/lib/platform/admin'
+import { platformSession } from '@/lib/platform/auth'
 import { resolveGithubIdentity } from '@/lib/platform/github-identity'
 import { githubLoginSchema } from '@/lib/tengri/access-schemas'
 import { noStoreHeaders, readPlatformJsonBody, requireSameOrigin, platformRouteError } from '@/lib/platform/http'
