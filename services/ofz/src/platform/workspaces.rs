@@ -494,10 +494,13 @@ pub async fn activity(
         .get()
         .await
         .map_err(|_| Status::unavailable("workspace activity unavailable"))?;
-    let rows = connection.query("SELECT sequence,receipt FROM ofz.audit WHERE sequence<$1 AND receipt ? 'platform_workspace_id' AND receipt->>'platform_workspace_id'=$2 AND (receipt->>'allowed'='false' OR receipt->>'platform_action' NOT IN ('ofz.workspaces.read','ofz.workspaces.activity','ofz.relationships.read')) ORDER BY sequence DESC LIMIT 101", &[&cursor,&request.workspace_id]).await.map_err(sql_error)?;
+    let rows = connection.query("SELECT sequence,created_at_ms,receipt FROM ofz.audit WHERE sequence<$1 AND receipt ? 'platform_workspace_id' AND receipt->>'platform_workspace_id'=$2 AND (receipt->>'allowed'='false' OR receipt->>'platform_action' NOT IN ('ofz.workspaces.read','ofz.workspaces.activity','ofz.relationships.read')) ORDER BY sequence DESC LIMIT 101", &[&cursor,&request.workspace_id]).await.map_err(sql_error)?;
     let mut receipts = Vec::new();
     for row in rows.iter().take(100) {
-        receipts.push(store::decode::<proto::AuditReceipt>(row.get(1))?);
+        let mut receipt: proto::AuditReceipt = store::decode(row.get(2))?;
+        receipt.sequence = row.get::<_, i64>(0) as u64;
+        receipt.created_at_unix_ms = row.get::<_, i64>(1) as u64;
+        receipts.push(receipt);
     }
     let cursor = if rows.len() > 100 {
         rows[99].get::<_, i64>(0).to_string()
