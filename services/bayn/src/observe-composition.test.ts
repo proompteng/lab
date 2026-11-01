@@ -197,13 +197,13 @@ import { TargetPlanReason, TargetPlanStatus } from './target-planner/index'
 import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import type { IsoDate } from './types'
 
-const signalDate = '2020-04-30'
-const executionDate = '2020-05-01'
+const signalDate = '2026-09-03'
+const executionDate = '2026-09-04'
 const accountId = 'paper-account-1'
 const generationHash = 'a'.repeat(64)
 const accountingHash = 'b'.repeat(64)
-const reconciledAt = '2020-05-01T16:44:59.000Z'
-const evaluatedAt = '2020-05-01T16:45:02.000Z'
+const reconciledAt = '2026-09-04T16:44:59.000Z'
+const evaluatedAt = '2026-09-04T16:45:02.000Z'
 
 const unusedAuthority = Effect.die(new Error('fixture must not read or change authority'))
 const unusedAuthorityStore: AuthorityGenerationStoreShape = {
@@ -292,32 +292,32 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
       phase: 'ENTRY',
-      submissionCutoffAt: '2020-05-01T17:00:00.000Z',
-      observedAt: '2020-05-01T16:59:59.000Z',
+      submissionCutoffAt: '2026-09-04T17:00:00.000Z',
+      observedAt: '2026-09-04T16:59:59.000Z',
     }),
   ).toBe(true)
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
       phase: 'ENTRY',
-      submissionCutoffAt: '2020-05-01T17:00:00.000Z',
-      observedAt: '2020-05-01T17:00:00.000Z',
+      submissionCutoffAt: '2026-09-04T17:00:00.000Z',
+      observedAt: '2026-09-04T17:00:00.000Z',
     }),
   ).toBe(false)
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
       phase: 'CLOSE',
-      submissionCutoffAt: '2020-05-03T20:00:00.000Z',
-      observedAt: '2020-05-01T17:05:00.000Z',
+      submissionCutoffAt: '2026-09-06T20:00:00.000Z',
+      observedAt: '2026-09-04T17:05:00.000Z',
     }),
   ).toBe(true)
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
       phase: 'CLOSE',
-      submissionCutoffAt: '2020-05-03T20:00:00.000Z',
-      observedAt: '2020-05-03T20:00:00.000Z',
+      submissionCutoffAt: '2026-09-06T20:00:00.000Z',
+      observedAt: '2026-09-06T20:00:00.000Z',
     }),
   ).toBe(false)
 })
@@ -566,18 +566,18 @@ test('preserves execution authority after the next bound-cycle reconciliation fa
 const calendarMaterial = withProviderSessions({
   schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
-  requestedRange: { start: signalDate, end: '2020-05-30' },
+  requestedRange: { start: signalDate, end: '2026-10-03' },
   timeZone: 'UTC' as const,
   sessions: [
     {
       date: signalDate,
-      openAt: '2020-04-30T13:30:00.000Z',
-      closeAt: '2020-04-30T20:00:00.000Z',
+      openAt: '2026-09-03T13:30:00.000Z',
+      closeAt: '2026-09-03T20:00:00.000Z',
     },
     {
       date: executionDate,
-      openAt: '2020-05-01T14:00:00.000Z',
-      closeAt: '2020-05-01T20:30:00.000Z',
+      openAt: '2026-09-04T14:00:00.000Z',
+      closeAt: '2026-09-04T20:30:00.000Z',
     },
   ],
 } as const)
@@ -1575,7 +1575,7 @@ describe('OBSERVE runtime composition', () => {
                     ).snapshot
                     return Effect.succeed(
                       mode === 'mismatched-window'
-                        ? { ...loaded, manifest: { ...loaded.manifest, rangeEndAt: '2020-05-01T16:44:00.000Z' } }
+                        ? { ...loaded, manifest: { ...loaded.manifest, rangeEndAt: '2026-09-04T16:44:00.000Z' } }
                         : loaded,
                     )
                   }),
@@ -1591,7 +1591,7 @@ describe('OBSERVE runtime composition', () => {
                     calls.window += 1
                     return mode === 'window-failure'
                       ? Effect.fail(databaseFailure)
-                      : Effect.succeed(mode === 'consumed' ? Option.some('2020-05-01T16:45:00.000Z') : Option.none())
+                      : Effect.succeed(mode === 'consumed' ? Option.some('2026-09-04T16:45:00.000Z') : Option.none())
                   }),
               }),
               Effect.provideService(JevBatchStore, {
@@ -2303,10 +2303,10 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('completes PAPER only after every intent is filled and a later exact reconciliation closes unknowns', () => {
-    const intentUpdatedAt = '2020-05-01T16:45:03.000Z'
+    const intentUpdatedAt = '2026-09-04T16:45:03.000Z'
     const laterReconciliation = {
       status: ReconciliationStatus.Exact,
-      reconciledAt: '2020-05-01T16:45:04.000Z',
+      reconciledAt: '2026-09-04T16:45:04.000Z',
       accountingExact: true,
       unknownMutationCount: 0,
       unknownOrderCount: 0,
@@ -2458,13 +2458,13 @@ describe('OBSERVE runtime composition', () => {
             state: IntentState.Terminal,
             terminalOutcome: TerminalOutcome.Canceled,
             terminalDisposition: 'BENIGN_ZERO_FILL_LIMIT',
-            updatedAt: '2020-05-01T16:45:03.000Z',
-            latestMutationAt: '2020-05-01T16:45:03.000Z',
+            updatedAt: '2026-09-04T16:45:03.000Z',
+            latestMutationAt: '2026-09-04T16:45:03.000Z',
           },
         ],
         {
           status: ReconciliationStatus.Exact,
-          reconciledAt: '2020-05-01T16:45:04.000Z',
+          reconciledAt: '2026-09-04T16:45:04.000Z',
           accountingExact: true,
           unknownMutationCount: 0,
           unknownOrderCount: 0,
@@ -2505,7 +2505,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('uses the persisted reconciliation time when completing an already-flat cycle', () => {
-    const reconciliationCompletedAt = '2020-05-01T16:45:04.000Z'
+    const reconciliationCompletedAt = '2026-09-04T16:45:04.000Z'
     const flatReconciliation = reconciliationResultAt(reconciliationCompletedAt)
 
     expect(decideReconciledExecutionCycleCompletion(flatReconciliation)).toEqual({
@@ -4831,7 +4831,7 @@ describe('OBSERVE runtime composition', () => {
     const document = result.exit.value
     expect(result.events).toEqual(['signal', 'inference-committed', 'refresh-start', 'refresh-committed', 'pricing'])
     expect(result.refreshes).toBe(1)
-    expect(result.snapshotRequests[1]?.observedAt).toBe('2020-05-01T16:45:04.000Z')
+    expect(result.snapshotRequests[1]?.observedAt).toBe('2026-09-04T16:45:04.000Z')
     expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v7')
     if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('expected Jev entry')
     expect(
@@ -4840,10 +4840,10 @@ describe('OBSERVE runtime composition', () => {
     expect(document.deltaRisk[0]?.facts?.state.account).toEqual(result.refreshed?.brokerState.account)
     expect(document.deltaRisk[0]?.facts?.state.dailyTradedNotionalMicros).toBe('1000000')
     expect(document.deltaRisk[0]?.facts?.state.entryQuote).toEqual({
-      eventAt: '2020-05-01T16:45:03.000Z',
+      eventAt: '2026-09-04T16:45:03.000Z',
       maximumAgeMs: 10_000,
     })
-    expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe('2020-05-01T16:45:13.000Z')
+    expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe('2026-09-04T16:45:13.000Z')
   })
 
   test.each([2_000, 3_000])(
@@ -5240,8 +5240,8 @@ describe('OBSERVE runtime composition', () => {
     expect(close.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.execution-market-data-binding.v3',
       purpose: IntradaySnapshotPurpose.Liquidation,
-      rangeStartAt: '2020-05-01T20:24:00.000Z',
-      rangeEndAt: '2020-05-01T20:25:00.000Z',
+      rangeStartAt: '2026-09-04T20:24:00.000Z',
+      rangeEndAt: '2026-09-04T20:25:00.000Z',
       observedAt,
     })
     const { contentHash: _hash, ...material } = close
@@ -5353,7 +5353,7 @@ describe('OBSERVE runtime composition', () => {
         }).pipe(Effect.result)
       }).pipe(
         Effect.provideService(CandidateObservationStore, {
-          latestJevWindowEnd: () => Effect.succeed(Option.some('2020-05-01T16:45:00.000Z')),
+          latestJevWindowEnd: () => Effect.succeed(Option.some('2026-09-04T16:45:00.000Z')),
           record: () => Effect.die('Same-window retry must not record a new observation'),
         }),
         (program) => provideDecisionServices(program, calendarRead([])),
@@ -5364,7 +5364,7 @@ describe('OBSERVE runtime composition', () => {
     if (Result.isFailure(result))
       expect(result.failure).toMatchObject({
         _tag: 'ObserveDecisionAwaitingSignal',
-        readiness: { reason: DecisionReadinessReason.SignalWindowObserved, availableAt: '2020-05-01T16:46:02.000Z' },
+        readiness: { reason: DecisionReadinessReason.SignalWindowObserved, availableAt: '2026-09-04T16:46:02.000Z' },
       })
   })
 
@@ -5502,22 +5502,22 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {
-    const signalSessionDate: IsoDate = '2020-04-29'
+    const signalSessionDate: IsoDate = '2026-09-02'
     const calendarMaterial = withProviderSessions({
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
       source: 'alpaca-v2-calendar' as const,
-      requestedRange: { start: signalSessionDate, end: '2020-05-29' },
+      requestedRange: { start: signalSessionDate, end: '2026-10-02' },
       timeZone: 'UTC' as const,
       sessions: [
         {
           date: signalSessionDate,
-          openAt: '2020-04-29T13:30:00.000Z',
-          closeAt: '2020-04-29T20:00:00.000Z',
+          openAt: '2026-09-02T13:30:00.000Z',
+          closeAt: '2026-09-02T20:00:00.000Z',
         },
         {
           date: signalDate,
-          openAt: '2020-04-30T13:30:00.000Z',
-          closeAt: '2020-04-30T20:00:00.000Z',
+          openAt: '2026-09-03T13:30:00.000Z',
+          closeAt: '2026-09-03T20:00:00.000Z',
         },
       ],
     })
@@ -6372,8 +6372,8 @@ test('persists the pricing quote event and its full freshness deadline for every
   expect(Result.isSuccess(decodeExecutionDecisionDocument(fixture.document))).toBeTrue()
   expect(fixture.document.deltaRisk.length).toBeGreaterThan(0)
   for (const risk of fixture.document.deltaRisk) {
-    expect(risk.facts?.state.entryQuote).toEqual({ eventAt: '2020-05-01T16:45:01.000Z', maximumAgeMs: 10_000 })
-    expect(risk.evaluation.decision.expiresAt).toBe('2020-05-01T16:45:11.000Z')
+    expect(risk.facts?.state.entryQuote).toEqual({ eventAt: '2026-09-04T16:45:01.000Z', maximumAgeMs: 10_000 })
+    expect(risk.evaluation.decision.expiresAt).toBe('2026-09-04T16:45:11.000Z')
     expect(risk.evaluation.input.freshUntil).toBe(risk.evaluation.decision.expiresAt)
     const facts = risk.facts
     if (facts === undefined) throw new Error('entry is missing durable risk facts')
@@ -7533,10 +7533,10 @@ test('admission protection requires exact current flat, settled and generation-b
     expect(
       protectedAccountAdmission(withAdmissionDrawdown(candidate, policy), policy, generationHash, evaluatedAt),
     ).toBeUndefined()
-  const beforeMidnight = '2020-05-02T03:59:59.999Z'
+  const beforeMidnight = '2026-09-05T03:59:59.999Z'
   const priorDate = withAdmissionDrawdown(reconciliationResultAt(beforeMidnight), policy)
   expect(protectedAccountAdmission(priorDate, policy, generationHash, beforeMidnight)).toBeDefined()
-  expect(protectedAccountAdmission(priorDate, policy, generationHash, '2020-05-02T04:00:00.000Z')).toBeUndefined()
+  expect(protectedAccountAdmission(priorDate, policy, generationHash, '2026-09-05T04:00:00.000Z')).toBeUndefined()
 })
 
 test.each(['empty', 'expired', 'bound'] as const)(

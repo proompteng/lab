@@ -1429,11 +1429,12 @@ export class CodexAppServerClient {
             id: item.id,
             status,
             title: 'image generation',
-            detail: item.revisedPrompt ?? item.result,
+            detail: item.revisedPrompt ?? ('result' in item ? item.result : item.fileId),
             data: {
               status: item.status,
               revisedPrompt: item.revisedPrompt,
-              result: item.result,
+              ...('result' in item ? { result: item.result } : { fileId: item.fileId }),
+              ...(item.savedPath ? { savedPath: item.savedPath } : {}),
             },
           }
         default:

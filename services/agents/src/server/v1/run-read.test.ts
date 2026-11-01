@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
 
 import { RESOURCE_MAP, type KubernetesClient } from '../kube-types'
+import type { AgentRunRecord } from './agent-run-store'
 
 import {
   getAgentRunHandler,
+  cancelAgentRunHandler,
   getRunHandler,
   getRunWithServicesEffect,
   makeRunReadLayer,
@@ -57,6 +59,143 @@ const createStoreMock = (overrides: Partial<RunReadApiStore>): RunReadApiStore =
     updatedAt: now,
   })),
   ...overrides,
+})
+
+const cancellationFixture = () => {
+  const resource = {
+    apiVersion: 'agents.proompteng.ai/v1alpha1',
+    kind: 'AgentRun',
+    metadata: { name: 'agent-run-1', namespace: 'agents', uid: 'original-uid' },
+    status: { phase: 'Running' },
+  }
+  let live: Record<string, unknown> | null = resource
+  let record: AgentRunRecord = {
+    id: 'record-1',
+    agentName: 'codex-agent',
+    deliveryId: 'delivery-1',
+    provider: 'job',
+    status: 'Running',
+    externalRunId: 'agent-run-1',
+    payload: { resource },
+  }
+  const store = createStoreMock({
+    getAgentRunById: vi.fn(async () => record),
+    updateAgentRunDetails: vi.fn(async (input) => {
+      record = { ...record, ...input, payload: input.payload ?? record.payload }
+      return record
+    }),
+  })
+  const kube = createKubeMock(resource)
+  vi.mocked(kube.get).mockImplementation(async () => live)
+  vi.mocked(kube.delete).mockImplementation(async () => {
+    live = null
+    return {}
+  })
+  return {
+    deps: { storeFactory: vi.fn(() => store), kubeClient: kube },
+    kube,
+    store,
+    record: () => record,
+    setResource: (value: Record<string, unknown> | null) => {
+      live = value
+    },
+  }
+}
+
+describe('AgentRun cancellation and retained results', () => {
+  const request = () => new Request('http://agents.local/v1/agent-runs/record-1', { method: 'DELETE' })
+
+  it('persists cancellation intent before deleting the matching UID and retains the record after cleanup', async () => {
+    const f = cancellationFixture()
+    const response = await cancelAgentRunHandler('record-1', request(), f.deps)
+    expect(response.status).toBe(202)
+    expect(f.record()).toMatchObject({ status: 'Cancelling', payload: { cancellation: { uid: 'original-uid' } } })
+    expect(f.kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'agent-run-1', 'agents', { uid: 'original-uid' })
+    expect(vi.mocked(f.store.updateAgentRunDetails).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(f.kube.delete).mock.invocationCallOrder[0],
+    )
+    const read = await getAgentRunHandler('record-1', new Request('http://agents.local/v1/agent-runs/record-1'), f.deps)
+    expect(await read.json()).toMatchObject({ agentRun: { id: 'record-1', status: 'Cancelled' }, resource: null })
+    expect((await cancelAgentRunHandler('record-1', request(), f.deps)).status).toBe(200)
+    expect(f.kube.delete).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed deletion without losing the cancellation intent', async () => {
+    const f = cancellationFixture()
+    vi.mocked(f.kube.delete).mockRejectedValueOnce(new Error('temporary Kubernetes failure'))
+    expect((await cancelAgentRunHandler('record-1', request(), f.deps)).status).toBe(500)
+    const intent = f.record().payload.cancellation
+    expect(f.record().status).toBe('Cancelling')
+    expect((await cancelAgentRunHandler('record-1', request(), f.deps)).status).toBe(202)
+    expect(f.record().payload.cancellation).toEqual(intent)
+    expect(f.kube.delete).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a replacement AgentRun without changing its identity or deleting it', async () => {
+    const f = cancellationFixture()
+    f.setResource({
+      metadata: { name: 'agent-run-1', namespace: 'agents', uid: 'replacement-uid' },
+      status: { phase: 'Running' },
+    })
+    expect((await cancelAgentRunHandler('record-1', request(), f.deps)).status).toBe(409)
+    expect(f.kube.delete).not.toHaveBeenCalled()
+    expect(f.store.updateAgentRunDetails).not.toHaveBeenCalled()
+  })
+
+  it('preserves a completed result when cancellation races with completion', async () => {
+    const f = cancellationFixture()
+    f.setResource({
+      metadata: { name: 'agent-run-1', namespace: 'agents', uid: 'original-uid' },
+      status: { phase: 'Succeeded', artifacts: [{ name: 'result', url: 's3://agents/result.json' }] },
+    })
+    const response = await cancelAgentRunHandler('record-1', request(), f.deps)
+    expect(await response.json()).toMatchObject({ agentRun: { status: 'Succeeded' }, cancellationRequested: false })
+    expect(f.kube.delete).not.toHaveBeenCalled()
+  })
+
+  it('retains new artifact references even when the phase is unchanged', async () => {
+    const f = cancellationFixture()
+    const resource = {
+      metadata: { name: 'agent-run-1', namespace: 'agents', uid: 'original-uid' },
+      status: { phase: 'Running', artifacts: [{ name: 'result', url: 's3://agents/result.json' }] },
+    }
+    f.setResource(resource)
+    await getAgentRunHandler('record-1', new Request('http://agents.local/v1/agent-runs/record-1'), f.deps)
+    f.setResource(null)
+    const response = await getAgentRunHandler(
+      'record-1',
+      new Request('http://agents.local/v1/agent-runs/record-1'),
+      f.deps,
+    )
+    expect(await response.json()).toMatchObject({ agentRun: { payload: { resource } }, resource: null })
+  })
+
+  it('preserves rerun review state and leaves a completed parent resource alone', async () => {
+    const f = cancellationFixture()
+    const resource = {
+      metadata: { name: 'agent-run-1', namespace: 'agents', uid: 'original-uid' },
+      status: { phase: 'Succeeded' },
+    }
+    await f.store.updateAgentRunDetails({ id: 'record-1', status: 'needs_iteration', payload: { resource } })
+    f.setResource(resource)
+    const response = await cancelAgentRunHandler('record-1', request(), f.deps)
+    expect(await response.json()).toMatchObject({
+      agentRun: { status: 'needs_iteration' },
+      cancellationRequested: false,
+    })
+    expect(f.kube.delete).not.toHaveBeenCalled()
+  })
+
+  it('defers cancellation to the mutation leader before opening a store', async () => {
+    const f = cancellationFixture()
+    const response = await cancelAgentRunHandler('record-1', request(), {
+      ...f.deps,
+      requireLeaderForMutation: () => new Response('not leader', { status: 503 }),
+    })
+    expect(response.status).toBe(503)
+    expect(f.deps.storeFactory).not.toHaveBeenCalled()
+    expect(f.kube.delete).not.toHaveBeenCalled()
+  })
 })
 
 describe('run read v1 API', () => {

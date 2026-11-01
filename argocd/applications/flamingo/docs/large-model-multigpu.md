@@ -63,7 +63,7 @@ args:
   - --port
   - "8000"
   - --model
-  - Qwen/Qwen3.8-27B-FP8
+  - nvidia/Qwen3.8-27B-NVFP4
   - --served-model-name
   - qwen38-flamingo
   - --trust-remote-code
