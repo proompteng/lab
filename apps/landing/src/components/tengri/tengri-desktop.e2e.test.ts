@@ -11724,8 +11724,13 @@ test('keeps workspace sharing in Tengri and directs administration to its own po
   }
 })
 
-for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
-  test(`restores provider authorization on a phone without repeating setup or prompting for passkeys: ${outcome}`, async ({
+for (const { outcome, repair } of [
+  { outcome: 'connected', repair: false },
+  { outcome: 'cancelled', repair: false },
+  { outcome: 'account-mismatch', repair: false },
+  { outcome: 'connected', repair: true },
+] as const) {
+  test(`restores provider authorization on a phone without repeating setup or prompting for passkeys: ${outcome}, repair ${repair}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 })
@@ -11734,7 +11739,21 @@ for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
     let begins = 0
     let signIns = 0
     let accountReady = false
-    let connections: Record<string, unknown>[] = []
+    let connections: Record<string, unknown>[] = repair
+      ? [
+          {
+            id: '88888888-8888-4888-8888-888888888888',
+            clientService: 'tengri-web',
+            clientReference: readyAgent.uid + '/inventory',
+            actions: ['inventory.items.read', 'inventory.details.read'],
+            resources: [{ kind: 'inventory.account', id: 'inventory/team' }],
+            binding: { service: 'tengri', id: readyAgent.uid },
+            enabled: true,
+            version: '1',
+            credentialActive: false,
+          },
+        ]
+      : []
     await page.route('**/api/auth/*', (route) => {
       signIns++
       return route.fulfill({ status: 500, json: { error: 'No sign-in expected' } })
@@ -11742,16 +11761,14 @@ for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
     await page.route('**/api/platform/connectors', (route) =>
       route.fulfill({
         json: {
-          operations: [
-            {
-              connectorId: 'inventory',
-              name: 'items',
-              action: 'inventory.items.read',
-              description: 'Read team inventory',
-              readOnly: true,
-              targets: [{ name: 'Team inventory', resource: { kind: 'inventory.account', id: 'inventory/team' } }],
-            },
-          ],
+          operations: (repair ? ['items', 'details'] : ['items']).map((name) => ({
+            connectorId: 'inventory',
+            name,
+            action: `inventory.${name}.read`,
+            description: name === 'items' ? 'Read team inventory' : 'Read detailed inventory',
+            readOnly: true,
+            targets: [{ name: 'Team inventory', resource: { kind: 'inventory.account', id: 'inventory/team' } }],
+          })),
         },
       }),
     )
@@ -11772,6 +11789,7 @@ for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
               profileId: 'inventory',
               name: 'Inventory',
               connectorId: 'inventory',
+              connectionId: repair ? '77777777-7777-4777-8777-777777777777' : '',
               state: accountReady ? 'PROVIDER_CONNECTION_STATE_READY' : 'PROVIDER_CONNECTION_STATE_RECONNECT',
               accountName: accountReady ? 'Team' : '',
               providerScopes: ['items.read'],
@@ -11799,11 +11817,11 @@ for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
               id: request.connectionId,
               clientService: 'tengri-web',
               clientReference: readyAgent.uid + '/inventory',
-              actions: ['inventory.items.read'],
+              actions: request.operations.map((name) => `inventory.${name}.read`),
               resources: request.targets,
               binding: { service: 'tengri', id: readyAgent.uid },
               enabled: true,
-              version: '1',
+              version: String(BigInt(request.expectedVersion) + BigInt(1)),
               credentialActive: true,
               credentialGeneration: '5',
               recoveryGeneration: '1',
@@ -11821,12 +11839,26 @@ for (const outcome of ['connected', 'cancelled', 'account-mismatch'] as const) {
     await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
     const settings = page.getByRole('region', { name: 'Settings window', exact: true })
     await openSettingsPane(settings, 'Connections')
-    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (repair) {
+      await settings.getByRole('button', { name: 'Manage', exact: true }).click()
+      await settings.getByRole('button', { name: 'Customize access', exact: true }).click()
+      await settings.getByRole('checkbox', { name: 'Read detailed inventory', exact: true }).uncheck()
+      await settings
+        .getByRole('button', { name: /^(Connect account|Reconnect account|Save changes)$/ })
+        .first()
+        .click()
+    } else {
+      await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    }
     if (outcome === 'connected') {
       await expect(settings.getByRole('button', { name: 'Manage', exact: true })).toBeVisible()
       await expect(settings.getByText('Connected', { exact: true })).toBeVisible()
       expect(saves).toHaveLength(1)
       expect(saves[0]?.operations).toEqual(['items'])
+      if (repair) {
+        expect(saves[0]?.connectionId).toBe('88888888-8888-4888-8888-888888888888')
+        expect(saves[0]?.expectedVersion).toBe('1')
+      }
     } else {
       await expect(
         settings.getByText(
