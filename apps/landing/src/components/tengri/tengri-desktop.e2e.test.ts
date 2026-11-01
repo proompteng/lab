@@ -6346,7 +6346,7 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await expect(settings.getByRole('alert')).toHaveCount(0)
 })
 
-test('cancels an obsolete access refresh when another tab is selected', async ({ page }) => {
+test('cancels an obsolete workspace access refresh when another settings pane is selected', async ({ page }) => {
   await mockTengri(page)
   const refreshStarted = Promise.withResolvers<void>()
   const releaseRefresh = Promise.withResolvers<void>()
@@ -6376,12 +6376,12 @@ test('cancels an obsolete access refresh when another tab is selected', async ({
   const cancelled = page.waitForEvent('requestfailed', {
     predicate: (request) => new URL(request.url()).searchParams.get('view') === 'workspace',
   })
-  await access.getByRole('tab', { name: 'Platform', exact: true }).click()
+  await openSettingsPane(settings, 'General')
   await cancelled
   releaseRefresh.resolve()
-  const platform = access.getByRole('tabpanel', { name: 'Platform', exact: true })
-  await expect(platform).toContainText('platform-identity')
-  await expect(access.getByText('workspace-identity', { exact: true })).toHaveCount(0)
+  await expect(settings.getByRole('region', { name: 'General', exact: true })).toBeVisible()
+  await expect(access).toBeHidden()
+  await expect(settings.getByText('workspace-identity', { exact: true })).toBeHidden()
 })
 
 for (const outcome of ['success', 'uncertain'] as const) {

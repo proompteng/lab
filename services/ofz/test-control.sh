@@ -166,7 +166,6 @@ SQL
       if [[ "$fixture_mode" == runtime ]]; then
         cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri "${2:-runtime_shared_state}" -- --ignored --nocapture --test-threads=1
       elif [[ "$fixture_mode" == editor ]]; then
-        export TENGRI_BFF_DATABASE_DSN="postgres://tengri_bff@localhost:$fixture_pg_port/tengri_control"
         bash ../nanoagent/test-vscode-browser.sh "${@:2}"
       elif [[ "$fixture_mode" == failover ]]; then
         # shellcheck source=tests/database-failover.sh
