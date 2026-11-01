@@ -3,7 +3,7 @@ import { Effect, Exit, Layer, Logger, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { operationalError } from '../errors'
 import { JevClient } from './client'
-import { DecisionsClient } from './decisions'
+import { DecisionsClient, type DecisionsError } from './decisions'
 import {
   EntryInferenceJournal,
   EntrySourceFeasibilityReason,
@@ -13,7 +13,8 @@ import {
 } from './entry-inference'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { evaluateClaimedEntryInferences } from './entry-inference-batch'
-import { entryHandoffDiagnostic } from './entry-inference-diagnostics'
+import { entryHandoffDiagnostic, logCommittedEntryHandoff } from './entry-inference-diagnostics'
+import type { EntryHandoff } from './entry-inference'
 import { entryCompletionFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevEvaluationStore, makeJevDispatch } from './evaluation'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
@@ -141,6 +142,50 @@ test('feasibility diagnostic preserves invalid economics as failure rather than 
   }
 })
 
+test.each(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE'] as const)(
+  'projects only the closed visual failure category %s',
+  async (category: DecisionsError['category']) => {
+    const request = entryEvaluationRequestFixture()
+    const handoff: EntryHandoff = {
+      ...entryCompletionFixture(request).handoff,
+      disposition: {
+        status: 'VISUAL_FAILED',
+        failure: {
+          category,
+          httpStatus: 429,
+          responseHash: 'f'.repeat(64),
+          usage: {
+            input_tokens: 100,
+            input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+            output_tokens: 20,
+            total_tokens: 120,
+          },
+        },
+      },
+    }
+    const before = JSON.stringify(handoff)
+    const feasibility = prepare(request).sourceFeasibility
+    const diagnostic = entryHandoffDiagnostic(request.cycleId, handoff, feasibility)
+    expect(diagnostic).toMatchObject({ disposition: 'VISUAL_FAILED', visualFailureCategory: category })
+    expect(JSON.stringify(handoff)).toBe(before)
+    for (const forbidden of ['httpStatus', 'responseHash', 'usage', 'input_tokens', '429', 'f'.repeat(64)])
+      expect(JSON.stringify(diagnostic)).not.toContain(forbidden)
+    const exit = await Effect.runPromiseExit(
+      logCommittedEntryHandoff(request.cycleId, handoff, feasibility).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              throw new Error('diagnostic sink unavailable')
+            }),
+          ]),
+        ),
+      ),
+    )
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(JSON.stringify(handoff)).toBe(before)
+  },
+)
+
 test('projects authentic ready and unfunded derivations without provider or financial material', () => {
   const request = entryEvaluationRequestFixture()
   const ready = entryCompletionFixture(request).handoff
@@ -160,6 +205,24 @@ test('projects authentic ready and unfunded derivations without provider or fina
     'sourceFeasibility',
   ])
   const unfunded = entryCompletionFixture(noQuantityRequest()).handoff
+  if (ready.disposition.status !== 'READY') throw new Error('Expected a ready fixture')
+  const otherHandoffs: readonly EntryHandoff[] = [
+    ready,
+    unfunded,
+    { ...ready, disposition: { status: 'SOURCE_INFEASIBLE' } },
+    {
+      ...ready,
+      disposition: {
+        status: 'PREPARATION_FAILED',
+        visual: ready.disposition.visual,
+        reason: 'DERIVATION_CONTRACT',
+      },
+    },
+  ]
+  for (const handoff of otherHandoffs)
+    expect(entryHandoffDiagnostic(request.cycleId, handoff, prepare(request).sourceFeasibility)).not.toHaveProperty(
+      'visualFailureCategory',
+    )
   expect(
     entryHandoffDiagnostic(request.cycleId, unfunded, prepare(noQuantityRequest()).sourceFeasibility),
   ).toMatchObject({

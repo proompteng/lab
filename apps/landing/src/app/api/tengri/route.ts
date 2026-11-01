@@ -1,4 +1,4 @@
-import { isTengriAuthConfigured } from '@/lib/tengri/auth'
+import { isPlatformAuthConfigured } from '@/lib/platform/auth'
 import { observeRequest } from '@/lib/observability/server'
 import {
   answerCodexQuestions,
@@ -42,14 +42,14 @@ import {
   writeFile,
 } from '@/lib/tengri/grpc'
 import {
-  getRateLimitedTengriIdentity,
+  getRateLimitedPlatformIdentity,
   noStoreHeaders,
-  readTengriJsonBody,
+  readPlatformJsonBody,
   requireSameOrigin,
   requireSameOriginGet,
-  requireTengriIdentity,
-  tengriRouteError,
-} from '@/lib/tengri/http'
+  requirePlatformIdentity,
+  platformRouteError,
+} from '@/lib/platform/http'
 import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
 import { tengriActionSchema } from '@/lib/tengri/schemas'
 import type { TengriDesktopSnapshot } from '@/lib/tengri/types'
@@ -63,11 +63,11 @@ export async function GET(request: Request) {
 async function getSnapshot(request: Request) {
   try {
     requireSameOriginGet(request)
-    const authConfigured = isTengriAuthConfigured()
+    const authConfigured = isPlatformAuthConfigured()
     const previewGatewayOrigin = normalizePreviewGatewayOrigin(process.env.TENGRI_PUBLIC_URL || '')
     const controlPlaneConfigured = isTengriControlPlaneConfigured() && Boolean(previewGatewayOrigin)
     if (!authConfigured) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })
-    const identity = await getRateLimitedTengriIdentity(request)
+    const identity = await getRateLimitedPlatformIdentity(request)
     if (!identity) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })
     const agents = controlPlaneConfigured ? await listAgents(identity) : []
     return Response.json(
@@ -82,7 +82,7 @@ async function getSnapshot(request: Request) {
       { headers: noStoreHeaders() },
     )
   } catch (error) {
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
 }
 
@@ -93,8 +93,8 @@ export async function POST(request: Request) {
 async function runAction(request: Request) {
   try {
     requireSameOrigin(request)
-    const identity = await requireTengriIdentity(request)
-    const parsed = tengriActionSchema.safeParse(await readTengriJsonBody(request, { subject: identity.subject }))
+    const identity = await requirePlatformIdentity(request)
+    const parsed = tengriActionSchema.safeParse(await readPlatformJsonBody(request, { subject: identity.subject }))
     if (!parsed.success) {
       return Response.json(
         {
@@ -290,7 +290,7 @@ async function runAction(request: Request) {
     }
     return Response.json({ result }, { headers: noStoreHeaders() })
   } catch (error) {
-    return tengriRouteError(error)
+    return platformRouteError(error)
   }
 }
 

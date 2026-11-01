@@ -11,7 +11,7 @@
       },
       "models": {
         "qwen38-flamingo": {
-          "name": "Flamingo Qwen3.8 27B FP8",
+          "name": "Flamingo Qwen3.8 27B NVIDIA NVFP4",
           "capabilities": {
             "tools": true,
             "input": [
@@ -20,7 +20,15 @@
             "output": [
               "text"
             ],
-            "temperature": true
+            "temperature": true,
+            "reasoning": {
+              "supported": true,
+              "effort": [
+                "low",
+                "medium",
+                "xhigh"
+              ]
+            }
           },
           "limit": {
             "context": 262144,

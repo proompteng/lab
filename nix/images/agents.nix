@@ -311,6 +311,7 @@ let
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
     "services/agents/src/runner"
+    "services/agents/src/runner-result.ts"
     "services/agents/tsconfig.json"
   ];
 
