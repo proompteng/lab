@@ -193,6 +193,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
   const recoveredRunRef = useRef<TengriCodexRun | undefined>(undefined)
+  const activeRunsRecoveryFailure = useRef<Error | undefined>(undefined)
   const runRecoveryFailure = useRef<Error | undefined>(undefined)
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
@@ -333,7 +334,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     if (!account?.authenticated) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
-    let lastRecoveryFailure: Error | undefined
     setRunRecovered(false)
     async function recover() {
       try {
@@ -347,7 +347,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         const active =
           activeRuns.find((run) => run.threadId === threadId) ??
           (!threadId && recoverInitialRun.current ? activeRuns[0] : undefined)
-        const recoveredFailure = lastRecoveryFailure
+        const recoveredFailure = activeRunsRecoveryFailure.current
+        activeRunsRecoveryFailure.current = undefined
         setError((current) => (current === recoveredFailure ? '' : current))
         setWorkspaceRuns(activeRuns)
         if (active && ((!threadId && recoverInitialRun.current) || active.threadId === threadId)) {
@@ -363,9 +364,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         if (activeRuns.some((run) => !codexRunIsTerminal(run))) timer = setTimeout(() => void recover(), 2000)
       } catch (cause) {
         if (controller.signal.aborted) return
-        lastRecoveryFailure = runRecoveryError(cause, 'Active run recovery failed')
+        activeRunsRecoveryFailure.current = runRecoveryError(cause, 'Active run recovery failed')
         setRunRecovered(false)
-        setError(lastRecoveryFailure)
+        setError(activeRunsRecoveryFailure.current)
         timer = setTimeout(() => void recover(), 3000)
       }
     }
