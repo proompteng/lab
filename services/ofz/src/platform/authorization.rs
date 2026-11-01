@@ -467,6 +467,14 @@ pub async fn check(
         ));
     }
     onboarding::verify(database).await?;
+    if !request.audit_receipt_id.is_empty() {
+        super::providers::verify_execution_connection(
+            database,
+            &request.operation_id,
+            &request.audit_receipt_id,
+        )
+        .await?;
+    }
     Ok(proto::PlatformDecision {
         allowed: true,
         revision: recorded.revision,

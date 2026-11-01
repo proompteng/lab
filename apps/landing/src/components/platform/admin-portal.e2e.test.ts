@@ -5,6 +5,7 @@ import tailwind from '@tailwindcss/postcss'
 import { createRequire } from 'node:module'
 import { policyWriteSchema, type PolicyWrite } from '@/lib/platform/policies'
 import { accessRequestMutationSchema, type AccessRequestMutation } from '@/lib/platform/access-requests'
+import { providerMutationSchema, type ProviderMutation } from '@/lib/platform/provider-connections'
 
 // This fixture exercises the UI against the public JSON contracts. The real Ofz platform fixture separately proves
 // gateway/session isolation, policy writes, permission revocation and both Relay consumers.
@@ -24,6 +25,11 @@ let loginStarts = 0
 let requestPending = false
 let requestLoseReply = false
 let requestMfa = false
+let providerEnabled = false
+let providerConnected = false
+let providerLoseReply = false
+const providerWrites: ProviderMutation[] = []
+const providerOutcomes = new Set<string>()
 const requestWrites: AccessRequestMutation[] = []
 const requestOutcomes = new Map<string, string>()
 const outcomes = new Map<string, string>()
@@ -98,6 +104,45 @@ beforeAll(async () => {
         return Response.json({ workspaces: [metadata, { id: other, name: 'Other workspace' }] })
       }
       if (url.pathname === '/api/auth/logout') return Response.json({ loggedOut: true })
+      if (url.pathname === '/api/platform/provider-connections') {
+        if (request.method === 'GET')
+          return Response.json({
+            connections:
+              providerEnabled && url.searchParams.get('workspaceId') === workspace
+                ? [
+                    {
+                      profileId: 'inventory',
+                      name: 'Shared inventory',
+                      connectorId: 'inventory',
+                      workspaceManaged: true,
+                      connectionId: '77777777-7777-4777-8777-777777777777',
+                      state: providerConnected
+                        ? 'PROVIDER_CONNECTION_STATE_READY'
+                        : 'PROVIDER_CONNECTION_STATE_DISCONNECTED',
+                      accountName: providerConnected ? 'Team inventory' : '',
+                      providerScopes: ['items.read'],
+                    },
+                  ]
+                : [],
+          })
+        const write = providerMutationSchema.parse(await request.json())
+        providerWrites.push(write)
+        if (write.kind === 'begin')
+          return Response.json({
+            authorizationUrl: 'https://oauth.workspace.fixture/authorize',
+            connectionId: '77777777-7777-4777-8777-777777777777',
+          })
+        providerOutcomes.add(write.operationId)
+        providerConnected = false
+        if (providerLoseReply) {
+          providerLoseReply = false
+          return Response.json({ error: 'The account disconnect response was lost.' }, { status: 503 })
+        }
+        return Response.json({
+          decision: { allowed: true, auditReceiptId: '22222222-2222-4222-8222-222222222222' },
+          providerRevocationConfirmed: true,
+        })
+      }
       if (url.pathname === '/api/auth/login') {
         loginStarts++
         return Response.json({ url: url.origin + '/signed-in' })
@@ -207,7 +252,7 @@ beforeAll(async () => {
       }
       if (url.pathname.startsWith('/api/')) return Response.json({ error: 'Not found' }, { status: 404 })
       return new Response(
-        `<!doctype html><html class="dark"><head><title>Workspace administration fixture</title><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fixture.css"><style>@font-face{font-family:FixtureGeist;src:url(/fixture-font.woff2)}:root{--font-geist-sans:FixtureGeist}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>`,
+        `<!doctype html><html class="dark"><head><meta charset="utf-8"><title>Workspace administration fixture</title><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fixture.css"><style>@font-face{font-family:FixtureGeist;src:url(/fixture-font.woff2)}:root{--font-geist-sans:FixtureGeist}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>`,
         { headers: { 'Content-Type': 'text/html' } },
       )
     },
@@ -399,3 +444,44 @@ test('allows signing in after sign-out refreshes identity without remounting the
     await page.close()
   }
 }, 30_000)
+
+test('connects a shared provider on a phone and retries its original disconnect after a lost response and reload', async () => {
+  providerEnabled = true
+  providerConnected = false
+  providerLoseReply = true
+  providerWrites.length = 0
+  providerOutcomes.clear()
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.route('https://oauth.workspace.fixture/authorize', (route) => {
+      providerConnected = true
+      return route.fulfill({
+        status: 302,
+        headers: {
+          location:
+            base + `/workspaces/${workspace}/integrations?platform_connection=connected&provider_profile=inventory`,
+        },
+        body: '',
+      })
+    })
+    await page.goto(`${base}/workspaces/${workspace}/integrations`)
+    const panel = page.getByRole('region', { name: 'Workspace accounts', exact: true })
+    await panel.getByRole('button', { name: 'Reconnect account', exact: true }).click()
+    await browserExpect(panel.getByText('Account connected.', { exact: true })).toBeVisible()
+    await browserExpect(panel.getByText('Team inventory · Connected', { exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Disconnect account', exact: true }).click()
+    await browserExpect(panel.getByRole('alert')).toHaveText('The account disconnect response was lost.')
+    const original = structuredClone(providerWrites.at(-1))
+    if (original?.kind !== 'disconnect') throw new Error('Expected a saved provider disconnect')
+    await page.reload()
+    await browserExpect(panel.getByRole('button', { name: 'Retry disconnect', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Retry disconnect', exact: true }).click()
+    await browserExpect(panel.getByText('Account disconnected.', { exact: true })).toBeVisible()
+    expect(providerWrites.filter((write) => write.kind === 'disconnect')).toEqual([original, original])
+    expect(providerOutcomes.size).toBe(1)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  } finally {
+    providerEnabled = false
+    await page.close()
+  }
+}, 20_000)

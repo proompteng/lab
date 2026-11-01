@@ -1385,5 +1385,53 @@
     "operation": "POST /api/platform/access-requests",
     "action": "ACTION_POLICY_COMMAND",
     "dispatch": "Same-origin authenticated gateway; member request or cancellation, admin-only review; Ofz workspace, ownership, fresh MFA and durable journal enforcement"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListProviderConnections",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Attested member gateway and enrolled workspace client or independent admin gateway and exact workspace administrator; owned account metadata only; durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "BeginProviderConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Current human and enrolled workspace client with resource authority, or exact workspace admin for shared accounts; PKCE, browser binding, fixed provider registration and durable attempt"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CompleteProviderConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Original human, gateway, browser binding and single-use state; current workspace authority; no repeated token exchange and no account identity replacement"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "DisconnectProviderConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Original personal account owner or exact workspace administrator; durable local revocation before provider revocation; exact operation receipt"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ResolveProviderCredential",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Attested Relay executor only; durably started execution, exact connector and destination, current authorization and owner-bound account revision"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/provider-connections",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Same-origin current human; Ofz enforces member/client or exact workspace-admin scope; host-only browser binding cookie"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/provider-connections",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Same-origin authenticated bounded request; Ofz enforces owned begin/disconnect and durable operation identity"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/provider-connections/callback/[profileId]",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Current human and host-only browser binding; Ofz verifies original state, gateway, profile and authority before one code exchange; fixed local return path"
   }
 ]

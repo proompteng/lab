@@ -331,3 +331,42 @@ bounded `grpc_code` tag and a status-specific title. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
 contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
 database connection or changing authorization state. Confirm the returned IDs in both collectors.
+
+### Provider accounts
+
+Ofz owns provider OAuth2 accounts for registered HTTP and upstream MCP connectors. Product clients connect personal
+accounts; workspace administrators connect shared accounts in the independent portal. Ordinary connect, refresh and
+reconnect reuse the current session. Resource grants remain separate workspace policy decisions.
+
+`platform/provider-profiles.json` is the reviewed registration input and defaults to `[]`. Set
+`OFZ_PROVIDER_PROFILES_FILE` to a mounted replacement in both Ofz and its onboarding job. Each profile registers
+`id`, `name`, `workspace_id`, unique `connector_id`, `ownership` (`personal` or `workspace`), the native policy
+`resource` and `actions`, exact `resource_url`, `issuer`, `authorization_endpoint`, `token_endpoint`,
+`account_endpoint`, `account_id_field`, `account_name_field`, optional `revocation_endpoint`, `client_id`, optional
+absolute `client_secret_file` and `ca_file`, and `scopes`. All URLs are fixed HTTPS endpoints; the resource URL must
+exactly match Relay's canonical HTTP origin or MCP endpoint. The account endpoint returns the registered stable ID
+and display-name fields. No dynamic endpoint or client-supplied credential is accepted. Provider registrations are
+part of the qualified policy package hash; changing them requires onboarding the reviewed package before serving.
+
+Nonempty registrations also require `OFZ_PROVIDER_CREDENTIAL_KEY_FILE`, an operator-mounted stable 32-byte encryption
+key. Keep this key and its recovery copy outside source control. The runtime requires the key and provider client
+secrets; onboarding requires the registration file and any configured CA. Configure each provider's allowed callback
+at `https://proompteng.ai/api/platform/provider-connections/callback/<profile-id>` for personal accounts or
+`https://admin.proompteng.ai/api/platform/provider-connections/callback/<profile-id>` for workspace accounts. Scope
+changes require new provider consent. No external provider account or key is provisioned by the empty default.
+
+Authorization uses S256 PKCE, a five-minute attempt, browser binding and the original human/client/workspace. Tokens
+are encrypted with account/profile binding and never returned to a browser, Tengri guest or OpenCode. Reconnect
+preserves the connection ID and original provider identity; selecting another account is rejected. Refresh is
+serialized per account; uncertain exchanges are never repeated automatically. Local disconnect takes effect before
+upstream revocation, and its receipt says whether the provider confirmed revocation. Provider token failures require
+repair; policy denials remain policy denials.
+
+Only the attested Relay executor can resolve a token, after the exact authorized execution has durably started.
+Ofz binds that execution to the account revision. Disconnect or credential replacement blocks later dispatch and
+withholds results from the old revision. Shared accounts remain subject to the invoking workload's native resource
+permissions; connecting an account never grants access.
+
+`bash services/ofz/test-control.sh platform` qualifies the lifecycle against real PostgreSQL, SpiceDB and a controlled
+TLS OAuth provider, including HTTP and MCP execution for Tengri delegation and standalone OpenCode. It exercises
+refresh races, account mismatch, lost exchanges, revoked authority and replayed receipts without external accounts.

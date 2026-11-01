@@ -32,6 +32,90 @@ service PlatformAuthorizationService {
   rpc ReviewPlatformAccessRequest(ReviewPlatformAccessRequestRequest) returns (ReviewPlatformAccessRequestResponse);
   rpc CancelPlatformAccessRequest(CancelPlatformAccessRequestRequest) returns (CancelPlatformAccessRequestResponse);
   rpc ListPlatformAccessRequests(ListPlatformAccessRequestsRequest) returns (ListPlatformAccessRequestsResponse);
+  rpc ListProviderConnections(ListProviderConnectionsRequest) returns (ListProviderConnectionsResponse);
+  rpc BeginProviderConnection(BeginProviderConnectionRequest) returns (BeginProviderConnectionResponse);
+  rpc CompleteProviderConnection(CompleteProviderConnectionRequest) returns (CompleteProviderConnectionResponse);
+  rpc DisconnectProviderConnection(DisconnectProviderConnectionRequest) returns (DisconnectProviderConnectionResponse);
+  rpc ResolveProviderCredential(ResolveProviderCredentialRequest) returns (ResolveProviderCredentialResponse);
+}
+
+enum ProviderConnectionState {
+  PROVIDER_CONNECTION_STATE_UNSPECIFIED = 0;
+  PROVIDER_CONNECTION_STATE_DISCONNECTED = 1;
+  PROVIDER_CONNECTION_STATE_READY = 2;
+  PROVIDER_CONNECTION_STATE_RECONNECT = 3;
+}
+message ProviderConnection {
+  string profile_id = 1;
+  string name = 2;
+  string connector_id = 3;
+  PlatformConnectionScope scope = 4;
+  bool workspace_managed = 5;
+  string connection_id = 6;
+  ProviderConnectionState state = 7;
+  string account_name = 8;
+  repeated string provider_scopes = 9;
+}
+message ListProviderConnectionsRequest {
+  PlatformHumanSession human = 1;
+  string workspace_id = 2;
+}
+message ListProviderConnectionsResponse {
+  repeated ProviderConnection connections = 1;
+}
+message BeginProviderConnectionRequest {
+  string operation_id = 1;
+  PlatformHumanSession human = 2;
+  string profile_id = 3;
+  string binding = 4;
+  string return_path = 5;
+}
+message BeginProviderConnectionResponse {
+  string authorization_url = 1;
+  string connection_id = 2;
+}
+message CompleteProviderConnectionRequest {
+  PlatformHumanSession human = 1;
+  string profile_id = 2;
+  string state = 3;
+  string binding = 4;
+  string code = 5;
+  string error = 6;
+  string issuer = 7;
+}
+message CompleteProviderConnectionResponse {
+  string connection_id = 1;
+  string return_path = 2;
+  bool connected = 3;
+  ProviderConnectionProblem problem = 4;
+}
+enum ProviderConnectionProblem {
+  PROVIDER_CONNECTION_PROBLEM_UNSPECIFIED = 0;
+  PROVIDER_CONNECTION_PROBLEM_CANCELLED = 1;
+  PROVIDER_CONNECTION_PROBLEM_ACCOUNT_MISMATCH = 2;
+  PROVIDER_CONNECTION_PROBLEM_AUTHORIZATION_FAILED = 3;
+  PROVIDER_CONNECTION_PROBLEM_ACCESS_REMOVED = 4;
+}
+message DisconnectProviderConnectionRequest {
+  string operation_id = 1;
+  PlatformHumanSession human = 2;
+  string profile_id = 3;
+  string connection_id = 4;
+}
+message DisconnectProviderConnectionResponse {
+  PlatformDecision decision = 1;
+  bool provider_revocation_confirmed = 2;
+}
+message ResolveProviderCredentialRequest {
+  string profile_id = 1;
+  string destination = 2;
+  CheckPlatformAccessRequest authorization = 3;
+  string connector_id = 4;
+}
+message ResolveProviderCredentialResponse {
+  string access_token = 1;
+  string connection_id = 2;
+  uint64 expires_at_unix_ms = 3;
 }
 
 message BeginSignInRequest {
@@ -108,6 +192,12 @@ message GetPlatformConfigurationResponse {
   uint64 policy_version = 1;
   string policy_catalog_json = 2;
   repeated RegisteredRelayClient relay_clients = 3;
+  repeated RegisteredProviderProfile provider_profiles = 4;
+}
+message RegisteredProviderProfile {
+  string id = 1;
+  string connector_id = 2;
+  string destination = 3;
 }
 message RegisteredRelayClient {
   string id = 1;
