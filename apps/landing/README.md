@@ -39,29 +39,36 @@ The homepage shows a “convex backend” badge once it can reach the Convex hea
 
 ## Tengri BFF development
 
+Browser identity lives in `src/lib/platform/auth.ts` and uses the platform authorization API. Each web deployment sets
+`PLATFORM_WEB_ORIGIN`, `PLATFORM_OIDC_CLIENT_ID`, `PLATFORM_OIDC_ISSUER` and `PLATFORM_OIDC_CLIENT_SECRET_FILE`, with
+its own SPIFFE identity. The deployed host-only cookie names remain stable, preserving active browser sessions during the move. Cookies
+remain isolated between origins, and Ofz binds each session to its gateway. The retired session RPCs are removed.
+
 The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and required verified passkeys. Ofz
 verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
 
-The BFF's SQL pool serves only OAuth attempt creation and consumption. Five-minute attempts use one shared unlogged
-PostgreSQL table, so sign-in does not wait for WAL or synchronous replication. Consumption remains atomic across BFF
-replicas. A database crash or failover discards unfinished attempts and requires a fresh sign-in; it cannot authorize
-a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
-query deadline, verified database TLS, and existing attempt expiry and capacity limits.
+Ofz owns five-minute PKCE attempts as well as sessions. Attempts are gateway-scoped and consumed atomically through
+SPIFFE mTLS. Their unlogged table tolerates database failover by discarding unfinished sign-ins; established sessions,
+policies and audits remain durable. The web application holds no database password or database connection.
 
-`/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
-Workspace and Platform open with one row per person and focused add/manage actions. Workspace limits show usage
-beside the configured allowance. Diagnostic grants, ownership transfer and emergency recovery are under Advanced.
-Sign-in and passkey management is a separate disclosure below the access tabs. Audit starts with recent activity and
-keeps receipt IDs inside details.
-The Service access tab starts with registered clients. Choose a service and named resource to load its current
-SpiceDB relationships, then save only changed permissions in one audited command. Platform members can be selected
-under People’s resource permissions; the normal flow does not require SPIFFE IDs or Ofz identity hashes.
-The internal access command API uses a typed `recipient`: `github-login` for a new lookup, or `github-id` for an
-existing immutable roster identity. The former top-level `login` field is removed. Settings dropdowns share `SettingsSelect`, composed from the design package's Select components;
-portaled menus carry the same Tengri theme and Geist font as their triggers. Access tabs use the shared Tabs states.
-Identity verification appears beside the affected save action only when Ofz requires a fresh passkey check.
+`admin.proompteng.ai` hosts workspace administration. It uses the same web image with `PLATFORM_PORTAL=admin`,
+its own service account, SPIFFE identity, confidential OIDC client and host-only session. It has no Tengri controller,
+Relay executor, database, HMAC or guest credential. The issuer can reuse existing verified passkey SSO across clients;
+Ofz keeps their session authority separate. Step-up returns to the same local page.
+
+The portal's workspace selector controls the visible context. Ofz separately checks the administrator's current role
+for every resource, person, client and activity request. People & access manages workspace membership and prevents
+removing the last active administrator. Integrations enrolls clients and grants named resource operations to workspace
+members, individual people or registered clients. Activity shows changes, execution outcomes and denied access;
+receipt IDs stay inside details. Access changes require a reason and contextual fresh verification. Unconfirmed changes
+retain their exact operation in per-person, per-workspace browser storage until reconciled.
+
+Settings → Privacy & Security contains personal workspace sharing, scoped diagnostics, ownership transfer and passkey
+management. `/access` opens the administration portal. Product policy/quota/global-audit editors and their replaced
+handlers are removed. Settings → Connections records consent to already-approved resource access; it never grants
+permissions. Forms use the shared design components, and dropdowns use `components/platform/settings-select.tsx`.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
@@ -175,8 +182,8 @@ The conversation follows new events while the reader is at the bottom. Reading e
 position until the reader chooses **Jump to latest**.
 
 1. Set the Ofz endpoint, exact SPIFFE identity, TLS control database files and OIDC client secret file from `.env.example`.
-2. Set `TENGRI_DESKTOP_ORIGIN` to the HTTPS desktop origin and `TENGRI_OIDC_ISSUER` to the dedicated realm. The issuer
-   registers the exact `${TENGRI_DESKTOP_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
+2. Set `PLATFORM_WEB_ORIGIN` to the HTTPS desktop origin and `PLATFORM_OIDC_ISSUER` to the dedicated realm. The issuer
+   registers the exact `${PLATFORM_WEB_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
    broker callback documented in [`keycloak/tengri`](../../argocd/applications/keycloak/tengri/README.md).
 3. Keep `TENGRI_PUBLIC_URL` as the separate browser/preview gateway origin. It is not the desktop authentication origin.
 4. Start the Rust Tengri service against the isolated migrated control plane. Direct GitHub/Better Auth cookies and

@@ -108,7 +108,8 @@ cephClusterSpec:
 ## Follow-up and recovery
 
 - [ ] Recheck Talos and Kubernetes through the [current release procedure](../releases/README.md).
-      All three live nodes already report Talos `1.14.0` and Kubernetes `1.37.0`; do not combine another OS upgrade with NIC installation.
+      All three live nodes now report Talos `1.14.5`, host Linux `6.18.58-talos` and Kubernetes `1.37.0`;
+      see the [completed OS acceptance](../releases/talos-v1.14.5-acceptance.md). Do not combine another OS upgrade with NIC installation.
 - [ ] Handle the optional RB5009 management-LAN move in a separate window after storage acceptance and router availability.
       Prepare reservations, BMC access, etcd/kubelet subnet selectors, API certificates/LB, Omni installer registry,
       MetalLB VIPs, Pi-hole DNS, and Tailscale routes together. Retire the old lab addressing after acceptance.

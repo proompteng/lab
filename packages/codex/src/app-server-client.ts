@@ -38,6 +38,8 @@ import type {
   ThreadGoalStatus,
   ThreadHistoryMode,
   ThreadItem,
+  ThreadItemsListParams,
+  ThreadItemsListResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
@@ -68,6 +70,7 @@ type JsonRpcRequestMethod =
   | 'initialize'
   | 'thread/start'
   | 'thread/resume'
+  | 'thread/items/list'
   | 'thread/goal/set'
   | 'thread/goal/get'
   | 'thread/goal/clear'
@@ -809,6 +812,19 @@ export class CodexAppServerClient {
       params,
     )) as ThreadGoalClearResponse
     return response.cleared
+  }
+
+  async getTurnItems(threadId: string, turnId: string): Promise<ThreadItem[]> {
+    await this.ensureReady()
+    const items: ThreadItem[] = []
+    let cursor: string | null = null
+    do {
+      const params: ThreadItemsListParams = { threadId, turnId, cursor, limit: 100, sortDirection: 'asc' }
+      const page = await this.request<ThreadItemsListResponse>('thread/items/list', params)
+      items.push(...page.data.map(({ item }) => item))
+      cursor = page.nextCursor
+    } while (cursor)
+    return items
   }
 
   async waitForThreadIdle(

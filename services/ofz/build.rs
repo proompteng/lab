@@ -31,6 +31,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
         )
         .field_attribute(
+            ".proompteng.authz.v1.AuditReceipt.platform_workspace_id",
+            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+        )
+        .field_attribute(
+            ".proompteng.authz.v1.ReadPolicyRelationshipsRequest.workspace_id",
+            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+        )
+        .field_attribute(
+            ".proompteng.authz.v1.WritePolicyRelationshipsRequest.workspace_id",
+            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+        )
+        .field_attribute(
             ".proompteng.authz.v1.AuditReceipt.platform_resources",
             "#[serde(default, skip_serializing_if = \"Vec::is_empty\")]",
         )

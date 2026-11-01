@@ -80,15 +80,6 @@ const collaborator = {
   recipient: accessRecipientSchema,
 }
 const commandSchema = z.discriminatedUnion('action', [
-  z
-    .object({
-      ...common,
-      action: z.literal('membership'),
-      recipient: accessRecipientSchema,
-      role: z.enum(['member', 'administrator', 'auditor', 'operator']),
-      enabled: z.boolean(),
-    })
-    .strict(),
   z.discriminatedUnion('enabled', [
     z.object({ ...collaborator, role: z.enum(['developer', 'viewer']), enabled: z.literal(false) }).strict(),
     z.discriminatedUnion('role', [
@@ -114,16 +105,6 @@ const commandSchema = z.discriminatedUnion('action', [
   z
     .object({
       ...common,
-      action: z.literal('quota'),
-      recipient: accessRecipientSchema,
-      total: z.number().int().min(0).max(6),
-      active: z.number().int().min(0).max(6),
-      retainedGiB: z.number().int().min(0).max(192),
-    })
-    .strict(),
-  z
-    .object({
-      ...common,
       action: z.literal('grant'),
       workspaceUid: workspaceUidSchema,
       grantId: workspaceUidSchema,
@@ -137,21 +118,6 @@ const commandSchema = z.discriminatedUnion('action', [
     .strict(),
   z
     .object({ ...common, action: z.literal('revoke'), workspaceUid: workspaceUidSchema, grantId: workspaceUidSchema })
-    .strict(),
-  z
-    .object({
-      ...common,
-      action: z.literal('emergency'),
-      workspaceUid: workspaceUidSchema,
-      recipient: accessRecipientSchema,
-      incidentId: z
-        .string()
-        .min(3)
-        .max(128)
-        .regex(/^[a-zA-Z0-9._:/-]+$/),
-      approvalId: z.union([workspaceUidSchema, z.literal('')]),
-      expiresAt: z.iso.datetime(),
-    })
     .strict(),
 ])
 export const accessCommandSchema = commandSchema.refine(
