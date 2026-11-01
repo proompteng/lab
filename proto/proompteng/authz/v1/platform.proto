@@ -28,6 +28,10 @@ service PlatformAuthorizationService {
   rpc CreatePlatformDelegation(CreatePlatformDelegationRequest) returns (CreatePlatformDelegationResponse);
   rpc ActivatePlatformDelegation(ActivatePlatformDelegationRequest) returns (ActivatePlatformDelegationResponse);
   rpc RevokePlatformDelegation(RevokePlatformDelegationRequest) returns (RevokePlatformDelegationResponse);
+  rpc CreatePlatformAccessRequest(CreatePlatformAccessRequestRequest) returns (CreatePlatformAccessRequestResponse);
+  rpc ReviewPlatformAccessRequest(ReviewPlatformAccessRequestRequest) returns (ReviewPlatformAccessRequestResponse);
+  rpc CancelPlatformAccessRequest(CancelPlatformAccessRequestRequest) returns (CancelPlatformAccessRequestResponse);
+  rpc ListPlatformAccessRequests(ListPlatformAccessRequestsRequest) returns (ListPlatformAccessRequestsResponse);
 }
 
 message BeginSignInRequest {
@@ -335,6 +339,70 @@ message ListPlatformConnectionsResponse {
   repeated PlatformConnection connections = 1;
   uint64 recovery_generation = 2;
   repeated PlatformConnectionScope available_scopes = 3;
+  repeated PlatformConnectionScope requestable_scopes = 4;
+  repeated PlatformAccessRequest access_requests = 5;
+}
+
+enum PlatformAccessRequestState {
+  PLATFORM_ACCESS_REQUEST_STATE_UNSPECIFIED = 0;
+  PLATFORM_ACCESS_REQUEST_STATE_PENDING = 1;
+  PLATFORM_ACCESS_REQUEST_STATE_APPROVED = 2;
+  PLATFORM_ACCESS_REQUEST_STATE_DECLINED = 3;
+  PLATFORM_ACCESS_REQUEST_STATE_CANCELLED = 4;
+}
+enum PlatformAccessRequestDecision {
+  PLATFORM_ACCESS_REQUEST_DECISION_UNSPECIFIED = 0;
+  PLATFORM_ACCESS_REQUEST_DECISION_APPROVE = 1;
+  PLATFORM_ACCESS_REQUEST_DECISION_DECLINE = 2;
+}
+message PlatformAccessRequest {
+  string id = 1;
+  string requester_human_id = 2;
+  string client_service = 3;
+  PlatformConnectionScope scope = 4;
+  string reason = 5;
+  PlatformAccessRequestState state = 6;
+  string decision_reason = 7;
+  uint64 created_at_unix_ms = 8;
+  uint64 updated_at_unix_ms = 9;
+}
+message CreatePlatformAccessRequestRequest {
+  string operation_id = 1;
+  PlatformHumanSession requester = 2;
+  string workspace_id = 3;
+  PlatformResource resource = 4;
+  repeated string actions = 5;
+  string reason = 6;
+}
+message CreatePlatformAccessRequestResponse {
+  string request_id = 1;
+  PlatformDecision decision = 2;
+}
+message ReviewPlatformAccessRequestRequest {
+  string operation_id = 1;
+  PlatformHumanSession administrator = 2;
+  string workspace_id = 3;
+  string request_id = 4;
+  PlatformAccessRequestDecision decision = 5;
+  string reason = 6;
+}
+message ReviewPlatformAccessRequestResponse {
+  PlatformDecision decision = 1;
+}
+message CancelPlatformAccessRequestRequest {
+  string operation_id = 1;
+  PlatformHumanSession requester = 2;
+  string request_id = 3;
+}
+message CancelPlatformAccessRequestResponse {
+  PlatformDecision decision = 1;
+}
+message ListPlatformAccessRequestsRequest {
+  PlatformHumanSession administrator = 1;
+  string workspace_id = 2;
+}
+message ListPlatformAccessRequestsResponse {
+  repeated PlatformAccessRequest requests = 1;
 }
 message PutPlatformConnectionRequest {
   string operation_id = 1;

@@ -9,7 +9,7 @@ use crate::{
     store::{self, Database, sql_error},
 };
 
-fn gateway(peer: &str, session: &proto::PlatformHumanSession) -> Result<(), Status> {
+pub(crate) fn gateway(peer: &str, session: &proto::PlatformHumanSession) -> Result<(), Status> {
     let service = registry::configured()?
         .service(peer)
         .ok_or_else(|| Status::permission_denied("registered administration gateway required"))?;

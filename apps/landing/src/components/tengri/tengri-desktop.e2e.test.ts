@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/connections'
+import { accessRequestMutationSchema, type AccessRequestMutation } from '@/lib/platform/access-requests'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
@@ -10921,6 +10922,108 @@ for (const refreshDisconnect of [false, true]) {
     await verifyConnectionRecovery(page, refreshDisconnect)
   })
 }
+
+test('requests integration access without admin controls and recovers the exact intent on a phone', async ({
+  page,
+}) => {
+  await mockTengri(page)
+  const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const scope = {
+    workspaceId,
+    workspaceName: 'Lab',
+    resource: { kind: 'kubernetes.namespace', id: 'galactic/namespace-uid' },
+    resourceName: 'Production',
+    actions: ['kubernetes.status.read'],
+  }
+  const writes: AccessRequestMutation[] = []
+  let requestId = ''
+  let approved = false
+  let loseReply = true
+  await page.route('**/api/platform/connectors', (route) =>
+    route.fulfill({
+      json: {
+        operations: approved
+          ? [
+              {
+                connectorId: 'galactic',
+                name: 'pod_status',
+                action: 'kubernetes.status.read',
+                description: 'Read pod status',
+                readOnly: true,
+                targets: [{ name: 'Production', resource: scope.resource }],
+              },
+            ]
+          : [],
+      },
+    }),
+  )
+  await page.route('**/api/tengri/connections**', (route) =>
+    route.fulfill({
+      json: {
+        connections: [],
+        recoveryGeneration: '1',
+        availableScopes: approved ? [scope] : [],
+        requestableScopes: [scope],
+        accessRequests: requestId
+          ? [
+              {
+                id: requestId,
+                requesterHumanId: 'a'.repeat(64),
+                clientService: 'tengri-web',
+                scope,
+                reason: 'Investigate production health',
+                state: approved ? 'PLATFORM_ACCESS_REQUEST_STATE_APPROVED' : 'PLATFORM_ACCESS_REQUEST_STATE_PENDING',
+                createdAtUnixMs: '1793510000000',
+                updatedAtUnixMs: '1793510000000',
+              },
+            ]
+          : [],
+      },
+    }),
+  )
+  await page.route('**/api/platform/access-requests', (route) => {
+    const body = accessRequestMutationSchema.parse(route.request().postDataJSON())
+    writes.push(body)
+    if (body.kind !== 'create') throw new Error('Expected a member request')
+    requestId = body.operationId
+    if (loseReply) {
+      loseReply = false
+      return route.fulfill({ status: 503, json: { error: 'The request response was lost.' } })
+    }
+    return route.fulfill({
+      json: { requestId, decision: { allowed: true, auditReceiptId: '22222222-2222-4222-8222-222222222222' } },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  let settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Connections')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settings.getByRole('button', { name: 'Request access', exact: true }).click()
+  const reason = settings.getByLabel('Why do you need access?', { exact: true })
+  await reason.fill('Investigate production health')
+  expect(
+    await reason.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+  ).toBeGreaterThanOrEqual(16)
+  await settings.screenshot({ path: test.info().outputPath('access-request-phone.png'), animations: 'disabled' })
+  await settings.getByRole('button', { name: 'Send request', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('The request response was lost.')
+  await page.reload()
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Connections')
+  await settings.getByRole('button', { name: 'Retry saved request', exact: true }).click()
+  await expect(settings.getByText('Pending approval', { exact: true })).toBeVisible()
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toEqual(writes[0])
+  await expect(settings.getByText('Service policies', { exact: true })).toHaveCount(0)
+  await expect(settings.getByRole('button', { name: 'Verify passkey', exact: true })).toHaveCount(0)
+  approved = true
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(settings.getByRole('button', { name: 'Connect', exact: true })).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Request access', exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
 
 test('keeps an oversized resource selection editable without saving a pending request', async ({ page }) => {
   await mockTengri(page)
