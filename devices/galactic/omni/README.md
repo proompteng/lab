@@ -4,11 +4,17 @@
 `galactic` cluster. It preserves every imported machine patch, removes the stale imported `machine.install.image`
 overrides so Omni can derive installers from schematics, and references the Elauwit Image Factory registry patch.
 
-The template targets Talos 1.14.5 and Kubernetes 1.37.0 through Omni 1.11. Use the
-[current patch procedure](../releases/README.md#talos-1145-patch-upgrade) to upgrade Talos while retaining
-Kubernetes 1.37.0. All three machines now report valid Image Factory schematic metadata. This maintenance uses
-the locked installer procedure to retain standalone Pod-local state; subsequent ordinary upgrades use the rolling
-lifecycle with `maxParallelism: 1`. Individual control-plane locks are unsupported.
+The template targets Talos 1.14.5 and Kubernetes 1.37.0 through Omni 1.11. The
+[acceptance record](../releases/talos-v1.14.5-acceptance.md) covers the current rollout and its remaining workload gates.
+All three machines report valid Image Factory schematic metadata. Future version changes use Omni's rolling
+lifecycle with `maxParallelism: 1`, after fencing standalone workspaces for retained-home recovery.
+Individual control-plane locks are unsupported.
+
+Do not pre-upgrade hosts while a locked Omni cluster still desires an older version, then assume an atomic target
+and unlock update safely adopts them. On Omni 1.11.0, the status controller can briefly see the old derived install
+target after unlock and stage a downgrade. This happened to Turin during the 1.14.5 handoff. A manual same-version
+artifact repair remains separate from a version rollout; require the Cluster target, derived install targets,
+applied configuration versions and live host versions to agree before releasing its maintenance lock.
 
 Each Machine's `install.diskSelector` selects its verified system-disk serial and preserves the existing install
 options. The original 1.14.0 transition and its atomic version/lock handoff are historical procedures in the

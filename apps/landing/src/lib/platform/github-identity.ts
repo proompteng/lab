@@ -3,8 +3,8 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { request } from 'node:https'
 import { z } from 'zod'
-import { githubLoginSchema } from './access-schemas'
-import { OfzError } from './ofz'
+import { githubLoginSchema } from '../tengri/access-schemas'
+import { OfzError } from '../platform/ofz'
 
 const profile = z.object({
   id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -21,7 +21,7 @@ export async function resolveGithubIdentity(login: string) {
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'tengri-ofz-administration',
+          'User-Agent': 'proompteng-administration',
         },
       },
       (response) => {

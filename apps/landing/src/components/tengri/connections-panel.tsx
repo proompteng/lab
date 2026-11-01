@@ -35,7 +35,11 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { startSignIn } from '@/lib/platform/auth-client'
+import { MemberAccessRequests } from '@/components/platform/member-access-requests'
+import { ProviderAccount } from '@/components/platform/provider-accounts'
+import { connectProvider, consumeProviderReturn } from '@/lib/platform/provider-client'
+import { providerResultMessage } from '@/lib/platform/provider-connections'
 import {
   completePendingConnection,
   connectionConnector,
@@ -49,6 +53,9 @@ import {
 } from '@/lib/tengri/connections'
 import {
   ListPlatformConnectionsResponseSchema,
+  ListProviderConnectionsResponseSchema,
+  ProviderConnectionState,
+  type ProviderConnection,
   type ListPlatformConnectionsResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 import type { TengriAgent } from '@/lib/tengri/types'
@@ -101,6 +108,7 @@ export function ConnectionsPanel({
 }) {
   const [catalog, setCatalog] = useState<ConnectorCatalog>()
   const [snapshot, setSnapshot] = useState<ListPlatformConnectionsResponse>()
+  const [providers, setProviders] = useState<ProviderConnection[]>()
   const [editor, setEditor] = useState<string>()
   const [customizing, setCustomizing] = useState(false)
   const [error, setError] = useState('')
@@ -122,17 +130,19 @@ export function ConnectionsPanel({
   const reset = form.reset
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      const [connections, available] = await Promise.all([
+      const [connections, available, accounts] = await Promise.all([
         fetch('/api/tengri/connections?agentId=' + encodeURIComponent(agent.id), { cache: 'no-store', signal }).then(
           responseJson,
         ),
         fetch('/api/platform/connectors', { cache: 'no-store', signal }).then(responseJson),
+        fetch('/api/platform/provider-connections', { cache: 'no-store', signal }).then(responseJson),
       ])
       if (signal?.aborted) return
       const next = fromJson(ListPlatformConnectionsResponseSchema, connections)
       for (const connection of next.connections) connectionConnector(connection, agent.uid)
       setSnapshot(next)
       setCatalog(connectorCatalogSchema.parse(available))
+      setProviders(fromJson(ListProviderConnectionsResponseSchema, accounts).connections)
     },
     [agent.id, agent.uid],
   )
@@ -140,10 +150,17 @@ export function ConnectionsPanel({
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    void load(controller.signal).catch((cause: unknown) => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Connections are unavailable.')
-    })
-    return () => controller.abort()
+    const refresh = () =>
+      void load(controller.signal).catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : 'Connections are unavailable.')
+      })
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      controller.abort()
+      window.removeEventListener('focus', refresh)
+    }
   }, [active, agent.runtimeEpoch, load])
   useEffect(() => {
     if (!active) return
@@ -176,6 +193,13 @@ export function ConnectionsPanel({
       try {
         retainPendingConnection(sessionStorage, pendingKey, request, false)
         setPending(request)
+        const provider = providers?.find((profile) => profile.connectorId === request.connectorId)
+        if (provider && provider.state !== ProviderConnectionState.READY) {
+          if (provider.workspaceManaged) throw new Error('Your workspace admin needs to reconnect this account.')
+          retainPendingConnection(sessionStorage, pendingKey, request, true)
+          await connectProvider(principalId, provider.profileId, window.location.pathname + window.location.search)
+          return
+        }
         const response = await fetch('/api/tengri/connections', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -198,12 +222,12 @@ export function ConnectionsPanel({
         )
       } catch (cause) {
         if (cause instanceof ConnectionRequestError) {
-          if ((cause.status === 401 || cause.status === 428) && !afterSignIn) {
+          if (cause.status === 401 && !afterSignIn) {
             try {
               retainPendingConnection(sessionStorage, pendingKey, request, true)
-              await startTengriSignIn(cause.status === 401 ? 'login' : 'step-up')
+              await startSignIn('login')
             } catch {
-              setError('Verification could not start. Your choices are saved. Try again when you’re ready.')
+              setError('Sign-in could not start. Your choices are saved. Try again when you’re ready.')
             }
             return
           }
@@ -218,14 +242,22 @@ export function ConnectionsPanel({
         setBusy(false)
       }
     },
-    [agent.runtimeEpoch, load, pendingKey, reset],
+    [agent.runtimeEpoch, load, pendingKey, principalId, providers, reset],
   )
 
   useEffect(() => {
-    if (!active || !catalog || !snapshot || restored.current === pendingKey) return
+    if (!active || !catalog || !snapshot || !providers || restored.current === pendingKey) return
     restored.current = pendingKey
     try {
+      const returned = consumeProviderReturn(principalId)
       const retained = readPendingConnection(sessionStorage, pendingKey)
+      if (returned) {
+        setNotice(providerResultMessage[returned.result])
+        if (retained && returned.result !== 'connected') {
+          retainPendingConnection(sessionStorage, pendingKey, retained.request, false)
+          retained.resumeAfterSignIn = false
+        }
+      }
       if (!retained) return
       if (retained.request.agentId !== agent.id) throw new Error('This setup belongs to another workspace.')
       setPending(retained.request)
@@ -233,11 +265,11 @@ export function ConnectionsPanel({
       lastEditor.current = retained.request.connectorId
       reset({ operations: retained.request.operations, targets: retained.request.targets.map(resourceKey) })
       if (retained.resumeAfterSignIn) void save(retained.request, true)
-      else setNotice('Your choices are saved. Try again to finish connecting.')
+      else if (!returned) setNotice('Your choices are saved. Try again to finish connecting.')
     } catch {
       setError('Your previous setup could not be restored. Refresh Connections before continuing.')
     }
-  }, [active, agent.id, catalog, pendingKey, reset, save, snapshot])
+  }, [active, agent.id, catalog, pendingKey, principalId, providers, reset, save, snapshot])
 
   const available = catalog?.operations.filter((operation) => operation.readOnly) ?? []
   const serviceIds = [
@@ -266,6 +298,7 @@ export function ConnectionsPanel({
     return Boolean(
       connection &&
       snapshot &&
+      !providers?.some((profile) => profile.connectorId === id && profile.state !== ProviderConnectionState.READY) &&
       credentialMatchesRuntime(connection, agent.runtimeEpoch ?? '', snapshot.recoveryGeneration, Date.now()),
     )
   }
@@ -292,6 +325,32 @@ export function ConnectionsPanel({
     setCustomizing(false)
     setNotice('')
     if (!pending) setError('')
+  }
+  const connect = (id: string) => {
+    const operations = available.filter((operation) => operation.connectorId === id)
+    const targets = [
+      ...new Map(
+        operations
+          .flatMap((operation) => operation.targets)
+          .map((target) => [resourceKey(target.resource), target.resource]),
+      ).values(),
+    ]
+    if (savedConnection(id) || pending || targets.length !== 1 || agent.phase !== 'ready') {
+      openEditor(id)
+      return
+    }
+    lastEditor.current = id
+    reset({ operations: operations.map((operation) => operation.name), targets: targets.map(resourceKey) })
+    void save({
+      kind: 'save',
+      operationId: crypto.randomUUID(),
+      agentId: agent.id,
+      connectionId: crypto.randomUUID(),
+      expectedVersion: '0',
+      connectorId: id,
+      operations: operations.map((operation) => operation.name),
+      targets,
+    })
   }
   const refresh = async () => {
     setBusy(true)
@@ -325,8 +384,22 @@ export function ConnectionsPanel({
   const submit = form.handleSubmit(
     async (value) => {
       if (!editor) return
+      const workspaces = new Set(
+        snapshot?.availableScopes
+          .filter((scope) => scope.resource && value.targets.includes(resourceKey(scope.resource)))
+          .map((scope) => scope.workspaceId),
+      )
+      if (workspaces.size > 1) {
+        form.setError('targets', { message: 'Choose resources from one workspace.' })
+        return
+      }
       const existing = savedConnection(editor)
-      if (!pending && existing?.enabled && !form.formState.isDirty) {
+      if (
+        !pending &&
+        existing?.enabled &&
+        !form.formState.isDirty &&
+        !providers?.some((profile) => profile.connectorId === editor && profile.state !== ProviderConnectionState.READY)
+      ) {
         await reconnect()
         return
       }
@@ -404,10 +477,13 @@ export function ConnectionsPanel({
   ]
   const selectedTargets = form.watch('targets')
   const selectedOperations = form.watch('operations')
+  const permittedOperations = operations.filter((operation) =>
+    selectedTargets.every((key) => operation.targets.some((target) => resourceKey(target.resource) === key)),
+  )
   const operationOptions = [
-    ...operations.map((operation) => ({ name: operation.name, label: operation.description })),
+    ...permittedOperations.map((operation) => ({ name: operation.name, label: operation.description })),
     ...selectedOperations
-      .filter((name) => !operations.some((operation) => operation.name === name))
+      .filter((name) => !permittedOperations.some((operation) => operation.name === name))
       .map((name) => ({ name, label: 'Unavailable tool. Remove it to continue.' })),
   ]
   const targetOptions = [
@@ -418,6 +494,7 @@ export function ConnectionsPanel({
   ]
   const selected = editor ? savedConnection(editor) : undefined
   const selectedConnected = editor ? isConnected(editor) : false
+  const selectedProvider = providers?.find((profile) => profile.connectorId === editor)
   const blocked = disabled || busy || Boolean(pending) || Boolean(pendingDisconnect)
   const { errors } = form.formState
   return (
@@ -432,7 +509,7 @@ export function ConnectionsPanel({
           {notice}
         </p>
       ) : null}
-      {!catalog || !snapshot ? (
+      {!catalog || !snapshot || !providers ? (
         <div role="status" aria-label="Loading connections" className="space-y-3">
           <Skeleton className="h-4 w-3/4" />
           <Skeleton className="h-24 w-full" />
@@ -454,6 +531,23 @@ export function ConnectionsPanel({
             </h2>
             <FieldDescription>{editor} · Read access for this agent. You can disconnect at any time.</FieldDescription>
           </div>
+          {selectedProvider ? (
+            selectedProvider.workspaceManaged ? (
+              <FieldDescription>
+                {selectedProvider.state === ProviderConnectionState.READY
+                  ? 'Uses your connected workspace account.'
+                  : 'Your workspace admin needs to connect this account before you can continue.'}
+              </FieldDescription>
+            ) : (
+              <ProviderAccount
+                profile={selectedProvider}
+                principalId={principalId}
+                showConnect={false}
+                disabled={disabled || busy}
+                onChanged={load}
+              />
+            )
+          ) : null}
           <Card size="sm">
             <form noValidate onSubmit={submit}>
               <CardContent className="space-y-5">
@@ -478,17 +572,35 @@ export function ConnectionsPanel({
                               checked={field.value.includes(target.key)}
                               disabled={blocked}
                               onBlur={field.onBlur}
-                              onCheckedChange={(checked) =>
-                                field.onChange(
-                                  checked
-                                    ? [...field.value, target.key]
-                                    : field.value.filter((key) => key !== target.key),
+                              onCheckedChange={(checked) => {
+                                const targets = checked
+                                  ? [...field.value, target.key]
+                                  : field.value.filter((key) => key !== target.key)
+                                field.onChange(targets)
+                                const allowed = operations.filter((operation) =>
+                                  targets.every((key) =>
+                                    operation.targets.some((target) => resourceKey(target.resource) === key),
+                                  ),
                                 )
-                              }
+                                form.setValue(
+                                  'operations',
+                                  allowed.map((operation) => operation.name),
+                                  { shouldDirty: true },
+                                )
+                              }}
                               aria-invalid={Boolean(errors.targets)}
                               aria-describedby={formId + '-targets-error'}
                             />
-                            <FieldLabel htmlFor={formId + '-target-' + index}>{target.label}</FieldLabel>
+                            <div className="min-w-0">
+                              <FieldLabel htmlFor={formId + '-target-' + index}>{target.label}</FieldLabel>
+                              <FieldDescription>
+                                {
+                                  snapshot.availableScopes.find(
+                                    (scope) => scope.resource && resourceKey(scope.resource) === target.key,
+                                  )?.workspaceName
+                                }
+                              </FieldDescription>
+                            </div>
                           </Field>
                         ))}
                         {targetOptions.length === 0 ? (
@@ -586,6 +698,9 @@ export function ConnectionsPanel({
                     disabled ||
                     busy ||
                     Boolean(pendingDisconnect) ||
+                    Boolean(
+                      selectedProvider?.workspaceManaged && selectedProvider.state !== ProviderConnectionState.READY,
+                    ) ||
                     agent.phase !== 'ready' ||
                     Boolean(selected?.enabled && selectedConnected && !form.formState.isDirty && !pending)
                   }
@@ -634,7 +749,24 @@ export function ConnectionsPanel({
                             : 'Not connected'}
                       </Badge>
                     </ItemTitle>
-                    <ItemDescription>{id}</ItemDescription>
+                    <ItemDescription>
+                      {[
+                        id,
+                        ...new Set(
+                          available
+                            .filter((operation) => operation.connectorId === id)
+                            .flatMap((operation) => operation.targets.map((target) => target.name)),
+                        ),
+                      ].join(' · ')}
+                    </ItemDescription>
+                    {!connection?.enabled ? (
+                      <ItemDescription>
+                        {available
+                          .filter((operation) => operation.connectorId === id)
+                          .map((operation) => operation.description)
+                          .join(', ')}
+                      </ItemDescription>
+                    ) : null}
                     {connection?.enabled ? (
                       <ItemDescription className="break-words">
                         {connection.resources
@@ -655,7 +787,7 @@ export function ConnectionsPanel({
                         Boolean(pending && !waiting) ||
                         Boolean(pendingDisconnect && pendingDisconnect.connectionId !== connection?.id)
                       }
-                      onClick={() => openEditor(id)}
+                      onClick={() => connect(id)}
                     >
                       {waiting ? 'Finish setup' : connection?.enabled ? 'Manage' : 'Connect'}
                     </Button>
@@ -664,7 +796,13 @@ export function ConnectionsPanel({
               )
             })}
           </ItemGroup>
-          {serviceIds.length === 0 ? (
+          <MemberAccessRequests
+            snapshot={snapshot}
+            humanId={principalId}
+            disabled={disabled || busy}
+            onChanged={() => void refresh()}
+          />
+          {serviceIds.length === 0 && snapshot.requestableScopes.length === 0 ? (
             <div className="space-y-2 py-6 text-center text-zinc-400">
               <Plug aria-hidden="true" className="mx-auto size-6" />
               <p>No services are available yet.</p>
