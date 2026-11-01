@@ -171,6 +171,11 @@ test('host storage collector reads host counters without a public listener or Ku
     'node_disk_io_time_weighted_seconds_total',
     'node_network_speed_bytes',
     'node_network_receive_drop_total',
+    'node_ethtool_info',
+    'node_ethtool_received_discards_phy',
+    'node_ethtool_received_out_of_buffer',
+    'node_ethtool_transmitted_pause_ctrl_phy',
+    'node_ethtool_received_crc_errors_phy',
     'node_pressure_io_stalled_seconds_total',
     'node_scrape_collector_success',
   ])
