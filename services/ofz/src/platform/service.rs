@@ -7,6 +7,7 @@ use crate::{
     native::Native,
     proto::{self, platform_authorization_service_server::PlatformAuthorizationService},
     registry,
+    sessions::{self, Issuer},
     store::Database,
     transport,
 };
@@ -18,19 +19,72 @@ use tonic::{Request, Response, Status};
 pub struct Service {
     database: Database,
     native: Native,
+    issuer: Issuer,
     capacity: Arc<Semaphore>,
 }
 impl Service {
-    pub fn new(database: Database, native: Native) -> Self {
+    pub fn new(database: Database, native: Native, issuer: Issuer) -> Self {
         Self {
             database,
             native,
+            issuer,
             capacity: Arc::new(Semaphore::new(128)),
         }
     }
 }
 #[tonic::async_trait]
 impl PlatformAuthorizationService for Service {
+    async fn establish_session(
+        &self,
+        request: Request<proto::EstablishSessionRequest>,
+    ) -> Result<Response<proto::EstablishSessionResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        let session = sessions::establish(
+            &self.database,
+            &self.native,
+            &self.issuer,
+            &peer,
+            request.into_inner(),
+        )
+        .await?;
+        Ok(Response::new(proto::EstablishSessionResponse {
+            session: Some(session),
+        }))
+    }
+    async fn inspect_session(
+        &self,
+        request: Request<proto::InspectSessionRequest>,
+    ) -> Result<Response<proto::InspectSessionResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        let session =
+            sessions::inspect(&self.database, &self.native, &peer, request.into_inner()).await?;
+        Ok(Response::new(proto::InspectSessionResponse {
+            session: Some(session),
+        }))
+    }
+    async fn revoke_session(
+        &self,
+        request: Request<proto::RevokeSessionRequest>,
+    ) -> Result<Response<proto::RevokeSessionResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        let receipt =
+            sessions::revoke(&self.database, &self.native, &peer, request.into_inner()).await?;
+        Ok(Response::new(proto::RevokeSessionResponse {
+            receipt: Some(receipt),
+        }))
+    }
     async fn get_platform_configuration(
         &self,
         request: Request<proto::GetPlatformConfigurationRequest>,

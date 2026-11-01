@@ -8,6 +8,7 @@ import path from 'node:path'
 import { createConnection, createServer as tcpServer, type Socket } from 'node:net'
 import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { status as grpcStatus } from '@grpc/grpc-js'
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
@@ -821,6 +822,7 @@ identityTest(
     const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
     const { ofzCall } = await import('./ofz')
     const { TengriAuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
+    const { PlatformAuthorizationService } = await import('./generated/proompteng/authz/v1/platform_pb')
     await ofzCall(TengriAuthorizationService.method.getPolicyState, {}).catch((error) => {
       throw new Error('Ofz wire handshake failed', { cause: error.cause || error })
     })
@@ -995,6 +997,16 @@ identityTest(
     expect(opaque?.secure).toBe(true)
     const inspected = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
     expect(inspected?.session.githubId).toBe('1')
+    const retiredSessionRoute = await realOfzCall(
+      { ...PlatformAuthorizationService.method.inspectSession, parent: TengriAuthorizationService },
+      { sessionId: opaque?.value },
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(retiredSessionRoute).toBeInstanceOf(OfzError)
+    if (!(retiredSessionRoute instanceof OfzError)) throw new Error('The retired session route returned success')
+    expect(z.object({ code: z.number() }).parse(retiredSessionRoute.cause).code).toBe(grpcStatus.UNIMPLEMENTED)
 
     if (!inspected) throw new Error('Verified fixture session missing')
     await new Promise<void>((resolve, reject) => {

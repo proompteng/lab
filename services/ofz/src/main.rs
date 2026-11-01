@@ -96,17 +96,13 @@ async fn main() -> anyhow::Result<()> {
                 .on_failure(ofz::telemetry::grpc_failure),
         )
         .add_service(
-            TengriAuthorizationServiceServer::new(Service::new(
-                database.clone(),
-                native.clone(),
-                issuer,
-            ))
-            .max_decoding_message_size(128 * 1024)
-            .max_encoding_message_size(1_048_576),
+            TengriAuthorizationServiceServer::new(Service::new(database.clone(), native.clone()))
+                .max_decoding_message_size(128 * 1024)
+                .max_encoding_message_size(1_048_576),
         )
         .add_service(
             PlatformAuthorizationServiceServer::new(ofz::platform::service::Service::new(
-                database, native,
+                database, native, issuer,
             ))
             .max_decoding_message_size(128 * 1024)
             .max_encoding_message_size(1_048_576),

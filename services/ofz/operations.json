@@ -782,19 +782,19 @@
     "action": "ACTION_AUDIT_READ"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "EstablishSession",
     "internal_only": true,
     "action": "ACTION_SESSION_ESTABLISH"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "InspectSession",
     "internal_only": true,
     "action": "ACTION_SESSION_INSPECT"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "RevokeSession",
     "internal_only": true,
     "action": "ACTION_SESSION_REVOKE"

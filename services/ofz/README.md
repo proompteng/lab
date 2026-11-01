@@ -4,8 +4,8 @@ Ofz owns platform authorization, service registration, policy onboarding and dur
 SpiceDB. [The platform package](platform/README.md) explains service/policy onboarding and relationship management;
 [the architecture and cutover guide](../../docs/platform/ofz-relay.md) covers Relay and its clients.
 
-`PlatformAuthorizationService` is the extensible platform contract. `TengriAuthorizationService` owns Tengri's existing
-identity, workspace lifecycle, session and content-access operations. The former `AuthorizationService` and its
+`PlatformAuthorizationService` owns browser sessions and the extensible platform authorization contract.
+`TengriAuthorizationService` owns Tengri's workspace lifecycle and content-access operations. The former `AuthorizationService` and its
 Tengri connector API are removed. Kubernetes connector execution goes through the separate Relay service.
 Ofz and its existing Tengri consumers retain their coordinated image release cohort.
 

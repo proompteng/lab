@@ -4,13 +4,227 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { CommandReceipt } from "./authz_pb";
+import { file_proompteng_authz_v1_authz } from "./authz_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file proompteng/authz/v1/platform.proto.
  */
 export const file_proompteng_authz_v1_platform: GenFile = /*@__PURE__*/
-  fileDesc("CiJwcm9vbXB0ZW5nL2F1dGh6L3YxL3BsYXRmb3JtLnByb3RvEhNwcm9vbXB0ZW5nLmF1dGh6LnYxIiEKH0dldFBsYXRmb3JtQ29uZmlndXJhdGlvblJlcXVlc3QimgEKIEdldFBsYXRmb3JtQ29uZmlndXJhdGlvblJlc3BvbnNlEhYKDnBvbGljeV92ZXJzaW9uGAEgASgEEhsKE3BvbGljeV9jYXRhbG9nX2pzb24YAiABKAkSQQoNcmVsYXlfY2xpZW50cxgDIAMoCzIqLnByb29tcHRlbmcuYXV0aHoudjEuUmVnaXN0ZXJlZFJlbGF5Q2xpZW50IjcKFVJlZ2lzdGVyZWRSZWxheUNsaWVudBIKCgJpZBgBIAEoCRISCgppZGVudGl0aWVzGAIgAygJIq0BCh5SZWNvcmRQbGF0Zm9ybUV4ZWN1dGlvblJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEiAKGGF1dGhvcml6YXRpb25fcmVjZWlwdF9pZBgCIAEoCRIUCgxyZXF1ZXN0X2hhc2gYAyABKAwSDwoHb3V0Y29tZRgEIAEoCRIXCg91cHN0cmVhbV9zdGF0dXMYBSABKA0SEwoLcmVzdWx0X2hhc2gYBiABKAwiOwofUmVjb3JkUGxhdGZvcm1FeGVjdXRpb25SZXNwb25zZRIYChBhdWRpdF9yZWNlaXB0X2lkGAEgASgJIoUBChtHZXRQbGF0Zm9ybUV4ZWN1dGlvblJlcXVlc3QSRgoNYXV0aG9yaXphdGlvbhgBIAEoCzIvLnByb29tcHRlbmcuYXV0aHoudjEuQ2hlY2tQbGF0Zm9ybUFjY2Vzc1JlcXVlc3QSHgoWZXhlY3V0aW9uX3JlcXVlc3RfaGFzaBgCIAEoDCLaAQoRUGxhdGZvcm1FeGVjdXRpb24SFAoMb3BlcmF0aW9uX2lkGAEgASgJEg8KB291dGNvbWUYAiABKAkSIAoYYXV0aG9yaXphdGlvbl9yZWNlaXB0X2lkGAMgASgJEhwKFGV4ZWN1dGlvbl9yZWNlaXB0X2lkGAQgASgJEhcKD3Vwc3RyZWFtX3N0YXR1cxgFIAEoDRITCgtyZXN1bHRfaGFzaBgGIAEoDBIUCgxyZXF1ZXN0X2hhc2gYByABKAwSGgoSdXBkYXRlZF9hdF91bml4X21zGAggASgEIpIBChxHZXRQbGF0Zm9ybUV4ZWN1dGlvblJlc3BvbnNlEjkKCWV4ZWN1dGlvbhgBIAEoCzImLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1FeGVjdXRpb24SNwoIZGVjaXNpb24YAiABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24iPAoQUGxhdGZvcm1SZXNvdXJjZRIMCgRraW5kGAEgASgJEgoKAmlkGAIgASgJEg4KBnRhcmdldBgDIAEoCSJMChRQbGF0Zm9ybUh1bWFuU2Vzc2lvbhIQCghodW1hbl9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEg4KBm9yaWdpbhgDIAEoCSJTChdQbGF0Zm9ybURlbGVnYXRpb25Qcm9vZhIVCg1kZWxlZ2F0aW9uX2lkGAEgASgJEhIKCmNyZWRlbnRpYWwYAiABKAkSDQoFcHJvb2YYAyABKAkizAEKD1BsYXRmb3JtU3ViamVjdBIVCgt3b3JrbG9hZF9pZBgBIAEoCUgAEjoKBWh1bWFuGAIgASgLMikucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUh1bWFuU2Vzc2lvbkgAEkIKCmRlbGVnYXRpb24YAyABKAsyLC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVsZWdhdGlvblByb29mSAASFgoOY2xpZW50X3NlcnZpY2UYBCABKAlCCgoIaWRlbnRpdHkiQgoPUGxhdGZvcm1CaW5kaW5nEg8KB3NlcnZpY2UYASABKAkSCgoCaWQYAiABKAkSEgoKZ2VuZXJhdGlvbhgDIAEoCSKaAgoaQ2hlY2tQbGF0Zm9ybUFjY2Vzc1JlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEjUKB3N1YmplY3QYAiABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtU3ViamVjdBIOCgZhY3Rpb24YAyABKAkSOAoJcmVzb3VyY2VzGAQgAygLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEhQKDHJlcXVlc3RfaGFzaBgFIAEoDBI1CgdiaW5kaW5nGAYgASgLMiQucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUJpbmRpbmcSGAoQYXVkaXRfcmVjZWlwdF9pZBgHIAEoCSKJAQoQUGxhdGZvcm1EZWNpc2lvbhIPCgdhbGxvd2VkGAEgASgIEhAKCHJldmlzaW9uGAIgASgJEhgKEGF1ZGl0X3JlY2VpcHRfaWQYAyABKAkSGwoTdmFsaWRfdW50aWxfdW5peF9tcxgEIAEoBBIbChNyZWNvdmVyeV9nZW5lcmF0aW9uGAUgASgEIpoBChJQb2xpY3lSZWxhdGlvbnNoaXASNwoIcmVzb3VyY2UYASABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtUmVzb3VyY2USEAoIcmVsYXRpb24YAiABKAkSFAoMc3ViamVjdF9raW5kGAMgASgJEhIKCnN1YmplY3RfaWQYBCABKAkSDwoHZW5hYmxlZBgFIAEoCCLFAQoeUmVhZFBvbGljeVJlbGF0aW9uc2hpcHNSZXF1ZXN0EkAKDWFkbWluaXN0cmF0b3IYASABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEjcKCHJlc291cmNlGAIgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEhQKDHN1YmplY3Rfa2luZBgDIAEoCRISCgpzdWJqZWN0X2lkGAQgASgJIkwKH1JlYWRQb2xpY3lSZWxhdGlvbnNoaXBzUmVzcG9uc2USFgoOcG9saWN5X3ZlcnNpb24YASABKAQSEQoJcmVsYXRpb25zGAIgAygJIuoBCh9Xcml0ZVBvbGljeVJlbGF0aW9uc2hpcHNSZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRJACg1hZG1pbmlzdHJhdG9yGAIgASgLMikucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUh1bWFuU2Vzc2lvbhIfChdleHBlY3RlZF9wb2xpY3lfdmVyc2lvbhgDIAEoBBI+Cg1yZWxhdGlvbnNoaXBzGAQgAygLMicucHJvb21wdGVuZy5hdXRoei52MS5Qb2xpY3lSZWxhdGlvbnNoaXASDgoGcmVhc29uGAUgASgJIpQDCh9DcmVhdGVQbGF0Zm9ybURlbGVnYXRpb25SZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRI5CgZpc3N1ZXIYAiABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEhYKDmNsaWVudF9zZXJ2aWNlGAMgASgJEhAKCGFnZW50X2lkGAQgASgJEg8KB2FjdGlvbnMYBSADKAkSOAoJcmVzb3VyY2VzGAYgAygLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEhwKFHByb29mX2tleV90aHVtYnByaW50GAcgASgJEhoKEmV4cGlyZXNfYXRfdW5peF9tcxgIIAEoBBI1CgdiaW5kaW5nGAkgASgLMiQucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUJpbmRpbmcSFQoNY29ubmVjdGlvbl9pZBgKIAEoCRIjChtleHBlY3RlZF9jb25uZWN0aW9uX3ZlcnNpb24YCyABKAQipQEKIENyZWF0ZVBsYXRmb3JtRGVsZWdhdGlvblJlc3BvbnNlEhUKDWRlbGVnYXRpb25faWQYASABKAkSEgoKY3JlZGVudGlhbBgCIAEoCRI3CghkZWNpc2lvbhgDIAEoCzIlLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1EZWNpc2lvbhIdChVjcmVkZW50aWFsX2dlbmVyYXRpb24YBCABKAQi4AMKElBsYXRmb3JtQ29ubmVjdGlvbhIKCgJpZBgBIAEoCRIWCg5jbGllbnRfc2VydmljZRgCIAEoCRIYChBjbGllbnRfcmVmZXJlbmNlGAMgASgJEg8KB2FjdGlvbnMYBCADKAkSOAoJcmVzb3VyY2VzGAUgAygLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEjUKB2JpbmRpbmcYBiABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtQmluZGluZxIPCgd2ZXJzaW9uGAcgASgEEg8KB2VuYWJsZWQYCCABKAgSFQoNZGVsZWdhdGlvbl9pZBgJIAEoCRJAChJjcmVkZW50aWFsX2JpbmRpbmcYCiABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtQmluZGluZxIcChRwcm9vZl9rZXlfdGh1bWJwcmludBgLIAEoCRIaChJleHBpcmVzX2F0X3VuaXhfbXMYDCABKAQSGQoRY3JlZGVudGlhbF9hY3RpdmUYDSABKAgSHQoVY3JlZGVudGlhbF9nZW5lcmF0aW9uGA4gASgEEhsKE3JlY292ZXJ5X2dlbmVyYXRpb24YDyABKAQiqgEKHkxpc3RQbGF0Zm9ybUNvbm5lY3Rpb25zUmVxdWVzdBI5CgZpc3N1ZXIYASABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEhYKDmNsaWVudF9zZXJ2aWNlGAIgASgJEjUKB2JpbmRpbmcYAyABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtQmluZGluZyJ8Ch9MaXN0UGxhdGZvcm1Db25uZWN0aW9uc1Jlc3BvbnNlEjwKC2Nvbm5lY3Rpb25zGAEgAygLMicucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUNvbm5lY3Rpb24SGwoTcmVjb3ZlcnlfZ2VuZXJhdGlvbhgCIAEoBCLUAgocUHV0UGxhdGZvcm1Db25uZWN0aW9uUmVxdWVzdBIUCgxvcGVyYXRpb25faWQYASABKAkSOQoGaXNzdWVyGAIgASgLMikucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUh1bWFuU2Vzc2lvbhIWCg5jbGllbnRfc2VydmljZRgDIAEoCRIVCg1jb25uZWN0aW9uX2lkGAQgASgJEhgKEGV4cGVjdGVkX3ZlcnNpb24YBSABKAQSGAoQY2xpZW50X3JlZmVyZW5jZRgGIAEoCRIPCgdhY3Rpb25zGAcgAygJEjgKCXJlc291cmNlcxgIIAMoCzIlLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1SZXNvdXJjZRI1CgdiaW5kaW5nGAkgASgLMiQucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUJpbmRpbmcinwEKHVB1dFBsYXRmb3JtQ29ubmVjdGlvblJlc3BvbnNlEhUKDWNvbm5lY3Rpb25faWQYASABKAkSDwoHdmVyc2lvbhgCIAEoBBIdChVjcmVkZW50aWFsX2dlbmVyYXRpb24YAyABKAQSNwoIZGVjaXNpb24YBCABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24ioQEKH1Jldm9rZVBsYXRmb3JtQ29ubmVjdGlvblJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEjkKBmlzc3VlchgCIAEoCzIpLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1IdW1hblNlc3Npb24SFgoOY2xpZW50X3NlcnZpY2UYAyABKAkSFQoNY29ubmVjdGlvbl9pZBgEIAEoCSKRAQogUmV2b2tlUGxhdGZvcm1Db25uZWN0aW9uUmVzcG9uc2USFQoNY29ubmVjdGlvbl9pZBgBIAEoCRIdChVjcmVkZW50aWFsX2dlbmVyYXRpb24YAiABKAQSNwoIZGVjaXNpb24YAyABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24iiQEKH1Jldm9rZVBsYXRmb3JtRGVsZWdhdGlvblJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEjkKBmlzc3VlchgCIAEoCzIpLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1IdW1hblNlc3Npb24SFQoNZGVsZWdhdGlvbl9pZBgDIAEoCSKpAQohQWN0aXZhdGVQbGF0Zm9ybURlbGVnYXRpb25SZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRI5CgZpc3N1ZXIYAiABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEhUKDWRlbGVnYXRpb25faWQYAyABKAkSHAoUcHJvb2Zfa2V5X3RodW1icHJpbnQYBCABKAkiVgobQ2hlY2tQbGF0Zm9ybUFjY2Vzc1Jlc3BvbnNlEjcKCGRlY2lzaW9uGAEgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybURlY2lzaW9uIlsKIFdyaXRlUG9saWN5UmVsYXRpb25zaGlwc1Jlc3BvbnNlEjcKCGRlY2lzaW9uGAEgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybURlY2lzaW9uIl0KIkFjdGl2YXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2USNwoIZGVjaXNpb24YASABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24iWwogUmV2b2tlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2USNwoIZGVjaXNpb24YASABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24y7AwKHFBsYXRmb3JtQXV0aG9yaXphdGlvblNlcnZpY2UShwEKGEdldFBsYXRmb3JtQ29uZmlndXJhdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuR2V0UGxhdGZvcm1Db25maWd1cmF0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuR2V0UGxhdGZvcm1Db25maWd1cmF0aW9uUmVzcG9uc2USeAoTQ2hlY2tQbGF0Zm9ybUFjY2VzcxIvLnByb29tcHRlbmcuYXV0aHoudjEuQ2hlY2tQbGF0Zm9ybUFjY2Vzc1JlcXVlc3QaMC5wcm9vbXB0ZW5nLmF1dGh6LnYxLkNoZWNrUGxhdGZvcm1BY2Nlc3NSZXNwb25zZRKEAQoXUmVjb3JkUGxhdGZvcm1FeGVjdXRpb24SMy5wcm9vbXB0ZW5nLmF1dGh6LnYxLlJlY29yZFBsYXRmb3JtRXhlY3V0aW9uUmVxdWVzdBo0LnByb29tcHRlbmcuYXV0aHoudjEuUmVjb3JkUGxhdGZvcm1FeGVjdXRpb25SZXNwb25zZRJ7ChRHZXRQbGF0Zm9ybUV4ZWN1dGlvbhIwLnByb29tcHRlbmcuYXV0aHoudjEuR2V0UGxhdGZvcm1FeGVjdXRpb25SZXF1ZXN0GjEucHJvb21wdGVuZy5hdXRoei52MS5HZXRQbGF0Zm9ybUV4ZWN1dGlvblJlc3BvbnNlEoQBChdSZWFkUG9saWN5UmVsYXRpb25zaGlwcxIzLnByb29tcHRlbmcuYXV0aHoudjEuUmVhZFBvbGljeVJlbGF0aW9uc2hpcHNSZXF1ZXN0GjQucHJvb21wdGVuZy5hdXRoei52MS5SZWFkUG9saWN5UmVsYXRpb25zaGlwc1Jlc3BvbnNlEocBChhXcml0ZVBvbGljeVJlbGF0aW9uc2hpcHMSNC5wcm9vbXB0ZW5nLmF1dGh6LnYxLldyaXRlUG9saWN5UmVsYXRpb25zaGlwc1JlcXVlc3QaNS5wcm9vbXB0ZW5nLmF1dGh6LnYxLldyaXRlUG9saWN5UmVsYXRpb25zaGlwc1Jlc3BvbnNlEoQBChdMaXN0UGxhdGZvcm1Db25uZWN0aW9ucxIzLnByb29tcHRlbmcuYXV0aHoudjEuTGlzdFBsYXRmb3JtQ29ubmVjdGlvbnNSZXF1ZXN0GjQucHJvb21wdGVuZy5hdXRoei52MS5MaXN0UGxhdGZvcm1Db25uZWN0aW9uc1Jlc3BvbnNlEn4KFVB1dFBsYXRmb3JtQ29ubmVjdGlvbhIxLnByb29tcHRlbmcuYXV0aHoudjEuUHV0UGxhdGZvcm1Db25uZWN0aW9uUmVxdWVzdBoyLnByb29tcHRlbmcuYXV0aHoudjEuUHV0UGxhdGZvcm1Db25uZWN0aW9uUmVzcG9uc2UShwEKGFJldm9rZVBsYXRmb3JtQ29ubmVjdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1Db25uZWN0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1Db25uZWN0aW9uUmVzcG9uc2UShwEKGENyZWF0ZVBsYXRmb3JtRGVsZWdhdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuQ3JlYXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuQ3JlYXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2USjQEKGkFjdGl2YXRlUGxhdGZvcm1EZWxlZ2F0aW9uEjYucHJvb21wdGVuZy5hdXRoei52MS5BY3RpdmF0ZVBsYXRmb3JtRGVsZWdhdGlvblJlcXVlc3QaNy5wcm9vbXB0ZW5nLmF1dGh6LnYxLkFjdGl2YXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2UShwEKGFJldm9rZVBsYXRmb3JtRGVsZWdhdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1EZWxlZ2F0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2VCO1o5Z2l0aHViLmNvbS9wcm9vbXB0ZW5nL2xhYi9nZW4vcHJvb21wdGVuZy9hdXRoei92MTthdXRoenYxYgZwcm90bzM");
+  fileDesc("CiJwcm9vbXB0ZW5nL2F1dGh6L3YxL3BsYXRmb3JtLnByb3RvEhNwcm9vbXB0ZW5nLmF1dGh6LnYxIocBChdFc3RhYmxpc2hTZXNzaW9uUmVxdWVzdBIWCg5pZGVudGl0eV90b2tlbhgBIAEoCRINCgVub25jZRgCIAEoCRIUCgxvcGVyYXRpb25faWQYAyABKAkSGwoTcHJldmlvdXNfY3JlZGVudGlhbBgEIAEoCRISCgpjcmVkZW50aWFsGAUgASgJIvYBCgdTZXNzaW9uEgoKAmlkGAEgASgJEhAKCGh1bWFuX2lkGAIgASgJEhoKEmV4cGlyZXNfYXRfdW5peF9tcxgDIAEoBBIdChVpZGxlX2RlYWRsaW5lX3VuaXhfbXMYBCABKAQSFgoObWZhX2F0X3VuaXhfbXMYBSABKAQSGwoTcmVjb3ZlcnlfZ2VuZXJhdGlvbhgGIAEoBBISCgpjcmVkZW50aWFsGAcgASgJEhEKCWdpdGh1Yl9pZBgIIAEoCRIUCgxkaXNwbGF5X25hbWUYCSABKAkSDQoFZW1haWwYCiABKAkSEQoJaW1hZ2VfdXJsGAsgASgJIkkKGEVzdGFibGlzaFNlc3Npb25SZXNwb25zZRItCgdzZXNzaW9uGAEgASgLMhwucHJvb21wdGVuZy5hdXRoei52MS5TZXNzaW9uIkcKFkluc3BlY3RTZXNzaW9uUmVzcG9uc2USLQoHc2Vzc2lvbhgBIAEoCzIcLnByb29tcHRlbmcuYXV0aHoudjEuU2Vzc2lvbiJNChVSZXZva2VTZXNzaW9uUmVzcG9uc2USNAoHcmVjZWlwdBgBIAEoCzIjLnByb29tcHRlbmcuYXV0aHoudjEuQ29tbWFuZFJlY2VpcHQiUAoUUmV2b2tlU2Vzc2lvblJlcXVlc3QSEgoKY3JlZGVudGlhbBgBIAEoCRIUCgxvcGVyYXRpb25faWQYAiABKAkSDgoGb3JpZ2luGAMgASgJIisKFUluc3BlY3RTZXNzaW9uUmVxdWVzdBISCgpzZXNzaW9uX2lkGAEgASgJIiEKH0dldFBsYXRmb3JtQ29uZmlndXJhdGlvblJlcXVlc3QimgEKIEdldFBsYXRmb3JtQ29uZmlndXJhdGlvblJlc3BvbnNlEhYKDnBvbGljeV92ZXJzaW9uGAEgASgEEhsKE3BvbGljeV9jYXRhbG9nX2pzb24YAiABKAkSQQoNcmVsYXlfY2xpZW50cxgDIAMoCzIqLnByb29tcHRlbmcuYXV0aHoudjEuUmVnaXN0ZXJlZFJlbGF5Q2xpZW50IjcKFVJlZ2lzdGVyZWRSZWxheUNsaWVudBIKCgJpZBgBIAEoCRISCgppZGVudGl0aWVzGAIgAygJIq0BCh5SZWNvcmRQbGF0Zm9ybUV4ZWN1dGlvblJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEiAKGGF1dGhvcml6YXRpb25fcmVjZWlwdF9pZBgCIAEoCRIUCgxyZXF1ZXN0X2hhc2gYAyABKAwSDwoHb3V0Y29tZRgEIAEoCRIXCg91cHN0cmVhbV9zdGF0dXMYBSABKA0SEwoLcmVzdWx0X2hhc2gYBiABKAwiOwofUmVjb3JkUGxhdGZvcm1FeGVjdXRpb25SZXNwb25zZRIYChBhdWRpdF9yZWNlaXB0X2lkGAEgASgJIoUBChtHZXRQbGF0Zm9ybUV4ZWN1dGlvblJlcXVlc3QSRgoNYXV0aG9yaXphdGlvbhgBIAEoCzIvLnByb29tcHRlbmcuYXV0aHoudjEuQ2hlY2tQbGF0Zm9ybUFjY2Vzc1JlcXVlc3QSHgoWZXhlY3V0aW9uX3JlcXVlc3RfaGFzaBgCIAEoDCLaAQoRUGxhdGZvcm1FeGVjdXRpb24SFAoMb3BlcmF0aW9uX2lkGAEgASgJEg8KB291dGNvbWUYAiABKAkSIAoYYXV0aG9yaXphdGlvbl9yZWNlaXB0X2lkGAMgASgJEhwKFGV4ZWN1dGlvbl9yZWNlaXB0X2lkGAQgASgJEhcKD3Vwc3RyZWFtX3N0YXR1cxgFIAEoDRITCgtyZXN1bHRfaGFzaBgGIAEoDBIUCgxyZXF1ZXN0X2hhc2gYByABKAwSGgoSdXBkYXRlZF9hdF91bml4X21zGAggASgEIpIBChxHZXRQbGF0Zm9ybUV4ZWN1dGlvblJlc3BvbnNlEjkKCWV4ZWN1dGlvbhgBIAEoCzImLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1FeGVjdXRpb24SNwoIZGVjaXNpb24YAiABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24iPAoQUGxhdGZvcm1SZXNvdXJjZRIMCgRraW5kGAEgASgJEgoKAmlkGAIgASgJEg4KBnRhcmdldBgDIAEoCSJMChRQbGF0Zm9ybUh1bWFuU2Vzc2lvbhIQCghodW1hbl9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEg4KBm9yaWdpbhgDIAEoCSJTChdQbGF0Zm9ybURlbGVnYXRpb25Qcm9vZhIVCg1kZWxlZ2F0aW9uX2lkGAEgASgJEhIKCmNyZWRlbnRpYWwYAiABKAkSDQoFcHJvb2YYAyABKAkizAEKD1BsYXRmb3JtU3ViamVjdBIVCgt3b3JrbG9hZF9pZBgBIAEoCUgAEjoKBWh1bWFuGAIgASgLMikucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUh1bWFuU2Vzc2lvbkgAEkIKCmRlbGVnYXRpb24YAyABKAsyLC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVsZWdhdGlvblByb29mSAASFgoOY2xpZW50X3NlcnZpY2UYBCABKAlCCgoIaWRlbnRpdHkiQgoPUGxhdGZvcm1CaW5kaW5nEg8KB3NlcnZpY2UYASABKAkSCgoCaWQYAiABKAkSEgoKZ2VuZXJhdGlvbhgDIAEoCSKaAgoaQ2hlY2tQbGF0Zm9ybUFjY2Vzc1JlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEjUKB3N1YmplY3QYAiABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtU3ViamVjdBIOCgZhY3Rpb24YAyABKAkSOAoJcmVzb3VyY2VzGAQgAygLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEhQKDHJlcXVlc3RfaGFzaBgFIAEoDBI1CgdiaW5kaW5nGAYgASgLMiQucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUJpbmRpbmcSGAoQYXVkaXRfcmVjZWlwdF9pZBgHIAEoCSKJAQoQUGxhdGZvcm1EZWNpc2lvbhIPCgdhbGxvd2VkGAEgASgIEhAKCHJldmlzaW9uGAIgASgJEhgKEGF1ZGl0X3JlY2VpcHRfaWQYAyABKAkSGwoTdmFsaWRfdW50aWxfdW5peF9tcxgEIAEoBBIbChNyZWNvdmVyeV9nZW5lcmF0aW9uGAUgASgEIpoBChJQb2xpY3lSZWxhdGlvbnNoaXASNwoIcmVzb3VyY2UYASABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtUmVzb3VyY2USEAoIcmVsYXRpb24YAiABKAkSFAoMc3ViamVjdF9raW5kGAMgASgJEhIKCnN1YmplY3RfaWQYBCABKAkSDwoHZW5hYmxlZBgFIAEoCCLFAQoeUmVhZFBvbGljeVJlbGF0aW9uc2hpcHNSZXF1ZXN0EkAKDWFkbWluaXN0cmF0b3IYASABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEjcKCHJlc291cmNlGAIgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEhQKDHN1YmplY3Rfa2luZBgDIAEoCRISCgpzdWJqZWN0X2lkGAQgASgJIkwKH1JlYWRQb2xpY3lSZWxhdGlvbnNoaXBzUmVzcG9uc2USFgoOcG9saWN5X3ZlcnNpb24YASABKAQSEQoJcmVsYXRpb25zGAIgAygJIuoBCh9Xcml0ZVBvbGljeVJlbGF0aW9uc2hpcHNSZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRJACg1hZG1pbmlzdHJhdG9yGAIgASgLMikucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUh1bWFuU2Vzc2lvbhIfChdleHBlY3RlZF9wb2xpY3lfdmVyc2lvbhgDIAEoBBI+Cg1yZWxhdGlvbnNoaXBzGAQgAygLMicucHJvb21wdGVuZy5hdXRoei52MS5Qb2xpY3lSZWxhdGlvbnNoaXASDgoGcmVhc29uGAUgASgJIpQDCh9DcmVhdGVQbGF0Zm9ybURlbGVnYXRpb25SZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRI5CgZpc3N1ZXIYAiABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEhYKDmNsaWVudF9zZXJ2aWNlGAMgASgJEhAKCGFnZW50X2lkGAQgASgJEg8KB2FjdGlvbnMYBSADKAkSOAoJcmVzb3VyY2VzGAYgAygLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEhwKFHByb29mX2tleV90aHVtYnByaW50GAcgASgJEhoKEmV4cGlyZXNfYXRfdW5peF9tcxgIIAEoBBI1CgdiaW5kaW5nGAkgASgLMiQucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUJpbmRpbmcSFQoNY29ubmVjdGlvbl9pZBgKIAEoCRIjChtleHBlY3RlZF9jb25uZWN0aW9uX3ZlcnNpb24YCyABKAQipQEKIENyZWF0ZVBsYXRmb3JtRGVsZWdhdGlvblJlc3BvbnNlEhUKDWRlbGVnYXRpb25faWQYASABKAkSEgoKY3JlZGVudGlhbBgCIAEoCRI3CghkZWNpc2lvbhgDIAEoCzIlLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1EZWNpc2lvbhIdChVjcmVkZW50aWFsX2dlbmVyYXRpb24YBCABKAQi4AMKElBsYXRmb3JtQ29ubmVjdGlvbhIKCgJpZBgBIAEoCRIWCg5jbGllbnRfc2VydmljZRgCIAEoCRIYChBjbGllbnRfcmVmZXJlbmNlGAMgASgJEg8KB2FjdGlvbnMYBCADKAkSOAoJcmVzb3VyY2VzGAUgAygLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlEjUKB2JpbmRpbmcYBiABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtQmluZGluZxIPCgd2ZXJzaW9uGAcgASgEEg8KB2VuYWJsZWQYCCABKAgSFQoNZGVsZWdhdGlvbl9pZBgJIAEoCRJAChJjcmVkZW50aWFsX2JpbmRpbmcYCiABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtQmluZGluZxIcChRwcm9vZl9rZXlfdGh1bWJwcmludBgLIAEoCRIaChJleHBpcmVzX2F0X3VuaXhfbXMYDCABKAQSGQoRY3JlZGVudGlhbF9hY3RpdmUYDSABKAgSHQoVY3JlZGVudGlhbF9nZW5lcmF0aW9uGA4gASgEEhsKE3JlY292ZXJ5X2dlbmVyYXRpb24YDyABKAQiqgEKHkxpc3RQbGF0Zm9ybUNvbm5lY3Rpb25zUmVxdWVzdBI5CgZpc3N1ZXIYASABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEhYKDmNsaWVudF9zZXJ2aWNlGAIgASgJEjUKB2JpbmRpbmcYAyABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtQmluZGluZyJ8Ch9MaXN0UGxhdGZvcm1Db25uZWN0aW9uc1Jlc3BvbnNlEjwKC2Nvbm5lY3Rpb25zGAEgAygLMicucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUNvbm5lY3Rpb24SGwoTcmVjb3ZlcnlfZ2VuZXJhdGlvbhgCIAEoBCLUAgocUHV0UGxhdGZvcm1Db25uZWN0aW9uUmVxdWVzdBIUCgxvcGVyYXRpb25faWQYASABKAkSOQoGaXNzdWVyGAIgASgLMikucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUh1bWFuU2Vzc2lvbhIWCg5jbGllbnRfc2VydmljZRgDIAEoCRIVCg1jb25uZWN0aW9uX2lkGAQgASgJEhgKEGV4cGVjdGVkX3ZlcnNpb24YBSABKAQSGAoQY2xpZW50X3JlZmVyZW5jZRgGIAEoCRIPCgdhY3Rpb25zGAcgAygJEjgKCXJlc291cmNlcxgIIAMoCzIlLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1SZXNvdXJjZRI1CgdiaW5kaW5nGAkgASgLMiQucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUJpbmRpbmcinwEKHVB1dFBsYXRmb3JtQ29ubmVjdGlvblJlc3BvbnNlEhUKDWNvbm5lY3Rpb25faWQYASABKAkSDwoHdmVyc2lvbhgCIAEoBBIdChVjcmVkZW50aWFsX2dlbmVyYXRpb24YAyABKAQSNwoIZGVjaXNpb24YBCABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24ioQEKH1Jldm9rZVBsYXRmb3JtQ29ubmVjdGlvblJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEjkKBmlzc3VlchgCIAEoCzIpLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1IdW1hblNlc3Npb24SFgoOY2xpZW50X3NlcnZpY2UYAyABKAkSFQoNY29ubmVjdGlvbl9pZBgEIAEoCSKRAQogUmV2b2tlUGxhdGZvcm1Db25uZWN0aW9uUmVzcG9uc2USFQoNY29ubmVjdGlvbl9pZBgBIAEoCRIdChVjcmVkZW50aWFsX2dlbmVyYXRpb24YAiABKAQSNwoIZGVjaXNpb24YAyABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24iiQEKH1Jldm9rZVBsYXRmb3JtRGVsZWdhdGlvblJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJEjkKBmlzc3VlchgCIAEoCzIpLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1IdW1hblNlc3Npb24SFQoNZGVsZWdhdGlvbl9pZBgDIAEoCSKpAQohQWN0aXZhdGVQbGF0Zm9ybURlbGVnYXRpb25SZXF1ZXN0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRI5CgZpc3N1ZXIYAiABKAsyKS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtSHVtYW5TZXNzaW9uEhUKDWRlbGVnYXRpb25faWQYAyABKAkSHAoUcHJvb2Zfa2V5X3RodW1icHJpbnQYBCABKAkiVgobQ2hlY2tQbGF0Zm9ybUFjY2Vzc1Jlc3BvbnNlEjcKCGRlY2lzaW9uGAEgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybURlY2lzaW9uIlsKIFdyaXRlUG9saWN5UmVsYXRpb25zaGlwc1Jlc3BvbnNlEjcKCGRlY2lzaW9uGAEgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybURlY2lzaW9uIl0KIkFjdGl2YXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2USNwoIZGVjaXNpb24YASABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24iWwogUmV2b2tlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2USNwoIZGVjaXNpb24YASABKAsyJS5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtRGVjaXNpb24ysA8KHFBsYXRmb3JtQXV0aG9yaXphdGlvblNlcnZpY2USbwoQRXN0YWJsaXNoU2Vzc2lvbhIsLnByb29tcHRlbmcuYXV0aHoudjEuRXN0YWJsaXNoU2Vzc2lvblJlcXVlc3QaLS5wcm9vbXB0ZW5nLmF1dGh6LnYxLkVzdGFibGlzaFNlc3Npb25SZXNwb25zZRJmCg1SZXZva2VTZXNzaW9uEikucHJvb21wdGVuZy5hdXRoei52MS5SZXZva2VTZXNzaW9uUmVxdWVzdBoqLnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlU2Vzc2lvblJlc3BvbnNlEmkKDkluc3BlY3RTZXNzaW9uEioucHJvb21wdGVuZy5hdXRoei52MS5JbnNwZWN0U2Vzc2lvblJlcXVlc3QaKy5wcm9vbXB0ZW5nLmF1dGh6LnYxLkluc3BlY3RTZXNzaW9uUmVzcG9uc2UShwEKGEdldFBsYXRmb3JtQ29uZmlndXJhdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuR2V0UGxhdGZvcm1Db25maWd1cmF0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuR2V0UGxhdGZvcm1Db25maWd1cmF0aW9uUmVzcG9uc2USeAoTQ2hlY2tQbGF0Zm9ybUFjY2VzcxIvLnByb29tcHRlbmcuYXV0aHoudjEuQ2hlY2tQbGF0Zm9ybUFjY2Vzc1JlcXVlc3QaMC5wcm9vbXB0ZW5nLmF1dGh6LnYxLkNoZWNrUGxhdGZvcm1BY2Nlc3NSZXNwb25zZRKEAQoXUmVjb3JkUGxhdGZvcm1FeGVjdXRpb24SMy5wcm9vbXB0ZW5nLmF1dGh6LnYxLlJlY29yZFBsYXRmb3JtRXhlY3V0aW9uUmVxdWVzdBo0LnByb29tcHRlbmcuYXV0aHoudjEuUmVjb3JkUGxhdGZvcm1FeGVjdXRpb25SZXNwb25zZRJ7ChRHZXRQbGF0Zm9ybUV4ZWN1dGlvbhIwLnByb29tcHRlbmcuYXV0aHoudjEuR2V0UGxhdGZvcm1FeGVjdXRpb25SZXF1ZXN0GjEucHJvb21wdGVuZy5hdXRoei52MS5HZXRQbGF0Zm9ybUV4ZWN1dGlvblJlc3BvbnNlEoQBChdSZWFkUG9saWN5UmVsYXRpb25zaGlwcxIzLnByb29tcHRlbmcuYXV0aHoudjEuUmVhZFBvbGljeVJlbGF0aW9uc2hpcHNSZXF1ZXN0GjQucHJvb21wdGVuZy5hdXRoei52MS5SZWFkUG9saWN5UmVsYXRpb25zaGlwc1Jlc3BvbnNlEocBChhXcml0ZVBvbGljeVJlbGF0aW9uc2hpcHMSNC5wcm9vbXB0ZW5nLmF1dGh6LnYxLldyaXRlUG9saWN5UmVsYXRpb25zaGlwc1JlcXVlc3QaNS5wcm9vbXB0ZW5nLmF1dGh6LnYxLldyaXRlUG9saWN5UmVsYXRpb25zaGlwc1Jlc3BvbnNlEoQBChdMaXN0UGxhdGZvcm1Db25uZWN0aW9ucxIzLnByb29tcHRlbmcuYXV0aHoudjEuTGlzdFBsYXRmb3JtQ29ubmVjdGlvbnNSZXF1ZXN0GjQucHJvb21wdGVuZy5hdXRoei52MS5MaXN0UGxhdGZvcm1Db25uZWN0aW9uc1Jlc3BvbnNlEn4KFVB1dFBsYXRmb3JtQ29ubmVjdGlvbhIxLnByb29tcHRlbmcuYXV0aHoudjEuUHV0UGxhdGZvcm1Db25uZWN0aW9uUmVxdWVzdBoyLnByb29tcHRlbmcuYXV0aHoudjEuUHV0UGxhdGZvcm1Db25uZWN0aW9uUmVzcG9uc2UShwEKGFJldm9rZVBsYXRmb3JtQ29ubmVjdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1Db25uZWN0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1Db25uZWN0aW9uUmVzcG9uc2UShwEKGENyZWF0ZVBsYXRmb3JtRGVsZWdhdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuQ3JlYXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuQ3JlYXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2USjQEKGkFjdGl2YXRlUGxhdGZvcm1EZWxlZ2F0aW9uEjYucHJvb21wdGVuZy5hdXRoei52MS5BY3RpdmF0ZVBsYXRmb3JtRGVsZWdhdGlvblJlcXVlc3QaNy5wcm9vbXB0ZW5nLmF1dGh6LnYxLkFjdGl2YXRlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2UShwEKGFJldm9rZVBsYXRmb3JtRGVsZWdhdGlvbhI0LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1EZWxlZ2F0aW9uUmVxdWVzdBo1LnByb29tcHRlbmcuYXV0aHoudjEuUmV2b2tlUGxhdGZvcm1EZWxlZ2F0aW9uUmVzcG9uc2VCO1o5Z2l0aHViLmNvbS9wcm9vbXB0ZW5nL2xhYi9nZW4vcHJvb21wdGVuZy9hdXRoei92MTthdXRoenYxYgZwcm90bzM", [file_proompteng_authz_v1_authz]);
+
+/**
+ * @generated from message proompteng.authz.v1.EstablishSessionRequest
+ */
+export type EstablishSessionRequest = Message<"proompteng.authz.v1.EstablishSessionRequest"> & {
+  /**
+   * Verified against the configured issuer, audience, signature and broker ID.
+   *
+   * @generated from field: string identity_token = 1;
+   */
+  identityToken: string;
+
+  /**
+   * @generated from field: string nonce = 2;
+   */
+  nonce: string;
+
+  /**
+   * @generated from field: string operation_id = 3;
+   */
+  operationId: string;
+
+  /**
+   * Browser cookie being replaced, if present. Revoked atomically with issuance.
+   *
+   * @generated from field: string previous_credential = 4;
+   */
+  previousCredential: string;
+
+  /**
+   * Gateway-generated 256-bit base64url credential, reused only for an exact retry.
+   * Ofz persists its hash and the request fingerprint, never this plaintext.
+   *
+   * @generated from field: string credential = 5;
+   */
+  credential: string;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.EstablishSessionRequest.
+ * Use `create(EstablishSessionRequestSchema)` to create a new message.
+ */
+export const EstablishSessionRequestSchema: GenMessage<EstablishSessionRequest> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 0);
+
+/**
+ * @generated from message proompteng.authz.v1.Session
+ */
+export type Session = Message<"proompteng.authz.v1.Session"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string human_id = 2;
+   */
+  humanId: string;
+
+  /**
+   * @generated from field: uint64 expires_at_unix_ms = 3;
+   */
+  expiresAtUnixMs: bigint;
+
+  /**
+   * @generated from field: uint64 idle_deadline_unix_ms = 4;
+   */
+  idleDeadlineUnixMs: bigint;
+
+  /**
+   * @generated from field: uint64 mfa_at_unix_ms = 5;
+   */
+  mfaAtUnixMs: bigint;
+
+  /**
+   * @generated from field: uint64 recovery_generation = 6;
+   */
+  recoveryGeneration: bigint;
+
+  /**
+   * Opaque random credential, returned only at establishment; hash stored centrally.
+   *
+   * @generated from field: string credential = 7;
+   */
+  credential: string;
+
+  /**
+   * @generated from field: string github_id = 8;
+   */
+  githubId: string;
+
+  /**
+   * @generated from field: string display_name = 9;
+   */
+  displayName: string;
+
+  /**
+   * @generated from field: string email = 10;
+   */
+  email: string;
+
+  /**
+   * @generated from field: string image_url = 11;
+   */
+  imageUrl: string;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.Session.
+ * Use `create(SessionSchema)` to create a new message.
+ */
+export const SessionSchema: GenMessage<Session> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 1);
+
+/**
+ * @generated from message proompteng.authz.v1.EstablishSessionResponse
+ */
+export type EstablishSessionResponse = Message<"proompteng.authz.v1.EstablishSessionResponse"> & {
+  /**
+   * @generated from field: proompteng.authz.v1.Session session = 1;
+   */
+  session?: Session | undefined;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.EstablishSessionResponse.
+ * Use `create(EstablishSessionResponseSchema)` to create a new message.
+ */
+export const EstablishSessionResponseSchema: GenMessage<EstablishSessionResponse> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 2);
+
+/**
+ * @generated from message proompteng.authz.v1.InspectSessionResponse
+ */
+export type InspectSessionResponse = Message<"proompteng.authz.v1.InspectSessionResponse"> & {
+  /**
+   * @generated from field: proompteng.authz.v1.Session session = 1;
+   */
+  session?: Session | undefined;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.InspectSessionResponse.
+ * Use `create(InspectSessionResponseSchema)` to create a new message.
+ */
+export const InspectSessionResponseSchema: GenMessage<InspectSessionResponse> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 3);
+
+/**
+ * @generated from message proompteng.authz.v1.RevokeSessionResponse
+ */
+export type RevokeSessionResponse = Message<"proompteng.authz.v1.RevokeSessionResponse"> & {
+  /**
+   * @generated from field: proompteng.authz.v1.CommandReceipt receipt = 1;
+   */
+  receipt?: CommandReceipt | undefined;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.RevokeSessionResponse.
+ * Use `create(RevokeSessionResponseSchema)` to create a new message.
+ */
+export const RevokeSessionResponseSchema: GenMessage<RevokeSessionResponse> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 4);
+
+/**
+ * @generated from message proompteng.authz.v1.RevokeSessionRequest
+ */
+export type RevokeSessionRequest = Message<"proompteng.authz.v1.RevokeSessionRequest"> & {
+  /**
+   * Possession revokes only this session, including a retry after revocation.
+   *
+   * @generated from field: string credential = 1;
+   */
+  credential: string;
+
+  /**
+   * @generated from field: string operation_id = 2;
+   */
+  operationId: string;
+
+  /**
+   * @generated from field: string origin = 3;
+   */
+  origin: string;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.RevokeSessionRequest.
+ * Use `create(RevokeSessionRequestSchema)` to create a new message.
+ */
+export const RevokeSessionRequestSchema: GenMessage<RevokeSessionRequest> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 5);
+
+/**
+ * @generated from message proompteng.authz.v1.InspectSessionRequest
+ */
+export type InspectSessionRequest = Message<"proompteng.authz.v1.InspectSessionRequest"> & {
+  /**
+   * Opaque credential from the gateway's HttpOnly cookie, not the public session ID.
+   *
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+};
+
+/**
+ * Describes the message proompteng.authz.v1.InspectSessionRequest.
+ * Use `create(InspectSessionRequestSchema)` to create a new message.
+ */
+export const InspectSessionRequestSchema: GenMessage<InspectSessionRequest> = /*@__PURE__*/
+  messageDesc(file_proompteng_authz_v1_platform, 6);
 
 /**
  * @generated from message proompteng.authz.v1.GetPlatformConfigurationRequest
@@ -23,7 +237,7 @@ export type GetPlatformConfigurationRequest = Message<"proompteng.authz.v1.GetPl
  * Use `create(GetPlatformConfigurationRequestSchema)` to create a new message.
  */
 export const GetPlatformConfigurationRequestSchema: GenMessage<GetPlatformConfigurationRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 0);
+  messageDesc(file_proompteng_authz_v1_platform, 7);
 
 /**
  * @generated from message proompteng.authz.v1.GetPlatformConfigurationResponse
@@ -50,7 +264,7 @@ export type GetPlatformConfigurationResponse = Message<"proompteng.authz.v1.GetP
  * Use `create(GetPlatformConfigurationResponseSchema)` to create a new message.
  */
 export const GetPlatformConfigurationResponseSchema: GenMessage<GetPlatformConfigurationResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 1);
+  messageDesc(file_proompteng_authz_v1_platform, 8);
 
 /**
  * @generated from message proompteng.authz.v1.RegisteredRelayClient
@@ -72,7 +286,7 @@ export type RegisteredRelayClient = Message<"proompteng.authz.v1.RegisteredRelay
  * Use `create(RegisteredRelayClientSchema)` to create a new message.
  */
 export const RegisteredRelayClientSchema: GenMessage<RegisteredRelayClient> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 2);
+  messageDesc(file_proompteng_authz_v1_platform, 9);
 
 /**
  * @generated from message proompteng.authz.v1.RecordPlatformExecutionRequest
@@ -114,7 +328,7 @@ export type RecordPlatformExecutionRequest = Message<"proompteng.authz.v1.Record
  * Use `create(RecordPlatformExecutionRequestSchema)` to create a new message.
  */
 export const RecordPlatformExecutionRequestSchema: GenMessage<RecordPlatformExecutionRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 3);
+  messageDesc(file_proompteng_authz_v1_platform, 10);
 
 /**
  * @generated from message proompteng.authz.v1.RecordPlatformExecutionResponse
@@ -131,7 +345,7 @@ export type RecordPlatformExecutionResponse = Message<"proompteng.authz.v1.Recor
  * Use `create(RecordPlatformExecutionResponseSchema)` to create a new message.
  */
 export const RecordPlatformExecutionResponseSchema: GenMessage<RecordPlatformExecutionResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 4);
+  messageDesc(file_proompteng_authz_v1_platform, 11);
 
 /**
  * @generated from message proompteng.authz.v1.GetPlatformExecutionRequest
@@ -153,7 +367,7 @@ export type GetPlatformExecutionRequest = Message<"proompteng.authz.v1.GetPlatfo
  * Use `create(GetPlatformExecutionRequestSchema)` to create a new message.
  */
 export const GetPlatformExecutionRequestSchema: GenMessage<GetPlatformExecutionRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 5);
+  messageDesc(file_proompteng_authz_v1_platform, 12);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformExecution
@@ -205,7 +419,7 @@ export type PlatformExecution = Message<"proompteng.authz.v1.PlatformExecution">
  * Use `create(PlatformExecutionSchema)` to create a new message.
  */
 export const PlatformExecutionSchema: GenMessage<PlatformExecution> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 6);
+  messageDesc(file_proompteng_authz_v1_platform, 13);
 
 /**
  * @generated from message proompteng.authz.v1.GetPlatformExecutionResponse
@@ -227,7 +441,7 @@ export type GetPlatformExecutionResponse = Message<"proompteng.authz.v1.GetPlatf
  * Use `create(GetPlatformExecutionResponseSchema)` to create a new message.
  */
 export const GetPlatformExecutionResponseSchema: GenMessage<GetPlatformExecutionResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 7);
+  messageDesc(file_proompteng_authz_v1_platform, 14);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformResource
@@ -254,7 +468,7 @@ export type PlatformResource = Message<"proompteng.authz.v1.PlatformResource"> &
  * Use `create(PlatformResourceSchema)` to create a new message.
  */
 export const PlatformResourceSchema: GenMessage<PlatformResource> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 8);
+  messageDesc(file_proompteng_authz_v1_platform, 15);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformHumanSession
@@ -281,7 +495,7 @@ export type PlatformHumanSession = Message<"proompteng.authz.v1.PlatformHumanSes
  * Use `create(PlatformHumanSessionSchema)` to create a new message.
  */
 export const PlatformHumanSessionSchema: GenMessage<PlatformHumanSession> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 9);
+  messageDesc(file_proompteng_authz_v1_platform, 16);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformDelegationProof
@@ -308,7 +522,7 @@ export type PlatformDelegationProof = Message<"proompteng.authz.v1.PlatformDeleg
  * Use `create(PlatformDelegationProofSchema)` to create a new message.
  */
 export const PlatformDelegationProofSchema: GenMessage<PlatformDelegationProof> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 10);
+  messageDesc(file_proompteng_authz_v1_platform, 17);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformSubject
@@ -348,7 +562,7 @@ export type PlatformSubject = Message<"proompteng.authz.v1.PlatformSubject"> & {
  * Use `create(PlatformSubjectSchema)` to create a new message.
  */
 export const PlatformSubjectSchema: GenMessage<PlatformSubject> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 11);
+  messageDesc(file_proompteng_authz_v1_platform, 18);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformBinding
@@ -375,7 +589,7 @@ export type PlatformBinding = Message<"proompteng.authz.v1.PlatformBinding"> & {
  * Use `create(PlatformBindingSchema)` to create a new message.
  */
 export const PlatformBindingSchema: GenMessage<PlatformBinding> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 12);
+  messageDesc(file_proompteng_authz_v1_platform, 19);
 
 /**
  * @generated from message proompteng.authz.v1.CheckPlatformAccessRequest
@@ -422,7 +636,7 @@ export type CheckPlatformAccessRequest = Message<"proompteng.authz.v1.CheckPlatf
  * Use `create(CheckPlatformAccessRequestSchema)` to create a new message.
  */
 export const CheckPlatformAccessRequestSchema: GenMessage<CheckPlatformAccessRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 13);
+  messageDesc(file_proompteng_authz_v1_platform, 20);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformDecision
@@ -459,7 +673,7 @@ export type PlatformDecision = Message<"proompteng.authz.v1.PlatformDecision"> &
  * Use `create(PlatformDecisionSchema)` to create a new message.
  */
 export const PlatformDecisionSchema: GenMessage<PlatformDecision> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 14);
+  messageDesc(file_proompteng_authz_v1_platform, 21);
 
 /**
  * @generated from message proompteng.authz.v1.PolicyRelationship
@@ -496,7 +710,7 @@ export type PolicyRelationship = Message<"proompteng.authz.v1.PolicyRelationship
  * Use `create(PolicyRelationshipSchema)` to create a new message.
  */
 export const PolicyRelationshipSchema: GenMessage<PolicyRelationship> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 15);
+  messageDesc(file_proompteng_authz_v1_platform, 22);
 
 /**
  * @generated from message proompteng.authz.v1.ReadPolicyRelationshipsRequest
@@ -528,7 +742,7 @@ export type ReadPolicyRelationshipsRequest = Message<"proompteng.authz.v1.ReadPo
  * Use `create(ReadPolicyRelationshipsRequestSchema)` to create a new message.
  */
 export const ReadPolicyRelationshipsRequestSchema: GenMessage<ReadPolicyRelationshipsRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 16);
+  messageDesc(file_proompteng_authz_v1_platform, 23);
 
 /**
  * @generated from message proompteng.authz.v1.ReadPolicyRelationshipsResponse
@@ -550,7 +764,7 @@ export type ReadPolicyRelationshipsResponse = Message<"proompteng.authz.v1.ReadP
  * Use `create(ReadPolicyRelationshipsResponseSchema)` to create a new message.
  */
 export const ReadPolicyRelationshipsResponseSchema: GenMessage<ReadPolicyRelationshipsResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 17);
+  messageDesc(file_proompteng_authz_v1_platform, 24);
 
 /**
  * @generated from message proompteng.authz.v1.WritePolicyRelationshipsRequest
@@ -587,7 +801,7 @@ export type WritePolicyRelationshipsRequest = Message<"proompteng.authz.v1.Write
  * Use `create(WritePolicyRelationshipsRequestSchema)` to create a new message.
  */
 export const WritePolicyRelationshipsRequestSchema: GenMessage<WritePolicyRelationshipsRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 18);
+  messageDesc(file_proompteng_authz_v1_platform, 25);
 
 /**
  * @generated from message proompteng.authz.v1.CreatePlatformDelegationRequest
@@ -654,7 +868,7 @@ export type CreatePlatformDelegationRequest = Message<"proompteng.authz.v1.Creat
  * Use `create(CreatePlatformDelegationRequestSchema)` to create a new message.
  */
 export const CreatePlatformDelegationRequestSchema: GenMessage<CreatePlatformDelegationRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 19);
+  messageDesc(file_proompteng_authz_v1_platform, 26);
 
 /**
  * @generated from message proompteng.authz.v1.CreatePlatformDelegationResponse
@@ -686,7 +900,7 @@ export type CreatePlatformDelegationResponse = Message<"proompteng.authz.v1.Crea
  * Use `create(CreatePlatformDelegationResponseSchema)` to create a new message.
  */
 export const CreatePlatformDelegationResponseSchema: GenMessage<CreatePlatformDelegationResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 20);
+  messageDesc(file_proompteng_authz_v1_platform, 27);
 
 /**
  * @generated from message proompteng.authz.v1.PlatformConnection
@@ -773,7 +987,7 @@ export type PlatformConnection = Message<"proompteng.authz.v1.PlatformConnection
  * Use `create(PlatformConnectionSchema)` to create a new message.
  */
 export const PlatformConnectionSchema: GenMessage<PlatformConnection> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 21);
+  messageDesc(file_proompteng_authz_v1_platform, 28);
 
 /**
  * @generated from message proompteng.authz.v1.ListPlatformConnectionsRequest
@@ -800,7 +1014,7 @@ export type ListPlatformConnectionsRequest = Message<"proompteng.authz.v1.ListPl
  * Use `create(ListPlatformConnectionsRequestSchema)` to create a new message.
  */
 export const ListPlatformConnectionsRequestSchema: GenMessage<ListPlatformConnectionsRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 22);
+  messageDesc(file_proompteng_authz_v1_platform, 29);
 
 /**
  * @generated from message proompteng.authz.v1.ListPlatformConnectionsResponse
@@ -822,7 +1036,7 @@ export type ListPlatformConnectionsResponse = Message<"proompteng.authz.v1.ListP
  * Use `create(ListPlatformConnectionsResponseSchema)` to create a new message.
  */
 export const ListPlatformConnectionsResponseSchema: GenMessage<ListPlatformConnectionsResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 23);
+  messageDesc(file_proompteng_authz_v1_platform, 30);
 
 /**
  * @generated from message proompteng.authz.v1.PutPlatformConnectionRequest
@@ -879,7 +1093,7 @@ export type PutPlatformConnectionRequest = Message<"proompteng.authz.v1.PutPlatf
  * Use `create(PutPlatformConnectionRequestSchema)` to create a new message.
  */
 export const PutPlatformConnectionRequestSchema: GenMessage<PutPlatformConnectionRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 24);
+  messageDesc(file_proompteng_authz_v1_platform, 31);
 
 /**
  * @generated from message proompteng.authz.v1.PutPlatformConnectionResponse
@@ -911,7 +1125,7 @@ export type PutPlatformConnectionResponse = Message<"proompteng.authz.v1.PutPlat
  * Use `create(PutPlatformConnectionResponseSchema)` to create a new message.
  */
 export const PutPlatformConnectionResponseSchema: GenMessage<PutPlatformConnectionResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 25);
+  messageDesc(file_proompteng_authz_v1_platform, 32);
 
 /**
  * @generated from message proompteng.authz.v1.RevokePlatformConnectionRequest
@@ -943,7 +1157,7 @@ export type RevokePlatformConnectionRequest = Message<"proompteng.authz.v1.Revok
  * Use `create(RevokePlatformConnectionRequestSchema)` to create a new message.
  */
 export const RevokePlatformConnectionRequestSchema: GenMessage<RevokePlatformConnectionRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 26);
+  messageDesc(file_proompteng_authz_v1_platform, 33);
 
 /**
  * @generated from message proompteng.authz.v1.RevokePlatformConnectionResponse
@@ -970,7 +1184,7 @@ export type RevokePlatformConnectionResponse = Message<"proompteng.authz.v1.Revo
  * Use `create(RevokePlatformConnectionResponseSchema)` to create a new message.
  */
 export const RevokePlatformConnectionResponseSchema: GenMessage<RevokePlatformConnectionResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 27);
+  messageDesc(file_proompteng_authz_v1_platform, 34);
 
 /**
  * @generated from message proompteng.authz.v1.RevokePlatformDelegationRequest
@@ -997,7 +1211,7 @@ export type RevokePlatformDelegationRequest = Message<"proompteng.authz.v1.Revok
  * Use `create(RevokePlatformDelegationRequestSchema)` to create a new message.
  */
 export const RevokePlatformDelegationRequestSchema: GenMessage<RevokePlatformDelegationRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 28);
+  messageDesc(file_proompteng_authz_v1_platform, 35);
 
 /**
  * @generated from message proompteng.authz.v1.ActivatePlatformDelegationRequest
@@ -1029,7 +1243,7 @@ export type ActivatePlatformDelegationRequest = Message<"proompteng.authz.v1.Act
  * Use `create(ActivatePlatformDelegationRequestSchema)` to create a new message.
  */
 export const ActivatePlatformDelegationRequestSchema: GenMessage<ActivatePlatformDelegationRequest> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 29);
+  messageDesc(file_proompteng_authz_v1_platform, 36);
 
 /**
  * @generated from message proompteng.authz.v1.CheckPlatformAccessResponse
@@ -1046,7 +1260,7 @@ export type CheckPlatformAccessResponse = Message<"proompteng.authz.v1.CheckPlat
  * Use `create(CheckPlatformAccessResponseSchema)` to create a new message.
  */
 export const CheckPlatformAccessResponseSchema: GenMessage<CheckPlatformAccessResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 30);
+  messageDesc(file_proompteng_authz_v1_platform, 37);
 
 /**
  * @generated from message proompteng.authz.v1.WritePolicyRelationshipsResponse
@@ -1063,7 +1277,7 @@ export type WritePolicyRelationshipsResponse = Message<"proompteng.authz.v1.Writ
  * Use `create(WritePolicyRelationshipsResponseSchema)` to create a new message.
  */
 export const WritePolicyRelationshipsResponseSchema: GenMessage<WritePolicyRelationshipsResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 31);
+  messageDesc(file_proompteng_authz_v1_platform, 38);
 
 /**
  * @generated from message proompteng.authz.v1.ActivatePlatformDelegationResponse
@@ -1080,7 +1294,7 @@ export type ActivatePlatformDelegationResponse = Message<"proompteng.authz.v1.Ac
  * Use `create(ActivatePlatformDelegationResponseSchema)` to create a new message.
  */
 export const ActivatePlatformDelegationResponseSchema: GenMessage<ActivatePlatformDelegationResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 32);
+  messageDesc(file_proompteng_authz_v1_platform, 39);
 
 /**
  * @generated from message proompteng.authz.v1.RevokePlatformDelegationResponse
@@ -1097,12 +1311,36 @@ export type RevokePlatformDelegationResponse = Message<"proompteng.authz.v1.Revo
  * Use `create(RevokePlatformDelegationResponseSchema)` to create a new message.
  */
 export const RevokePlatformDelegationResponseSchema: GenMessage<RevokePlatformDelegationResponse> = /*@__PURE__*/
-  messageDesc(file_proompteng_authz_v1_platform, 33);
+  messageDesc(file_proompteng_authz_v1_platform, 40);
 
 /**
  * @generated from service proompteng.authz.v1.PlatformAuthorizationService
  */
 export const PlatformAuthorizationService: GenService<{
+  /**
+   * @generated from rpc proompteng.authz.v1.PlatformAuthorizationService.EstablishSession
+   */
+  establishSession: {
+    methodKind: "unary";
+    input: typeof EstablishSessionRequestSchema;
+    output: typeof EstablishSessionResponseSchema;
+  },
+  /**
+   * @generated from rpc proompteng.authz.v1.PlatformAuthorizationService.RevokeSession
+   */
+  revokeSession: {
+    methodKind: "unary";
+    input: typeof RevokeSessionRequestSchema;
+    output: typeof RevokeSessionResponseSchema;
+  },
+  /**
+   * @generated from rpc proompteng.authz.v1.PlatformAuthorizationService.InspectSession
+   */
+  inspectSession: {
+    methodKind: "unary";
+    input: typeof InspectSessionRequestSchema;
+    output: typeof InspectSessionResponseSchema;
+  },
   /**
    * @generated from rpc proompteng.authz.v1.PlatformAuthorizationService.GetPlatformConfiguration
    */

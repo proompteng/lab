@@ -402,7 +402,15 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     );
     {
         use p::platform_authorization_service_server::PlatformAuthorizationService;
-        let service = super::service::Service::new(database.clone(), native.clone());
+        let service = super::service::Service::new(
+            database.clone(),
+            native.clone(),
+            crate::sessions::Issuer::new(
+                "https://identity.invalid/realms/tengri".into(),
+                "tengri-bff".into(),
+            )
+            .unwrap(),
+        );
         let query = p::ReadPolicyRelationshipsRequest {
             administrator: Some(session(&humans[0])),
             resource: Some(resource(&resource_id)),
@@ -1214,7 +1222,15 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let authority = listener.local_addr().unwrap();
-    let ofz = super::service::Service::new(database.clone(), native.clone());
+    let ofz = super::service::Service::new(
+        database.clone(),
+        native.clone(),
+        crate::sessions::Issuer::new(
+            "https://identity.invalid/realms/tengri".into(),
+            "tengri-bff".into(),
+        )
+        .unwrap(),
+    );
     let grpc = tokio::spawn(async move {
         let incoming =
             async_stream::stream! {loop{yield listener.accept().await.map(|(stream,_)|stream);}};

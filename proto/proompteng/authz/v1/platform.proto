@@ -2,9 +2,14 @@ syntax = "proto3";
 
 package proompteng.authz.v1;
 
+import "proompteng/authz/v1/authz.proto";
+
 option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 
 service PlatformAuthorizationService {
+  rpc EstablishSession(EstablishSessionRequest) returns (EstablishSessionResponse);
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
   rpc GetPlatformConfiguration(GetPlatformConfigurationRequest) returns (GetPlatformConfigurationResponse);
   rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
@@ -17,6 +22,55 @@ service PlatformAuthorizationService {
   rpc CreatePlatformDelegation(CreatePlatformDelegationRequest) returns (CreatePlatformDelegationResponse);
   rpc ActivatePlatformDelegation(ActivatePlatformDelegationRequest) returns (ActivatePlatformDelegationResponse);
   rpc RevokePlatformDelegation(RevokePlatformDelegationRequest) returns (RevokePlatformDelegationResponse);
+}
+
+message EstablishSessionRequest {
+  // Verified against the configured issuer, audience, signature and broker ID.
+  string identity_token = 1;
+  string nonce = 2;
+  string operation_id = 3;
+  // Browser cookie being replaced, if present. Revoked atomically with issuance.
+  string previous_credential = 4;
+  // Gateway-generated 256-bit base64url credential, reused only for an exact retry.
+  // Ofz persists its hash and the request fingerprint, never this plaintext.
+  string credential = 5;
+}
+
+message Session {
+  string id = 1;
+  string human_id = 2;
+  uint64 expires_at_unix_ms = 3;
+  uint64 idle_deadline_unix_ms = 4;
+  uint64 mfa_at_unix_ms = 5;
+  uint64 recovery_generation = 6;
+  // Opaque random credential, returned only at establishment; hash stored centrally.
+  string credential = 7;
+  string github_id = 8;
+  string display_name = 9;
+  string email = 10;
+  string image_url = 11;
+}
+
+message EstablishSessionResponse {
+  Session session = 1;
+}
+message InspectSessionResponse {
+  Session session = 1;
+}
+message RevokeSessionResponse {
+  CommandReceipt receipt = 1;
+}
+
+message RevokeSessionRequest {
+  // Possession revokes only this session, including a retry after revocation.
+  string credential = 1;
+  string operation_id = 2;
+  string origin = 3;
+}
+
+message InspectSessionRequest {
+  // Opaque credential from the gateway's HttpOnly cookie, not the public session ID.
+  string session_id = 1;
 }
 
 message GetPlatformConfigurationRequest {}

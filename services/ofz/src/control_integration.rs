@@ -728,15 +728,7 @@ async fn control_integration_durability_authority_and_quota() {
         .try_init()
         .ok();
     let (admin, database, native, identities) = setup().await;
-    let service = Service::new(
-        database.clone(),
-        native.clone(),
-        Issuer::new(
-            "https://identity.invalid/realms/tengri".into(),
-            "tengri-bff".into(),
-        )
-        .unwrap(),
-    );
+    let service = Service::new(database.clone(), native.clone());
     let fixture = ControlFixture {
         admin,
         database,

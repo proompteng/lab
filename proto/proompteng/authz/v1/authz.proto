@@ -13,9 +13,6 @@ service TengriAuthorizationService {
   rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
   rpc ListAccess(ListAccessRequest) returns (ListAccessResponse);
   rpc ReadAudit(ReadAuditRequest) returns (ReadAuditResponse);
-  rpc EstablishSession(EstablishSessionRequest) returns (EstablishSessionResponse);
-  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
-  rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
   rpc GetPolicyState(GetPolicyStateRequest) returns (GetPolicyStateResponse);
   // Exact controller identity only. Denied runtime state remains visible so it can be fenced.
   rpc GetWorkspaceState(GetWorkspaceStateRequest) returns (GetWorkspaceStateResponse);
@@ -422,55 +419,6 @@ message AuditReceipt {
 message ReadAuditResponse {
   repeated AuditReceipt receipts = 1;
   string cursor = 2;
-}
-
-message EstablishSessionRequest {
-  // Verified against the configured issuer, audience, signature and broker ID.
-  string identity_token = 1;
-  string nonce = 2;
-  string operation_id = 3;
-  // Browser cookie being replaced, if present. Revoked atomically with issuance.
-  string previous_credential = 4;
-  // BFF-generated 256-bit base64url credential, reused only for an exact retry.
-  // Ofz persists its hash and the request fingerprint, never this plaintext.
-  string credential = 5;
-}
-
-message Session {
-  string id = 1;
-  string human_id = 2;
-  uint64 expires_at_unix_ms = 3;
-  uint64 idle_deadline_unix_ms = 4;
-  uint64 mfa_at_unix_ms = 5;
-  uint64 recovery_generation = 6;
-  // Opaque random credential, returned only at establishment; hash stored centrally.
-  string credential = 7;
-  string github_id = 8;
-  string display_name = 9;
-  string email = 10;
-  string image_url = 11;
-}
-
-message EstablishSessionResponse {
-  Session session = 1;
-}
-message InspectSessionResponse {
-  Session session = 1;
-}
-message RevokeSessionResponse {
-  CommandReceipt receipt = 1;
-}
-
-message RevokeSessionRequest {
-  // Possession revokes only this session, including a retry after revocation.
-  string credential = 1;
-  string operation_id = 2;
-  string origin = 3;
-}
-
-message InspectSessionRequest {
-  // Opaque credential from the BFF's HttpOnly cookie, not the public session ID.
-  string session_id = 1;
 }
 
 message GetPolicyStateRequest {}
