@@ -86,7 +86,7 @@ and Tailscale operator must be available before the first reconciliation.
 ## Verify the deployed service
 
 After an authorized rollout, check the exact Argo revision, running image digests, three database instances, three
-SpiceDB replicas, two Playground replicas, and the completed initial backup. Initialize the independent NUC buckets
+SpiceDB replicas, two Playground replicas, and the completed initial backup. Verify the Ceph recovery buckets
 before reconciliation. The sync waves install writer credentials before PostgreSQL, then let the SpiceDB operator
 migrate the datastore and start the service. Verify an isolated physical restore before the Tengri identity cutover.
 

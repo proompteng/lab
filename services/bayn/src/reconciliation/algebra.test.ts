@@ -214,6 +214,7 @@ const comparisonInput = (status: AccountStatus = AccountStatus.Active): Paramete
     accountId,
     openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
     transactions: [prepared.transaction],
+    fillExecutionTimes: new Map([[prepared.transaction.brokerEventId, `${observedAt.slice(0, -1)}000000Z`]]),
     receipts: [receipt],
     ledgerExact: true,
     brokerFeeAccruals: [],
@@ -668,6 +669,7 @@ describe('PostgreSQL reconciliation algebra', () => {
     const predates = failureOf(
       compareOpeningCash({
         accountId,
+        fillExecutionTimes: new Map<string, string>(),
         openingCash: { cash_micros: '1000000000', observed_at: '2026-07-22T15:30:00.001Z' },
         transactions: [prepared.transaction],
         receipts: [receipt],
@@ -711,6 +713,7 @@ describe('PostgreSQL reconciliation algebra', () => {
     const duplicateComparison = failureOf(
       compareOpeningCash({
         accountId,
+        fillExecutionTimes: new Map<string, string>(),
         openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
         transactions: [],
         receipts: [],

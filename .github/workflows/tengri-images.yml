@@ -203,6 +203,7 @@ jobs:
           node ../tengri/fixtures/generate-ofz-guest-request-v4.mjs
           git diff --exit-code -- ../tengri/fixtures/ofz-guest-request-v4.json internal/guestauth/testdata/ofz-guest-request-v4.json
           test -z "$(gofmt -l .)"
+          python3 -m unittest browser_mcp_tunnel_test.py
           node --test relay-client.test.mjs
           TENGRI_CODEX_CONTRACT_BINARY="$HOME/.local/bin/codex" GOWORK=off go test -race ./...
           GOWORK=off go vet ./...

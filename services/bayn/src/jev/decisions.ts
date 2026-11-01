@@ -1,7 +1,7 @@
 import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result, Schema, Stream } from 'effect'
 import { HttpClient, HttpClientRequest } from 'effect/http'
 
-import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import {
   NonNegativeIntegerSchema,
   Sha256Schema,
@@ -120,12 +120,12 @@ export const prepareDecisionsRequest = (input: unknown) =>
           new DecisionsError({ category: 'REQUEST', message: 'Decisions choices must be distinct' }),
         )
     }
-    const body = yield* canonicalJsonV1Result(request).pipe(
+    const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(request).pipe(
       Result.mapError(
         (cause) =>
           new DecisionsError({
             category: 'REQUEST',
-            message: 'Decisions request cannot be serialized',
+            message: 'Decisions request cannot be serialized or hashed',
             cause: Redacted.make(cause),
           }),
       ),
@@ -137,16 +137,6 @@ export const prepareDecisionsRequest = (input: unknown) =>
           message: 'Decisions request exceeds the native chart transport budget',
         }),
       )
-    const requestHash = yield* canonicalHashV1Result(request).pipe(
-      Result.mapError(
-        (cause) =>
-          new DecisionsError({
-            category: 'REQUEST',
-            message: 'Decisions request cannot be hashed',
-            cause: Redacted.make(cause),
-          }),
-      ),
-    )
     return { request, requestHash, body }
   })
 

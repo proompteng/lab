@@ -44,7 +44,9 @@ export type EffectTool<I = any, O = any> = {
   title: string
   description: string
   inputSchema: Schema.Schema<I, any, never>
+  inputJsonSchema?: Record<string, unknown>
   outputSchema?: Schema.Schema<O, any, never>
+  auditResult?: boolean
   annotations: ToolAnnotations
   scopes: string[]
   securitySchemes: OAuth2SecurityScheme[]
@@ -153,7 +155,7 @@ export const installEffectToolHandlers = (
     name: tool.name,
     title: tool.title,
     description: tool.description,
-    inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
+    inputSchema: tool.inputJsonSchema ?? effectSchemaToJsonSchema(tool.inputSchema),
     annotations: tool.annotations,
     securitySchemes: tool.securitySchemes,
     _meta: tool._meta,
@@ -210,7 +212,7 @@ export const installEffectToolHandlers = (
         const finishedAuditErrors = runner.audit('tool_call_finished', auth, {
           durationMs: performance.now() - startedAt,
           outcome: toolOutcome(tool?.name, result),
-          ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
+          ...(authorized && tool?.auditResult !== false ? { result: content ?? result.content } : {}),
         })
         const auditSink = await runner.flushAudit()
         return {

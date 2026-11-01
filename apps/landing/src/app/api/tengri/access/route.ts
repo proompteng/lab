@@ -16,21 +16,19 @@ import {
   ExecuteCommandRequestSchema,
   ExecuteCommandResponseSchema,
   ListAccessResponseSchema,
-  PlatformRole,
-  ReadAuditResponseSchema,
   ResourceKind,
   WorkspaceRole,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
-import { resolveGithubIdentity } from '@/lib/tengri/github-identity'
+import { resolveGithubIdentity } from '@/lib/platform/github-identity'
 import {
   noStoreHeaders,
-  readTengriJsonBody,
+  readPlatformJsonBody,
   requireSameOrigin,
   requireSameOriginGet,
-  requireTengriIdentity,
-  tengriRouteError,
-} from '@/lib/tengri/http'
-import { OfzError, ofzCall } from '@/lib/tengri/ofz'
+  requirePlatformIdentity,
+  platformRouteError,
+} from '@/lib/platform/http'
+import { OfzError, ofzCall } from '@/lib/platform/ofz'
 
 export const dynamic = 'force-dynamic'
 const actions = {
@@ -40,12 +38,6 @@ const actions = {
   codex: Action.CODEX_OBSERVE,
   browser: Action.BROWSER_OBSERVE,
   preview: Action.PREVIEW_OBSERVE,
-}
-const roles = {
-  member: PlatformRole.MEMBER,
-  administrator: PlatformRole.ADMINISTRATOR,
-  auditor: PlatformRole.AUDITOR,
-  operator: PlatformRole.OPERATOR,
 }
 function resource(value: z.infer<typeof accessResourceSchema>) {
   return {
@@ -64,7 +56,7 @@ export async function GET(request: Request) {
 async function handleGET(request: Request) {
   try {
     requireSameOriginGet(request)
-    const identity = await requireTengriIdentity(request)
+    const identity = await requirePlatformIdentity(request)
     const url = new URL(request.url)
     const uid = url.searchParams.get('workspace')
     const context = humanContext(identity, uid ? workspaceUidSchema.parse(uid) : '')
@@ -72,24 +64,14 @@ async function handleGET(request: Request) {
       .string()
       .max(256)
       .parse(url.searchParams.get('cursor') || '')
-    const view = url.searchParams.get('view') || 'platform'
-    if (view === 'audit' && !uid) {
-      const response = await ofzCall(
-        TengriAuthorizationService.method.readAudit,
-        { context, cursor, limit: 100 },
-        request.signal,
-      )
-      return Response.json(toJson(ReadAuditResponseSchema, response), { headers: noStoreHeaders() })
-    }
-    if (view !== 'platform' && view !== 'workspace') throw new OfzError(400)
-    if ((view === 'workspace') !== Boolean(uid)) throw new OfzError(400)
+    if (url.searchParams.get('view') !== 'workspace' || !uid) throw new OfzError(403)
     const response = await ofzCall(
       TengriAuthorizationService.method.listAccess,
       {
         context,
         cursor,
         limit: 100,
-        resource: { kind: uid ? ResourceKind.WORKSPACE : ResourceKind.PLATFORM, id: uid || 'lab' },
+        resource: { kind: ResourceKind.WORKSPACE, id: uid },
       },
       request.signal,
     )
@@ -106,9 +88,9 @@ export async function POST(request: Request) {
 async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request)
-    const identity = await requireTengriIdentity(request)
+    const identity = await requirePlatformIdentity(request)
     const parsed = accessCommandSchema.parse(
-      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: MAX_ACCESS_COMMAND_BYTES }),
+      await readPlatformJsonBody(request, { subject: identity.subject, maxBytes: MAX_ACCESS_COMMAND_BYTES }),
     )
     const input: MessageInitShape<typeof ExecuteCommandRequestSchema> = {
       context: humanContext(identity, workspace(parsed)),
@@ -132,38 +114,35 @@ async function handlePOST(request: Request) {
         { headers: noStoreHeaders() },
       )
     }
-    if ('login' in parsed) {
+    if ('recipient' in parsed) {
       const permission = {
-        membership: Action.MEMBERS_MANAGE,
         collaborator: Action.COLLABORATORS_MANAGE,
         transfer: Action.WORKSPACE_TRANSFER,
-        quota: Action.QUOTAS_MANAGE,
-        emergency: Action.MEMBERS_MANAGE,
       }[parsed.action]
-      const workspacePermission = parsed.action === 'collaborator' || parsed.action === 'transfer'
       const authorization = await ofzCall(
         TengriAuthorizationService.method.authorizeCommand,
         {
           context: input.context,
           action: permission,
           resource: {
-            kind: workspacePermission ? ResourceKind.WORKSPACE : ResourceKind.PLATFORM,
-            id: workspacePermission ? workspace(parsed) : 'lab',
+            kind: ResourceKind.WORKSPACE,
+            id: workspace(parsed),
           },
         },
         request.signal,
       )
       if (!authorization.allowed) throw new OfzError(403, authorization.auditReceiptId)
     }
-    const human = 'login' in parsed ? await resolveGithubIdentity(parsed.login) : undefined
+    const human =
+      'recipient' in parsed
+        ? parsed.recipient.kind === 'github-login'
+          ? await resolveGithubIdentity(parsed.recipient.login)
+          : {
+              githubId: parsed.recipient.githubId,
+              humanId: createHash('sha256').update(`github:${parsed.recipient.githubId}`).digest('hex'),
+            }
+        : undefined
     switch (parsed.action) {
-      case 'membership':
-        if (!human) throw new OfzError(400)
-        input.command = {
-          case: 'setMembership',
-          value: { ...human, role: roles[parsed.role], enabled: parsed.enabled },
-        }
-        break
       case 'collaborator':
         if (!human) throw new OfzError(400)
         input.command = {
@@ -184,18 +163,6 @@ async function handlePOST(request: Request) {
           value: { workspaceUid: parsed.workspaceUid, nextOwnerId: human.humanId },
         }
         break
-      case 'quota':
-        if (!human) throw new OfzError(400)
-        input.command = {
-          case: 'setQuota',
-          value: {
-            humanId: human.humanId,
-            totalWorkspaces: parsed.total,
-            activeWorkspaces: parsed.active,
-            retainedBytes: BigInt(parsed.retainedGiB) * BigInt(1_073_741_824),
-          },
-        }
-        break
       case 'grant':
         input.command = {
           case: 'createGrant',
@@ -214,19 +181,6 @@ async function handlePOST(request: Request) {
       case 'revoke':
         input.command = { case: 'revokeGrant', value: { grantId: parsed.grantId } }
         break
-      case 'emergency':
-        if (!human) throw new OfzError(400)
-        input.command = {
-          case: 'emergencyAccess',
-          value: {
-            workspaceUid: parsed.workspaceUid,
-            humanId: human.humanId,
-            incidentId: parsed.incidentId,
-            custodianApprovalId: parsed.approvalId,
-            expiresAtUnixMs: BigInt(Date.parse(parsed.expiresAt)),
-          },
-        }
-        break
     }
     input.context = humanContext(identity, workspace(parsed))
     const response = await ofzCall(TengriAuthorizationService.method.executeCommand, input, request.signal)
@@ -242,7 +196,7 @@ function failure(error: unknown) {
       { error: 'Invalid access request', issues: error.issues.map(({ path, message }) => ({ path, message })) },
       { status: 400, headers: noStoreHeaders() },
     )
-  return tengriRouteError(error)
+  return platformRouteError(error)
 }
 
 export function HEAD() {

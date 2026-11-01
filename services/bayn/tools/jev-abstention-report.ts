@@ -188,7 +188,7 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-state.v23'),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({
     maximumEntryFeeBps: NonNegative,
@@ -295,6 +295,7 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
         ? {}
         : {
             feeSensitivity: hypotheticalCryptoFeeSensitivity({
+              feeAt: request.chartSource.windowEndAt,
               symbol: candidate.symbol,
               protocol: target.evidence.observation.protocol,
               economics: Result.getOrThrow(

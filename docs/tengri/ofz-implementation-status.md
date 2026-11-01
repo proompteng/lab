@@ -189,7 +189,7 @@ not Kubernetes exporter adoption, independent database/home restore or the final
 - [ ] Deliver dedicated native Kubernetes RBAC and the scoped broker; verify effective permissions and real denied requests.
 - [ ] Deliver the reviewed connector catalog, target/credential controls, destination validation and response budgets.
 - [ ] Complete IdP offboarding, copied-credential rotation and clean-environment recovery for quarantined homes.
-- [ ] Install independent immutable audit, database/home backups and restore on the approved NUC destination.
+- [ ] Complete restore qualification against the [active Ceph recovery store](../../services/ofz/recovery.md).
 - [ ] Publish and qualify the owner-only bootstrap/activation commands; install the protected approved input and
       complete both custodians' real passkey enrollment.
 - [ ] Enroll API/broker delivery, supply required credentials and activate the reviewed final contract through Kargo/Argo.

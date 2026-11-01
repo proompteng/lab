@@ -41,6 +41,7 @@ spec:
   postgresql:
     parameters:
       wal_level: logical
+      wal_buffers: 16MB
       max_replication_slots: '32'
       max_wal_senders: '10'
 ---
@@ -87,6 +88,7 @@ spec:
   postgresql:
     parameters:
       wal_level: logical
+      wal_buffers: 16MB
       max_replication_slots: '32'
       max_wal_senders: '10'
 ---
@@ -133,5 +135,6 @@ spec:
   postgresql:
     parameters:
       wal_level: logical
+      wal_buffers: 16MB
       max_replication_slots: '32'
       max_wal_senders: '10'

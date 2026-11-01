@@ -10,7 +10,7 @@ import { latestQuotes, persistIntradayRecordRows } from '../intraday/verificatio
 import { reproduceStreamingSnapshot } from './replay'
 
 const fixture = streamingFixture()
-const { candidateSymbols: _candidates, ...baseQuery } = fixture.query
+const { candidateSymbols: _candidates, candidateEvidencePolicy: _policy, ...baseQuery } = fixture.query
 const query: IntradaySnapshotQuery = {
   ...baseQuery,
   symbols: ['AAPL'],

@@ -71,6 +71,22 @@ pub(crate) async fn acknowledge_fixture_archive(admin: &Database) {
     admin.pool.get().await.unwrap().batch_execute("BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='control-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;").await.unwrap();
 }
 
+pub(crate) async fn seed_session(
+    client: &tokio_postgres::Client,
+    session: Uuid,
+    human: &str,
+    github_id: &str,
+) {
+    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
+    let hash = Sha256::digest(credential.as_bytes()).to_vec();
+    client.execute(
+        "WITH authority AS (INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,gateway_service) \
+         VALUES($1,$2,$3,$3,ofz.now_ms()+3600000,ofz.now_ms()+3600000,ofz.now_ms(),1,$4,'tengri-web') RETURNING id) \
+         INSERT INTO ofz.session_credentials(session_id,token_hash,operation_id,establishment_fingerprint) SELECT id,$5,$6,$5 FROM authority",
+        &[&session,&human,&Uuid::new_v4().to_string(),&github_id,&hash,&Uuid::new_v4()],
+    ).await.unwrap();
+}
+
 pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
@@ -104,7 +120,48 @@ pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)
     )
     .await
     .unwrap();
+    let legacy_schema = include_str!("../migrations/0001_control.sql");
+    conn.batch_execute(legacy_schema).await.unwrap();
+    conn.execute(
+        "INSERT INTO ofz.schema_version(version,checksum) VALUES(1,$1)",
+        &[&Sha256::digest(legacy_schema.as_bytes()).to_vec()],
+    )
+    .await
+    .unwrap();
+    let mut legacy_sessions = vec![];
+    for revoked in [false, true] {
+        let id = Uuid::new_v4();
+        let operation = Uuid::new_v4();
+        let hash = Sha256::digest(id.as_bytes()).to_vec();
+        conn.execute(
+            "INSERT INTO ofz.sessions(id,token_hash,human_id,github_id,identity_subject,identity_session,operation_id,establishment_fingerprint,expires_at_ms,idle_deadline_ms,recovery_generation,revoked) \
+             VALUES($1,$2,$3,'999','legacy-subject','legacy-session',$4,$2,ofz.now_ms()+3600000,ofz.now_ms()+1800000,1,$5)",
+            &[&id,&hash,&policy::github_human_id("999").unwrap(),&operation,&revoked],
+        ).await.unwrap();
+        legacy_sessions.push((id, operation, hash, revoked));
+    }
     admin.migrate().await.unwrap();
+    for (id, operation, hash, revoked) in legacy_sessions {
+        let row = conn.query_one(
+            "SELECT c.session_id,c.token_hash,c.establishment_fingerprint,c.revoked,s.revoked,s.gateway_service FROM ofz.session_credentials c JOIN ofz.sessions s ON s.id=c.session_id WHERE c.operation_id=$1",
+            &[&operation],
+        ).await.unwrap();
+        assert_eq!(row.get::<_, Uuid>(0), id);
+        assert_eq!(row.get::<_, Vec<u8>>(1), hash);
+        assert_eq!(row.get::<_, Vec<u8>>(2), hash);
+        assert_eq!(row.get::<_, bool>(3), revoked);
+        assert_eq!(row.get::<_, bool>(4), revoked);
+        assert_eq!(row.get::<_, String>(5), "tengri-web");
+        conn.execute(
+            "DELETE FROM ofz.session_credentials WHERE session_id=$1",
+            &[&id],
+        )
+        .await
+        .unwrap();
+        conn.execute("DELETE FROM ofz.sessions WHERE id=$1", &[&id])
+            .await
+            .unwrap();
+    }
     admin.migrate().await.unwrap();
     let mut api_config = config;
     api_config
@@ -128,7 +185,6 @@ pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)
         .unwrap()
         .error_for_status()
         .unwrap();
-    let now = admin.state().await.unwrap().now_ms;
     let mut identities = vec![];
     let mut relationships = vec![];
     for number in 1..=4 {
@@ -164,8 +220,7 @@ pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)
                 &human,
             )));
         }
-        let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-        conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,$8,$2)", &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64),&number.to_string()]).await.unwrap();
+        seed_session(&conn, session, &human, &number.to_string()).await;
         identities.push((human, session.to_string()));
     }
     for (role, id) in [("bff", BFF_ID), ("controller", CONTROLLER_ID)] {
@@ -674,15 +729,7 @@ async fn control_integration_durability_authority_and_quota() {
         .try_init()
         .ok();
     let (admin, database, native, identities) = setup().await;
-    let service = Service::new(
-        database.clone(),
-        native.clone(),
-        Issuer::new(
-            "https://identity.invalid/realms/tengri".into(),
-            "tengri-bff".into(),
-        )
-        .unwrap(),
-    );
+    let service = Service::new(database.clone(), native.clone());
     let fixture = ControlFixture {
         admin,
         database,
@@ -691,6 +738,8 @@ async fn control_integration_durability_authority_and_quota() {
         service,
     };
     Box::pin(verify_maintenance_state_during_audit(&fixture)).await;
+    Box::pin(verify_sign_in_attempts(&fixture)).await;
+    Box::pin(verify_browser_gateways(&fixture)).await;
     Box::pin(verify_session_bootstrap(&fixture)).await;
     let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
     verify_audit_write_pressure(
@@ -1229,12 +1278,7 @@ async fn verify_offboarding_preserves_removal(fixture: &ControlFixture) {
         .await;
     }
     let session = Uuid::new_v4();
-    let now = admin.state().await.unwrap().now_ms as i64;
-    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-    admin.pool.get().await.unwrap().execute(
-        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'7',$2)",
-        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&humans[0],&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
-    ).await.unwrap();
+    seed_session(&admin.pool.get().await.unwrap(), session, &humans[0], "7").await;
     let owner = (humans[0].clone(), session.to_string());
     let reservation_id = Uuid::new_v4().to_string();
     let workspace_uid = Uuid::new_v4().to_string();
@@ -1398,12 +1442,13 @@ async fn verify_offboarding_during_enrollment(fixture: &ControlFixture) {
     )
     .await;
     let session = Uuid::new_v4();
-    let now = fixture.admin.state().await.unwrap().now_ms as i64;
-    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-    fixture.admin.pool.get().await.unwrap().execute(
-        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'5',$2)",
-        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
-    ).await.unwrap();
+    seed_session(
+        &fixture.admin.pool.get().await.unwrap(),
+        session,
+        &human,
+        "5",
+    )
+    .await;
     let owner = (human.clone(), session.to_string());
     let reservation = Uuid::new_v4().to_string();
     execute(
@@ -1504,6 +1549,260 @@ async fn verify_offboarding_during_enrollment(fixture: &ControlFixture) {
     assert_eq!(retained.get::<_, i64>(2), HOME_BYTES as i64);
 }
 
+async fn verify_sign_in_attempts(fixture: &ControlFixture) {
+    let admin_peer = "spiffe://proompteng.ai/ns/proompteng/sa/platform-admin";
+    let token = |label: &str| URL_SAFE_NO_PAD.encode(Sha256::digest(label.as_bytes()));
+    let request = BeginSignInRequest {
+        return_path: "/workspaces/test/people".into(),
+        state: token("state"),
+        binding: token("binding"),
+        verifier: token("verifier"),
+        nonce: token("nonce"),
+        operation_id: Uuid::new_v4().to_string(),
+    };
+    for invalid in [
+        "https://outside.invalid/",
+        "//outside.invalid/",
+        "/\\outside.invalid/",
+        "/invalid\r\nheader",
+    ] {
+        assert_eq!(
+            sessions::begin_sign_in(
+                &fixture.database,
+                BFF_ID,
+                BeginSignInRequest {
+                    return_path: invalid.into(),
+                    ..request.clone()
+                }
+            )
+            .await
+            .unwrap_err()
+            .code(),
+            Code::InvalidArgument
+        );
+    }
+    let consume = ConsumeSignInRequest {
+        state: request.state.clone(),
+        binding: request.binding.clone(),
+    };
+    sessions::begin_sign_in(&fixture.database, BFF_ID, request.clone())
+        .await
+        .unwrap();
+    for (peer, attempt) in [
+        (admin_peer, consume.clone()),
+        (
+            BFF_ID,
+            ConsumeSignInRequest {
+                binding: token("other"),
+                ..consume.clone()
+            },
+        ),
+    ] {
+        assert_eq!(
+            sessions::consume_sign_in(&fixture.database, peer, attempt)
+                .await
+                .unwrap_err()
+                .code(),
+            Code::Unauthenticated
+        );
+    }
+    let (first, second) = tokio::join!(
+        sessions::consume_sign_in(&fixture.database, BFF_ID, consume.clone()),
+        sessions::consume_sign_in(&fixture.database, BFF_ID, consume.clone()),
+    );
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let value = first.as_ref().or(second.as_ref()).unwrap();
+    assert_eq!(value.return_path, request.return_path);
+    assert_eq!(value.operation_id, request.operation_id);
+    assert_eq!(value.verifier, request.verifier);
+    assert_eq!(value.nonce, request.nonce);
+    assert_eq!(
+        first.err().or(second.err()).unwrap().code(),
+        Code::Unauthenticated
+    );
+
+    sessions::begin_sign_in(
+        &fixture.database,
+        admin_peer,
+        BeginSignInRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            ..request.clone()
+        },
+    )
+    .await
+    .unwrap();
+    let client = fixture.admin.pool.get().await.unwrap();
+    client.execute("UPDATE ofz.sign_in_attempts SET expires_at_ms=ofz.now_ms()-1 WHERE gateway_service='platform-admin'", &[]).await.unwrap();
+    assert_eq!(
+        sessions::consume_sign_in(&fixture.database, admin_peer, consume)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        sessions::begin_sign_in(&fixture.database, CONTROLLER_ID, request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        sessions::begin_sign_in(
+            &fixture.database,
+            BFF_ID,
+            BeginSignInRequest {
+                verifier: "guess".into(),
+                ..request.clone()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::InvalidArgument
+    );
+
+    client.execute("INSERT INTO ofz.sign_in_attempts(gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms) SELECT 'tengri-web',decode(md5(i::text)||md5(i::text),'hex'),decode(md5(i::text)||md5(i::text),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid(),ofz.now_ms()+300000 FROM generate_series(1,2000) i", &[]).await.unwrap();
+    assert_eq!(
+        sessions::begin_sign_in(&fixture.database, BFF_ID, request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::ResourceExhausted
+    );
+    sessions::begin_sign_in(
+        &fixture.database,
+        admin_peer,
+        BeginSignInRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            ..request
+        },
+    )
+    .await
+    .unwrap();
+    client
+        .execute("DELETE FROM ofz.sign_in_attempts", &[])
+        .await
+        .unwrap();
+}
+
+async fn verify_browser_gateways(fixture: &ControlFixture) {
+    let owner = &fixture.identities[0];
+    let id = Uuid::new_v4();
+    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(id.as_bytes()));
+    let peer = "spiffe://proompteng.ai/ns/proompteng/sa/platform-admin";
+    let origin = "https://admin.proompteng.ai";
+    let client = fixture.admin.pool.get().await.unwrap();
+    seed_session(&client, id, &owner.0, "1").await;
+    client
+        .execute(
+            "UPDATE ofz.sessions SET gateway_service='platform-admin' WHERE id=$1",
+            &[&id],
+        )
+        .await
+        .unwrap();
+    let inspect = InspectSessionRequest {
+        session_id: credential.clone(),
+    };
+    assert_eq!(
+        sessions::inspect(&fixture.database, &fixture.native, peer, inspect.clone())
+            .await
+            .unwrap()
+            .id,
+        id.to_string()
+    );
+    assert_eq!(
+        sessions::inspect(&fixture.database, &fixture.native, BFF_ID, inspect.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    let state = fixture.database.state().await.unwrap();
+    let mut context = RequestContext {
+        actor: Some(Actor {
+            identity: Some(Identity::HumanId(owner.0.clone())),
+        }),
+        session_id: id.to_string(),
+        origin: origin.into(),
+        deadline_unix_ms: state.now_ms + 2000,
+        contract_version: crate::CONTRACT_VERSION,
+        ..Default::default()
+    };
+    decision::session(&fixture.database, &context, Action::PolicyRead, &state)
+        .await
+        .unwrap();
+    context.origin = "https://proompteng.ai".into();
+    assert_eq!(
+        decision::session(&fixture.database, &context, Action::PolicyRead, &state)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    let revoke = RevokeSessionRequest {
+        credential,
+        operation_id: Uuid::new_v4().to_string(),
+        origin: origin.into(),
+    };
+    assert_eq!(
+        sessions::revoke(
+            &fixture.database,
+            BFF_ID,
+            RevokeSessionRequest {
+                origin: "https://proompteng.ai".into(),
+                ..revoke.clone()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        sessions::revoke(
+            &fixture.database,
+            peer,
+            RevokeSessionRequest {
+                origin: "https://proompteng.ai".into(),
+                ..revoke.clone()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unauthenticated
+    );
+    sessions::revoke(&fixture.database, peer, revoke)
+        .await
+        .unwrap();
+    assert_eq!(
+        sessions::inspect(&fixture.database, &fixture.native, peer, inspect)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    let product_cookie = URL_SAFE_NO_PAD.encode(Sha256::digest(
+        Uuid::parse_str(&owner.1).unwrap().as_bytes(),
+    ));
+    assert_eq!(
+        sessions::inspect(
+            &fixture.database,
+            &fixture.native,
+            BFF_ID,
+            InspectSessionRequest {
+                session_id: product_cookie
+            }
+        )
+        .await
+        .unwrap()
+        .id,
+        owner.1,
+        "admin logout cannot revoke the independent product session"
+    );
+}
+
 async fn verify_session_bootstrap(fixture: &ControlFixture) {
     let ControlFixture {
         admin,
@@ -1531,17 +1830,18 @@ async fn verify_session_bootstrap(fixture: &ControlFixture) {
     )
     .to_vec();
     let conn = admin.pool.get().await.unwrap();
-    conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) SELECT $1,$2,human_id,identity_subject,identity_session,$3,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,$4 FROM ofz.sessions WHERE id=$5", &[&retry_id,&Sha256::digest(retry_credential.as_bytes()).to_vec(),&retry_operation,&retry_fingerprint,&Uuid::parse_str(&owner.1).unwrap()]).await.unwrap();
+    conn.execute(
+        "WITH authority AS (INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,gateway_service) \
+         SELECT $1,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,gateway_service FROM ofz.sessions WHERE id=$2 RETURNING id) \
+         INSERT INTO ofz.session_credentials(session_id,token_hash,operation_id,establishment_fingerprint) SELECT id,$3,$4,$5 FROM authority",
+        &[&retry_id,&Uuid::parse_str(&owner.1).unwrap(),&Sha256::digest(retry_credential.as_bytes()).to_vec(),&retry_operation,&retry_fingerprint],
+    ).await.unwrap();
     let before_retry: i64 = conn
         .query_one("SELECT count(*) FROM ofz.sessions", &[])
         .await
         .unwrap()
         .get(0);
-    let issuer = Issuer::new(
-        "https://identity.invalid/realms/tengri".into(),
-        "tengri-bff".into(),
-    )
-    .unwrap();
+    let issuer = Issuer::new("https://identity.invalid/realms/tengri".into()).unwrap();
     let recovered = sessions::establish(database, native, &issuer, BFF_ID, retry_request.clone())
         .await
         .unwrap();
@@ -1572,6 +1872,55 @@ async fn verify_session_bootstrap(fixture: &ControlFixture) {
             .unwrap_err()
             .code(),
         Code::AlreadyExists
+    );
+    let rotated_credential = URL_SAFE_NO_PAD.encode([8_u8; 32]);
+    conn.execute(
+        "UPDATE ofz.session_credentials SET revoked=true WHERE session_id=$1",
+        &[&retry_id],
+    )
+    .await
+    .unwrap();
+    conn.execute(
+        "INSERT INTO ofz.session_credentials(session_id,token_hash,operation_id,establishment_fingerprint) VALUES($1,$2,$3,$2)",
+        &[&retry_id,&Sha256::digest(rotated_credential.as_bytes()).to_vec(),&Uuid::new_v4()],
+    ).await.unwrap();
+    assert_eq!(
+        sessions::establish(database, native, &issuer, BFF_ID, retry_request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated,
+        "a lost establishment reply cannot resurrect a replaced browser credential"
+    );
+    assert_eq!(
+        sessions::revoke(
+            database,
+            BFF_ID,
+            RevokeSessionRequest {
+                credential: retry_credential,
+                operation_id: Uuid::new_v4().to_string(),
+                origin: "https://proompteng.ai".into(),
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unauthenticated,
+        "a replaced cookie cannot revoke its successor's session authority"
+    );
+    assert_eq!(
+        sessions::inspect(
+            database,
+            native,
+            BFF_ID,
+            InspectSessionRequest {
+                session_id: rotated_credential
+            }
+        )
+        .await
+        .unwrap()
+        .id,
+        retry_id.to_string()
     );
     conn.execute(
         "UPDATE ofz.sessions SET revoked=true WHERE id=$1",
@@ -1968,7 +2317,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
             .await
             .unwrap_err()
             .code(),
-        Code::PermissionDenied
+        Code::Unauthenticated
     );
     let mut wrong_epoch = stream.clone();
     wrong_epoch.context.as_mut().unwrap().runtime_epoch = Uuid::new_v4().to_string();
@@ -2117,7 +2466,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
         audit
             .receipts
             .windows(2)
-            .all(|pair| pair[0].sequence < pair[1].sequence)
+            .all(|pair| pair[0].sequence > pair[1].sequence)
     );
     for audit_read in [false, true] {
         let auditor = &identities[2];
@@ -3434,12 +3783,13 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
     )
     .await;
     let session = Uuid::new_v4();
-    let now = fixture.admin.state().await.unwrap().now_ms as i64;
-    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-    fixture.admin.pool.get().await.unwrap().execute(
-        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'6',$2)",
-        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
-    ).await.unwrap();
+    seed_session(
+        &fixture.admin.pool.get().await.unwrap(),
+        session,
+        &human,
+        "6",
+    )
+    .await;
     let viewer = &(human, session.to_string());
     let assignment = |scope| {
         Command::SetWorkspaceRole(SetWorkspaceRole {
@@ -4350,7 +4700,7 @@ async fn verify_offboarding(fixture: &ControlFixture, workspace: &WorkspaceFixtu
         operation_id: Uuid::new_v4().to_string(),
         origin: "https://proompteng.ai".into(),
     };
-    let original = crate::sessions::revoke(database, native, BFF_ID, revoke.clone())
+    let original = crate::sessions::revoke(database, BFF_ID, revoke.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -4369,7 +4719,7 @@ async fn verify_offboarding(fixture: &ControlFixture, workspace: &WorkspaceFixtu
         Action::SessionRevoke as i32,
         "logout receipt uses the catalogued revocation action"
     );
-    let retried = crate::sessions::revoke(database, native, BFF_ID, revoke.clone())
+    let retried = crate::sessions::revoke(database, BFF_ID, revoke.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -4396,7 +4746,6 @@ async fn verify_offboarding(fixture: &ControlFixture, workspace: &WorkspaceFixtu
     assert_eq!(
         crate::sessions::revoke(
             database,
-            native,
             BFF_ID,
             RevokeSessionRequest {
                 credential: other,

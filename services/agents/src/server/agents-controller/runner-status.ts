@@ -1,5 +1,6 @@
 import { asRecord, asString, readNested } from '../primitives'
 import type { KubernetesClient } from '../kube-types'
+import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../../runner-result'
 
 export type RunnerTerminalPhase = 'succeeded' | 'failed' | 'cancelled'
 
@@ -23,6 +24,7 @@ export type RunnerTerminalStatus = {
     outputArtifacts?: Record<string, unknown>[]
   }
   error?: string
+  result?: AgentRunnerResultPreview
 }
 
 export type RunnerTerminalOutcome = {
@@ -69,6 +71,17 @@ export const parseRunnerTerminalStatus = (value: unknown): RunnerTerminalStatus 
   const status = asString(record.status)
   if (!status || !RUNNER_STATUS_VALUES.has(status as RunnerTerminalPhase)) return null
   const artifacts = normalizeArtifacts(record.artifacts)
+  const rawResult = asRecord(record.result)
+  const resultText = asString(rawResult?.text)
+  if (record.result !== undefined && (!rawResult || resultText === null || typeof rawResult.truncated !== 'boolean'))
+    return null
+  const result =
+    rawResult && resultText !== null
+      ? {
+          text: resultText.slice(0, AGENT_RUNNER_RESULT_PREVIEW_CHARS),
+          truncated: rawResult.truncated === true || resultText.length > AGENT_RUNNER_RESULT_PREVIEW_CHARS,
+        }
+      : undefined
   return {
     status: status as RunnerTerminalPhase,
     ...(asString(record.provider) ? { provider: asString(record.provider) as string } : {}),
@@ -84,6 +97,7 @@ export const parseRunnerTerminalStatus = (value: unknown): RunnerTerminalStatus 
     ...(asString(record.effort) ? { effort: asString(record.effort) as string } : {}),
     ...(normalizeNullableString(record.cwd) !== undefined ? { cwd: normalizeNullableString(record.cwd) } : {}),
     ...(artifacts ? { artifacts } : {}),
+    ...(result ? { result } : {}),
     ...(asString(record.error) ? { error: truncate(asString(record.error) as string) } : {}),
   }
 }
@@ -199,6 +213,7 @@ export const runnerStatusForAgentRunStatus = (status: RunnerTerminalStatus): Rec
   ...(status.cwd !== undefined ? { cwd: status.cwd } : {}),
   ...(status.artifacts ? { artifacts: status.artifacts } : {}),
   ...(status.error ? { error: status.error } : {}),
+  ...(status.result ? { result: status.result } : {}),
 })
 
 export const runnerStatusOutputArtifacts = (status: RunnerTerminalStatus) => status.artifacts?.outputArtifacts ?? []

@@ -1,7 +1,7 @@
 import 'server-only'
 import { type DescMessage, type DescMethodUnary, type MessageInitShape, type MessageShape } from '@bufbuild/protobuf'
 import { attestedCaller } from './rpc'
-import { platformRpcError } from '../tengri/ofz'
+import { platformRpcError } from './ofz'
 const call = attestedCaller(() => ({
   target: process.env.RELAY_GRPC_ENDPOINT?.trim() || '',
   peer: 'spiffe://proompteng.ai/ns/relay/sa/relay',

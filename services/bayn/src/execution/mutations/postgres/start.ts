@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import type { SqlError } from 'effect/sql/SqlError'
 
 import { MutationOperation } from '../../../broker/alpaca-mutations/model'
@@ -12,6 +12,7 @@ import {
   decideMutationStartReplay,
   decideSubmitStartWrite,
   decodeStartInput,
+  storeError,
   startStoreOperationFor,
 } from '../decisions'
 import type { MutationStartInput, MutationStoreError, StartReceipt } from '../model'
@@ -199,7 +200,19 @@ export const makeMutationStartPostgres = (
         ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
         ...(closeOnly === true ? { closeOnly: true as const } : {}),
       }),
-    ).pipe(Effect.flatMap((input) => fence.transaction(beginTransaction(operation, input))))
+    ).pipe(
+      Effect.flatMap((input) =>
+        Effect.gen(function* () {
+          if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+            return yield* storeError({
+              operation: startStoreOperationFor(operation),
+              failure: 'invariant',
+              message: 'mutation admission must commit independently before broker routing',
+            })
+          return yield* fence.transaction(beginTransaction(operation, input))
+        }),
+      ),
+    )
 
   const authorizeSubmit = (intentId: string, closeOnly = false) =>
     Effect.gen(function* () {

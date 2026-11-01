@@ -9,6 +9,15 @@ import {
 } from './runner-status'
 
 describe('runner status extraction', () => {
+  it('retains a bounded result preview and reports truncation', () => {
+    const status = parseRunnerTerminalStatus({
+      status: 'succeeded',
+      result: { text: 'x'.repeat(512), truncated: false },
+    })
+    expect(status?.result).toEqual({ text: 'x'.repeat(256), truncated: true })
+    expect(status && runnerStatusForAgentRunStatus(status).result).toEqual(status?.result)
+    expect(parseRunnerTerminalStatus({ status: 'succeeded', result: { text: 'done' } })).toBeNull()
+  })
   it('parses and sanitizes runner terminal status', () => {
     const status = parseRunnerTerminalStatus({
       provider: 'codex',

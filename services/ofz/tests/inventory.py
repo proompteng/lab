@@ -329,7 +329,7 @@ def main():
     assert schema_actions == actual["bff_access"], (
         f"access schema and handler classification disagree: unclassified={sorted(actual['bff_access'] - schema_actions)}, missing={sorted(schema_actions - actual['bff_access'])}"
     )
-    auth = (ROOT / "apps/landing/src/lib/tengri/auth.ts").read_text()
+    auth = (ROOT / "apps/landing/src/lib/platform/auth.ts").read_text()
     actual["bff_auth"] = operation_cases(auth)
     actual["bff_auth_http"] = next_routes(
         ROOT / "apps/landing/src/app/api/auth", "/api/auth"
@@ -344,11 +344,18 @@ def main():
     actual["supervisor"] = rust_routes(supervisor, "forward")
     actual["supervisor"].add("* {*forward}")
     computer = (ROOT / "services/nanoagent/browser_cua.go").read_text()
-    browser_mcp = computer[computer.index("func runBrowserMCP") :]
+    browser_source = (ROOT / "services/nanoagent/browser_mcp.go").read_text()
+    browser_mcp = browser_source[browser_source.index("func browserMCPResponse") :]
     browser_mcp = browser_mcp[: browser_mcp.index("\n}") + 2]
     actual["browser_mcp"] = operation_cases(
         browser_mcp, "request.Method", r'failure\s*=\s*errors\.New\("[^"\\]*"\)'
     )
+    http_mcp = browser_source[browser_source.index("func (browser *browserSupervisor) serveMCP") :]
+    http_mcp = http_mcp[: http_mcp.index("\n}")]
+    actual["browser_mcp_http"] = {
+        f"{method.upper()} /mcp"
+        for method in re.findall(r"\bhttp\.Method(\w+)\b", without_comments(http_mcp))
+    }
     actions = computer[computer.index("func validateComputerAction") :]
     actions = actions[: actions.index("\n}")]
     actual["browser_action"] = operation_cases(
