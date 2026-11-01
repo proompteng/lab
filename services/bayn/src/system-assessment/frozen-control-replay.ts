@@ -83,7 +83,7 @@ const Capture = Schema.Struct({
 export const FrozenControlBacktestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest.v1'),
   replicate: StrictNonEmptyStringSchema,
-  sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20), Schema.isUnique()),
+  sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1), Schema.isUnique()),
   source: FrozenControlSourceSchema,
   openingCashMicros: PositiveMicrosSchema,
   fractionalTrading: Schema.Boolean,

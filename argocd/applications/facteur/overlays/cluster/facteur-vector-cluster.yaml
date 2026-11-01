@@ -6,6 +6,9 @@ metadata:
   namespace: facteur
 spec:
   imageName: registry.ide-newton.ts.net/lab/vecteur:18-trixie
+  postgresql:
+    parameters:
+      wal_buffers: 16MB
   imagePullPolicy: Always
   instances: 3
   inheritedMetadata:
