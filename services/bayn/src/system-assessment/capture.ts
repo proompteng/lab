@@ -22,7 +22,7 @@ import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { qualificationRuntime } from './configuration'
 import { BrokerEnvironment, BrokerIdentitySchema } from '../broker/identity'
-import type { SystemRegistration } from './policy'
+import { registeredMarkIntervalMs, type SystemRegistration } from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { sourceFitsRegisteredSession } from './decision-work'
@@ -330,7 +330,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             const inventory = yield* Effect.fromResult(prepareValuationInventory(forward))
             const observedTimes = new Set(cashObservations.map((mark) => mark.at))
             const scheduled = yield* Effect.forEach(
-              requiredValuationTimes(registration.calendar.sessions).filter(
+              requiredValuationTimes(registration.calendar.sessions, registeredMarkIntervalMs(registration)).filter(
                 (at) => at <= asOf && !observedTimes.has(at),
               ),
               (at) =>

@@ -59,9 +59,9 @@ spec:
             - name: UI_PORT
               value: '8080'
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: b73ba918f412953640fdbfd4a430834fe500f709
+              value: 1635ab983a20e594af977b1947c5d41256fcd504
             - name: JANGAR_GITOPS_REVISION
-              value: b73ba918f412953640fdbfd4a430834fe500f709
+              value: 1635ab983a20e594af977b1947c5d41256fcd504
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: '120'
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -123,9 +123,9 @@ spec:
             - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
               value: '5000'
             - name: JANGAR_MODELS
-              value: qwen36-flamingo,gpt-6-astra
+              value: qwen38-flamingo,gpt-6-astra
             - name: JANGAR_DEFAULT_MODEL
-              value: qwen36-flamingo
+              value: qwen38-flamingo
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: '6'
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
@@ -351,15 +351,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: '5000'
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "41254711744"
+              value: "41291510134"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:6a81d39849c662a9e5fc9f423761a8872ee53bbc865799e848cc64d161c89303
+              value: sha256:2da127cf4413bedbd6048c19fd81a440e3c6a31bb04aefec322e7b39d51c7992
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: b73ba918f412953640fdbfd4a430834fe500f709
+              value: 1635ab983a20e594af977b1947c5d41256fcd504
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:6a81d39849c662a9e5fc9f423761a8872ee53bbc865799e848cc64d161c89303
+              value: sha256:2da127cf4413bedbd6048c19fd81a440e3c6a31bb04aefec322e7b39d51c7992
           ports:
             - name: http
               containerPort: 8080
