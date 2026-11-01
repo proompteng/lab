@@ -476,8 +476,10 @@ for (const receiptFailure of [false, true]) {
         const result = yield* Fiber.join(fiber)
         expect(Exit.isFailure(result)).toBe(true)
         expect(setup.receiptAttempts()).toBe(1)
+        expect(setup.jevBudgets).toEqual([10000])
         expect(setup.records).toHaveLength(receiptFailure ? 0 : 1)
         if (Exit.isFailure(result)) {
+          expect(Cause.pretty(result.cause)).toContain('Unavailable')
           expect(Cause.pretty(result.cause)).toContain('Terminal cleanup unavailable')
           if (receiptFailure) expect(Cause.pretty(result.cause)).toContain('Receipt cleanup unavailable')
         }
