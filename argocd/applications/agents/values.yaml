@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: kargo-sha-1635ab983a20e594af977b1947c5d41256fcd504-run-41291510201
-  digest: sha256:be63f49c0fcc7ae3065d7c467984ea3a96ad01fcd4e5fac6c1d7c236ea496169
+  tag: kargo-sha-2f6d15e3ecabe4011aeb7aee6e90737d6210080f-run-41304920478
+  digest: sha256:28044b5d649e4a6eca5bc247bc14a28d3432930da96d35e2f693b7390e6149a0
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,26 +14,26 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: kargo-sha-1635ab983a20e594af977b1947c5d41256fcd504-run-41291510201
-    digest: sha256:4607cf0ec3528ff610e201b5530241980551369aba87007ca7915bf276725b30
+    tag: kargo-sha-2f6d15e3ecabe4011aeb7aee6e90737d6210080f-run-41304920478
+    digest: sha256:af5ed52b3014991d3e74921e20b76ecd7a8bc1085667426889be8e04819326c0
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 1635ab983a20e594af977b1947c5d41256fcd504
-      AGENTS_GITOPS_REVISION: 1635ab983a20e594af977b1947c5d41256fcd504
-      AGENTS_SOURCE_CI_RUN_ID: "41291510201"
+      AGENTS_SOURCE_HEAD_SHA: 2f6d15e3ecabe4011aeb7aee6e90737d6210080f
+      AGENTS_GITOPS_REVISION: 2f6d15e3ecabe4011aeb7aee6e90737d6210080f
+      AGENTS_SOURCE_CI_RUN_ID: "41304920478"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:4607cf0ec3528ff610e201b5530241980551369aba87007ca7915bf276725b30
-      AGENTS_SERVING_BUILD_COMMIT: 1635ab983a20e594af977b1947c5d41256fcd504
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:4607cf0ec3528ff610e201b5530241980551369aba87007ca7915bf276725b30
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:af5ed52b3014991d3e74921e20b76ecd7a8bc1085667426889be8e04819326c0
+      AGENTS_SERVING_BUILD_COMMIT: 2f6d15e3ecabe4011aeb7aee6e90737d6210080f
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:af5ed52b3014991d3e74921e20b76ecd7a8bc1085667426889be8e04819326c0
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: kargo-sha-1635ab983a20e594af977b1947c5d41256fcd504-run-41291510201
-    digest: sha256:61e53017705ce5612d74d1a6893279a08ca1155690ce699317954611ad7065cc
+    tag: kargo-sha-2f6d15e3ecabe4011aeb7aee6e90737d6210080f-run-41304920478
+    digest: sha256:65bb9060228dc7675eab1a1e1010d12642e16096bca65437c9d420d624638bed
 linearMcpGateway:
   enabled: false
   replicaCount: 2
@@ -56,8 +56,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: kargo-sha-1635ab983a20e594af977b1947c5d41256fcd504-run-41291510201
-    digest: sha256:6c86311d5a285f415f3b46617e2ce0f6e41fea4c05fb193f37055274bc7aed98
+    tag: kargo-sha-2f6d15e3ecabe4011aeb7aee6e90737d6210080f-run-41304920478
+    digest: sha256:c0cc2f431902668ab7b4015061bed3fae46d6df69e03027b052b470493f26cbe
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -77,13 +77,7 @@ agentsShell:
       HOME: /workspace/.agents-shell/home
       AGENTS_SHELL_GIT_USER_NAME: Greg Konush
       AGENTS_SHELL_GIT_USER_EMAIL: 12027037+gregkonush@users.noreply.github.com
-      AGENTS_SHELL_AGENT_NAMESPACE: agents
-      AGENTS_SHELL_AGENT_NAME: codex-agent
-      AGENTS_SHELL_AGENT_REPOSITORY: proompteng/lab
-      AGENTS_SHELL_AGENT_BASE_BRANCH: main
-      AGENTS_SHELL_AGENT_VCS_REF: github
-      AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT: agents-sa
-      AGENTS_SHELL_AGENT_SECRETS: github-token,codex-auth
+      AGENTS_SHELL_REPO_BASE_BRANCH: main
     secrets:
       - name: GITHUB_TOKEN
         secretName: github-token
@@ -203,8 +197,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: kargo-sha-1635ab983a20e594af977b1947c5d41256fcd504-run-41291510201
-    digest: sha256:be63f49c0fcc7ae3065d7c467984ea3a96ad01fcd4e5fac6c1d7c236ea496169
+    tag: kargo-sha-2f6d15e3ecabe4011aeb7aee6e90737d6210080f-run-41304920478
+    digest: sha256:28044b5d649e4a6eca5bc247bc14a28d3432930da96d35e2f693b7390e6149a0
   autoscaling:
     enabled: false
 swarm:

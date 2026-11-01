@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 
 export const requiredTerms = [
-  'Qwen/Qwen3.8-27B-FP8',
+  'nvidia/Qwen3.8-27B-NVFP4',
   'qwen38-flamingo',
-  '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a',
+  '482ca0f3832238542f8f5295dde86b5f22711d80',
   'qwen3',
   'qwen3_coder',
   '262144',
@@ -19,6 +19,8 @@ export const requiredTerms = [
 ]
 
 export const forbiddenTerms = [
+  'Qwen/Qwen3.8-27B-FP8',
+  '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a',
   'unsloth/Qwen3.6-35B-A3B-NVFP4',
   'qwen36-flamingo',
   '739af1e7aac320af1682ed1e0cce369af4c5265d',

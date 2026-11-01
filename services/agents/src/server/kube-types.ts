@@ -22,7 +22,7 @@ export type KubernetesClient = {
     resource: string,
     name: string,
     namespace: string,
-    options?: { wait?: boolean; timeoutSeconds?: number },
+    options?: { wait?: boolean; timeoutSeconds?: number; uid?: string },
   ) => Promise<Record<string, unknown> | null>
   patch: (
     resource: string,
@@ -539,6 +539,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
         {
           apiVersion: 'v1',
           kind: 'DeleteOptions',
+          ...(options?.uid ? { preconditions: { uid: options.uid } } : {}),
           ...(options?.timeoutSeconds ? { gracePeriodSeconds: options.timeoutSeconds } : {}),
         },
       )) as Record<string, unknown>

@@ -83,6 +83,7 @@ const buildChartDecisionsRequest = (source: ChartDecisionSource) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(funding.bidMicros),

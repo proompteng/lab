@@ -97,6 +97,7 @@ const retainedSourceFeasible = (
 ) =>
   Result.gen(function* () {
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol: input.protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(input.funding.bidMicros),

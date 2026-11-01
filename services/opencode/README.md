@@ -20,6 +20,9 @@ additional tools built into the container layer reset on rollout. The research c
 keeps its read-only root filesystem.
 
 Flamingo (`flamingo/qwen38-flamingo`) is the default. Native tools remain enabled.
+Its reasoning picker uses Qwen3.8's native `low`, `medium`, and `xhigh` efforts.
+The generic OpenAI-compatible `high` effort is invalid for this checkpoint.
+After refreshing an existing browser session, select `Medium` or `Xhigh`.
 The full native integration catalog remains available through Connect and Models.
 For remote sign-in, choose OpenAI > Codex device code (legacy) to use a supported ChatGPT plan. Other
 providers need their own credentials or credits; a catalog entry does not grant

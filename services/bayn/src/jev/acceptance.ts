@@ -41,10 +41,14 @@ const protocol = {
 }
 
 export enum JevAcceptanceVersion {
-  Current = 'ECONOMIC_EVIDENCE_V4',
+  Current = 'RESEARCH_EVIDENCE_V5',
+  RetainedV4 = 'ECONOMIC_EVIDENCE_V4',
   RetainedV3 = 'REGISTERED_WINDOW_V3',
   RetainedV2 = 'RETAINED_V2',
 }
+
+export const usesLegacyAcceptance = (version: JevAcceptanceVersion) =>
+  version === JevAcceptanceVersion.RetainedV2 || version === JevAcceptanceVersion.RetainedV3
 
 const protocolFor = (version: JevAcceptanceVersion) =>
   version === JevAcceptanceVersion.RetainedV3
@@ -132,7 +136,7 @@ export class JevAcceptanceError extends Data.TaggedError('JevAcceptanceError')<{
 
 export const jevAcceptanceProtocolHash = (version = JevAcceptanceVersion.Current) =>
   canonicalHashV1Result(
-    version === JevAcceptanceVersion.Current
+    !usesLegacyAcceptance(version)
       ? protocol
       : version === JevAcceptanceVersion.RetainedV3
         ? retainedRegisteredWindowPolicy
@@ -280,7 +284,7 @@ const numericalReport = (
   terms: NumericalAssessmentTerms,
 ) => {
   const protocol = protocolFor(version)
-  const legacy = version !== JevAcceptanceVersion.Current
+  const legacy = usesLegacyAcceptance(version)
   const rows = candidate.sessions
   const money = moneyScale([candidate, ...controls], protocol, terms)
   const sessionCount = BigInt(rows.length)
@@ -390,7 +394,7 @@ export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVer
     Result.flatMap((data) =>
       Result.gen(function* () {
         const protocol = protocolFor(version)
-        const legacy = version !== JevAcceptanceVersion.Current
+        const legacy = usesLegacyAcceptance(version)
         const protocolHash = yield* jevAcceptanceProtocolHash(version)
         if (
           version === JevAcceptanceVersion.RetainedV2 &&
@@ -506,6 +510,9 @@ export const evaluateJevAcceptance = (input: unknown, version = JevAcceptanceVer
           schemaVersion: 'bayn.jev-acceptance-report.v1',
           scope:
             'Numerical targets only. Source receipts, preregistration, execution, costs and deployment require independent verification. This report grants no trading authority.',
+          ...(version === JevAcceptanceVersion.Current
+            ? { statisticalEvidence: { status: 'RESEARCH_ONLY', reason: 'STATISTICAL_COVERAGE_NOT_ESTABLISHED' } }
+            : {}),
           protocolHash,
           inputHash,
           registration: data.registration,

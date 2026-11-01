@@ -1,9 +1,67 @@
-# Galactic Talos 1.14 and Kubernetes 1.37 rollout
+# Galactic Talos release procedure
 
-The target is Talos `v1.14.0`, followed by Kubernetes `v1.37.0`. Downtime is authorized. Keep the three existing
+The current target is Talos `v1.14.5`; Kubernetes remains `v1.37.0`. Downtime is authorized. Keep the three existing
 machine identities, boot disks, data volumes, provider networking, PodCIDRs, and `maxPods: 500`. Maintain etcd quorum
 by upgrading only one control-plane node at a time. Subsequent Omni upgrades use `maxParallelism: 1`. Individual
 control-plane nodes cannot be locked; the cluster-wide maintenance lock is supported.
+
+## Talos 1.14.5 patch upgrade
+
+The current patch target is Talos `v1.14.5` with Linux `6.18.58`. Kubernetes remains `v1.37.0`.
+Use the signed catalog in `devices/nuc/image-factory/release.json` and the installer identities in
+[`talos-v1.14.5.json`](talos-v1.14.5.json). The existing schematics install the pinned Kata r6 and preserve each machine's GPU
+extensions, Tailscale, kernel arguments, disk selectors and network configuration.
+
+Run `verify-installer.sh <profile> <evidence-directory>` for all three profiles before maintenance.
+The current drain inventory contains PDB-blocked singleton services and standalone Turin Pods. In particular,
+Tengri's guest snapshots live in Pod-local disk-backed volumes. Both eviction and graceful node shutdown terminate
+these Pods and discard their local state. Sleeping a guest and extending `NoExecute` tolerations do not preserve its
+snapshot through `talosctl reboot`. Use the locked custom-installer procedure with explicit retained-home recovery.
+
+1. Require no active Omni lifecycle operation, then lock `galactic` while its live desired Talos version remains
+   `1.14.0`. Keep Kubernetes at `1.37.0` throughout. Do not sync the new target while installations are incomplete.
+2. Complete active work, use the signed-in workspace Sleep action and require `GuestStopped`. Plan a
+   [fenced retained-home cold boot](../../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+   for Turin. Preserve the MicroVM, Lease, home PVC, owner grant and guest image. The replacement Pod gets a new UID;
+   files and conversations remain on the home PVC, while memory snapshots and unsaved process state cannot survive.
+   A pending active-run record requires explicit recovery, not deletion of the activity pin or a fabricated completion.
+3. Upgrade Ryzen, Turin and Altra one at a time. Before each target, verify three healthy etcd members, its system-disk
+   serial, Kubernetes readiness, KVM and current storage state. Cordon and gracefully drain controller-managed Pods
+   with the authorized PDB bypass. Exclude `app=rook-ceph-osd` from the client drain so local OSDs remain available
+   while clients flush and unmount. The subsequent node shutdown stops the OSDs. Inventory every standalone Pod's
+   local data before maintenance; excluding it from drain does not preserve that data through shutdown.
+   Never use `--force`, delete a PVC or force-detach a volume. Require storage redundancy before the next host.
+4. Use the exact target installer index from `talos-v1.14.5.json` with
+   `talosctl upgrade --drain=false --no-reboot --wait --progress=plain`. Require a completed installation before
+   `talosctl reboot --drain=false --wait --progress=plain`. Apply the recorded hardware recovery procedure only for
+   an observed matching failure. Verify the new kernel, disk identity, etcd, storage, GPU and all four Kata runtimes
+   before uncordoning the target and continuing.
+5. After all three pass, render the committed template with existing secrets. Require its dry run to update only
+   the Talos version semantically and remove the maintenance lock in the same Cluster update. Sync that reviewed
+   template, verify Omni convergence and resume the original workspace through its authenticated control.
+
+The operator explicitly requested no manual backups for this patch rollout. Preserve data, placement,
+workload concurrency, durability and `osd_max_scrubs=3`. Keep replica counts, permissions and the saved power
+preference unchanged. Restore any temporary maintenance settings after recovery.
+
+### Observed Turin shutdown behavior
+
+On 2026-11-01, the six standalone slot Pods retained their UIDs through the client drain, but kubelet marked them
+`Failed`, reason `Terminated`, during Talos's `stopAllPods` shutdown task. Their message was
+`Pod was terminated in response to imminent node shutdown.` The retained workspace's local journal was absent after
+reboot, despite its extended tolerations. Its original home PVC remained bound with the same UID. Recovery fenced
+the old writer, verified volume detachment and retained the original MicroVM, Lease, home, image and active-run pin
+before allowing the controller to create a new Pod. This was a cold boot, not a successful snapshot restore.
+
+Turin also returned with two active Ceph LVs missing their `/dev` nodes. OSD 0's `expand-bluefs` init container failed
+with `Operation not permitted`. After confirming the original disks and active LV identities, `vgmknodes` for only
+the affected VGs recreated the device nodes. Restoring their existing Ceph ownership and normally replacing the
+failed OSD Pod let all six OSDs start. No disk was formatted, replaced or force-detached. Verify clean PGs before
+continuing maintenance; six OSDs reporting up does not establish recovered redundancy.
+
+The original 1.14.0 transition below is historical; it is not the patch-upgrade execution path.
+
+## Original Talos 1.14.0 transition
 
 The Talos-only phase uses the
 [template at `83ad18f4c768f37d79276eee49d7788a6e349688`](https://github.com/proompteng/lab/blob/83ad18f4c768f37d79276eee49d7788a6e349688/devices/galactic/omni/cluster-template.yaml),
@@ -116,7 +174,7 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
 
 ## Artifact identity gate
 
-[`talos-v1.14.0.json`](talos-v1.14.0.json) records the installed factory indexes, architecture manifests, and extension
+[`talos-v1.14.5.json`](talos-v1.14.5.json) records the target factory indexes, architecture manifests, and extension
 inputs for Ryzen, Turin, and Altra. Its request IDs come from the completed Image Factory builds retained with the
 rollout evidence. Both NVIDIA machines share an index and schematic, with different architecture manifests.
 

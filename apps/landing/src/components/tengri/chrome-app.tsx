@@ -4,7 +4,27 @@ import { reportBrowserFailure } from '@/lib/observability/client'
 
 import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import type { TengriPreviewSession } from '@/lib/tengri/types'
+import { runTengriAction } from './client'
+import { ConfirmationDialog } from './confirmation-dialog'
+import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './preview-session'
 import { useDesktopPreview } from './use-desktop-preview'
+
+function revokeChatGPTConnection(
+  agentId: string,
+  connection: TengriPreviewSession,
+  options: { signal?: AbortSignal; keepalive?: boolean },
+) {
+  return runTengriAction(
+    {
+      action: 'revoke-preview-session',
+      agentId,
+      sessionId: connection.id,
+      revocationToken: new URL(connection.launchUrl).hash.slice(1),
+    },
+    options,
+  )
+}
 
 export function ChromeApp({
   agentId,
@@ -21,6 +41,65 @@ export function ChromeApp({
 }) {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
+  const [connectionState, setConnectionState] = useState<'closed' | 'confirm' | 'creating'>('closed')
+  const [chatGPTError, setChatGPTError] = useState('')
+  const exportedConnection = useRef<TengriPreviewSession | null>(null)
+  const connectionRequest = useRef<AbortController | null>(null)
+  useEffect(
+    () => () => {
+      connectionRequest.current?.abort()
+      const connection = exportedConnection.current
+      exportedConnection.current = null
+      if (connection)
+        void revokeChatGPTConnection(agentId, connection, { keepalive: true }).catch(() =>
+          reportBrowserFailure('chrome.chatgpt-revoke'),
+        )
+    },
+    [agentId],
+  )
+
+  const connectChatGPT = async () => {
+    if (connectionRequest.current) return
+    const controller = new AbortController()
+    connectionRequest.current = controller
+    setConnectionState('creating')
+    setChatGPTError('')
+    try {
+      const previous = exportedConnection.current
+      if (previous) {
+        await revokeChatGPTConnection(agentId, previous, { signal: controller.signal })
+        exportedConnection.current = null
+      }
+      const connection = await runTengriAction<TengriPreviewSession>(
+        { action: 'browser-session', agentId, windowId: `${desktopId}-${windowId}-chatgpt`, renewal: true },
+        controller.signal,
+      )
+      const launchUrl = safePreviewLaunchUrl(connection.launchUrl, previewGatewayOrigin)
+      const origin = safePreviewSessionOrigin(connection.previewOrigin, connection.id)
+      if (!launchUrl || !origin) throw new Error('Tengri returned an invalid browser connection')
+      if (controller.signal.aborted) {
+        await revokeChatGPTConnection(agentId, connection, { keepalive: true })
+        return
+      }
+      exportedConnection.current = { ...connection, launchUrl, previewOrigin: origin }
+      const file = URL.createObjectURL(
+        new Blob([JSON.stringify({ version: 1, ...exportedConnection.current })], { type: 'application/json' }),
+      )
+      const download = document.createElement('a')
+      download.href = file
+      download.download = 'tengri-browser-connection.json'
+      download.click()
+      window.setTimeout(() => URL.revokeObjectURL(file), 1000)
+      setConnectionState('closed')
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setChatGPTError(cause instanceof Error ? cause.message : 'Could not connect ChatGPT')
+        setConnectionState('confirm')
+      }
+    } finally {
+      if (connectionRequest.current === controller) connectionRequest.current = null
+    }
+  }
   useEffect(() => {
     if (error) reportBrowserFailure('chrome.connection')
   }, [error])
@@ -60,7 +139,12 @@ export function ChromeApp({
         setReady(true)
         setError('')
       } else if (message.type === 'focus') focus.current()
-      else if (message.type === 'error') {
+      else if (message.type === 'connect-chatgpt') {
+        if (!connectionRequest.current) {
+          setChatGPTError('')
+          setConnectionState('confirm')
+        }
+      } else if (message.type === 'error') {
         setError('error' in message && typeof message.error === 'string' ? message.error : 'Chrome disconnected')
       }
     }
@@ -76,6 +160,19 @@ export function ChromeApp({
 
   return (
     <div className="relative h-full w-full bg-[#202124]">
+      <ConfirmationDialog
+        busy={connectionState === 'creating'}
+        confirmLabel="Download connection"
+        destructive={false}
+        description="Allow ChatGPT to see and operate this browser for up to 30 minutes. Take control pauses it. Closing Chrome or signing out revokes the connection. Start the private tunnel helper before downloading the connection file."
+        error={chatGPTError}
+        onCancel={() => {
+          if (!connectionRequest.current) setConnectionState('closed')
+        }}
+        onConfirm={() => void connectChatGPT()}
+        open={connectionState !== 'closed'}
+        title="Connect ChatGPT to Chrome?"
+      />
       {session ? (
         <iframe
           key={connectionGeneration}

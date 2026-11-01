@@ -321,6 +321,7 @@ const requestFromSnapshot = (
           )
         : null
     const economics = yield* jevEntryEconomics({
+      feeAt: snapshot.manifest.observedAt,
       cryptoFeeTier,
       protocol: native.protocol,
       symbol,
