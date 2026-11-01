@@ -54,7 +54,7 @@ device-plugin visibility first.
 
 ## Common vLLM Arguments
 
-Every multi-GPU candidate keeps the Qwen3.6 hard-migration target:
+Every multi-GPU candidate keeps the Qwen3.8 hard-migration target:
 
 ```yaml
 args:
@@ -63,9 +63,9 @@ args:
   - --port
   - "8000"
   - --model
-  - unsloth/Qwen3.6-35B-A3B-NVFP4
+  - Qwen/Qwen3.8-27B-FP8
   - --served-model-name
-  - qwen36-flamingo
+  - qwen38-flamingo
   - --trust-remote-code
   - --dtype
   - bfloat16
@@ -192,7 +192,7 @@ Render and inspect before Argo sync:
 
 ```bash
 mise exec helm@3 -- kustomize build --enable-helm argocd/applications/flamingo > /tmp/flamingo-render.yaml
-rg -n -- '--pipeline-parallel-size|--tensor-parallel-size|nvidia.com/gpu|sizeLimit|qwen36-flamingo' /tmp/flamingo-render.yaml
+rg -n -- '--pipeline-parallel-size|--tensor-parallel-size|nvidia.com/gpu|sizeLimit|qwen38-flamingo' /tmp/flamingo-render.yaml
 ```
 
 Sync through Argo CD after the diff is reviewed:
@@ -235,7 +235,7 @@ kubectl -n flamingo run flamingo-chat-smoke \
   --command -- sh -c '
     curl -fsS http://flamingo.flamingo.svc.cluster.local/v1/chat/completions \
       -H "Content-Type: application/json" \
-      -d "{\"model\":\"qwen36-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"max_tokens\":8,\"temperature\":0}"
+      -d "{\"model\":\"qwen38-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"max_tokens\":8,\"temperature\":0}"
   '
 ```
 
@@ -245,7 +245,7 @@ Tool-call smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen36-flamingo",
+    "model": "qwen38-flamingo",
     "messages": [{"role": "user", "content": "Call get_repo_status for lab."}],
     "tools": [{
       "type": "function",

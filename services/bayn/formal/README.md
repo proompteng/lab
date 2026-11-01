@@ -38,13 +38,16 @@ Assessment and replay use the nonempty calendar chosen before the first open. Th
 count. `Bootstrap.lean` proves exact sample length and in-range indices for any positive registered block length,
 including truncated final blocks. Conformance compares multiple block lengths and 1-, 3-, 7-, 19-, 20-, 21-, and
 25-session windows, including later attempts with an adequate preregistered replicate budget. Current absolute and
-paired bounds share the exact familywise-corrected percentile rank. A whole-window block cannot establish edge.
+paired bounds share the exact familywise-corrected percentile rank. A whole-window block is uninformative. `negative_expectancy_has_a_positive_bootstrap_sample` checks the concrete
+negative-expectancy counterexample. The bootstrap model proves execution arithmetic, not confidence coverage.
 
 `Qualification.lean` requires positive actual profit, a positive absolute lower bound, a positive paired bound for
 every selected control, source-approved risk limits, complete evidence, 99.9% reliability, and zero safety violations.
 An empty recovery schedule is permitted; empty required operational classes are not. The reachable example uses
 small positive profit and no invented recovery event. Activity, turnover, control multiples, and stress scenarios do
-not enter the current predicate. The model does not supply market probabilities or prove future returns.
+not enter the current predicate. The model does not supply market probabilities or prove statistical coverage or future returns. Current assessment
+evidence is incomplete because bootstrap coverage is unestablished, so its conjunction cannot qualify. Conformance
+checks that result and separately checks a retained v4 success under its original rules.
 
 ## Repeated momentum and native-control commitments
 
