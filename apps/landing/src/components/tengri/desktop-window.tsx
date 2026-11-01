@@ -97,7 +97,7 @@ export function DesktopWindowFrame({
 
   const begin = useCallback(
     (event: ReactPointerEvent<HTMLElement>, edge: ResizeEdge | null) => {
-      if (window.mode !== 'normal' || event.button !== 0) return
+      if (window.mode !== 'normal' || event.button !== 0 || globalThis.window.innerWidth < 640) return
       event.preventDefault()
       dispatch({ type: 'focus', id: window.id })
       if (event.target instanceof Element) event.target.setPointerCapture(event.pointerId)
@@ -158,6 +158,8 @@ export function DesktopWindowFrame({
   const unifiedToolbar = window.app === 'finder' || window.app === 'settings'
   return (
     <motion.div
+      data-tengri-window-frame
+      data-window-mode={window.mode}
       ref={elementRef}
       className="absolute overflow-visible"
       initial={false}
@@ -192,7 +194,7 @@ export function DesktopWindowFrame({
         data-active={active}
         data-app={window.app}
         className={cn(
-          'tengri-window absolute inset-3 flex flex-col overflow-hidden bg-zinc-900 outline-none',
+          'tengri-window absolute inset-3 flex flex-col overflow-hidden bg-zinc-900 outline-none max-sm:rounded-none',
           window.mode === 'maximized'
             ? 'rounded-none'
             : cn(

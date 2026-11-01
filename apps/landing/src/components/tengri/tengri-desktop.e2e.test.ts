@@ -5358,6 +5358,7 @@ test('adds another passkey from Settings and retries a failed start', async ({ p
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   await page.getByRole('button', { name: 'Privacy & Security', exact: true }).click()
+  await page.getByText('Sign-in & passkeys', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Add another passkey', exact: true })).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('passkey-settings.png') })
   await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
@@ -6313,7 +6314,12 @@ test('switches access tabs immediately and supports keyboard selection while loa
       json:
         view === 'audit'
           ? { receipts: [] }
-          : { version: '1', entries: [{ subjectId: `${view}-identity`, role: 'viewer' }] },
+          : {
+              version: '1',
+              entries: [
+                { subjectId: `${view}-identity`, displayName: `${view}-identity`, githubId: '123', role: 'viewer' },
+              ],
+            },
     })
   })
   await page.goto('/')
@@ -6343,7 +6349,7 @@ test('switches access tabs immediately and supports keyboard selection while loa
   const audit = access.getByRole('tab', { name: 'Audit', exact: true })
   await expect(audit).toBeFocused()
   await expect(audit).toHaveAttribute('aria-selected', 'true')
-  await expect(access.getByRole('tabpanel', { name: 'Audit', exact: true })).toContainText('No audit records.')
+  await expect(access.getByRole('tabpanel', { name: 'Audit', exact: true })).toContainText('No activity to show.')
   await audit.press('Home')
   await expect(access.getByRole('tab', { name: 'Workspace', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(access.getByRole('tabpanel', { name: 'Workspace', exact: true })).toContainText('workspace-identity')
@@ -6360,7 +6366,12 @@ test('cancels an obsolete access refresh when another tab is selected', async ({
       refreshStarted.resolve()
       await releaseRefresh.promise
     }
-    await route.fulfill({ json: { version: '1', entries: [{ subjectId: `${view}-identity`, role: 'viewer' }] } })
+    await route.fulfill({
+      json: {
+        version: '1',
+        entries: [{ subjectId: `${view}-identity`, displayName: `${view}-identity`, githubId: '123', role: 'viewer' }],
+      },
+    })
   })
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
@@ -6414,11 +6425,12 @@ for (const outcome of ['success', 'uncertain'] as const) {
     await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
     const settings = page.getByRole('region', { name: 'Settings window' })
     await openSettingsPane(settings, 'Privacy & Security')
-    await selectOption(page, settings.getByLabel('Change', { exact: true }), 'Grant')
+    await settings.getByText('Advanced access & recovery', { exact: true }).click()
+    await settings.getByRole('button', { name: 'Create diagnostic grant', exact: true }).click()
     await settings.getByLabel('Diagnostic agent UUID').fill('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
     await settings.getByLabel('Proof key thumbprint').fill('a'.repeat(43))
     await settings.getByLabel('Reason', { exact: true }).fill('Settings navigation regression fixture')
-    await settings.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await settings.getByRole('button', { name: 'Save changes', exact: true }).click()
     await started.promise
     await openSettingsPane(settings, 'General')
     release.resolve()
@@ -7023,28 +7035,38 @@ for (const width of [1440, 390]) {
     await prompt.fill('Keep this unsent Alpha draft.')
     await openSidebar()
     await expect(sidebar.getByText('Conversations', { exact: true })).toHaveCount(0)
-    await sidebar.getByRole('button', { name: 'Chat actions for Alpha', exact: true }).click()
-    const archiveMenu = page.getByRole('menuitem', { name: 'Archive', exact: true })
-    await expect(archiveMenu).toHaveCSS('font-size', '12px')
-    expect(await archiveMenu.evaluate((item) => getComputedStyle(item).fontFamily)).toMatch(/geist/i)
-    expect((await archiveMenu.boundingBox())!.height).toBeLessThanOrEqual(32)
-    await page.getByRole('menu').screenshot({ path: test.info().outputPath(`session-menu-${width}.png`) })
-    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+    const archive = sidebar.getByRole('button', { name: 'Archive Alpha', exact: true })
+    await sidebar.locator('[data-conversation-id="thread-alpha"]').hover()
+    await expect(archive).toHaveText('')
+    await expect(archive).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Archive', exact: true })).toHaveCount(0)
+    await sidebar.screenshot({ path: test.info().outputPath(`archive-icon-${width}.png`) })
+    await archive.click()
     await expect.poll(() => store.threads.find((thread) => thread.id === 'thread-alpha')?.archived).toBe(true)
     await expect(sidebar.locator('[data-conversation-id="thread-alpha"]')).toHaveCount(0)
     if (width === 390 && (await sidebar.isVisible())) await page.keyboard.press('Escape')
     await expect(prompt).toHaveValue('')
     await openSidebar()
     await sidebar.getByRole('button', { name: 'Archived chats', exact: true }).click()
-    await sidebar.getByRole('button', { name: 'Chat actions for Alpha', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Restore', exact: true }).click()
+    const restore = sidebar.getByRole('button', { name: 'Restore Alpha', exact: true })
+    if (width === 1440) {
+      await page.mouse.move(0, 0)
+      await sidebar.getByRole('button', { name: 'Back to chats', exact: true }).focus()
+      await page.keyboard.press('Shift+Tab')
+      await expect(restore).toBeFocused()
+      await expect(restore).toHaveCSS('opacity', '1')
+      await restore.press('Enter')
+    } else {
+      await sidebar.getByRole('button', { name: 'Alpha', exact: true }).locator('..').hover()
+      await restore.click()
+    }
     await expect.poll(() => store.threads.find((thread) => thread.id === 'thread-alpha')?.archived).toBe(false)
     await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
     await expect(prompt).toHaveValue('Keep this unsent Alpha draft.')
     await expect(prompt).toBeFocused()
     await openSidebar()
-    await sidebar.getByRole('button', { name: 'Chat actions for Beta', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+    await sidebar.getByRole('button', { name: 'Beta', exact: true }).hover()
+    await sidebar.getByRole('button', { name: 'Archive Beta', exact: true }).click()
     await expect(sidebar.locator('[data-conversation-id="thread-beta"]')).toHaveCount(0)
     const otherContext = await browser.newContext()
     try {
@@ -7228,8 +7250,8 @@ test('pauses native chat index recovery while an archive outcome is unconfirmed'
   const beforeFailure = reads
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect.poll(() => reads).toBeGreaterThan(beforeFailure)
-  await sidebar.getByRole('button', { name: 'Chat actions for Keep archive receipt', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Keep archive receipt', exact: true }).hover()
+  await sidebar.getByRole('button', { name: 'Archive Keep archive receipt', exact: true }).click()
   await expect.poll(() => writes).toBe(1)
   try {
     const readsDuringArchive = reads
@@ -7267,14 +7289,14 @@ test('retains native sessions after archive failure and pages through older chat
   await sidebar.getByRole('button', { name: 'Load older chats', exact: true }).click()
   await expect(sidebar.locator('[data-conversation-id]')).toHaveCount(55)
   expect(mock.actions.some((action) => action.action === 'list-threads' && action.cursor === 'page:50')).toBe(true)
-  await sidebar.getByRole('button', { name: 'Chat actions for Chat 0', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Chat 0', exact: true }).hover()
+  await sidebar.getByRole('button', { name: 'Archive Chat 0', exact: true }).click()
   await expect(sidebar.getByRole('alert')).toHaveText('Archive is temporarily unavailable')
   await expect(sidebar.locator('[data-conversation-id="thread-0"]')).toBeVisible()
   expect(store.threads[0].archived).toBe(false)
   fail = false
-  await sidebar.getByRole('button', { name: 'Chat actions for Chat 0', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Chat 0', exact: true }).hover()
+  await sidebar.getByRole('button', { name: 'Archive Chat 0', exact: true }).click()
   await expect(sidebar.locator('[data-conversation-id="thread-0"]')).toHaveCount(0)
   await expect(sidebar.getByRole('alert')).toHaveCount(0)
 })
@@ -7294,8 +7316,8 @@ test('reconciles a lost archive response by reading the native index without res
   })
   await page.goto('/')
   const sidebar = page.getByTestId('agent-conversation-sidebar')
-  await sidebar.getByRole('button', { name: 'Chat actions for Archive me', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Archive me', exact: true }).hover()
+  await sidebar.getByRole('button', { name: 'Archive Archive me', exact: true }).click()
   await expect(sidebar.getByRole('alert')).toHaveText('Archive confirmation was interrupted')
   await sidebar.getByRole('button', { name: 'Retry chats', exact: true }).click()
   await expect(sidebar.locator('[data-conversation-id="thread-archiving"]')).toHaveCount(0)
@@ -7338,9 +7360,8 @@ test('runs another conversation while keeping each active response unarchivable'
   })
   await page.goto('/')
   const sidebar = page.getByTestId('agent-conversation-sidebar')
-  await sidebar.getByRole('button', { name: 'Chat actions for Working', exact: true }).click()
-  await expect(page.getByRole('menuitem', { name: 'Finish response to archive', exact: true })).toBeDisabled()
-  await page.keyboard.press('Escape')
+  await sidebar.getByRole('button', { name: 'Working', exact: true }).hover()
+  await expect(sidebar.getByRole('button', { name: 'Archive Working', exact: true })).toBeDisabled()
   await expect(sidebar.locator('[data-conversation-id="thread-other"]')).toBeEnabled()
   await sidebar.locator('[data-conversation-id="thread-other"]').click()
   await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
@@ -7353,9 +7374,8 @@ test('runs another conversation while keeping each active response unarchivable'
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
   await expect(page.getByText('Another conversation has an active run.', { exact: false })).toHaveCount(0)
   for (const title of ['Working', 'Other']) {
-    await sidebar.getByRole('button', { name: `Chat actions for ${title}`, exact: true }).click()
-    await expect(page.getByRole('menuitem', { name: 'Finish response to archive', exact: true })).toBeDisabled()
-    await page.keyboard.press('Escape')
+    await sidebar.getByRole('button', { name: title, exact: true }).hover()
+    await expect(sidebar.getByRole('button', { name: `Archive ${title}`, exact: true })).toBeDisabled()
   }
   await page.reload()
   await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
@@ -11071,14 +11091,22 @@ for (const { verificationStatus, failedStart } of [
   })
 }
 
-test('administers catalog-defined service policies and preserves the exact pending command', async ({ page }) => {
+test('edits saved service permissions and preserves the exact pending command', async ({ page }) => {
   await mockTengri(page)
   const writes: Record<string, unknown>[] = []
   let version = 20
   let lostResponse = true
   let requireVerification = false
+  let saved = ['can_inspect']
   const workload = 'spiffe://proompteng.ai/ns/opencode/sa/opencode'
-  await page.route('**/api/tengri/access**', (route) => route.fulfill({ json: { version: '20' } }))
+  await page.route('**/api/tengri/access**', (route) =>
+    route.fulfill({
+      json: {
+        version: '20',
+        entries: [{ subjectId: 'fixture-person', githubId: '123', displayName: 'Alex', role: 'member' }],
+      },
+    }),
+  )
   await page.route('**/api/platform/connectors', (route) =>
     route.fulfill({
       json: {
@@ -11095,9 +11123,10 @@ test('administers catalog-defined service policies and preserves the exact pendi
       },
     }),
   )
-  await page.route('**/api/platform/policies', async (route) => {
+  await page.route('**/api/platform/policies**', async (route) => {
     if (route.request().method() === 'POST') {
-      writes.push(policyWriteSchema.parse(route.request().postDataJSON()))
+      const write = policyWriteSchema.parse(route.request().postDataJSON())
+      writes.push(write)
       if (requireVerification) {
         await route.fulfill({ status: 428, json: { error: 'Fresh verification required' } })
         return
@@ -11107,10 +11136,21 @@ test('administers catalog-defined service policies and preserves the exact pendi
         await route.fulfill({ status: 503, json: { error: 'The policy result could not be confirmed.' } })
         return
       }
+      for (const change of write.relationships)
+        saved = change.enabled
+          ? [...new Set([...saved, change.relation])]
+          : saved.filter((name) => name !== change.relation)
       version += 1
       await route.fulfill({
         json: { decision: { allowed: true, auditReceiptId: '55555555-5555-4555-8555-555555555555' } },
       })
+      return
+    }
+    const query = new URL(route.request().url()).searchParams
+    if (query.size) {
+      expect(query.get('subjectId')).toBe(workload)
+      expect(query.get('id')).toBe('fixture/tenant-a')
+      await route.fulfill({ json: { policyVersion: String(version), relations: saved } })
       return
     }
     await route.fulfill({
@@ -11139,23 +11179,15 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
   const policies = settings.getByRole('region', { name: 'Service access', exact: true })
   await expect(settings.getByRole('button', { name: /Verify (passkey|identity)/ })).toHaveCount(0)
-  await expect(policies.getByLabel('Service', { exact: true })).toBeVisible()
-  await expect(settings.locator('select, datalist')).toHaveCount(0)
-  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
-  await expect(policies.getByLabel('Resource', { exact: true })).toHaveAttribute('aria-invalid', 'true')
-  await expect(policies.getByLabel('Resource', { exact: true })).toHaveAccessibleDescription('Choose a resource')
-  expect(writes).toHaveLength(0)
-  const servicePicker = policies.getByLabel('Service', { exact: true })
-  await servicePicker.focus()
-  await servicePicker.press('ArrowDown')
-  await expect(page.getByRole('option', { name: 'OpenCode', exact: true })).toBeFocused()
-  await page.keyboard.press('Enter')
-  await expect(servicePicker).toBeFocused()
-  await policies.getByLabel('Resource', { exact: true }).click()
-  const resourceMenu = page.getByRole('listbox')
-  await expect(resourceMenu).toContainText('Tenant A · fixture')
-  await expect(resourceMenu).not.toContainText('tenant-a')
-  const menuStyle = await resourceMenu.evaluate((element) => {
+  await expect(policies.getByRole('heading', { name: 'Service access', exact: true })).toBeVisible()
+  await expect(policies.getByRole('combobox')).toHaveCount(0)
+  await policies.getByRole('button', { name: 'Manage OpenCode', exact: true }).click()
+  await expect(policies.getByRole('heading', { name: 'OpenCode', exact: true })).toBeFocused()
+  await expect(policies.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
+  const resource = policies.getByLabel('Resource', { exact: true })
+  await resource.press('ArrowDown')
+  await expect(page.getByRole('listbox')).toBeVisible()
+  const menuStyle = await page.getByRole('listbox').evaluate((element) => {
     const style = getComputedStyle(element.closest('[data-slot="select-content"]') ?? element)
     const context = document.createElement('canvas').getContext('2d')
     if (!context) throw new Error('A canvas is required to normalize computed colors')
@@ -11169,26 +11201,19 @@ test('administers catalog-defined service policies and preserves the exact pendi
   expect(menuStyle.background).toEqual([24, 24, 27])
   expect(menuStyle.color).toEqual([244, 244, 245])
   expect(menuStyle.font).toMatch(/geist/i)
-  await settings.screenshot({ path: test.info().outputPath('service-access-resource-menu.png') })
   await page.getByRole('option', { name: 'Tenant A · fixture', exact: true }).click()
-  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).check()
+  await expect(policies.getByRole('checkbox', { name: 'Can inspect', exact: true })).toBeChecked()
+  await expect(policies.getByRole('checkbox', { name: 'Can list', exact: true })).not.toBeChecked()
   await policies.getByRole('checkbox', { name: 'Can list', exact: true }).check()
-  const controlHeights = await policies
-    .locator('[data-slot="select-trigger"], [data-slot="input"]')
-    .evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height))
-  expect(controlHeights).toHaveLength(5)
-  expect(Math.max(...controlHeights) - Math.min(...controlHeights)).toBeLessThanOrEqual(1)
-  await policies.getByLabel('Reason', { exact: true }).fill('Allow the standalone client to inspect Tenant A')
-  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
+  await policies.getByLabel('Reason for change', { exact: true }).fill('Allow the standalone client to list Tenant A')
+  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
   await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
+  await expect(policies.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled()
   await settings.getByRole('tab', { name: 'Audit', exact: true }).click()
-  await expect(policies).toBeHidden()
   await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
   await expect(policies.getByRole('alert')).toHaveText('The policy result could not be confirmed.')
   await policies.getByRole('button', { name: 'Retry exact change', exact: true }).click()
-  await expect(policies.getByRole('status')).toContainText('Access updated.')
-  await policies.getByText('View receipt', { exact: true }).click()
-  await expect(policies.getByRole('status')).toContainText('audit 55555555')
+  await expect(policies.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible()
   expect(writes).toHaveLength(2)
   expect(writes[1]).toEqual(writes[0])
   expect(writes[0]).toMatchObject({
@@ -11196,46 +11221,515 @@ test('administers catalog-defined service policies and preserves the exact pendi
     relationships: [
       {
         resource: { kind: 'fixture.service', id: 'fixture/tenant-a' },
-        relation: 'can_inspect',
-        subjectKind: 'workload',
-        subjectId: workload,
-        enabled: true,
-      },
-      {
         relation: 'can_list',
         subjectKind: 'workload',
         subjectId: workload,
         enabled: true,
-        resource: { kind: 'fixture.service', id: 'fixture/tenant-a' },
       },
     ],
   })
-  await selectOption(page, policies.getByLabel('Change', { exact: true }), 'Remove access')
-  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
+  await expect(policies.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
+  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).uncheck()
+  await policies.getByLabel('Reason for change', { exact: true }).fill('Remove inspection while retaining list access')
+  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
   await expect.poll(() => writes.length).toBe(3)
   expect(writes[2]).toMatchObject({
     expectedPolicyVersion: '21',
-    relationships: [{ enabled: false }, { enabled: false }],
+    relationships: [{ relation: 'can_inspect', enabled: false }],
   })
-  await expect(policies.getByRole('button', { name: 'Save access', exact: true })).toBeEnabled()
+  await expect(policies.getByRole('checkbox', { name: 'Can list', exact: true })).toBeChecked()
   const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service access"]').analyze()
   expect(accessibility.violations).toEqual([])
   await settings.getByRole('button', { name: 'Maximize Settings', exact: true }).click()
-  await settings.screenshot({ path: test.info().outputPath('service-policies-desktop.png') })
+  await settings.screenshot({ path: test.info().outputPath('services-desktop.png') })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect
     .poll(() => policies.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
     .toBeLessThanOrEqual(1)
-  await expect(policies.getByLabel('Service', { exact: true }).locator('[data-slot="select-value"]')).toHaveText(
-    'OpenCode',
-  )
-  await policies.getByLabel('Reason', { exact: true }).scrollIntoViewIfNeeded()
-  await settings.screenshot({ path: test.info().outputPath('service-policies-narrow.png') })
+  await settings.screenshot({ path: test.info().outputPath('services-mobile.png') })
   requireVerification = true
-  await policies.getByRole('button', { name: 'Save access', exact: true }).click()
+  await policies.getByRole('checkbox', { name: 'Can inspect', exact: true }).check()
+  await policies.getByLabel('Reason for change', { exact: true }).fill('Verify only when saving a privileged change')
+  await policies.getByRole('button', { name: 'Save changes', exact: true }).click()
   await expect(policies.getByRole('alert')).toHaveText('Verify your identity to save this change.')
   await expect(policies.locator('form').getByRole('button', { name: 'Verify identity', exact: true })).toBeVisible()
-  await expect(settings.getByRole('button', { name: 'Verify passkey', exact: true })).toHaveCount(0)
+  expect(writes).toHaveLength(4)
+})
+
+test('access tabs present people, limits and recent activity before focused editors', async ({ page }) => {
+  await mockTengri(page)
+  const posts: Record<string, unknown>[] = []
+  await page.route('**/api/tengri/access**', async (route) => {
+    if (route.request().method() === 'POST') {
+      posts.push(route.request().postDataJSON())
+      await route.fulfill({
+        json: {
+          receipt: {
+            operationId: route.request().postDataJSON().operationId,
+            version: '21',
+            auditReceiptId: 'fixture-audit',
+          },
+        },
+      })
+      return
+    }
+    const view = new URL(route.request().url()).searchParams.get('view')
+    await route.fulfill({
+      json:
+        view === 'audit'
+          ? {
+              receipts: [
+                {
+                  id: 'receipt-id',
+                  sequence: '200',
+                  createdAtUnixMs: '1793484000000',
+                  action: 'ACTION_POLICY_COMMAND',
+                  allowed: true,
+                  platformAction: 'ofz.relationships.write',
+                  reason: 'Allow namespace reads',
+                  operationId: 'operation-id',
+                },
+              ],
+            }
+          : {
+              version: '20',
+              workspaceState: 'active',
+              entries: [
+                {
+                  subjectId: 'alex',
+                  githubId: '123',
+                  displayName: 'Alex Chen',
+                  role: view === 'platform' ? 'member' : 'viewer',
+                },
+                {
+                  subjectId: 'alex',
+                  githubId: '123',
+                  displayName: 'Alex Chen',
+                  role: view === 'platform' ? 'administrator' : 'developer',
+                },
+              ],
+              quotas: [
+                {
+                  humanId: 'alex',
+                  totalWorkspaces: 2,
+                  activeWorkspaces: 1,
+                  retainedBytes: '68719476736',
+                  usedWorkspaces: 1,
+                  usedActive: 1,
+                  usedBytes: '34359738368',
+                },
+              ],
+            },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const access = settings.getByRole('region', { name: 'Access administration', exact: true })
+  await expect(access.getByRole('link', { name: 'Alex Chen', exact: true })).toHaveCount(1)
+  await expect(access.getByLabel('GitHub username', { exact: true })).toHaveCount(0)
+  await expect(access.getByText('Advanced access & recovery', { exact: true })).toBeVisible()
+  await expect(access.getByRole('button', { name: 'Create diagnostic grant', exact: true })).toBeHidden()
+  await access.getByRole('button', { name: 'Add collaborator', exact: true }).click()
+  await expect(access.getByRole('heading', { name: 'Collaborator access', exact: true })).toBeFocused()
+  await expect(access.getByLabel('GitHub username', { exact: true })).toBeVisible()
+  await access.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(access.getByRole('button', { name: 'Add collaborator', exact: true })).toBeFocused()
+  await settings.screenshot({ path: test.info().outputPath('workspace-desktop.png') })
+  await access.getByRole('tab', { name: 'Platform', exact: true }).click()
+  await expect(access.getByRole('link', { name: 'Alex Chen', exact: true })).toHaveCount(1)
+  await expect(access.getByRole('region', { name: 'Workspace limits', exact: true })).toContainText('Storage (GiB)')
+  await settings.screenshot({ path: test.info().outputPath('platform-desktop.png') })
+  await access.getByRole('button', { name: 'Adjust limits for GitHub #123', exact: true }).click()
+  await expect(access.getByLabel('GitHub username', { exact: true })).toHaveCount(0)
+  await access.getByLabel('Total workspaces', { exact: true }).fill('3')
+  await access.getByLabel('Reason', { exact: true }).fill('Adjust the existing member workspace allowance')
+  await access.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect.poll(() => posts.length).toBe(1)
+  expect(posts[0]).toMatchObject({
+    action: 'quota',
+    recipient: { kind: 'github-id', githubId: '123' },
+    total: 3,
+    active: 1,
+    retainedGiB: 64,
+  })
+  await access.getByRole('tab', { name: 'Audit', exact: true }).click()
+  await expect(access.getByText('Ofz relationships write', { exact: true })).toBeVisible()
+  await expect(access.getByText('receipt-id', { exact: true })).toBeHidden()
+  await access.getByText('Ofz relationships write', { exact: true }).click()
+  await expect(access.getByText('receipt-id', { exact: true })).toBeVisible()
+  await settings.screenshot({ path: test.info().outputPath('audit-desktop.png') })
+  for (const view of ['Workspace', 'Platform', 'Audit'] as const) {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await access.getByRole('tab', { name: view, exact: true }).click()
+    await expect(access.getByRole('heading', { level: 2 })).toBeVisible()
+    await expect
+      .poll(() => access.evaluate((element) => element.scrollWidth - element.clientWidth))
+      .toBeLessThanOrEqual(1)
+    expect(
+      (await new AxeBuilder({ page }).include('[aria-label="Access administration"]').analyze()).violations,
+    ).toEqual([])
+    await settings.screenshot({ path: test.info().outputPath(view.toLowerCase() + '-mobile.png') })
+  }
+  await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeHidden()
+  await settings.getByText('Sign-in & passkeys', { exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Add another passkey', exact: true })).toBeVisible()
+})
+
+test('managing a Viewer preserves their exact saved scope and identifies diagnostic agents', async ({ page }) => {
+  await mockTengri(page)
+  const writes: Record<string, unknown>[] = []
+  const scope = {
+    fileRoots: ['/workspace/approved '],
+    threadIds: ['saved-thread'],
+    terminalIds: ['saved-terminal'],
+    browserScreenshot: true,
+    maxBytes: 4096,
+    maxItems: 20,
+  }
+  const agent = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+  await page.route('**/api/tengri/access**', async (route) => {
+    if (route.request().method() === 'POST') {
+      writes.push(route.request().postDataJSON())
+      await route.fulfill({
+        json: {
+          receipt: {
+            operationId: route.request().postDataJSON().operationId,
+            version: '21',
+            auditReceiptId: 'fixture-audit',
+          },
+        },
+      })
+      return
+    }
+    await route.fulfill({
+      json: {
+        version: '20',
+        workspaceState: 'active',
+        entries: [
+          { subjectId: 'viewer-person', githubId: '123', displayName: 'Alex Chen', role: 'viewer', scope },
+          { subjectId: agent, role: 'diagnostic', grantId: 'ffffffff-ffff-4fff-8fff-ffffffffffff', scope },
+        ],
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const access = settings.getByRole('region', { name: 'Access administration', exact: true })
+  const diagnostic = access.locator('[data-slot="item"]').filter({ hasText: 'Diagnostic agent' })
+  await diagnostic.getByText('Access details', { exact: true }).click()
+  await expect(diagnostic.getByText('Agent ' + agent, { exact: true })).toBeVisible()
+  await expect(diagnostic).not.toContainText('Browser status')
+  await access.getByRole('button', { name: 'Manage Alex Chen viewer', exact: true }).click()
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).toBeChecked()
+  await expect(access.getByLabel('File roots under /workspace', { exact: true })).toHaveValue('/workspace/approved ')
+  await expect(access.getByLabel('Codex thread IDs', { exact: true })).toHaveValue('saved-thread')
+  await expect(access.getByLabel('Terminal IDs', { exact: true })).toHaveValue('saved-terminal')
+  await expect(access.getByRole('checkbox', { name: 'Allow browser screenshots', exact: true })).toBeChecked()
+  await expect(access.getByLabel('Maximum bytes', { exact: true })).toHaveValue('4096')
+  await expect(access.getByLabel('Maximum items', { exact: true })).toHaveValue('20')
+  await access.getByLabel('Reason', { exact: true }).fill('Keep this existing Viewer scope unchanged')
+  await access.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect.poll(() => writes.length).toBe(1)
+  expect(writes[0]).toMatchObject({ action: 'collaborator', recipient: { kind: 'github-id', githubId: '123' }, scope })
+  await expect(access.getByRole('status').filter({ hasText: 'Access updated.' })).toBeVisible()
+  await selectOption(page, access.getByLabel('Role', { exact: true }), 'Developer')
+  await selectOption(page, access.getByLabel('Role', { exact: true }), 'Viewer')
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).not.toBeChecked()
+  await access.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await access.getByRole('button', { name: 'Add collaborator', exact: true }).click()
+  await access.getByLabel('GitHub username', { exact: true }).fill('another-person')
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).not.toBeChecked()
+  await access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }).check()
+  await expect(access.getByLabel('File roots under /workspace', { exact: true })).toHaveValue('/workspace/project')
+  await access.getByLabel('GitHub username', { exact: true }).fill('different-person')
+  await expect(
+    access.getByRole('checkbox', { name: 'Approve bounded Viewer content access', exact: true }),
+  ).not.toBeChecked()
+})
+
+test('service resource permissions can be managed for a person on a later roster page', async ({ page }) => {
+  await mockTengri(page)
+  await page.route('**/api/tengri/access**', (route) => {
+    const later = new URL(route.request().url()).searchParams.get('cursor') === 'next-people'
+    return route.fulfill({
+      json: later
+        ? {
+            version: '20',
+            entries: [{ subjectId: 'later-person', githubId: '456', displayName: 'Later Member', role: 'member' }],
+          }
+        : {
+            version: '20',
+            entries: [{ subjectId: 'first-person', githubId: '123', displayName: 'First Member', role: 'member' }],
+            cursor: 'next-people',
+          },
+    })
+  })
+  await page.route('**/api/platform/connectors', (route) =>
+    route.fulfill({
+      json: {
+        operations: [
+          {
+            connectorId: 'fixture',
+            name: 'read',
+            description: 'Read a resource',
+            action: 'fixture.read',
+            readOnly: true,
+            targets: [{ name: 'Tenant A', resource: { kind: 'fixture.service', id: 'fixture/tenant-a' } }],
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/platform/policies**', (route) => {
+    const query = new URL(route.request().url()).searchParams
+    if (query.size) {
+      expect(query.get('subjectId')).toBe('later-person')
+      expect(query.get('subjectKind')).toBe('human')
+      return route.fulfill({ json: { policyVersion: '20', relations: ['reader'] } })
+    }
+    return route.fulfill({
+      json: {
+        policyVersion: '20',
+        policyCatalogJson: JSON.stringify({
+          version: 1,
+          resources: [{ kind: 'fixture.service', relations: [{ name: 'reader', subjects: ['human'] }] }],
+        }),
+        relayClients: [],
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  await settings.getByRole('tab', { name: 'Service access', exact: true }).click()
+  const policies = settings.getByRole('region', { name: 'Service access', exact: true })
+  await policies.getByText('People’s resource permissions', { exact: true }).click()
+  await expect(policies.getByRole('button', { name: 'Later Member', exact: true })).toHaveCount(0)
+  await policies.getByRole('button', { name: 'More people', exact: true }).click()
+  await policies.getByRole('button', { name: 'Later Member', exact: true }).click()
+  await selectOption(page, policies.getByLabel('Resource', { exact: true }), 'Tenant A · fixture')
+  await expect(policies.getByRole('checkbox', { name: 'Reader', exact: true })).toBeChecked()
+})
+
+test('editing a platform role does not validate unrelated fractional GiB quota fields', async ({ page }) => {
+  await mockTengri(page)
+  const writes: Record<string, unknown>[] = []
+  await page.route('**/api/tengri/access**', (route) => {
+    if (route.request().method() === 'POST') {
+      writes.push(route.request().postDataJSON())
+      return route.fulfill({
+        json: {
+          receipt: {
+            operationId: route.request().postDataJSON().operationId,
+            version: '21',
+            auditReceiptId: 'fixture-audit',
+          },
+        },
+      })
+    }
+    return route.fulfill({
+      json: {
+        version: '20',
+        entries: [{ subjectId: 'member-person', githubId: '123', displayName: 'Alex Chen', role: 'member' }],
+        quotas: [{ humanId: 'member-person', totalWorkspaces: 2, activeWorkspaces: 1, retainedBytes: '536870912' }],
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Privacy & Security')
+  await settings.getByRole('tab', { name: 'Platform', exact: true }).click()
+  await settings.getByRole('button', { name: 'Manage Alex Chen member', exact: true }).click()
+  await settings.getByLabel('Reason', { exact: true }).fill('Confirm this role without changing storage limits')
+  await settings.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect.poll(() => writes.length).toBe(1)
+  expect(writes[0]).toMatchObject({
+    action: 'membership',
+    recipient: { kind: 'github-id', githubId: '123' },
+    role: 'member',
+    enabled: true,
+  })
+})
+
+for (const width of [320, 390, 430]) {
+  test(`phone chat keeps its draft and controls stable through keyboard resize at ${width}px`, async ({
+    browser,
+    baseURL,
+  }) => {
+    const context = await browser.newContext({
+      baseURL,
+      viewport: { width, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 2,
+    })
+    try {
+      const page = await context.newPage()
+      const store: ThreadStore = {
+        threads: [{ id: 'thread-phone', title: 'Phone chat', updatedAt: 1, archived: false }],
+      }
+      await mockTengri(page, { threadStore: store })
+      await page.goto('/')
+      const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
+      const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+      await expect(composer).toHaveCSS('font-size', '16px')
+      await expect(composer).not.toBeFocused()
+      await composer.tap()
+      await composer.fill('Keep this unsent phone draft')
+      expect(await page.evaluate(() => window.visualViewport?.scale)).toBe(1)
+      const before = await chat.boundingBox()
+      expect(before?.x).toBeCloseTo(0, 0)
+      expect(before?.width).toBeCloseTo(width, 0)
+      await page.evaluate(() => {
+        const visual = window.visualViewport
+        if (!visual) return
+        Object.defineProperty(visual, 'height', { configurable: true, value: 800 })
+        visual.dispatchEvent(new Event('resize'))
+      })
+      await expect.poll(async () => (await chat.boundingBox())?.height).toBeCloseTo(before?.height ?? 0, 0)
+      await expect
+        .poll(() =>
+          page.locator('[data-tengri-dock-container]').evaluate((element) => element.getBoundingClientRect().height),
+        )
+        .toBe(44)
+      await page.evaluate(() => {
+        const viewport = window.visualViewport
+        if (!viewport) throw new Error('Visual viewport is required')
+        Object.defineProperty(viewport, 'height', { configurable: true, value: 400 })
+        Object.defineProperty(viewport, 'offsetTop', { configurable: true, value: 120 })
+        viewport.dispatchEvent(new Event('resize'))
+        viewport.dispatchEvent(new Event('scroll'))
+      })
+      await expect
+        .poll(() => page.locator('main.tengri-theme').evaluate((element) => element.getBoundingClientRect().height))
+        .toBe(400)
+      await expect
+        .poll(() => page.locator('[data-tengri-desktop]').evaluate((element) => element.getBoundingClientRect().top))
+        .toBe(120)
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+      await expect(composer).toBeInViewport()
+      await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport()
+      await expect
+        .poll(() =>
+          page.locator('[data-tengri-dock-container]').evaluate((element) => element.getBoundingClientRect().height),
+        )
+        .toBe(0)
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+        .toBeLessThanOrEqual(1)
+      await page.screenshot({ path: test.info().outputPath(`phone-keyboard-${width}.png`) })
+      await page.evaluate(() => {
+        const viewport = window.visualViewport
+        if (!viewport) return
+        Reflect.deleteProperty(viewport, 'height')
+        Reflect.deleteProperty(viewport, 'offsetTop')
+        viewport.dispatchEvent(new Event('resize'))
+      })
+      await expect
+        .poll(() => page.locator('main.tengri-theme').evaluate((element) => element.getBoundingClientRect().height))
+        .toBe(844)
+      await expect(composer).toHaveValue('Keep this unsent phone draft')
+      await composer.blur()
+      await chat.getByRole('button', { name: 'Show conversations', exact: true }).tap()
+      const sidebar = chat.getByTestId('agent-conversation-sidebar')
+      await sidebar.getByRole('button', { name: 'Phone chat', exact: true }).tap()
+      await expect(sidebar).toBeHidden()
+      await expect(composer).not.toBeFocused()
+      await chat.getByRole('button', { name: 'Show conversations', exact: true }).tap()
+      const archive = sidebar.getByRole('button', { name: 'Archive Phone chat', exact: true })
+      await expect(archive).toBeVisible()
+      await expect(archive).toHaveText('')
+      const target = await archive.boundingBox()
+      expect(target?.width).toBeGreaterThanOrEqual(44)
+      expect(target?.height).toBeGreaterThanOrEqual(44)
+      await expect(sidebar.getByRole('button', { name: 'Chat actions for Phone chat', exact: true })).toHaveCount(0)
+      await page.screenshot({ path: test.info().outputPath(`phone-sidebar-${width}.png`) })
+      await archive.tap()
+      await expect.poll(() => store.threads[0]?.archived).toBe(true)
+    } finally {
+      await context.close()
+    }
+  })
+}
+
+test('phone keyboard and viewport panning preserve the transcript reading position', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  })
+  try {
+    const page = await context.newPage()
+    await mockTengri(page, {
+      resumeThreadRawJson: JSON.stringify({
+        thread: {
+          turns: [
+            {
+              id: 'history-turn',
+              status: 'completed',
+              items: Array.from({ length: 80 }, (_, index) => ({
+                id: `history-${index}`,
+                type: 'agentMessage',
+                text: `History message ${index}. ` + 'Preserve this reading position. '.repeat(20),
+              })),
+            },
+          ],
+        },
+      }),
+    })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'mobile-reading-thread'))
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
+    const scroll = chat.getByTestId('agent-conversation-scroll')
+    await expect(chat.getByRole('article', { name: 'Codex response' })).toHaveCount(80)
+    await scroll.evaluate((element) => {
+      element.scrollTop = 1000
+      element.dispatchEvent(new Event('scroll'))
+    })
+    await expect(chat.getByRole('button', { name: 'Jump to latest', exact: true })).toBeVisible()
+    const position = await scroll.evaluate((element) => element.scrollTop)
+    await chat.getByRole('textbox', { name: 'Message your agent', exact: true }).tap()
+    await page.evaluate(() => {
+      const visual = window.visualViewport
+      if (!visual) throw new Error('Visual viewport required')
+      Object.defineProperty(visual, 'height', { configurable: true, value: 400 })
+      Object.defineProperty(visual, 'offsetTop', { configurable: true, value: 120 })
+      visual.dispatchEvent(new Event('resize'))
+      visual.dispatchEvent(new Event('scroll'))
+    })
+    await expect
+      .poll(() => page.locator('[data-tengri-desktop]').evaluate((element) => element.getBoundingClientRect().top))
+      .toBe(120)
+    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeCloseTo(position, 0)
+    await page.evaluate(() => {
+      const visual = window.visualViewport
+      if (!visual) return
+      Reflect.deleteProperty(visual, 'height')
+      Reflect.deleteProperty(visual, 'offsetTop')
+      visual.dispatchEvent(new Event('resize'))
+      visual.dispatchEvent(new Event('scroll'))
+    })
+    await expect
+      .poll(() => page.locator('[data-tengri-desktop]').evaluate((element) => element.getBoundingClientRect().height))
+      .toBe(844)
+    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeCloseTo(position, 0)
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+  } finally {
+    await context.close()
+  }
 })
 
 for (const mode of ['idle', 'current', 'other', 'closed'] as const) {

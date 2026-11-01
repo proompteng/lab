@@ -796,6 +796,7 @@ def evaluate (json : Json) : Except String Json := do
     let reliability ← (← (← json.getObjVal? "reliability").getArr?).mapM fun row => do
       return (← readNatural row "good", ← readNatural row "scheduled")
     let evidence : QualificationEvidence := {
+      sessionCount := ← readNatural json "sessionCount",
       netProfit := ← readInteger json "netProfit",
       bestControlProfit := ← readInteger json "bestControlProfit",
       profitLowerBoundTotal := ← readInteger json "profitLowerBoundTotal",
@@ -830,8 +831,8 @@ def evaluate (json : Json) : Except String Json := do
     let candidate ← readIntegerArray (← json.getObjVal? "candidate")
     let controls ← (← (← json.getObjVal? "controls").getArr?).mapM readIntegerArray
     let attempt ← readNatural json "attemptIndex"
-    if candidate.size != 20 || controls.size != 3 || controls.any (fun c => c.size != 20) then
-      throw "bootstrap requires twenty matched sessions and three controls"
+    if candidate.size == 0 || controls.size != 3 || controls.any (fun c => c.size != candidate.size) then
+      throw "bootstrap requires a nonempty matched window and three controls"
     if ¬ tailResolutionSupported attempt then throw "unsupported bootstrap tail resolution"
     let result := frozenBootstrap candidate controls attempt
     return Json.mkObj [

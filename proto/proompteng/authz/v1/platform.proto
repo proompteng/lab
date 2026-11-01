@@ -9,6 +9,7 @@ service PlatformAuthorizationService {
   rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
   rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
+  rpc ReadPolicyRelationships(ReadPolicyRelationshipsRequest) returns (ReadPolicyRelationshipsResponse);
   rpc WritePolicyRelationships(WritePolicyRelationshipsRequest) returns (WritePolicyRelationshipsResponse);
   rpc ListPlatformConnections(ListPlatformConnectionsRequest) returns (ListPlatformConnectionsResponse);
   rpc PutPlatformConnection(PutPlatformConnectionRequest) returns (PutPlatformConnectionResponse);
@@ -117,6 +118,17 @@ message PolicyRelationship {
   string subject_kind = 3;
   string subject_id = 4;
   bool enabled = 5;
+}
+
+message ReadPolicyRelationshipsRequest {
+  PlatformHumanSession administrator = 1;
+  PlatformResource resource = 2;
+  string subject_kind = 3;
+  string subject_id = 4;
+}
+message ReadPolicyRelationshipsResponse {
+  uint64 policy_version = 1;
+  repeated string relations = 2;
 }
 
 message WritePolicyRelationshipsRequest {

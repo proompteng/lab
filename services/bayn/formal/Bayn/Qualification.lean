@@ -172,6 +172,7 @@ theorem matched_approved_risk_is_reachable : registeredRiskPreserved {
     limits := ⟨40000000000, 40000000000, 100000000000, 100000000000, 200000000000⟩ } := by decide
 
 structure QualificationEvidence where
+  sessionCount : Nat
   netProfit : Int
   bestControlProfit : Int
   profitLowerBoundTotal : Int
@@ -190,14 +191,15 @@ structure QualificationEvidence where
   deriving Repr
 
 def economicTargets (e : QualificationEvidence) : Prop :=
-  5000000000 ≤ e.netProfit ∧
+  0 < e.sessionCount ∧ 5000000000 ≤ e.netProfit ∧
   5 * e.bestControlProfit ≤ 4 * e.netProfit ∧
   0 < e.profitLowerBoundTotal ∧
   e.pairedLowerBoundTotals.length = 3 ∧
-  (∀ bound ∈ e.pairedLowerBoundTotals, 1000000000 < bound) ∧
+  (∀ bound ∈ e.pairedLowerBoundTotals, 50000000 * e.sessionCount < bound) ∧
   0 < e.profitWithoutBest ∧ 0 < e.additionalCostProfit ∧ 0 < e.latencyStressProfit ∧
   e.maximumSessionLoss ≤ 1000000000 ∧ e.maximumDrawdown ≤ 2500000000 ∧
-  200 ≤ e.completedEpisodes ∧ 2000000000000 ≤ e.filledNotional
+  200 ≤ e.completedEpisodes ∧ 10 * e.sessionCount ≤ e.completedEpisodes ∧
+  100000000000 * e.sessionCount ≤ e.filledNotional
 
 def qualificationPass (e : QualificationEvidence) : Prop :=
   economicTargets e ∧ e.reliability.length = 4 ∧
@@ -227,6 +229,7 @@ theorem losing_control_cannot_replace_absolute_profit (e : QualificationEvidence
   omega
 
 def qualifyingExample : QualificationEvidence := {
+  sessionCount := 20,
   netProfit := 20000000000, bestControlProfit := 2000000000,
   profitLowerBoundTotal := 20000000000,
   pairedLowerBoundTotals := [18000000000, 18000000000, 18000000000],
@@ -240,5 +243,12 @@ def qualifyingExample : QualificationEvidence := {
 
 theorem qualification_is_reachable : qualificationPass qualifyingExample := by
   decide
+
+theorem shorter_window_can_qualify : qualificationPass { qualifyingExample with sessionCount := 3, filledNotional := 300000000000 } := by
+  decide
+
+theorem empty_window_cannot_qualify (e : QualificationEvidence) (empty : e.sessionCount = 0) :
+    ¬ qualificationPass e := by
+  simp [qualificationPass, economicTargets, empty]
 
 end Bayn
