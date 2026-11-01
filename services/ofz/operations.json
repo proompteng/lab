@@ -955,6 +955,24 @@
     "action": "ACTION_BROWSER_CONTROL"
   },
   {
+    "surface": "browser_mcp_http",
+    "operation": "POST /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp_http",
+    "operation": "DELETE /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "release",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
     "surface": "browser_action",
     "operation": "status",
     "internal_only": true,

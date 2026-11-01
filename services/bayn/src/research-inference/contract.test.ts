@@ -8,7 +8,6 @@ import {
   maximumResearchStreamBytes,
   parseResearchOutput,
   ResearchOutcome,
-  type RetainedResearchRun,
   researchRequest,
   researchServingIdentity,
   sealResearchReceipt,
@@ -45,22 +44,25 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
-  test('verifies Qwen3.6 receipts while rejecting retired registrations', () => {
+  test.each([
+    ['qwen36-flamingo', '739af1e7aac320af1682ed1e0cce369af4c5265d'],
+    ['qwen38-flamingo', '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'],
+  ] as const)('verifies %s retired receipts while rejecting retired registrations', (model, checkpoint) => {
     const current = editorFixture()
     const old = {
       ...current,
       policy: {
         ...current.policy,
-        model: 'qwen36-flamingo',
-        checkpoint: '739af1e7aac320af1682ed1e0cce369af4c5265d',
-        tokenizerRevision: '739af1e7aac320af1682ed1e0cce369af4c5265d',
-        chatTemplateRevision: '739af1e7aac320af1682ed1e0cce369af4c5265d',
+        model,
+        checkpoint,
+        tokenizerRevision: checkpoint,
+        chatTemplateRevision: checkpoint,
       },
-    } satisfies RetainedResearchRun
+    }
     const retained = Result.getOrThrow(decodeRetainedResearchRun(old))
     const receipt = retainedReceiptFixture(retained)
     expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
-    expect(retained).toEqual(old)
+    expect(JSON.stringify(retained)).toBe(JSON.stringify(old))
     expect(Result.getOrThrow(verifyResearchReceipt(retained, receipt))).toEqual(receipt)
     expect(Result.getOrThrow(researchExpensePlan(retained, receipt)).transfers[0]?.amount).toBe(1001000002n)
     expect(Result.isFailure(verifyResearchReceipt(current, receipt))).toBe(true)

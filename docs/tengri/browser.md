@@ -75,7 +75,7 @@ Downloads use the owner's `Downloads` folder. Closing the desktop view does not 
 Nanoagent registers `nanoagent browser-mcp` as a required server with each Codex app-server process. The 300-second
 tool timeout covers a cold browser installation. These settings use [Codex's documented MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
 The stdio MCP server exposes one
-`computer` tool with `screenshot`, `click`, `double_click`, `drag`, `scroll`, `key`, `type`, `navigate`, and `status`
+`computer` tool with `screenshot`, `click`, `double_click`, `drag`, `scroll`, `key`, `type`, `navigate`, `status`, and `release`
 actions. Each successful input action returns a screenshot and its dimensions. Coordinates include the native
 browser toolbar. Input validation rejects missing coordinates, invalid buttons, unsupported key syntax, and
 navigation URLs outside HTTP and HTTPS.
@@ -84,7 +84,10 @@ If screenshot capture fails after an input succeeds, the tool explicitly reports
 observation failure so the agent can request a screenshot without repeating a potentially consequential input.
 
 The MCP process reaches only the current guest's `~/.tengri/browser/control.sock`, with mode `0600`. It has no
-control-plane connection or credentials. Actions serialize on the shared display. **Take control** pauses both
+control-plane connection or credentials. Actions serialize on the shared display. Each MCP client has its own random
+driver identity. The first observation or input acquires exclusive agent control for five minutes, renewed on each
+action. Other agents receive an explicit error until the owner uses `release`, disconnects its stdio server, or its
+lease expires. `status` does not acquire or extend control. **Take control** clears the driver and pauses both
 agent input and screenshots, including after guest restart. **Let agent use browser** returns control. The status
 action remains available while the user has control.
 
@@ -93,12 +96,59 @@ not an operating system isolation boundary against that shell. MCP instructions 
 treat page contents as untrusted, and hand passwords, MFA, CAPTCHAs, and consequential actions to the user.
 Existing Codex approval settings remain in effect.
 
+## Private ChatGPT connection
+
+Chrome's **Connect ChatGPT** button asks the owner to download a separate browser connection. It uses the existing
+`IssueBrowserSession` operation, owner login, workspace/runtime binding, Ofz checks and preview revocation. The
+downloaded launch ticket expires after 30 seconds; exchanging it creates a browser-only lease lasting at most 30
+minutes. This connection does not renew automatically. Closing that Chrome window revokes its exported connection;
+sign-out revokes all desktop previews. Downloading a replacement revokes the previous exported connection first.
+
+The browser preview exposes Streamable HTTP MCP at `/mcp`, with the same tool schema, dispatcher and browser actions
+as stdio. It requires a fresh `initialize` and returns a random `Mcp-Session-Id`; subsequent POSTs and DELETE require
+that ID. Sessions expire after 30 minutes, with a maximum of 16 per guest. The handler rejects browser `Origin`
+headers and standalone GET streams. DELETE removes the MCP session and releases its driver. The gateway still
+requires its HttpOnly preview cookie on every request, checks fresh Ofz authority, and cancels a pending MCP request
+when its preview lease or authority ends. Browser takeover also invalidates input still waiting for cold startup,
+even if the user returns control before startup completes.
+
+Use a **dedicated private** [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+for this browser. Do not repoint the existing agents-shell tunnel or publish this connection in a public directory.
+Install OpenAI's `tunnel-client` and provide its runtime API key and tunnel ID through `CONTROL_PLANE_API_KEY` and
+`CONTROL_PLANE_TUNNEL_ID`. The tunnel's OpenAI workspace and connector access determine who can use this private
+connection; restrict them to the intended owner. Creating the tunnel and connecting it in ChatGPT are separate
+account actions, not effects of downloading the browser file.
+
+Start the helper before clicking **Download connection**:
+
+```sh
+python3 services/nanoagent/browser-mcp-tunnel.py
+```
+
+It waits up to five minutes for `~/Downloads/tengri-browser-connection.json` (an optional positional argument selects
+another download path). It accepts only a fresh regular file owned by the local user and the exact production
+gateway and isolated browser origins. It exchanges the native launch ticket using POST bodies without following
+redirects, deletes the consumed connection file, and writes a mode-0600 cookie in a temporary mode-0700 directory.
+The OpenAI client injects that cookie only on its private MCP backend hop through `mcp.extra_headers` and
+`mcp.discovery_extra_headers`; it is absent from the OpenAI control-plane headers, command arguments and profile.
+The helper selects an explicit profile and a small child environment, excluding inherited MCP targets and unsafe
+HTTP payload logging. It removes the temporary files when the client stops or the preview lease expires.
+
+Connect ChatGPT's private MCP plugin to that tunnel with no additional backend OAuth flow: the tunnel runtime owns
+the already-approved, bounded Tengri browser capability. Keep the helper running, select the actual Pro model and
+Pro reasoning mode in a normal Chat conversation, and use `computer`. The same browser remains visible in Tengri.
+Have the agent call `release` when its workflow finishes. Human takeover and revocation always remain available.
+
 ## Acceptance boundary
 
 `test-vscode-browser.sh` starts the real Nanoagent, Rust preview gateway, and desktop. On Linux, the Chromium suite
 uses the native remote display and the production stdio MCP socket. Its test website denies framing and reports
 JavaScript form input. The suite verifies manual navigation, text clipboard, agent screenshots and mouse input, native tabs and history, cookies,
-local storage, workspace downloads, takeover, grant revocation, and reopening the same browser.
+local storage, workspace downloads, takeover, grant revocation, and reopening the same browser. It also downloads the
+ChatGPT connection through the real desktop UI, exchanges its separate grant through the gateway, and drives the
+same Chromium through HTTP MCP, including Unicode form submission, competing-driver rejection, takeover, handback,
+release and closing-window revocation. The helper's Python tests verify exact-origin validation, native ticket
+exchange, redirect rejection, file permissions and backend-only cookie references.
 The disposable gateway shortens preview leases to one minute. Both suites cross the original cookie expiry:
 Code retains an unsaved buffer in the same document, and Chrome retains a filled form and human takeover.
 Production has no configurable short-lease or authorization bypass.
@@ -106,6 +156,9 @@ Production has no configurable short-lease or authorization bypass.
 The guest image independently validates its extracted graphics runtime and 1.5 GiB filesystem. The requested
 production rollout still requires the selected Kargo Freight, exact deployed images, an enrolled guest with the browser image,
 and actual browser and agent interaction on `proompteng.ai`.
+That fixture does not establish ChatGPT Pro compatibility. Live acceptance must separately verify the selected
+model/reasoning, completed response's model/reasoning, tool screenshot, navigation, click, type and resulting state
+in the Tengri viewer, plus takeover and handback through the connected private tunnel.
 
 Prepared slots retain their boot image and processes across sleep and resume. An image change follows the fenced
 recovery procedure in [the operations guide](operations.md); sleep and resume do not upgrade an existing slot.
