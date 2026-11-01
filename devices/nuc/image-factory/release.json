@@ -5,5 +5,5 @@
   "kataSource": "ghcr.io/proompteng/talos-kata-runtimes@sha256:95fda2db699ae61dd1ff2fe86c9e4aea83eb2a980047cab919a8194b2a277151",
   "kataCatalogEntry": "ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.14.0-r6@sha256:95fda2db699ae61dd1ff2fe86c9e4aea83eb2a980047cab919a8194b2a277151",
   "catalogRepository": "ghcr.io/proompteng/talos-extensions",
-  "catalogDigest": "sha256:03b58c83cb4e9066ee28cfb0800eb33cb0c8f5217eb21ec3ebba6b04a9df8e01"
+  "catalogDigest": "sha256:81911bfda439ce07510ffb762f333e61a6c775154c11d6b25a78f73981eb9b77"
 }
