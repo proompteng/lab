@@ -6,8 +6,7 @@ import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { makeJevEntryQuery } from './observation-query'
 import { defaultJevProtocolDocument } from './protocol'
-import { jevSignalFor } from './trading-signals'
-import { jevRequestForSnapshot } from './native.test-support'
+import { jevSignalFor, jevBenchmarkSignalFor, commonMomentumPrices } from './trading-signals'
 
 test('equity observations start with the first completed minute after the broker open', () => {
   const { query } = streamingFixture()
@@ -54,12 +53,13 @@ test('candidate and benchmark use the same actual reference minute despite diffe
     },
     query,
   )
-  const request = Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL'))
-  const state = JSON.parse(request.body).state
-  expect(state.candidate.priceWindow.referenceAt).toBe('2026-09-04T14:07:00.000Z')
-  expect(state.benchmark.priceWindow.referenceAt).toBe('2026-09-04T14:03:00.000Z')
-  expect(state.relativeSignals.referenceAt).toBe('2026-09-04T14:07:00.000Z')
-  expect(state.relativeSignals.lookbackMinutes).toBeCloseTo(23 + 2 / 60)
+  const candidate = Result.getOrThrow(jevSignalFor(snapshot, 'AAPL'))
+  const benchmark = Result.getOrThrow(jevBenchmarkSignalFor(snapshot, 'SPY'))
+  const common = Result.getOrThrow(commonMomentumPrices(snapshot, 'AAPL', 'SPY', candidate, benchmark))
+  expect(candidate.state.priceWindow.referenceAt).toBe('2026-09-04T14:07:00.000Z')
+  expect(benchmark.state.priceWindow.referenceAt).toBe('2026-09-04T14:03:00.000Z')
+  expect(common.referenceAt).toBe('2026-09-04T14:07:00.000Z')
+  expect((Date.parse(common.comparisonAt) - Date.parse(common.referenceAt)) / 60_000).toBeCloseTo(23 + 2 / 60)
 })
 
 test('late real historical backfill is usable without altering its arrival timestamp', () => {

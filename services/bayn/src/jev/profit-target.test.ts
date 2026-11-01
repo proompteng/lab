@@ -22,10 +22,10 @@ const held = (symbol: string, feeMicros = '0') => {
     exitPolicy: {
       ...original.exitPolicy,
       plans: Object.fromEntries(
-        Object.values(original.exitPolicy.plans).map((plan) => [
-          symbol,
-          { ...plan, levels: { ...plan.levels, symbol } },
-        ]),
+        Object.values(original.exitPolicy.plans).map((plan) => {
+          if (plan.schemaVersion !== 'bayn.jev-funded-exit-plan.v4') throw new Error('Expected chart fixture')
+          return [symbol, { ...plan, levels: { ...plan.levels, symbol } }]
+        }),
       ),
     },
     entryFills: original.entryFills.map((fill) => ({ ...fill, symbol, feeMicros })),
@@ -61,9 +61,9 @@ test('reported cash fees cannot move the pre-entry target', () => {
 
 test('the entry target seals the exit policy and rejects a rehashed policy substitution', () => {
   const entry = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
-  expect(entry.exitPolicy.schemaVersion).toBe('bayn.position-exit-policy.v4')
+  expect(entry.exitPolicy.schemaVersion).toBe('bayn.position-exit-policy.v5')
   expect(entry.exitPolicy.maximumPriceCheckIntervalMs).toBe(5000)
-  expect(entry.exitPolicy.plans['AAPL']?.levels.stopPriceMicros).toBeDefined()
+  expect(Object.values(entry.exitPolicy.plans)[0]?.levels.stopPriceMicros).toBeDefined()
   expect(
     Result.isFailure(
       Schema.decodeUnknownResult(JevEntryTargetSchema)({

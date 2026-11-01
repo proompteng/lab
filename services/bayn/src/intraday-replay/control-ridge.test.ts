@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
@@ -15,7 +16,7 @@ import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { config } from '../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis as iso } from '../time'
 import {
@@ -74,7 +75,7 @@ const fixture = (
   } = {},
 ) =>
   Effect.gen(function* () {
-    const risk = yield* loadExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
+    const risk = yield* Effect.fromResult(makeExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe))
     const pollIntervalMs = options.pollIntervalMs ?? 30_000
     const firstDecisionMs = sixBarOpenMs + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs
     const baseInputs: SixBarFixtureInput[] = sixBarFixtureInputs()
@@ -554,17 +555,27 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v5',
+            schemaVersion: 'bayn.backtest.v10',
+            policy: 'JEV' as const,
+            latencyStress: null,
             jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
             source: data.source,
             openingCashMicros: '100000000000',
             fractionalTrading: false,
             inference: {
-              mode: 'measured-provider',
+              mode: 'measured-providers',
               maximumCalls: 1000,
-              model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v21',
-              costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+              models: { jev: jevModel, chart: 'gpt-6-luna' },
+              inputDefinition: 'bayn.jev-entry-state.v23',
+              costs: replayRateCardFixture({
+                jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+                chart: {
+                  inputMicrosPerMillionTokens: '100000',
+                  outputMicrosPerMillionTokens: '0',
+                  cachedInputMicrosPerMillionTokens: '10000',
+                  cacheWriteInputMicrosPerMillionTokens: '125000',
+                },
+              }),
             },
             allocatedDataCostPerSessionMicros: '1000000',
             replicate: 'SYNTHETIC ridge pair',

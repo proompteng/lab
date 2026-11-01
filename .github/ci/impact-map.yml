@@ -81,6 +81,7 @@ targets:
       - argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml
       - argocd/applications/proompteng/network-policy.yaml
+      - argocd/applications/relay/network-policy.yaml
       - argocd/applications/restate/networkpolicy.yaml
       - argocd/applications/restate-example/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
@@ -170,6 +171,7 @@ targets:
       - argocd/**/*.river
       - schemas/custom/**
       - scripts/kubeconform.sh
+      - scripts/test-bayn-secret-file-mode.sh
       - kubernetes/**/*.yaml
       - kubernetes/**/*.yml
 

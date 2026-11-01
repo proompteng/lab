@@ -3,7 +3,20 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { ConnectionError, SqlError } from 'effect/sql/SqlError'
 import { CreateAccountStatus, CreateTransferStatus } from 'tigerbeetle-node'
 
-import { buildInferenceExpensePlan, makeInferenceExpenseQuote, type InferenceExpenseQuote } from './inference-expense'
+import {
+  buildInferenceExpensePlan,
+  makeInferenceExpenseQuote,
+  makeInferenceExpenseQuotes,
+  inferenceExpenseRateCard,
+  type InferenceExpenseQuote,
+} from './inference-expense'
+import {
+  entryEvaluationRequestFixture,
+  entryCompletionFixture,
+  makeConditionalEvaluationReceipt,
+} from './jev/conditional-entry.test-support'
+import { JevOutcome } from './jev/evidence'
+import { makeJevResolution, JevResolutionStatus } from './jev/resolution'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { runInferenceExpensePass } from './inference-expense-runtime'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
@@ -145,6 +158,62 @@ const memoryLedger = () => {
 }
 
 describe('inference expense TigerBeetle posting and reconciliation', () => {
+  test('reconciles both provider stages as separate expenses for the same entry request', async () => {
+    const request = entryEvaluationRequestFixture()
+    const completion = entryCompletionFixture(request)
+    const receipt = Result.getOrThrow(
+      makeConditionalEvaluationReceipt(request, {
+        startedAt: request.observedAt,
+        completedAt: request.observedAt,
+        outcome: { status: JevOutcome.Completed, completion },
+      }),
+    )
+    const resolution = Result.getOrThrow(
+      makeJevResolution(request, receipt, {
+        schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+        requestId: request.requestId,
+        status: JevResolutionStatus.Recorded,
+        receiptHash: receipt.receiptHash,
+      }),
+    )
+    const quotes = Result.getOrThrow(
+      makeInferenceExpenseQuotes(
+        {
+          accountId: 'stage-expense-ledger-test',
+          sessionDate: '2026-10-25',
+          asOf: request.expiresAt,
+          requestId: request.requestId,
+          cycleId: request.cycleId,
+          authorityGenerationHash: request.authorityGenerationHash,
+          request,
+          receipt,
+          resolution,
+          handoff: completion.handoff,
+        },
+        inferenceExpenseRateCard,
+      ),
+    )
+    const first = quotes[0]
+    if (first === undefined) throw new Error('Missing staged expense')
+    const records = quotes.map((quote) => ({ quote, verifiedAt: request.expiresAt }))
+    const captured = {
+      evidence: {
+        accountBindingHash: first.accountBindingHash,
+        sessionDate: first.sessionDate,
+        asOf: request.expiresAt,
+      },
+      quotes: records,
+    }
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(quotes))))
+    const report = await Effect.runPromise(readInferenceExpenseLedger(ledger.client, captured, Effect.succeed(records)))
+    expect(report.quotedRequestCount).toBe(2)
+    expect(report.claimedRequestCount).toBe(1)
+    expect(report.gapRequestCount).toBe(0)
+    expect(report.transferCount).toBe(2)
+    expect(report.knownEstimatedCostPicoUsd).toBe('18400000')
+    expect(report.exactLedgerPrefix).toBe(true)
+  })
   test('reports a captured quote set while later valid requests extend the session ledger', async () => {
     const ledger = memoryLedger()
     const later = Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture({ key: 'b' }), expenseRateFixture))

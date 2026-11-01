@@ -11,6 +11,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { memo, useRef, useState, type ReactNode } from 'react'
+import { Button, Card, CardContent } from '@proompteng/design/ui'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -20,6 +21,7 @@ import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
 import type { CodexApprovalDecision } from './codex-events'
 import { CodexCopyButton } from './codex-copy-button'
+import { codexAsyncQuestionReplyDisplayText } from './codex-async-questions'
 import { codexActivityTitle } from './codex-activity'
 import {
   codexImageUrl,
@@ -73,90 +75,111 @@ export const CodexEventCard = memo(function CodexEventCard({
             ))}
           </div>
         ) : null}
-        {body ? <Markdown text={body} /> : null}
+        {body ? <Markdown text={codexAsyncQuestionReplyDisplayText(body)} /> : null}
       </article>
     )
   }
 
   if (kind === 'approval' && approvalId && onResolveApproval) {
     return (
-      <article aria-label="Codex approval request" className="rounded-xl bg-zinc-900/40 px-3 py-2">
-        <div className="flex items-start gap-2">
-          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber-400/65" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <h3 className="text-label-14 text-zinc-200">{approvalTitle || 'Approval needed'}</h3>
-            {approvalTitle ? (
-              <>
-                <p className="mt-0.5 text-label-12 text-zinc-400">The agent wants to use your Chrome browser.</p>
-                <details className="group mt-1 text-label-12 text-zinc-400">
-                  <summary className="inline-flex min-h-6 cursor-pointer list-none items-center gap-1 rounded outline-none marker:content-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400">
-                    <ChevronRight className="size-3 group-open:rotate-90" aria-hidden="true" />
-                    Request details
-                  </summary>
-                  <pre className="mt-1 whitespace-pre-wrap break-words text-copy-13-mono">{text}</pre>
-                </details>
-              </>
-            ) : (
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-copy-14 text-zinc-300">
-                {text || 'Codex is requesting approval.'}
-              </p>
-            )}
-            <div className="mt-2 flex flex-wrap items-center gap-1">
-              {approvalDecisions.includes('approve-once') ? (
-                <ApprovalButton
-                  disabled={resolvingApproval}
-                  label="Approve once"
-                  onClick={() => onResolveApproval('approve-once')}
-                  primary
-                />
-              ) : null}
-              {approvalDecisions.includes('approve-session') ? (
-                <ApprovalButton
-                  disabled={resolvingApproval}
-                  label="Approve for session"
-                  onClick={() => onResolveApproval('approve-session')}
-                  primary={!approvalDecisions.includes('approve-once')}
-                />
-              ) : null}
-              {approvalDecisions.includes('approve-exec-policy-amendment') ? (
-                <ApprovalButton
-                  disabled={resolvingApproval}
-                  label="Apply command policy"
-                  onClick={() => onResolveApproval('approve-exec-policy-amendment')}
-                  primary={
-                    !approvalDecisions.includes('approve-once') && !approvalDecisions.includes('approve-session')
-                  }
-                />
-              ) : null}
-              {approvalDecisions.includes('approve-network-policy-amendment') ? (
-                <ApprovalButton
-                  disabled={resolvingApproval}
-                  label="Apply network policy"
-                  onClick={() => onResolveApproval('approve-network-policy-amendment')}
-                  primary={
-                    !approvalDecisions.includes('approve-once') &&
-                    !approvalDecisions.includes('approve-session') &&
-                    !approvalDecisions.includes('approve-exec-policy-amendment')
-                  }
-                />
-              ) : null}
-              {approvalDecisions.includes('deny') ? (
-                <ApprovalButton disabled={resolvingApproval} label="Deny" onClick={() => onResolveApproval('deny')} />
-              ) : null}
-              {approvalDecisions.length === 0 ? (
-                <span className="px-1 text-label-12 text-zinc-400" role="status">
-                  No supported response is available.
-                </span>
-              ) : null}
-              {resolvingApproval ? (
-                <span className="inline-flex items-center gap-1 px-1 text-label-12 text-zinc-400" role="status">
-                  <LoaderCircle className="size-3 animate-spin" aria-hidden="true" /> Resolving…
-                </span>
-              ) : null}
+      <Card
+        role="article"
+        aria-label="Codex approval request"
+        size="sm"
+        className="w-full max-w-xl bg-zinc-900/40 ring-white/10"
+      >
+        <CardContent>
+          <div className="flex items-start gap-2">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber-400/65" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-label-14 text-zinc-200">{approvalTitle || 'Approval needed'}</h3>
+              {approvalTitle ? (
+                <>
+                  <p className="mt-0.5 text-label-12 text-zinc-400">The agent wants to use your Chrome browser.</p>
+                  <details className="group mt-1 text-label-12 text-zinc-400">
+                    <summary className="inline-flex min-h-6 cursor-pointer list-none items-center gap-1 rounded outline-none marker:content-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400">
+                      <ChevronRight className="size-3 group-open:rotate-90" aria-hidden="true" />
+                      Request details
+                    </summary>
+                    <pre className="mt-1 whitespace-pre-wrap break-words text-copy-13-mono">{text}</pre>
+                  </details>
+                </>
+              ) : (
+                <p className="mt-0.5 whitespace-pre-wrap break-words text-copy-14 text-zinc-300">
+                  {text || 'Codex is requesting approval.'}
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                {approvalDecisions.includes('approve-once') ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    disabled={resolvingApproval}
+                    onClick={() => onResolveApproval('approve-once')}
+                  >
+                    Approve once
+                  </Button>
+                ) : null}
+                {approvalDecisions.includes('approve-session') ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={resolvingApproval}
+                    onClick={() => onResolveApproval('approve-session')}
+                  >
+                    Approve for session
+                  </Button>
+                ) : null}
+                {approvalDecisions.includes('approve-exec-policy-amendment') ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={resolvingApproval}
+                    onClick={() => onResolveApproval('approve-exec-policy-amendment')}
+                  >
+                    Apply command policy
+                  </Button>
+                ) : null}
+                {approvalDecisions.includes('approve-network-policy-amendment') ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={resolvingApproval}
+                    onClick={() => onResolveApproval('approve-network-policy-amendment')}
+                  >
+                    Apply network policy
+                  </Button>
+                ) : null}
+                {approvalDecisions.includes('deny') ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={resolvingApproval}
+                    onClick={() => onResolveApproval('deny')}
+                  >
+                    Deny
+                  </Button>
+                ) : null}
+                {approvalDecisions.length === 0 ? (
+                  <span className="px-1 text-label-12 text-zinc-400" role="status">
+                    No supported response is available.
+                  </span>
+                ) : null}
+                {resolvingApproval ? (
+                  <span className="inline-flex items-center gap-1 px-1 text-label-12 text-zinc-400" role="status">
+                    <LoaderCircle className="size-3 animate-spin" aria-hidden="true" /> Resolving…
+                  </span>
+                ) : null}
+              </div>
             </div>
           </div>
-        </div>
-      </article>
+        </CardContent>
+      </Card>
     )
   }
 
@@ -256,34 +279,6 @@ export const CodexEventCard = memo(function CodexEventCard({
     </article>
   )
 })
-
-function ApprovalButton({
-  disabled,
-  label,
-  onClick,
-  primary = false,
-}: {
-  disabled: boolean
-  label: string
-  onClick: () => void
-  primary?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        'inline-flex min-h-6 items-center rounded-md px-1.5 text-xs leading-4 font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
-        primary
-          ? 'bg-blue-600 text-white hover:bg-blue-500'
-          : 'border border-white/[0.08] text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200',
-      )}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  )
-}
 
 function MessageImage({ src, index }: { src: string; index: number }) {
   const [failed, setFailed] = useState(false)

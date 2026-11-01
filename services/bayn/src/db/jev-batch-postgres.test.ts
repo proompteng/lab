@@ -1,3 +1,4 @@
+import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { expect, spyOn, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Result } from 'effect'
@@ -7,7 +8,7 @@ import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevBatchPlanVersion, JevCandidatePlanStatus, usableJevBatchInferences } from '../jev/batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus, usableEntryBatchInferences } from '../jev/batch'
 import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -35,7 +36,14 @@ test.each([
         (candidate) => 'requestId' in candidate && candidate.requestId === request.requestId,
       )
       if (candidate === undefined || !('receipt' in candidate)) throw new Error('Missing committed fixture evidence')
-      return { request_id: request.requestId, request, receipt: candidate.receipt, resolution: candidate.resolution }
+      return {
+        request_id: request.requestId,
+        request,
+        receipt: candidate.receipt,
+        resolution: candidate.resolution,
+        handoff:
+          candidate.receipt?.outcome.status === 'COMPLETED' ? candidate.receipt.outcome.completion.handoff : null,
+      }
     })
     let persisted: unknown = null
     await Effect.runPromise(
@@ -97,18 +105,35 @@ test.each([
             if (finalized.success.result === null) throw new Error('Committed receipts must produce a complete result')
             expect(
               Result.isSuccess(
-                usableJevBatchInferences(plan, finalized.success.result, yield* Clock.currentTimeMillis),
+                usableEntryBatchInferences(
+                  plan,
+                  finalized.success.result,
+                  yield* Clock.currentTimeMillis,
+                  JevBatchPlanVersion.V8,
+                ),
               ),
             ).toBe(scenario.usable)
           } else expect(persisted).toBeNull()
         }),
-      ).pipe(Effect.provide(TestClock.layer()), Effect.provide(Reactivity.layer)),
+      ).pipe(
+        Effect.provide(entryInferenceFixtureLayer),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Reactivity.layer),
+      ),
     )
   },
 )
 
 test.each([
-  { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'stored', mutate: false },
+  {
+    cycleMatches: true,
+    portfolioMatches: true,
+    admitted: true,
+    checks: 2,
+    source: 'stored',
+    mutate: false,
+    readDelayMs: 250,
+  },
   { cycleMatches: false, portfolioMatches: true, admitted: false, checks: 1, source: 'stored', mutate: false },
   { cycleMatches: true, portfolioMatches: false, admitted: false, checks: 2, source: 'stored', mutate: false },
   { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'supplied', mutate: true },
@@ -122,7 +147,7 @@ test.each([
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const reproduce = spyOn(observations, 'reproduceJevCandidateObservation')
@@ -172,6 +197,21 @@ test.each([
                 return Effect.succeed([{ batch_id: plan.batchId }])
               }
               if (query.includes('INSERT INTO jev_evaluation_requests')) return Effect.succeed([])
+              if (query.includes('SELECT payload FROM jev_evaluation_requests')) {
+                const candidate = plan.candidates.find(
+                  (candidate) =>
+                    candidate.status === JevCandidatePlanStatus.Requested &&
+                    candidate.request.requestId === parameters[0],
+                )
+                if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Unknown admission request')
+                return TestClock.adjust('readDelayMs' in scenario ? scenario.readDelayMs : 0).pipe(
+                  Effect.as([{ payload: candidate.request }]),
+                )
+              }
+              if (query.includes('SELECT payload FROM jev_staged_'))
+                return TestClock.adjust('readDelayMs' in scenario ? scenario.readDelayMs : 0).pipe(Effect.as([]))
+              if (query.includes('INSERT INTO jev_staged_dispatch_claims'))
+                return Effect.succeed([{ claim_hash: parameters[2] }])
               throw new Error(`Unexpected admission query: ${query}`)
             },
             get(target, property, receiver) {
@@ -184,12 +224,19 @@ test.each([
           const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
           const saved = yield* store.begin(plan, suppliedObservation).pipe(Effect.result)
           expect(Result.isSuccess(saved)).toBe(scenario.admitted)
-          if (Result.isSuccess(saved))
+          if (Result.isSuccess(saved)) {
             expect(saved.success.dispatches).toHaveLength(
               plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
             )
+            // Newly inserted request/checkpoint rows must not consume the inference window in reloads.
+            expect(yield* Clock.currentTimeMillis).toBeLessThan(Date.parse(plan.expiresAt))
+          }
         }),
-      ).pipe(Effect.provide(TestClock.layer()), Effect.provide(Reactivity.layer)),
+      ).pipe(
+        Effect.provide(entryInferenceFixtureLayer),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Reactivity.layer),
+      ),
     )
     expect(reproduce).toHaveBeenCalledTimes(1)
     expect(admitted).toBe(scenario.admitted)
@@ -220,7 +267,7 @@ test.each([
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const statements: string[] = []
@@ -272,7 +319,7 @@ test.each([
     ).pipe(
       Effect.provideService(JevEvaluationStore, {
         read: () => Effect.die('Admission must not read a candidate request'),
-        record: () => Effect.die('Admission must not record inference'),
+        recordAll: () => Effect.die('Admission must not record inference'),
         abandon: () => Effect.die('Admission must not abandon inference'),
       }),
       Effect.provideService(JevClient, {
@@ -281,6 +328,7 @@ test.each([
             providerCalls += 1
           }).pipe(Effect.andThen(Effect.die('Admission must not call the provider'))),
       }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
       Effect.provide(Reactivity.layer),
     ),
@@ -297,7 +345,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const symbols = plan.candidates.flatMap((candidate) =>
@@ -344,13 +392,17 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
           Effect.provideService(JevEvaluationStore, {
             read: () => Effect.die('Finalization must use its bulk evidence read'),
 
-            record: () => Effect.die('Finalization must not record inference'),
+            recordAll: () => Effect.die('Finalization must not record inference'),
             abandon: () => Effect.die('Finalization must not call the independent abandonment writer'),
           }),
         )
         expect((yield* store.finish(plan.batchId)).result).toBeNull()
       }),
-    ).pipe(Effect.provide(TestClock.layer()), Effect.provide(Reactivity.layer)),
+    ).pipe(
+      Effect.provide(entryInferenceFixtureLayer),
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Reactivity.layer),
+    ),
   )
   const lookup = statements.find((statement) => statement.query.includes('AS matching_symbols'))
   if (lookup === undefined) throw new Error('Batch finalization did not query matching observations')

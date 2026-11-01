@@ -1,11 +1,13 @@
 import { Data, Result, Schema } from 'effect'
 import type { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 
-import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
+import { canonicalJsonWithHashV1Result } from '../hash'
 import {
   NonNegativeIntegerSchema,
+  Sha256Schema,
   StrictNonEmptyStringSchema,
   UnitIntervalSchema,
+  UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
 
@@ -84,6 +86,14 @@ export const JevResponseSchema = Schema.Struct({
 
 export type JevResponse = typeof JevResponseSchema.Type
 
+export const JevInferenceSchema = Schema.Struct({
+  requestHash: Sha256Schema,
+  responseHash: Sha256Schema,
+  startedAt: UtcInstantSchema,
+  completedAt: UtcInstantSchema,
+  response: JevResponseSchema,
+})
+
 export class JevContractError extends Data.TaggedError('JevContractError')<{
   readonly message: string
   readonly question?: string
@@ -99,9 +109,9 @@ export const prepareJevRequest = (input: unknown) =>
   )(input).pipe(
     Result.mapError((cause) => new JevContractError({ message: 'Jev request violates its contract', cause })),
     Result.flatMap((request) =>
-      Result.all({ requestHash: canonicalHashV1Result(request), body: canonicalJsonV1Result(request) }).pipe(
+      canonicalJsonWithHashV1Result(request).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Jev request cannot be serialized', cause })),
-        Result.flatMap(({ requestHash, body }) =>
+        Result.flatMap(({ hash: requestHash, body }) =>
           new TextEncoder().encode(body).byteLength > 128_000
             ? Result.fail(new JevContractError({ message: 'Jev request exceeds the 128000-byte transport budget' }))
             : Result.succeed({ request, requestHash, body }),

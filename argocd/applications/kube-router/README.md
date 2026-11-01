@@ -14,7 +14,7 @@ The image is pinned to the multi-architecture index
 
 The application is manual. Sync wave `-3` retains allow-all policies in agents, argocd, bilig, kafka, media,
 pgadmin, synthesis and torghut. Bayn retains an inert policy whose selector must match no Pods.
-Hermes, optional Tengri, and the six policy sets listed in the rollout runbook keep their restrictive
+Hermes, optional Tengri and Relay, and the six policy sets listed in the rollout runbook keep their restrictive
 policies enforced. Those namespaces receive no allow-all policy during activation.
 
 The bounded wave `-2` hook validates the complete live namespace set, each retained safety policy and the

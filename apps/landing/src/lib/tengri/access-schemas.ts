@@ -6,24 +6,9 @@ export const workspaceUidSchema = z
 export const githubLoginSchema = z
   .string()
   .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/, 'Enter a GitHub username')
-export const diagnosticActions = [
-  'metadata',
-  'files',
-  'terminal',
-  'codex',
-  'browser',
-  'preview',
-  'kube-status',
-  'kube-logs',
-  'kube-events',
-  'connector',
-] as const
+export const diagnosticActions = ['metadata', 'files', 'terminal', 'codex', 'browser', 'preview'] as const
 export const diagnosticActionSchema = z.enum(diagnosticActions)
-export const accessResourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('workspace'), id: workspaceUidSchema }).strict(),
-  z.object({ kind: z.literal('namespace'), id: z.string().regex(/^galactic\/[0-9a-f-]{36}$/) }).strict(),
-  z.object({ kind: z.literal('connector'), id: workspaceUidSchema }).strict(),
-])
+export const accessResourceSchema = z.object({ kind: z.literal('workspace'), id: workspaceUidSchema }).strict()
 const utf8 = new TextEncoder()
 export const MAX_ACCESS_COMMAND_BYTES = 64 * 1024
 const credentialSegments = new Set([
@@ -84,18 +69,22 @@ const common = {
     .max(500)
     .regex(/^[^\p{Cc}]+$/u, 'Use a single line reason without control characters'),
 }
+export const accessRecipientSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('github-login'), login: githubLoginSchema }),
+  z.strictObject({ kind: z.literal('github-id'), githubId: z.string().regex(/^[1-9][0-9]{0,19}$/) }),
+])
 const collaborator = {
   ...common,
   action: z.literal('collaborator'),
   workspaceUid: workspaceUidSchema,
-  login: githubLoginSchema,
+  recipient: accessRecipientSchema,
 }
 const commandSchema = z.discriminatedUnion('action', [
   z
     .object({
       ...common,
       action: z.literal('membership'),
-      login: githubLoginSchema,
+      recipient: accessRecipientSchema,
       role: z.enum(['member', 'administrator', 'auditor', 'operator']),
       enabled: z.boolean(),
     })
@@ -115,26 +104,21 @@ const commandSchema = z.discriminatedUnion('action', [
     ]),
   ]),
   z
-    .object({ ...common, action: z.literal('transfer'), workspaceUid: workspaceUidSchema, login: githubLoginSchema })
-    .strict(),
-  z
     .object({
       ...common,
-      action: z.literal('quota'),
-      login: githubLoginSchema,
-      total: z.number().int().min(0).max(6),
-      active: z.number().int().min(0).max(6),
-      retainedGiB: z.number().int().min(0).max(192),
+      action: z.literal('transfer'),
+      workspaceUid: workspaceUidSchema,
+      recipient: accessRecipientSchema,
     })
     .strict(),
   z
     .object({
       ...common,
-      action: z.literal('target'),
-      login: githubLoginSchema,
-      resource: accessResourceSchema,
-      permission: z.enum(['kube-status', 'kube-logs', 'kube-events', 'connector']),
-      enabled: z.boolean(),
+      action: z.literal('quota'),
+      recipient: accessRecipientSchema,
+      total: z.number().int().min(0).max(6),
+      active: z.number().int().min(0).max(6),
+      retainedGiB: z.number().int().min(0).max(192),
     })
     .strict(),
   z
@@ -159,7 +143,7 @@ const commandSchema = z.discriminatedUnion('action', [
       ...common,
       action: z.literal('emergency'),
       workspaceUid: workspaceUidSchema,
-      login: githubLoginSchema,
+      recipient: accessRecipientSchema,
       incidentId: z
         .string()
         .min(3)

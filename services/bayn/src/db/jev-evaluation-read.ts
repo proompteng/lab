@@ -3,7 +3,13 @@ import { Effect, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, type JevEvaluationRequest } from '../jev/evidence'
+import {
+  decodeJevEvaluationReceipt,
+  decodeJevEvaluationRequest,
+  JevOutcome,
+  type JevEvaluationRequest,
+} from '../jev/evidence'
+import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { decodeJevResolution, type JevEvaluationEvidence } from '../jev/resolution'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { withObservedStage } from '../telemetry'
@@ -12,6 +18,7 @@ const StoredRow = Schema.Struct({
   request_id: Sha256Schema,
   request: Schema.Unknown,
   receipt: Schema.NullOr(Schema.Unknown),
+  handoff: Schema.NullOr(Schema.Unknown),
   resolution: Schema.NullOr(Schema.Unknown),
 })
 const ObservationRow = Schema.Struct({
@@ -50,34 +57,45 @@ export const requireJevCandidateObservations = (sql: PgClient.PgClient, requests
           AND observation.observed_at = ${request.observedAt}::timestamptz`,
       ),
     )
-    // Bind the decoded request identities rather than rereading mutable query
-    // inputs. Group by the observation's primary key so shared source bytes cross
-    // the database boundary once, with their exact matching requests retained.
+    // Parse shared source metadata once instead of detoasting its JSON for every candidate.
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(ObservationRow),
       strictParseOptions,
     )(
       yield* sql`
-        SELECT observation.content_hash, observation.payload,
-          array_agg(requested.request_id ORDER BY requested.request_id COLLATE "C") AS matching_request_ids
-        FROM jsonb_to_recordset(${sql.json(requested)}::jsonb) AS requested(
-          request_id text, cycle_id text, observed_at text,
-          authority_generation_hash text, snapshot_id text, symbol text
-        )
-        JOIN intraday_candidate_observations AS observation
-          ON observation.cycle_id = requested.cycle_id
-          AND observation.observed_at = requested.observed_at::timestamptz
-          AND observation.payload->>'authorityGenerationHash' = requested.authority_generation_hash
-          AND observation.payload->>'observedAt' = requested.observed_at
-          AND observation.payload->'manifest'->>'observedAt' = requested.observed_at
-          AND observation.payload->'manifest'->>'snapshotId' = requested.snapshot_id
-          AND observation.payload->'manifest'->'candidateSymbols' ? requested.symbol
-          AND NOT EXISTS (
-            SELECT 1 FROM jsonb_array_elements(observation.payload->'manifest'->'candidateExclusions') AS excluded
-            WHERE excluded->>'symbol' = requested.symbol
+        WITH scoped_observations AS MATERIALIZED (
+          SELECT observation.content_hash, observation.cycle_id, observation.observed_at,
+            observation.payload->>'authorityGenerationHash' AS authority_generation_hash,
+            observation.payload->>'observedAt' AS payload_observed_at,
+            observation.payload->'manifest'->>'observedAt' AS manifest_observed_at,
+            observation.payload->'manifest'->>'snapshotId' AS snapshot_id,
+            observation.payload->'manifest'->'candidateSymbols' AS candidate_symbols,
+            observation.payload->'manifest'->'candidateExclusions' AS candidate_exclusions
+          FROM intraday_candidate_observations AS observation
+          WHERE ${scope}
+        ), matched AS (
+          SELECT observation.content_hash,
+            array_agg(requested.request_id ORDER BY requested.request_id COLLATE "C") AS matching_request_ids
+          FROM jsonb_to_recordset(${sql.json(requested)}::jsonb) AS requested(
+            request_id text, cycle_id text, observed_at text,
+            authority_generation_hash text, snapshot_id text, symbol text
           )
-        WHERE ${scope}
-        GROUP BY observation.content_hash
+          JOIN scoped_observations AS observation
+            ON observation.cycle_id = requested.cycle_id
+            AND observation.observed_at = requested.observed_at::timestamptz
+            AND observation.authority_generation_hash = requested.authority_generation_hash
+            AND observation.payload_observed_at = requested.observed_at
+            AND observation.manifest_observed_at = requested.observed_at
+            AND observation.snapshot_id = requested.snapshot_id
+            AND observation.candidate_symbols ? requested.symbol
+            AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(observation.candidate_exclusions) AS excluded
+              WHERE excluded->>'symbol' = requested.symbol
+            )
+          GROUP BY observation.content_hash
+        )
+        SELECT observation.content_hash, observation.payload, matched.matching_request_ids
+        FROM matched JOIN intraday_candidate_observations AS observation USING (content_hash)
         ORDER BY observation.content_hash COLLATE "C"
       `,
     )
@@ -107,16 +125,20 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
       strictParseOptions,
     )(
       yield* sql`
-        SELECT request.request_id, request.payload AS request, receipt.payload AS receipt,
+        SELECT request.request_id, request.payload AS request, receipt.payload AS receipt, handoff.payload AS handoff,
           resolution.payload AS resolution
         FROM jev_evaluation_requests AS request
         LEFT JOIN jev_evaluation_receipts AS receipt USING (request_id)
+        LEFT JOIN jev_inference_handoffs AS handoff USING (request_id)
         LEFT JOIN jev_evaluation_resolutions AS resolution USING (request_id)
         WHERE request.request_id IN ${sql.in(requestIds)}
       `,
     )
     const decoded = []
     for (const row of rows) {
+      // Reproduction is synchronous CPU work. Let other connections service their
+      // sockets between candidates without changing any database/deadline budget.
+      yield* Effect.yieldNow
       const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
       if (request.requestId !== row.request_id)
         return yield* jevEvaluationReadError('Stored Jev request identity differs')
@@ -128,8 +150,30 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
     )
     observationHashes.push(...observations.map((observation) => observation.content_hash))
     for (const { row, request } of decoded) {
+      yield* Effect.yieldNow
       const receipt =
         row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
+      if (receipt?.outcome.status === JevOutcome.Completed) {
+        // Receipt decoding already reproduces its entire handoff. Require the independent stored
+        // copy to contain exactly those verified bytes instead of reproducing the same source twice.
+        if (
+          row.handoff === null ||
+          (yield* Effect.fromResult(canonicalHashV1Result(row.handoff))) !==
+            (yield* Effect.fromResult(canonicalHashV1Result(receipt.outcome.completion.handoff)))
+        )
+          return yield* jevEvaluationReadError('Entry receipt differs from its committed provider handoff')
+      } else if (row.handoff !== null)
+        yield* Effect.fromResult(
+          decodeEntryHandoff(
+            {
+              requestId: request.requestId,
+              input: request.request,
+              observedAt: request.observedAt,
+              expiresAt: request.expiresAt,
+            },
+            row.handoff,
+          ),
+        )
       const resolution =
         row.resolution === null ? null : yield* Effect.fromResult(decodeJevResolution(request, receipt, row.resolution))
       if (receipt !== null && resolution === null)

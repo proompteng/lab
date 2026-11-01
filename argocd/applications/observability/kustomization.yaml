@@ -2,6 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 configMapGenerator:
+  - name: ci-build-performance-dashboard
+    namespace: observability
+    files:
+      - ci-build-performance.json=ci/dashboard.json
   - name: observability-grafana-sqlite-backup
     files:
       - grafana-sqlite-backup.py
@@ -16,6 +20,7 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - ci
   - loki-compatibility-service.yaml
   - loki-v3-config-check.yaml
   - tempo-compatibility-services.yaml
@@ -27,11 +32,7 @@ resources:
   - graf-mimir-rules.yaml
   - observability-alertmanager-email-externalsecret.yaml
   - observability-mimir-rule-loader.yaml
-  - graf-graf-dashboard-configmap.yaml
   - graf-bumba-dashboard-configmap.yaml
-  - symphony-fleet-dashboard-configmap.yaml
-  - codex-pipeline-dashboard-configmap.yaml
-  - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
   - bayn-cache-performance-dashboard-configmap.yaml
@@ -194,7 +195,7 @@ patches:
           argocd.argoproj.io/sync-wave: "3"
       - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
-        value: "2026-10-13-warning-email-1"
+        value: "2026-10-31-ceph-host-latency-1"
       - op: replace
         path: /spec/template/spec/volumes/4
         value:

@@ -312,12 +312,11 @@ spec:
                   value: "true"
                   effect: NoSchedule
               topologySpreadConstraints:
-                # Four 16Gi runners cannot fit Ryzen's 61.82Gi allocatable. Allow the
-                # nine shared-label slots to reach three on Ryzen and six on Turin.
+                # Available memory decides the host split. A full Ryzen must not strand
+                # runners while Turin has capacity; scratch admission still checks free space.
                 - maxSkew: 3
-                  minDomains: 2
                   topologyKey: kubernetes.io/hostname
-                  whenUnsatisfiable: DoNotSchedule
+                  whenUnsatisfiable: ScheduleAnyway
                   nodeTaintsPolicy: Honor
                   labelSelector:
                     matchLabels:
@@ -352,6 +351,7 @@ spec:
                 - name: listener
           template:
             spec:
+              automountServiceAccountToken: false
               nodeSelector:
                 kubernetes.io/arch: arm64
               dnsConfig:
@@ -364,95 +364,106 @@ spec:
                 # non-root runner user can create directories before any workflow steps run.
                 fsGroup: 1001
                 fsGroupChangePolicy: OnRootMismatch
-              initContainers:
-                - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: [ "cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/" ]
-                  resources:
-                    requests:
-                      cpu: "100m"
-                      memory: "128Mi"
-                    limits:
-                      cpu: "200m"
-                      memory: "256Mi"
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: [ "/bin/bash", "-lc" ]
-                  args:
-                    - |
-                      set -euo pipefail
-                      for attempt in $(seq 1 60); do
-                        if docker version >/dev/null 2>&1; then
-                          exec /home/runner/run.sh
-                        fi
-                        sleep 2
-                      done
-                      docker version
+                  securityContext:
+                    privileged: true
+                  command: [ "/home/runner/run.sh" ]
                   resources:
                     requests:
-                      cpu: "1"
-                      memory: "2Gi"
-                      ephemeral-storage: "8Gi"
+                      cpu: "2"
+                      memory: "4Gi"
+                      ephemeral-storage: "20Gi"
                     limits:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "32Gi"
+                      cpu: "10"
+                      memory: "18Gi"
+                      ephemeral-storage: "72Gi"
                   env:
-                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
-                      value: /home/runner/k8s/index.js
                     - name: ACTIONS_RUNNER_POD_NAME
                       valueFrom:
                         fieldRef:
                           fieldPath: metadata.name
-                    - name: DOCKER_HOST
-                      value: unix:///var/run/docker.sock
                     - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
                       value: "false"
                   volumeMounts:
                     - name: work
                       mountPath: /home/runner/_work
-                    - name: dind-sock
-                      mountPath: /var/run
-                - name: dind
-                  image: docker:dind
-                  # The private registry is a single filesystem writer on shared Ceph RBD.
-                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
-                  # fsync traffic into Kafka's pool.
-                  args:
-                    - dockerd
-                    - --host=unix:///var/run/docker.sock
-                    - --group=$(DOCKER_GROUP_GID)
-                    - --max-concurrent-uploads=1
-                  resources:
-                    requests:
-                      cpu: "1"
-                      memory: "2Gi"
-                      ephemeral-storage: "12Gi"
-                    limits:
-                      cpu: "6"
-                      memory: "10Gi"
-                      ephemeral-storage: "40Gi"
-                  env:
-                    - name: DOCKER_GROUP_GID
-                      value: "123"
-                  securityContext:
-                    privileged: true
-                  volumeMounts:
-                    - name: work
-                      mountPath: /home/runner/_work
-                    - name: dind-sock
-                      mountPath: /var/run
-                    - name: dind-externals
-                      mountPath: /home/runner/externals
               volumes:
                 - name: work
                   emptyDir:
                     sizeLimit: 20Gi
-                - name: dind-sock
-                  emptyDir: {}
-                - name: dind-externals
-                  emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set-publish
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/proompteng/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-amd64-publish
+          scaleSetLabels:
+            - arc-amd64-publish
+          minRunners: 2
+          maxRunners: 4
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              automountServiceAccountToken: false
+              nodeSelector:
+                kubernetes.io/arch: amd64
+                kubernetes.io/hostname: turin
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  securityContext:
+                    privileged: false
+                  command: [ "/home/runner/run.sh" ]
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "2Gi"
+                    limits:
+                      cpu: "4"
+                      memory: "8Gi"
+                      ephemeral-storage: "32Gi"
+                  env:
+                    - name: ARC_RUNNER_NODE_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: spec.nodeName
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 32Gi
   destination:
     server: https://kubernetes.default.svc
     namespace: arc

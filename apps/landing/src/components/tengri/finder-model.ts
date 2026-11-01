@@ -199,6 +199,7 @@ export function finderCanPreviewText(contentType: string): boolean {
   const mediaType = contentType.split(';', 1)[0]?.trim().toLowerCase() || ''
   return (
     mediaType.startsWith('text/') ||
+    /^application\/[^/]+\+(?:json|xml)$/.test(mediaType) ||
     ['application/javascript', 'application/json', 'application/toml', 'application/xml', 'application/yaml'].includes(
       mediaType,
     )

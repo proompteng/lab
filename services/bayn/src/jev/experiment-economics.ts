@@ -1,10 +1,11 @@
+import { JevResearchPolicy } from './acceptance'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { BacktestComparisonInputSchema, BacktestInputSchema, BacktestIssue } from '../intraday-replay/backtest'
 import { ReplayBrokerCheckpointSchema } from '../intraday-replay/broker-checkpoint'
-import { calculateReplayJevCosts, ReplayJevCostSummarySchema } from '../intraday-replay/jev-costs'
-import { ReplayJevCallSchema } from '../intraday-replay/jev-timing'
+import { calculateReplayInferenceCosts, ReplayInferenceCostSummarySchema } from '../intraday-replay/inference-costs'
+import { ReplayInferenceCallSchema } from '../intraday-replay/inference-timing'
 import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
 import { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import {
@@ -20,8 +21,8 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { JevContractError, JevFailure, decodeJevResponse, prepareJevRequest } from './contract'
-import { applyJevInstructions } from './instruction-evaluation'
+import { JevContractError, decodeJevResponse, prepareJevRequest } from './contract'
+import { decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { jevInstructions } from './instructions'
 import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
 import { JevInstructionVariantBuildSchema } from './instruction-variant'
@@ -29,7 +30,7 @@ import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 
 // Decode only the consumed projection after verifying the complete original document hash.
 const NativeEconomicReportSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest-report.v4'),
+  schemaVersion: Schema.Literal('bayn.backtest-report.v9'),
   comparisonInput: BacktestComparisonInputSchema,
   comparisonInputHash: Sha256Schema,
   jevInstructions: Schema.Struct({ contentHash: Sha256Schema, document: JevInstructionsSchema }),
@@ -39,9 +40,10 @@ const NativeEconomicReportSchema = Schema.Struct({
   reportHash: Sha256Schema,
   inference: Schema.Struct({
     definition: BacktestInputSchema.fields.inference,
-    calls: Schema.Array(ReplayJevCallSchema),
+    calls: Schema.Array(ReplayInferenceCallSchema),
     providerDispatchCount: NonNegativeIntegerSchema,
-    costs: ReplayJevCostSummarySchema,
+    retainedCallCount: NonNegativeIntegerSchema,
+    costs: ReplayInferenceCostSummarySchema,
   }),
   completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
   issues: Schema.Array(Schema.Enum(BacktestIssue)),
@@ -69,7 +71,7 @@ const NativeEconomicReportSchema = Schema.Struct({
       completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
       issues: Schema.Array(Schema.Enum(BacktestIssue)),
       closingNetEquityMicros: SignedMicrosSchema,
-      modelCosts: ReplayJevCostSummarySchema,
+      modelCosts: ReplayInferenceCostSummarySchema,
       allocatedDataCostMicros: Schema.NullOr(UnsignedMicrosSchema),
       netEquityChangeMicros: Schema.NullOr(SignedMicrosSchema),
     }),
@@ -130,6 +132,8 @@ export const jevBacktestOutcome = (input: {
     const { reportHash, ...material } = raw
     if (reportHash !== (yield* hash(material))) return yield* invalid('Native replay report hash differs')
     const report = yield* Schema.decodeUnknownResult(NativeEconomicReportSchema)(raw)
+    if (report.comparisonInput.policy !== JevResearchPolicy.Candidate)
+      return yield* invalid('Instruction-variant economics require the candidate policy')
     const variantBuild =
       input.variantBuild === null
         ? null
@@ -175,34 +179,33 @@ export const jevBacktestOutcome = (input: {
     )
       return yield* invalid('Native report strategy differs from the compiled execution and cost model')
     if (report.source.runId !== report.runId) return yield* invalid('Native source belongs to another replay run')
-    const costs = calculateReplayJevCosts(report.inference.calls, report.inference.definition.costs)
-    const undispatched = report.inference.calls.filter(
-      (call) => call.outcome.status === 'FAILED' && call.outcome.failure === JevFailure.NotDispatched,
-    ).length
-    const ambiguousDispatches = report.inference.calls.filter(
-      (call) => call.outcome.status === 'INTERRUPTED' || call.outcome.status === 'DEFECT',
-    ).length
-    const maximumDispatches = report.inference.calls.length - undispatched
+    const costs = calculateReplayInferenceCosts(report.inference.calls, report.inference.definition.costs)
+    if (report.inference.definition.mode !== 'measured-providers' || report.inference.retainedCallCount !== 0)
+      return yield* invalid('Instruction-variant economics require measured provider evidence for the evaluated policy')
     if (
       report.inference.providerDispatchCount > report.inference.definition.maximumCalls ||
-      report.inference.providerDispatchCount > maximumDispatches ||
-      report.inference.providerDispatchCount < maximumDispatches - ambiguousDispatches
+      report.inference.providerDispatchCount !== report.inference.calls.length
     )
       return yield* invalid('Native provider dispatch inventory differs from retained outcomes or its frozen budget')
     if ((yield* hash(costs)) !== (yield* hash(report.inference.costs)))
       return yield* invalid('Native replay inference expense does not reproduce')
     for (const call of report.inference.calls) {
-      const request = yield* prepareJevRequest(call.request)
-      const edited = yield* applyJevInstructions(request.request, instructions)
-      if (
-        request.requestHash !== call.requestHash ||
-        edited.requestHash !== request.requestHash ||
-        call.providerCompletedAt < call.providerStartedAt
-      )
-        return yield* invalid('Replay used different Jev instructions or request bytes')
+      const request =
+        call.stage !== 'JEV' ? yield* prepareDecisionsRequest(call.request) : yield* prepareJevRequest(call.request)
+      if (request.requestHash !== call.requestHash || call.providerCompletedAt < call.providerStartedAt)
+        return yield* invalid('Replay request differs from its measured provider call')
+      if (call.stage === 'JEV')
+        for (const question of Object.values(call.request.questions)) {
+          const context = Schema.decodeUnknownResult(Schema.Struct({ evidence: Schema.String }))(question.instructions)
+          if (question.type !== 'noul' || Result.isFailure(context) || context.success.evidence !== instructions.entry)
+            return yield* invalid('Replay used different proposal-specific Jev evidence instructions')
+        }
       if (call.outcome.status === 'RECEIVED') {
         const inference = call.outcome.inference
-        yield* decodeJevResponse(request.request, inference.response)
+        if (call.stage !== 'JEV' && call.outcome.status === 'RECEIVED')
+          yield* decodeDecisionsResponse(call.request, call.outcome.inference.response)
+        else if (call.stage === 'JEV' && call.outcome.status === 'RECEIVED')
+          yield* decodeJevResponse(call.request, call.outcome.inference.response)
         if (
           inference.requestHash !== request.requestHash ||
           inference.responseHash !== (yield* hash(inference.response)) ||
@@ -262,7 +265,7 @@ export const jevBacktestOutcome = (input: {
       const sessionCalls = report.inference.calls.slice(callIndex, callIndex + session.modelCosts.callCount)
       callIndex += session.modelCosts.callCount
       if (
-        (yield* hash(calculateReplayJevCosts(sessionCalls, report.inference.definition.costs))) !==
+        (yield* hash(calculateReplayInferenceCosts(sessionCalls, report.inference.definition.costs))) !==
         (yield* hash(session.modelCosts))
       )
         return yield* invalid('Native session inference inventory or expense does not reproduce')

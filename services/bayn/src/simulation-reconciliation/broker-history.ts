@@ -362,8 +362,10 @@ export const decideStableHistory = (
       filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
     if (
-      after.orders.rows.some(
-        ({ value: order }) => BigInt(order.filledQuantityAtoms) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+      after.orders.rows.some(({ value: order }) =>
+        [order, ...(order.legs ?? [])].some(
+          (member) => BigInt(member.filledQuantityAtoms) !== (filledByOrder.get(member.brokerOrderId) ?? 0n),
+        ),
       )
     ) {
       return yield* Result.fail(
@@ -376,6 +378,7 @@ export const decideStableHistory = (
 export const readStableBrokerSnapshot = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
+  waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
   read.projection?.snapshot ??
   Effect.gen(function* () {
@@ -387,12 +390,16 @@ export const readStableBrokerSnapshot = (
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
   }).pipe(
-    Effect.retry({
-      times: 2,
-      schedule: Schedule.spaced(500),
-      while: (cause) =>
-        cause instanceof ReconciliationError &&
-        cause.failure?._tag === 'Snapshot' &&
-        (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
-    }),
+    Effect.retry(
+      Schedule.recurs(2).pipe(
+        Schedule.while(({ input: cause }) =>
+          Effect.succeed(
+            cause instanceof ReconciliationError &&
+              cause.failure?._tag === 'Snapshot' &&
+              (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
+          ),
+        ),
+        Schedule.tap(() => waitForRetry(500)),
+      ),
+    ),
   )

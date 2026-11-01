@@ -1,3 +1,4 @@
+import { isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Option } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
@@ -57,7 +58,7 @@ export const advancePositionProtection = (request: {
   Effect.gen(function* () {
     const { input, cycle, document, protocol, policy, reconciliation, capability } = request
     const target = document.strategyDecision
-    if (target?.schemaVersion !== 'bayn.jev-entry-target.v6' || Object.keys(target.exitPolicy.plans).length === 0)
+    if (!isProtectedEntryTarget(target) || Object.keys(target.exitPolicy.plans).length === 0)
       return { _tag: 'Ready' } as const
     const plan = Object.values(target.exitPolicy.plans)[0]
     if (plan === undefined) return { _tag: 'Ready' } as const
@@ -329,10 +330,7 @@ export const advancePositionProtection = (request: {
         symbol: plan.levels.symbol,
         side: OrderSide.Sell,
         orderType: action.method === 'OCO' ? OrderType.Limit : OrderType.StopLimit,
-        timeInForce:
-          action.method === 'STOP_LIMIT' && plan.levels.symbol.includes('/')
-            ? TimeInForce.GoodUntilCanceled
-            : TimeInForce.Day,
+        timeInForce: protectionTimeInForce(action.method, plan.levels.symbol),
         quantityAtoms: quantityAtoms.toString(),
         limitPriceMicros: limit.toString(),
         notionalLimitMicros: ((quantityAtoms * limit) / quantityScale).toString(),
@@ -362,3 +360,6 @@ export const advancePositionProtection = (request: {
         : mutationRunnerError({ message: 'Strategy protection could not advance', cause, failure: 'operational' }),
     ),
   )
+
+const protectionTimeInForce = (method: 'OCO' | 'STOP_LIMIT', symbol: string): TimeInForce =>
+  method === 'STOP_LIMIT' && symbol.includes('/') ? TimeInForce.GoodUntilCanceled : TimeInForce.Day

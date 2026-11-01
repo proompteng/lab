@@ -35,12 +35,15 @@ const TriggerSchema = Schema.Union([
   }),
 ])
 
-export const JevExitEvidenceSchema = Schema.Struct({
+export const JevPositionEvidenceSchema = Schema.Struct({
   cycleId: Sha256Schema,
   sessionDate: IsoDateSchema,
   protocol: JevProtocolSchema,
   portfolio: JevPortfolioSchema,
   observedAt: UtcInstantSchema,
+})
+export const JevExitEvidenceSchema = Schema.Struct({
+  ...JevPositionEvidenceSchema.fields,
   trigger: TriggerSchema,
 })
 export type JevExitEvidence = typeof JevExitEvidenceSchema.Type
@@ -84,7 +87,7 @@ type PriceExitSource = {
   readonly rows: typeof JevObservationSchema.fields.rows.Type
 }
 
-const verifiedPriceExitQuote = (
+export const verifiedPositionQuote = (
   input: Pick<JevExitEvidence, 'protocol' | 'sessionDate' | 'observedAt'> & { readonly symbol: string },
   source: PriceExitSource,
 ) =>
@@ -127,10 +130,9 @@ const verifiedPriceExitQuote = (
     return { bid, quote }
   })
 
-export const decideJevExit = (input: unknown) =>
+export const validateJevPositionEvidence = (evidence: typeof JevPositionEvidenceSchema.Type) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(JevExitEvidenceSchema, strictParseOptions)(input)
-    const { portfolio, protocol, trigger } = evidence
+    const { portfolio, protocol } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
     if (!equal(portfolio.exitPolicy, jevPositionExitPolicy(protocol, portfolio.exitPolicy.plans)))
       return yield* invalid('Exit policy differs from the policy sealed into the entry decision')
@@ -156,6 +158,14 @@ export const decideJevExit = (input: unknown) =>
       now >= jevBrokerEvidenceFreshUntilMs(state)
     )
       return yield* invalid('Exit requires current position evidence for its strategy session')
+    return { portfolio, position, firstFill, entryPlan, now }
+  })
+
+export const decideJevExit = (input: unknown) =>
+  Result.gen(function* () {
+    const evidence = yield* Schema.decodeUnknownResult(JevExitEvidenceSchema, strictParseOptions)(input)
+    const { protocol, trigger } = evidence
+    const { portfolio, position, firstFill, entryPlan, now } = yield* validateJevPositionEvidence(evidence)
     let commitDeadlineAt = new Date(now + protocol.maximumQuoteAgeMs).toISOString()
     switch (trigger.reason) {
       case JevExitReason.ProtectionReleased:
@@ -168,7 +178,7 @@ export const decideJevExit = (input: unknown) =>
         break
       case JevExitReason.ProtectiveStop:
       case JevExitReason.ProfitTarget: {
-        const { bid, quote } = yield* verifiedPriceExitQuote({ ...evidence, symbol: position.symbol }, trigger)
+        const { bid, quote } = yield* verifiedPositionQuote({ ...evidence, symbol: position.symbol }, trigger)
         const crossed =
           trigger.reason === JevExitReason.ProtectiveStop
             ? jevProtectiveStopCrossed(bid, entryPlan.levels)
@@ -234,7 +244,7 @@ export const jevProfitTargetStopCrossed = (
     if (portfolio.purpose !== JevPurpose.Manage)
       return yield* invalid('A profit limit requires the entry-bound managed portfolio')
     const plan = yield* jevManagedExitPlan(portfolio)
-    const { bid, quote } = yield* verifiedPriceExitQuote(
+    const { bid, quote } = yield* verifiedPositionQuote(
       { protocol: target.evidence.protocol, sessionDate: target.sessionDate, observedAt, symbol: plan.levels.symbol },
       source,
     )

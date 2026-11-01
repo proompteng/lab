@@ -3,31 +3,25 @@
     "surface": "controller",
     "operation": "ConnectorAgent",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off connector gate precedes authentication, workspace admission and guest effects"
+    "dispatch": "Authenticated Tengri controller admission, current workspace and Codex control authority"
   },
   {
     "surface": "codex",
     "operation": "relay/identity",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "codex",
     "operation": "relay/configure",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "codex",
     "operation": "relay/remove",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
-  },
-  {
-    "surface": "ofz",
-    "operation": "CheckConnectorAgent",
-    "action": "ACTION_CONNECTOR_EXECUTE",
-    "dispatch": "Default-off connector gate precedes database, replay and authorization effects"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "controller",
@@ -178,7 +172,7 @@
   },
   {
     "surface": "controller",
-    "operation": "GetActiveCodexRun",
+    "operation": "GetActiveCodexRuns",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -545,7 +539,7 @@
   },
   {
     "surface": "bff",
-    "operation": "active-codex-run",
+    "operation": "active-codex-runs",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -1090,11 +1084,6 @@
   },
   {
     "surface": "bff_access",
-    "operation": "target",
-    "action": "ACTION_TARGETS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
     "operation": "grant",
     "action": "ACTION_GRANTS_MANAGE"
   },
@@ -1165,5 +1154,137 @@
     "operation": "OPTIONS /api/auth/[...all]",
     "public": true,
     "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformConfiguration",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CheckPlatformAccess",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RecordPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ReadPolicyRelationships",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Registered platform administrator service, active human administrator session, fully consistent resource relationships and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "WritePolicyRelationships",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListPlatformConnections",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "PutPlatformConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RevokePlatformConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CreatePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ActivatePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RevokePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "relay",
+    "operation": "ListOperations",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "relay",
+    "operation": "Execute",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "relay",
+    "operation": "GetExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/connectors",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/connections",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner-scoped saved connection intent; fresh Ofz authorization and guest acknowledgement before activation"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "DELETE /api/tengri/connections",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner-scoped saved connection intent; fresh Ofz authorization and guest acknowledgement before activation"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/policies",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/policies",
+    "action": "ACTION_TARGETS_MANAGE",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/relay/agent",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/connections",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Owner-scoped saved connection metadata without credentials"
   }
 ]

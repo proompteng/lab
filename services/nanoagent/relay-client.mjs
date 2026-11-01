@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
-import { open, readFile, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
+const uuid = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) &&
+  !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(value)
 const digest = (bytes) => createHash('sha256').update(bytes).digest('base64url')
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
 
@@ -38,47 +43,44 @@ export function proofFor({ endpoint, credential, privateKey, body, now = Date.no
 }
 
 async function privateFile(file, limit = 524288) {
-  const metadata = await stat(file)
-  if (
-    !metadata.isFile() ||
-    (metadata.mode & 0o077) !== 0 ||
-    metadata.size > limit ||
-    (process.getuid && metadata.uid !== process.getuid())
-  )
-    throw new Error('Connector credentials require an owner-only regular file')
-  return readFile(file, 'utf8')
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    const metadata = await handle.stat()
+    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0 || metadata.size > limit ||
+        (process.getuid && metadata.uid !== process.getuid()))
+      throw new Error('Connector credentials require an owner-only regular file')
+    const bytes = Buffer.alloc(limit + 1)
+    let total = 0
+    while (total < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, total, bytes.length - total, total)
+      if (!bytesRead) break
+      total += bytesRead
+    }
+    if (total > limit) throw new Error('Connector credentials exceed their byte budget')
+    return bytes.subarray(0, total).toString('utf8')
+  } finally {
+    await handle.close()
+  }
 }
 
-export async function invoke(config, operation, args, fetcher = fetch) {
-  const endpoint = new URL(config.endpoint)
-  if (
-    endpoint.protocol !== 'https:' ||
-    endpoint.username ||
-    endpoint.password ||
-    endpoint.search ||
-    endpoint.hash ||
-    endpoint.pathname !== '/api/tengri/connectors/agent'
-  )
-    throw new Error('An HTTPS Tengri connector endpoint is required')
-  if (!/^[A-Za-z0-9_-]{43}$/.test(config.credential) || !/^[a-zA-Z0-9_.-]{1,128}$/.test(operation))
-    throw new Error('Invalid connector grant configuration')
-  const body = Buffer.from(JSON.stringify({ connectionId: config.connectionId, operation, arguments: args }))
-  if (body.length > 1048576) throw new Error('Connector arguments exceed their byte budget')
-  const privateKey = await privateFile(config.keyFile, 16384)
-  const proof = proofFor({ endpoint: endpoint.toString(), credential: config.credential, privateKey, body })
-  const response = await fetcher(endpoint, {
-    method: 'POST',
-    redirect: 'error',
-    signal: AbortSignal.timeout(40000),
-    headers: {
-      'content-type': 'application/json',
-      authorization: `DPoP ${config.credential}`,
-      dpop: proof,
-      'x-tengri-grant': config.grantId,
-    },
-    body: JSON.stringify({ body: body.toString('base64') }),
-  })
-  if (!response.ok) throw new Error('Connector access was denied or the connection is unavailable')
+async function readConfiguration(file) {
+  const config = JSON.parse(await privateFile(file))
+  const generation = (value) => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value) && BigInt(value) <= 18446744073709551615n
+  if (!config || !uuid(config.connectionId) || !uuid(config.delegationId) ||
+      !generation(config.recoveryGeneration) || !generation(config.credentialGeneration) ||
+      config.clientService !== 'tengri-web' || config.binding?.service !== 'tengri' ||
+      !uuid(config.binding.id) || !uuid(config.binding.generation) ||
+      typeof config.keyFile !== 'string' || !config.keyFile || typeof config.endpoint !== 'string' ||
+      typeof config.connectorId !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(config.connectorId) ||
+      typeof config.credential !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(config.credential) ||
+      !Array.isArray(config.operations) || config.operations.length < 1 || config.operations.length > 128 ||
+      config.operations.some((operation) => !operation || typeof operation.name !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(operation.name) || operation.readOnly !== true || operation.inputSchema?.type !== 'object') ||
+      new Set(config.operations.map((operation) => operation.name)).size !== config.operations.length)
+    throw new Error('Invalid read-only connector configuration')
+  return config
+}
+
+async function readRelayResponse(response) {
   if (!response.body) throw new Error('The connector response is missing')
   const reader = response.body.getReader()
   const chunks = []
@@ -97,7 +99,144 @@ export async function invoke(config, operation, args, fetcher = fetch) {
   } finally {
     reader.releaseLock()
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')).result
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function lookupExecution(config, body, operationId, send, httpStatus) {
+  const failure = httpStatus ? `Relay returned HTTP ${httpStatus}` : 'Relay did not return a usable result'
+  const prefix = `${failure} for operation ${operationId}.`
+  const unknown = {
+    content: [
+      {
+        type: 'text',
+        text: `${prefix} Its outcome could not be confirmed. The request was not resent.`,
+      },
+    ],
+    isError: true,
+    _meta: { relay: { operationId, outcome: 'unknown' } },
+  }
+  try {
+    const lookup = Buffer.from(
+      JSON.stringify({
+        executionBody: body.toString('utf8'),
+        binding: config.binding,
+        delegationId: config.delegationId,
+      }),
+    )
+    const response = await send('lookup', lookup)
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error('Execution lookup unavailable')
+    }
+    const result = await readRelayResponse(response)
+    const execution = result?.execution
+    const status = execution?.upstreamStatus ?? 0
+    const resultHash = execution?.resultHash ?? ''
+    if (
+      !execution ||
+      execution.operationId !== operationId ||
+      execution.requestHash !== createHash('sha256').update(body).digest('base64') ||
+      !['started', 'succeeded', 'failed', 'withheld'].includes(execution.outcome) ||
+      !uuid(execution.authorizationReceiptId) ||
+      !uuid(execution.executionReceiptId) ||
+      !uuid(result.lookupReceiptId) ||
+      !Number.isInteger(status) ||
+      status < 0 ||
+      status > 599 ||
+      typeof execution.updatedAtUnixMs !== 'string' ||
+      !/^[0-9]{1,16}$/.test(execution.updatedAtUnixMs) ||
+      !Number.isSafeInteger(Number(execution.updatedAtUnixMs)) ||
+      Number(execution.updatedAtUnixMs) <= 0 ||
+      (resultHash !== '' && (typeof resultHash !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(resultHash))) ||
+      (['succeeded', 'withheld'].includes(execution.outcome) && resultHash === '')
+    )
+      throw new Error('Invalid execution snapshot')
+    const metadata = {
+      operationId,
+      outcome: execution.outcome,
+      authorizationReceiptId: execution.authorizationReceiptId,
+      executionReceiptId: execution.executionReceiptId,
+      lookupReceiptId: result.lookupReceiptId,
+      upstreamStatus: status,
+      updatedAtUnixMs: execution.updatedAtUnixMs,
+    }
+    const text = `${prefix} Relay recorded its outcome as ${execution.outcome}. The original result is unavailable. The request was not resent.`
+    return { content: [{ type: 'text', text }], isError: true, _meta: { relay: metadata } }
+  } catch {
+    return unknown
+  }
+}
+
+export async function invoke(config, operation, args, fetcher = fetch) {
+  const endpoint = new URL(config.endpoint)
+  if (
+    endpoint.protocol !== 'https:' ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash ||
+    endpoint.pathname !== '/api/platform/relay/agent'
+  )
+    throw new Error('An HTTPS Relay client endpoint is required')
+  if (!/^[A-Za-z0-9_-]{43}$/.test(config.credential) || !/^[a-zA-Z0-9_.-]{1,128}$/.test(operation))
+    throw new Error('Invalid connector grant configuration')
+  const operationId = randomUUID()
+  const body = Buffer.from(
+    JSON.stringify({
+      operationId,
+      clientService: config.clientService,
+      connectorId: config.connectorId,
+      operation,
+      arguments: args,
+      binding: config.binding,
+      delegationId: config.delegationId,
+    }),
+  )
+  if (body.length > 65536) throw new Error('Connector arguments exceed their byte budget')
+  const privateKey = await privateFile(config.keyFile, 16384)
+  const send = (kind, bytes) =>
+    fetcher(endpoint, {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(40000),
+      headers: {
+        'content-type': 'application/json',
+        authorization: `DPoP ${config.credential}`,
+        dpop: proofFor({ endpoint: endpoint.toString(), credential: config.credential, privateKey, body: bytes }),
+        'x-relay-delegation': config.delegationId,
+      },
+      body: JSON.stringify({ kind, body: bytes.toString('base64') }),
+    })
+  let response
+  try {
+    response = await send('execute', body)
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error('Relay execution failed')
+    }
+    const result = await readRelayResponse(response)
+    if (
+      result?.operationId !== operationId ||
+      !uuid(result.authorizationReceiptId) ||
+      !uuid(result.executionReceiptId) ||
+      typeof result.result !== 'string'
+    )
+      throw new Error('Relay execution receipt is invalid')
+    return {
+      content: [{ type: 'text', text: result.result }],
+      isError: false,
+      _meta: {
+        relay: {
+          operationId,
+          outcome: 'succeeded',
+          authorizationReceiptId: result.authorizationReceiptId,
+          executionReceiptId: result.executionReceiptId,
+        },
+      },
+    }
+  } catch {
+    return lookupExecution(config, body, operationId, send, response?.ok === false ? response.status : undefined)
+  }
 }
 
 async function main() {
@@ -108,8 +247,11 @@ async function main() {
   }
   const file = process.argv[2]
   if (!file) throw new Error('Supply the owner-only connector grant configuration file')
-  const config = JSON.parse(await privateFile(file))
+  await readConfiguration(file)
   if (process.argv[3] === 'call') {
+    const config = await readConfiguration(file)
+    if (!config.operations.some((operation) => operation.name === process.argv[4]))
+      throw new Error('Operation is not in this connector connection')
     process.stdout.write(
       `${JSON.stringify(await invoke(config, process.argv[4], JSON.parse(process.argv[5] || '{}')))}\n`,
     )
@@ -127,6 +269,7 @@ async function main() {
       if (active >= 8) throw new Error('Connector client is busy')
       active += 1
       counted = true
+      const config = await readConfiguration(file)
       let result
       switch (request.method) {
         case 'initialize':
@@ -143,16 +286,16 @@ async function main() {
           break
         case 'tools/list':
           result = {
-            tools: (config.operations || []).map(({ name, description, inputSchema, readOnly }) => ({
+            tools: config.operations.map(({ name, description, inputSchema }) => ({
               name,
               description,
               inputSchema,
-              annotations: { readOnlyHint: readOnly === true, openWorldHint: true },
+              annotations: { readOnlyHint: true, openWorldHint: true },
             })),
           }
           break
         case 'tools/call': {
-          const operation = (config.operations || []).find((operation) => operation.name === request.params?.name)
+          const operation = config.operations.find((operation) => operation.name === request.params?.name)
           if (!operation) throw new Error('Operation is not in this connector grant')
           const value = await invoke(config, operation.name, request.params?.arguments || {})
           result =
@@ -164,14 +307,9 @@ async function main() {
       }
       process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`)
     } catch {
-      const mutation =
-        request?.method === 'tools/call' &&
-        (config.operations || []).some(
-          (operation) => operation.name === request.params?.name && operation.readOnly !== true,
-        )
       if (request && Object.hasOwn(request, 'id'))
         process.stdout.write(
-          `${JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: mutation ? 'This change could not be confirmed. Check the provider before retrying.' : 'The connector request failed or was denied.' } })}\n`,
+          `${JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'The connector request failed or was denied.' } })}\n`,
         )
     } finally {
       if (counted) active -= 1

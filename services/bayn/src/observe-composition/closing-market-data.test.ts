@@ -1,3 +1,4 @@
+import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
@@ -247,20 +248,22 @@ const fixture = async (source = native) => {
               plan,
               dispatches: [],
               result: nativeJevBatchResult(plan, new Date(now).toISOString(), (symbol) =>
-                symbol === 'AAPL' ? 'enter' : 'wait',
+                symbol === 'AAPL' ? true : false,
               ),
             })),
           ),
+        complete: () => unused,
         finish: () => unused,
       }),
       Effect.provideService(JevEvaluationStore, {
         read: () => unused,
 
-        record: () => unused,
+        recordAll: () => unused,
         abandon: () => unused,
       }),
       Effect.provideService(JevClient, { evaluate: () => unused }),
       Effect.provideService(JevPositionStore, { read: () => unused }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -308,7 +311,7 @@ describe('closing market-data fallback boundaries', () => {
   ] as const)('profit close preserves its price and mandatory exits: %s', async (scenario) => {
     const request = await fixture()
     const entry = request.entryDocument.strategyDecision
-    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Expected a Jev entry')
+    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
     const plan = entry.exitPolicy.plans['AAPL']
     if (plan === undefined) throw new Error('Expected an entry-bound plan')
     const floor = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
@@ -438,7 +441,7 @@ describe('closing market-data fallback boundaries', () => {
             intradayMarketData: { ...freshMarket, loadSnapshot: (pricing) => Effect.succeed(snapshotAt(pricing, bid)) },
           },
         })
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(result.document.dispatchable).toBe(true)
     const risk = result.document.deltaRisk[0]
@@ -745,6 +748,7 @@ describe('closing market-data fallback boundaries', () => {
         expect(replacement.document.targetPlan.intentTargets[0]?.quantityAtoms).toBe(String(quantity - filled))
         expect(replacement.document.orderedIntentIds).not.toEqual(result.document.orderedIntentIds)
       }).pipe(
+        Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
@@ -803,7 +807,7 @@ describe('closing market-data fallback boundaries', () => {
             },
           },
         })
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(result.document.dispatchable).toBe(true)
     expect(result.document.targetPlan.intentTargets).toMatchObject([
@@ -851,7 +855,7 @@ describe('closing market-data fallback boundaries', () => {
             },
           },
         })
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(closed.document.dispatchable).toBe(true)
     expect(closed.document.expiresAt).toBe(expiry)
@@ -995,6 +999,7 @@ describe('closing market-data fallback boundaries', () => {
             recoveryUnknown: unused,
             latest: unused,
           }),
+          Effect.provide(entryInferenceFixtureLayer),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -1253,6 +1258,7 @@ describe('closing market-data fallback boundaries', () => {
           commitClosing: () => Effect.die('terminal close must not commit another close'),
         }),
         Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+        Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -1554,6 +1560,7 @@ describe('closing market-data fallback boundaries', () => {
             }),
         }),
         Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+        Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -1676,7 +1683,7 @@ describe('closing market-data fallback boundaries', () => {
           () => Effect.die(new Error('unexpected failure')),
         )
         expect(executionEvidenceContinuationDelayMs(waiting, 30_000, yield* currentUtcInstant)).toBeUndefined()
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
   })
 
@@ -1812,7 +1819,7 @@ describe('closing market-data fallback boundaries', () => {
         yield* TestClock.setTime(start + 3_000 + 30_000)
         const missed = yield* Effect.flip(close)
         expect(missed).toBeInstanceOf(ExecutionCloseAwaitingMarketData)
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
   })
 
@@ -1876,7 +1883,7 @@ describe('closing market-data fallback boundaries', () => {
             ),
           }),
         )
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(reads).toBe(1)
     expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)
@@ -1914,7 +1921,7 @@ describe('closing market-data fallback boundaries', () => {
             reconcile: currentUtcInstant.pipe(Effect.map((now) => factsAt(now, true))),
           }),
         )
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)
     expect(failure).toMatchObject({
@@ -1947,7 +1954,7 @@ describe('closing market-data fallback boundaries', () => {
             }),
           ),
         })
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(reads).toBe(2)
     expect(result.document.bindings.executionMarketData?.schemaVersion).toBe(
@@ -1981,7 +1988,7 @@ describe('closing market-data fallback boundaries', () => {
             }),
           }),
         )
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(entryInferenceFixtureLayer), Effect.provide(TestClock.layer())),
     )
     expect(reads).toBe(2)
     expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)

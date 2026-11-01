@@ -65,7 +65,7 @@ export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint, takerFeeBp
 
 export const calculateSessionFees = (
   fills: readonly FeeInput[],
-  model: ExecutionModel,
+  model: Pick<ExecutionModel, 'fees'>,
   costMultiplierMicros: bigint,
   takerFeeBps: CryptoTakerFeeBps,
 ): ExecutionResult<FeeBreakdown> => {

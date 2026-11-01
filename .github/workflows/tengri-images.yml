@@ -13,6 +13,11 @@ on:
       - 'services/ofz/operations.json'
       - 'services/ofz/test-control.sh'
       - 'proto/proompteng/authz/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
@@ -64,6 +69,11 @@ on:
       - 'packages/scripts/src/shared/oci.ts'
       - 'packages/scripts/src/tengri/**'
       - 'proto/proompteng/authz/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'services/nanoagent/**'
       - 'services/ofz/**'
       - 'services/ofz/Cargo.*'
@@ -238,7 +248,7 @@ jobs:
           guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
           directory="$(mktemp -d)"
           trap 'rm -rf "$directory"' EXIT
-          crane export "$guest" "$directory/rootfs.tar"
+          crane export --platform "linux/${ARCHITECTURE}" "$guest" "$directory/rootfs.tar"
           tar -xf "$directory/rootfs.tar" -C "$directory" guest/
           sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
           (cd "$directory" && sha256sum --check SHA256SUMS)
@@ -266,7 +276,7 @@ jobs:
       - build
       - validate-tengri
       - validate-nanoagent
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     timeout-minutes: 30
     permissions:
       contents: read
@@ -286,9 +296,6 @@ jobs:
           [[ "${source_sha}" == "${expected_source_sha}" ]]
           printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
           printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
-
-      - name: Set up Docker Buildx
-        uses: ./.github/actions/setup-buildkit
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.10.0
@@ -388,14 +395,15 @@ jobs:
 
       - name: Expose both verified images to Kargo
         env:
-          TENGRI_PREPARED_SLOT_CUTOVER_READY: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}
+          TENGRI_PREPARED_SLOT_GUEST_API_VERSION: ${{ vars.TENGRI_PREPARED_SLOT_GUEST_API_VERSION || '' }}
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           TENGRI_DIGEST: ${{ steps.images.outputs.tengri_digest }}
           NANOAGENT_DIGEST: ${{ steps.images.outputs.nanoagent_digest }}
         run: |
           set -euo pipefail
-          if [[ "${TENGRI_PREPARED_SLOT_CUTOVER_READY}" != 'true' ]]; then
-            echo 'Prepared-slot publication held: both Kargo aliases require approved old-writer fencing and retained-home enrollment. Set TENGRI_PREPARED_SLOT_CUTOVER_READY=true only after that cutover prerequisite is complete.' >> "${GITHUB_STEP_SUMMARY}"
+          required_guest_api_version="$(sed -nE 's/^pub const GUEST_API_PROTOCOL_VERSION: u32 = ([1-9][0-9]*);$/\1/p' services/tengri/src/lib.rs)"
+          if [[ ! "${required_guest_api_version}" =~ ^[1-9][0-9]*$ || "${TENGRI_PREPARED_SLOT_GUEST_API_VERSION}" != "${required_guest_api_version}" ]]; then
+            echo 'Prepared-slot publication held: both Kargo aliases require retained homes enrolled in this release guest API protocol. Set TENGRI_PREPARED_SLOT_GUEST_API_VERSION to the qualified source protocol only after fencing and enrollment are complete.' >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]

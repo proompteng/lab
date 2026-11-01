@@ -1,15 +1,15 @@
 # Ofz authorization API
 
-Ofz owns the final Tengri policy schema, action catalog, typed authorization API and durable control state.
-The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
-Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
+Ofz owns platform authorization, service registration, policy onboarding and durable authorization state through
+SpiceDB. [The platform package](platform/README.md) explains service/policy onboarding and relationship management;
+[the architecture and cutover guide](../../docs/platform/ofz-relay.md) covers Relay and its clients.
 
-[Dormant Relay support](../../docs/tengri/relay-staged-rollout.md) adds compatible
-connector contracts behind the default-off `TENGRI_CONNECTORS_ENABLED` server gate.
-The active native schema and existing diagnostic grants remain usable without
-enabling connectors or provisioning Relay.
+`PlatformAuthorizationService` is the extensible platform contract. `TengriAuthorizationService` owns Tengri's existing
+identity, workspace lifecycle, session and content-access operations. The former `AuthorizationService` and its
+Tengri connector API are removed. Kubernetes connector execution goes through the separate Relay service.
+Ofz and its existing Tengri consumers retain their coordinated image release cohort.
 
-[`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
+[`schema.zed`](schema.zed) uses immutable workspace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
 must check its expiring grant and its issuer's current permission in one fully consistent bulk request.
 
@@ -35,7 +35,7 @@ bash test-control.sh
 
 The policy fixture starts a disposable, loopback-only SpiceDB and an isolated PostgreSQL using the same pinned images as the cluster.
 It never reads or modifies production relationships. It checks the complete human role matrix, platform membership
-revocation, namespace/connector isolation, and native grant expiration. API, crash, broker and product acceptance are
+revocation, workspace isolation, and native grant expiration. API, crash, broker and product acceptance are
 separate gates; a schema fixture does not establish deployed application enforcement.
 
 The pinned SpiceDB release retained an allowed expiration result with both dispatch caches enabled, including fully
@@ -60,6 +60,8 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+Audit batch traces record queue wait and batch size, then separate connection acquisition, transaction begin, and
+durable commit. These timings do not change batching, synchronous durability, permissions, or audit-before-success.
 The server and initial audited transports allow thirty seconds for durable admission. Clients issue 25-second request
 contexts, leaving five seconds of headroom below the server's unchanged thirty-second validation ceiling.
 Ofz still rechecks current authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
@@ -80,7 +82,7 @@ and distinct canonical UUIDs in `operationId` and `activationOperationId`. Use t
 account IDs. Keep the same manifest for every uncertain retry; usernames and email addresses are not authority.
 
 Bootstrap requires a fresh, fenced control database. It durably records the approved intent before installing the
-compiled SpiceDB schema and the two Member/Administrator assignments, plus the four exact application workload
+compiled SpiceDB schema and the two Member/Administrator assignments, plus the two exact application workload
 relationships. It commits the SQL identities, immutable audit and original receipt while retaining the fence.
 The existing per-member defaults remain two workspaces, one active workspace and 64 GiB, within the fleet budget.
 The native schema read/write calls follow the [Authzed schema API](https://github.com/authzed/api/blob/main/authzed/api/v1/schema_service.proto).
@@ -88,7 +90,7 @@ The journal records the server's installed schema hash and rejects a changed sch
 
 Activation requires acknowledgement of the bootstrap and all prior audit receipts, a healthy archive checkpoint,
 unchanged initial administrator/workload authority and the installed schema. A fully consistent bounded read must
-match exactly the eight approved platform relationships; surplus principals, cross-role assignments and retired
+match exactly the six approved platform relationships; surplus principals, cross-role assignments and retired
 platform objects keep activation fenced. The final authority check repeats that comparison after the audit insertion.
 It rechecks archive health after its own
 audit insertion before removing the platform fence. Completed retries return their original receipt and report current
@@ -170,9 +172,16 @@ after version-specific readback and COMPLIANCE retention verification. An uncert
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
 Idle polls continue verifying the archive every second, but refresh its durable heartbeat only when it reaches ten
-seconds old. New batches still acknowledge immediately. A verification failure immediately clears archive health;
+seconds old. New batches still acknowledge immediately. A transient HTTP transport failure repeats the complete
+verification once before declaring failure; uncertain uploads reuse the existing immutable key and must pass the same
+version-specific readback. A persistent transport failure or an integrity failure immediately clears archive health;
 repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
 unchanged.
+
+After that bounded retry, the worker retries HTTP transport failures after one second while archive health remains
+invalid. Recovery requires fresh bucket, retention and payload verification before another acknowledgement. Database, integrity and policy
+failures still terminate the worker. `--once` performs the same bounded verification retry and reports any remaining
+failure without entering the worker's retry loop.
 
 If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
 the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit

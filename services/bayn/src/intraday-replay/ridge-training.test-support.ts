@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
@@ -123,17 +124,27 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v5',
+      schemaVersion: 'bayn.backtest.v10',
+      policy: 'JEV' as const,
+      latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       source,
       openingCashMicros: '100000000000',
       fractionalTrading: false,
       inference: {
-        mode: 'measured-provider',
+        mode: 'measured-providers',
         maximumCalls: 1000,
-        model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v21',
-        costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+        models: { jev: jevModel, chart: 'gpt-6-luna' },
+        inputDefinition: 'bayn.jev-entry-state.v23',
+        costs: replayRateCardFixture({
+          jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+          chart: {
+            inputMicrosPerMillionTokens: '100000',
+            outputMicrosPerMillionTokens: '0',
+            cachedInputMicrosPerMillionTokens: '10000',
+            cacheWriteInputMicrosPerMillionTokens: '125000',
+          },
+        }),
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'SYNTHETIC fixed-candidate training',

@@ -5,7 +5,7 @@ import { canonicalHashV1Result, sha256 } from '../src/hash'
 import { decideJevEntry, JevEntryTargetSchema } from '../src/jev/decision'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
-import { JevFundedExitPlanSchema } from '../src/jev/strategy-exit-plan'
+import { entryProposalExitPlan } from '../src/jev/strategy-exit-plan'
 import { PositiveMicrosSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../src/schemas'
 import { jevProtectiveStopCrossed } from '../src/jev/exit'
 import { jevMarketForSymbol } from '../src/jev/markets'
@@ -16,7 +16,10 @@ import type { ObservedMarketValue } from '../src/market-data/streaming/projectio
 import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
 import { NativeArrivalEpochSchema } from '../src/market-data/streaming/native-arrival'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
-import { auditNativeArrivalCoverage, nativeCoverageMaximumInputBytes } from './native-arrival-coverage'
+import {
+  auditNativeArrivalCoverage,
+  nativeCoverageMaximumInputBytes,
+} from '../src/intraday-replay/native-arrival-coverage'
 import { historicalFeeProvenance, hypotheticalCryptoFeeSensitivity } from './jev-fee-sensitivity'
 import { AccountingTransactionSchema } from '../src/accounting/schema'
 import { PositionOutcomeSchema } from '../src/forward-performance/position-outcomes'
@@ -166,12 +169,12 @@ export const reportJevRealizedEvidence = (input: unknown) => {
     }
   })
   return {
-    schemaVersion: 'bayn.jev-realized-evidence-report.v1',
+    schemaVersion: 'bayn.jev-realized-evidence-report.v2',
     inputHash: Result.getOrThrow(canonicalHashV1Result(bundle)),
     qualification: 'UNQUALIFIED_IMPORTED_EVIDENCE_JOIN',
     independentlyVerifiedLedger: false,
     completeOpportunityScheduleProven: false,
-    probabilityInterpretation: 'CATEGORICAL_CHOICE_MASS_NOT_PROFIT_PROBABILITY',
+    probabilityInterpretation: 'ATOMIC_JUDGMENT_SUPPORT_NOT_PROFIT_PROBABILITY',
     calibrationFitted: false,
     denominatorCount: rows.length,
     rows,
@@ -185,7 +188,7 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v21'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-state.v23'),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({
     maximumEntryFeeBps: NonNegative,
@@ -213,21 +216,6 @@ const State = Schema.Struct({
     minuteLogReturnVolatilityBps: Schema.NullOr(NonNegative),
   }),
 })
-
-// These are categorical choice masses, not calibrated probabilities of making money.
-export const summarizeJevChoiceMass = (probabilities: Readonly<Record<string, number>>) => {
-  const plans = Object.entries(probabilities)
-    .filter(([key]) => key.startsWith('plan_'))
-    .map(([, value]) => value)
-  return {
-    interpretation: 'CATEGORICAL_CHOICE_MASS_NOT_PROFIT_PROBABILITY',
-    aggregatePlanMass: plans.reduce((sum, value) => sum + value, 0),
-    maximumPlanMass: plans.length === 0 ? null : Math.max(...plans),
-    waitMass: probabilities['wait'] ?? null,
-    avoidMass: probabilities['avoid'] ?? null,
-    reportedTotalMass: Object.values(probabilities).reduce((sum, value) => sum + value, 0),
-  }
-}
 
 const range = (values: readonly number[]) =>
   values.length === 0 ? null : { minimum: Math.min(...values), maximum: Math.max(...values) }
@@ -259,49 +247,45 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
     if (candidate.status === JevCandidatePlanStatus.Excluded)
       return { symbol: candidate.symbol, status: candidate.status, reason: candidate.reason }
     const request = candidate.request.request
-    const state = Result.getOrThrow(Schema.decodeUnknownResult(State)(request.state))
-    const question = request.questions['action']
-    if (question?.type !== 'choice') throw new Error('Expected a complete-plan choice')
-    const plans = Object.entries(question.criteria)
-      .filter(([key]) => key.startsWith('plan_'))
-      .map(([choice, value]) => {
-        const { plan } = Result.getOrThrow(
-          Schema.decodeUnknownResult(Schema.Struct({ plan: JevFundedExitPlanSchema }))(value),
-        )
-        const acquisition = BigInt(plan.acquisitionCostMicros)
-        const loss = acquisition - BigInt(plan.estimatedStopNetMicros)
-        const profit = BigInt(plan.estimatedTargetNetMicros) - acquisition
-        if (loss <= 0n || profit <= 0n) throw new Error('Funded plan has invalid net economics')
-        return {
-          choice,
-          targetRiseFromBidBps:
-            (Number(plan.levels.profitLimitPriceMicros) / 1_000_000 / state.candidate.quote.bid - 1) * 10_000,
-          estimatedLossUsd: Number(loss) / 1_000_000,
-          estimatedProfitUsd: Number(profit) / 1_000_000,
-          netRewardRisk: Number(profit) / Number(loss),
-        }
-      })
+    const state = Result.getOrThrow(Schema.decodeUnknownResult(State)(request.numericalState))
     const result = target.evidence.batchResult.candidates.find((value) => value.symbol === candidate.symbol)
-    const response =
-      result?.status === JevCandidateResultStatus.Resolved && result.receipt?.outcome.status === JevOutcome.Received
-        ? result.receipt.outcome.inference.response
+    const completion =
+      result?.status === JevCandidateResultStatus.Resolved && result.receipt?.outcome.status === JevOutcome.Completed
+        ? result.receipt.outcome.completion
         : null
-    const answer = response?.answers['action']
-    const setup = response?.answers['setup']
-    if (answer !== undefined && answer.type !== 'choice') throw new Error('Expected a choice answer')
-    if (setup !== undefined && setup.type !== 'choice') throw new Error('Expected a setup choice answer')
+    const disposition = completion?.handoff.disposition
+    const evaluation =
+      disposition?.status === 'READY' || disposition?.status === 'NO_FUNDED_PROPOSALS' ? disposition.evaluation : null
+    const plans = (evaluation?.proposals ?? []).map((proposal) => {
+      const plan = entryProposalExitPlan(proposal)
+      const acquisition = BigInt(plan.acquisitionCostMicros)
+      const loss = acquisition - BigInt(plan.estimatedStopNetMicros)
+      const profit = BigInt(plan.estimatedTargetNetMicros) - acquisition
+      if (loss <= 0n || profit <= 0n) throw new Error('Funded plan has invalid net economics')
+      return {
+        proposalId: proposal.proposalId,
+        setup: proposal.source.setup,
+        source: proposal.source,
+        targetRiseFromBidBps:
+          (Number(plan.levels.profitLimitPriceMicros) / 1_000_000 / state.candidate.quote.bid - 1) * 10_000,
+        estimatedLossUsd: Number(loss) / 1_000_000,
+        estimatedProfitUsd: Number(profit) / 1_000_000,
+        netRewardRisk: Number(profit) / Number(loss),
+      }
+    })
     return {
       symbol: candidate.symbol,
       status: candidate.status,
       requestHash: candidate.request.requestHash,
       inputDefinition: state.schemaVersion,
-      chosenAction: answer?.choice ?? null,
-      chosenSetup: setup?.choice ?? null,
-      setupProbabilities: setup?.probabilities ?? null,
-      planChoiceCondition: 'SUPPORTED_LONG_SETUP_ASSUMED',
+      pipelineStatus: disposition?.status ?? null,
+      handoffHash: completion?.handoff.handoffHash ?? null,
+      jevStatus: completion?.jev.status ?? null,
+      judgments: completion?.jev.status === 'RECEIVED' ? completion.jev.inference.response.answers : null,
+      selectedProposalId: target.exitPolicy.plans[candidate.symbol]?.levels.proposalId ?? null,
       rejection: target.entryPlanRejections[candidate.symbol] ?? null,
-      choiceMass: answer === undefined ? null : summarizeJevChoiceMass(answer.probabilities),
-      fundedPlanCount: plans.length,
+      proposalRejections: evaluation?.rejections ?? null,
+      fundedPlanCount: evaluation === null ? null : plans.length,
       targetRiseFromBidBps: range(plans.map((plan) => plan.targetRiseFromBidBps)),
       netRewardRisk: range(plans.map((plan) => plan.netRewardRisk)),
       horizonMinutes: state.task.horizonMinutes,
@@ -314,7 +298,7 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
               symbol: candidate.symbol,
               protocol: target.evidence.observation.protocol,
               economics: Result.getOrThrow(
-                Schema.decodeUnknownResult(Schema.Struct({ entryEconomics: Schema.Unknown }))(request.state),
+                Schema.decodeUnknownResult(Schema.Struct({ entryEconomics: Schema.Unknown }))(request.numericalState),
               ).entryEconomics,
               bidMicros: Result.getOrThrow(
                 priceNumberToMicros(state.candidate.quote.bid, 'sealed sensitivity bid', 'DOWN'),
@@ -337,7 +321,7 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
     }
   })
   return {
-    schemaVersion: 'bayn.jev-abstention-report.v2',
+    schemaVersion: 'bayn.jev-abstention-report.v3',
     diagnosticOnly: true,
     modelRationaleAvailable: false,
     profitableEdgeProven: false,
@@ -355,11 +339,11 @@ export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unkn
 
 const Integer = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 export const JevPlanPathAssumptionsSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-plan-path-assumptions.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-plan-path-assumptions.v2'),
   decisionHash: Sha256Schema,
   sourceEvidenceSha256: Sha256Schema,
   symbol: Schema.NonEmptyString,
-  choice: Schema.String.check(Schema.isPattern(/^plan_[0-9]+$/)),
+  proposalId: Sha256Schema,
   windowAnchor: Schema.Literals(['OBSERVATION', 'HYPOTHETICAL_FIRST_FILL']),
   windowStartAt: UtcInstantSchema,
   entryLatencyMs: Integer.check(Schema.isLessThanOrEqualTo(60_000)),
@@ -388,11 +372,17 @@ export const reportJevPlanPath = (input: {
   const candidate = target.evidence.batchPlan.candidates.find((value) => value.symbol === assumptions.symbol)
   if (candidate?.status !== JevCandidatePlanStatus.Requested)
     throw new Error('Plan path requires a requested candidate')
-  const question = candidate.request.request.questions['action']
-  if (question?.type !== 'choice') throw new Error('Plan path requires the original complete-plan choice')
-  const { plan } = Result.getOrThrow(
-    Schema.decodeUnknownResult(Schema.Struct({ plan: JevFundedExitPlanSchema }))(question.criteria[assumptions.choice]),
-  )
+  const result = target.evidence.batchResult.candidates.find((value) => value.symbol === assumptions.symbol)
+  const disposition =
+    result?.status === JevCandidateResultStatus.Resolved && result.receipt?.outcome.status === JevOutcome.Completed
+      ? result.receipt.outcome.completion.handoff.disposition
+      : null
+  const proposal =
+    disposition?.status === 'READY'
+      ? disposition.evaluation.proposals.find((value) => value.proposalId === assumptions.proposalId)
+      : undefined
+  if (proposal === undefined) throw new Error('Plan path requires an exact funded proposal from the committed handoff')
+  const plan = entryProposalExitPlan(proposal)
   const quantity = BigInt(assumptions.quantityAtoms)
   const instrument = Result.getOrThrow(replayInstrument(assumptions.symbol, assumptions.instruments))
   if (
@@ -462,7 +452,7 @@ export const reportJevPlanPath = (input: {
   }
   largestGapMs = Math.max(largestGapMs, endMs - (lastAt ?? startMs))
   return {
-    schemaVersion: 'bayn.jev-plan-path-diagnostic.v1' as const,
+    schemaVersion: 'bayn.jev-plan-path-diagnostic.v2' as const,
     protocol: abstention.protocol,
     inputDefinition: abstention.inputDefinition,
     diagnosticOnly: true,
@@ -561,27 +551,33 @@ export const reportAuditedJevPlanPath = (input: {
   return { ...path, sourceAudit: audited.report }
 }
 
+const usage =
+  'Usage: node dist/research/jev-abstention-report.js <private-decision.json> [--realized-evidence | <assumptions.json> <native-bundle.json>] | --help'
+
 if (import.meta.main) {
-  const path = process.argv[2]
-  if (path === undefined) throw new Error('Usage: bun tools/jev-abstention-report.ts <private-decision.json>')
-  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  const assumptionsPath = process.argv[3]
-  const sourcePath = process.argv[4]
-  if (assumptionsPath === '--realized-evidence' && sourcePath === undefined) {
-    console.log(JSON.stringify(reportJevRealizedEvidence(raw)))
-  } else {
-    if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
-      throw new Error('Provide both an assumption manifest and native source bundle, or neither')
-    console.log(
-      JSON.stringify(
-        assumptionsPath === undefined || sourcePath === undefined
-          ? reportJevAbstention(raw)
-          : reportAuditedJevPlanPath({
-              decisionDocument: raw,
-              assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
-              sourceBundle: readFileSync(sourcePath),
-            }),
-      ),
-    )
+  if (process.argv.length === 3 && process.argv[2] === '--help') process.stdout.write(`${usage}\n`)
+  else {
+    const path = process.argv[2]
+    if (path === undefined) throw new Error(usage)
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    const assumptionsPath = process.argv[3]
+    const sourcePath = process.argv[4]
+    if (assumptionsPath === '--realized-evidence' && sourcePath === undefined) {
+      console.log(JSON.stringify(reportJevRealizedEvidence(raw)))
+    } else {
+      if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
+        throw new Error('Provide both an assumption manifest and native source bundle, or neither')
+      console.log(
+        JSON.stringify(
+          assumptionsPath === undefined || sourcePath === undefined
+            ? reportJevAbstention(raw)
+            : reportAuditedJevPlanPath({
+                decisionDocument: raw,
+                assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
+                sourceBundle: readFileSync(sourcePath),
+              }),
+        ),
+      )
+    }
   }
 }

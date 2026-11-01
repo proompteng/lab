@@ -1,3 +1,12 @@
+import {
+  persistVisualClaimFixture,
+  persistVisualTransitionFixture,
+  persistHandoffFixture,
+  persistEvaluationFixture,
+} from './evaluation.test-support'
+import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
+import { EntryInferenceJournal } from './entry-inference'
+import { entryCompletionFixture, stagedCheckpointFixture } from './entry-inference.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Config, Effect, FileSystem, Layer, Redacted, Schema } from 'effect'
 
@@ -6,7 +15,6 @@ import { PostgresClientLive } from '../db/postgres-client'
 import { Sha256Schema } from '../schemas'
 import { decodeJevEvaluationRequest, JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevEvaluationStore, recoverExpiredJevEvaluation } from './evaluation'
-import { tradingSignalInferenceFixture } from './trading-signal.test-support'
 
 const main = Effect.gen(function* () {
   const [mode, rawRequestId, requestPath, checkpointPath, resultPath] = process.argv.slice(2)
@@ -22,7 +30,7 @@ const main = Effect.gen(function* () {
   const parsed = new URL(Redacted.value(postgresUrl))
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
     return yield* new JevEvidenceError({ message: 'Jev restart worker requires a local _test database' })
-  const storeLayer = JevEvaluationStoreLive.pipe(
+  const storeLayer = Layer.mergeAll(JevEvaluationStoreLive, EntryInferenceJournalLive).pipe(
     Layer.provide(
       PostgresClientLive({
         operationTimeoutMs: 5000,
@@ -46,18 +54,31 @@ const main = Effect.gen(function* () {
     )
     if ((yield* store.read(request.requestId)) === null)
       return yield* new JevEvidenceError({ message: 'Worker requires its committed batch claim' })
+    if (mode === 'record') {
+      const journal = yield* EntryInferenceJournal
+      const checkpoint = stagedCheckpointFixture(request, request.observedAt)
+      for (const claim of checkpoint.claims) {
+        yield* persistVisualClaimFixture(journal, claim)
+        const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+        if (terminal !== undefined)
+          yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
+      }
+
+      yield* persistHandoffFixture(journal, entryCompletionFixture(request, request.observedAt).handoff)
+    }
     if (mode === 'record')
-      yield* store.record(
+      yield* persistEvaluationFixture(
+        store,
         request,
         yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: request.requestId,
             startedAt: request.observedAt,
             completedAt: request.observedAt,
             outcome: {
-              status: JevOutcome.Received,
-              inference: tradingSignalInferenceFixture(request.request, request.observedAt),
+              status: JevOutcome.Completed,
+              completion: entryCompletionFixture(request, request.observedAt, 0.9),
             },
           }),
         ),

@@ -1,9 +1,23 @@
 # Tengri control plane
 
-The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
-`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
-workspace and conversation requests do not call Relay.
+The controller exports process-local metrics without querying Kubernetes or PostgreSQL during a scrape. Successful
+readiness checks refresh guest and ticket inventory; their last-success timestamp and age identify stale gauges.
+Readiness still checks current Ofz authority, SQL access, and Kubernetes within the existing two-second deadline,
+with separate dependency error/timeout counters. Alloy discovers each controller Pod rather than combining independent
+counters behind a load-balanced Service.
+
+Boot/resume histograms measure successful CR creation or persisted resume intent through guest readiness, including
+reconciliation retries. They exclude BFF admission and are not a browser end-to-end SLO. Recovering a failed readiness
+probe is not another boot. Lifecycle identity is recorded with the running-intent CAS, so a failed resume cannot become
+a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
+The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
+or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
+Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
+
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
@@ -234,10 +248,11 @@ legacy guest SPIRE attestation, the `nanoagent` ServiceAccount, token/registrati
 publication, and the old guest network path after the final old guest and its storage writer are fenced. Slots use only
 the host supervisor registration and private vsock credential.
 
-The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-is exactly `true`. Keep it false until the authorized cutover has removed the old workspaces and homes and the new
-authority dependencies are ready for the immutable image pair. The owner chose fresh workspaces for this cutover;
-no retained-data import or migration rehearsal is required. Kargo's existing automatic promotion policy remains in place.
+The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases unless the repository variable
+`TENGRI_PREPARED_SLOT_GUEST_API_VERSION` matches the qualified source's `GUEST_API_PROTOCOL_VERSION`. Keep it unset
+while old writers are fenced and retained homes are enrolled in the approved guest image. A prior protocol's
+enrollment cannot release a new protocol. Follow the [retained-home replacement procedure](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+for incompatible guest upgrades. Kargo's existing automatic promotion policy remains in place.
 Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
 cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
@@ -276,6 +291,11 @@ id-less requests instead of generating a compatibility identity or negotiating w
 
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
+
+Claimed slots retain their guest image when the controller and supervisor roll. An incompatible guest API returns
+`FAILED_PRECONDITION` with `x-tengri-error-code: runtime_upgrade_required`; the BFF and browser preserve this as HTTP
+412 and `runtime_upgrade_required`. Complete the [retained-home runtime replacement](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+before releasing an incompatible image cohort. Retrying or resuming the old snapshot does not upgrade its guest image.
 
 Workspace file reads return bounded protobuf bytes and a required strong SHA-256 revision. Tengri verifies that the
 revision matches the content and rejects missing, malformed, or mismatched revisions. Writes require a lowercase
@@ -323,7 +343,7 @@ as ready to accept agent operations.
 ## Workspace authorization
 
 Ofz owns authorization for the controller and BFF. Tengri calls the canonical
-[AuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
+[TengriAuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
 receives a SpiceDB administrative key, installs schema, or creates owner tuples directly. The canonical
 [operation catalog](../ofz/operations.json) maps each runtime RPC to an explicit action. Local Kubernetes labels,
 names and owner fields locate resources; Ofz checks the actual MicroVM UID and current runtime epoch.
@@ -409,7 +429,7 @@ supervisor SQL restrictions and protected cleanup. `bash services/ofz/test-contr
 reservation/runtime reads and the two-stage removal contract. The container-based KVM acceptance fixture has been
 removed. Source checks do not establish production authority or fleet acceptance.
 
-These source contracts are held behind `TENGRI_PREPARED_SLOT_CUTOVER_READY=false` until the coordinated release.
+These source contracts remain held until `TENGRI_PREPARED_SLOT_GUEST_API_VERSION` records the enrolled source protocol.
 See [implementation status](../../docs/tengri/ofz-implementation-status.md) for the remaining production gates.
 
 ## Lifecycle settings and delivery
@@ -503,17 +523,19 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 8 provides direct file metadata and requires canonical UUID operation identities for every submission and
+Guest API 10 requires conversation-scoped pending-operation fences and retains direct file metadata and canonical UUID operation identities for every submission and
 control, plus confirmed native command cleanup before reporting cancellation. The web BFF, controller and guest must
 agree on this version; the operation inventory rejects drift. Older guests require a fenced cold replacement on their
 retained home.
 `SendCodexInput` returns a
-durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
+durable run, and `GetActiveCodexRuns` recovers the workspace's active runs without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
 after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
 
-`TengriWorkspaceRuns` holds one active run per immutable workspace UID. Its short claim and release handlers are
+`TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
+execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
+and release handlers are
 private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
 control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
 before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
@@ -521,6 +543,12 @@ a newly signed attempt can use the same operation UUID. Accepted workflows use p
 records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
+
+Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
+RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
+Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
+observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
+access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
 
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
@@ -540,19 +568,20 @@ controls live in Restate. One workflow per control ID records the exact pending 
 the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
 Native approval IDs additionally bind a random process identity, thread, and turn.
 
-Stop is a durable request. The workspace object retains the latest authenticated Stop authority, ordered by the original
+Stop is a durable request. The workspace object retains Stop authority separately for each run, ordered by the original
 admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
-Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
+Repeated observations return only changed controls. Stop does not release the conversation after an interrupt acknowledgement: the worker waits for
 the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
 and the sleep pin. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
 of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
-runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
+runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain that conversation claim. The desktop
 displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a
 MicroVM annotation before dispatch. Idle sleep must claim that same field with a UID/resource-version CAS before
 requesting an Ofz stop, so an old idle decision cannot sleep a concurrent admission. Automatic idle sleep respects
-the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority. Terminal cleanup removes only the matching pin
+the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority.
+The sleep fence contains a set of active run IDs. Terminal cleanup removes only its own ID
 using MicroVM UID and resource-version preconditions.
 
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
@@ -566,8 +595,10 @@ fresh signed read with exponential backoff capped at one second. Each request re
 window. Signature and authority denials, missing or conflicting runs and invalid responses fail immediately.
 Run submissions and controls are not replayed by this read recovery.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
-Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
-run and control invocations before registering this worker version, and retain earlier versions for pinned history.
+Stop after preparation and immediately before dispatch. The conversation-concurrency migration changes workspace state
+from a single claim to a map and changes the sleep pin to a JSON set. Drain active run and control invocations before
+registering this worker version, verify that the old sleep pin has cleared, and retain earlier versions for pinned history.
+The controller and BFF must use the plural active-run RPC together; the singular RPC is removed.
 Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
@@ -593,7 +624,7 @@ account. Run the real Restate process-replacement fixture with Docker available:
 cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
 ```
 
-This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping;
+This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping and its disposable Restate data is in tmpfs. Only the worker is killed;
 running-command recovery and authenticated deployment acceptance remain separate evidence boundaries.
 
 ## Error reporting and request traces

@@ -9,6 +9,74 @@ prometheus.remote_write "mimir" {
 	}
 }
 
+discovery.kubernetes "mimir_ingesters" {
+	role = "pod"
+
+	namespaces {
+		names = ["observability"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name=mimir,app.kubernetes.io/component=ingester"
+	}
+}
+
+discovery.relabel "mimir_ingester_metrics" {
+	targets = discovery.kubernetes.mimir_ingesters.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_port_name"]
+		regex         = "http-metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		replacement  = "observability"
+		target_label = "namespace"
+	}
+
+	rule {
+		replacement  = "mimir"
+		target_label = "service"
+	}
+}
+
+prometheus.relabel "mimir_ingester_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|cortex_ingester_(active_series|memory_series|local_limits)|cortex_discarded_samples_total"
+	}
+}
+
+prometheus.scrape "mimir_ingesters" {
+	job_name        = "mimir-ingester"
+	targets         = discovery.relabel.mimir_ingester_metrics.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.mimir_ingester_metrics.receiver]
+}
+
+prometheus.scrape "ci_observability" {
+	job_name = "ci-observability"
+	targets  = [{
+		"__address__" = "ci-observability.arc.svc.cluster.local:9101",
+		"namespace"   = "arc",
+		"service"     = "ci-observability",
+	}]
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
 discovery.kubernetes "cnpg_pods" {
 	role = "pod"
 
@@ -299,15 +367,52 @@ prometheus.relabel "tengri_metrics" {
 	}
 }
 
+discovery.kubernetes "tengri_controllers" {
+	role = "pod"
+
+	namespaces {
+		names = ["tengri"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name=tengri,app.kubernetes.io/component=control-plane"
+	}
+}
+
+discovery.relabel "tengri_controllers" {
+	targets = discovery.kubernetes.tengri_controllers.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "tengri;gateway"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		target_label = "service"
+		replacement  = "tengri"
+	}
+}
+
 prometheus.scrape "tengri" {
 	job_name = "tengri"
-	targets  = [
-		{
-			"__address__" = "tengri-gateway.tengri.svc.cluster.local:8080",
-			"namespace"   = "tengri",
-			"service"     = "tengri",
-		},
-	]
+	targets  = discovery.relabel.tengri_controllers.output
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
 	forward_to      = [prometheus.relabel.tengri_metrics.receiver]
@@ -574,7 +679,7 @@ prometheus.relabel "arc_resource_metrics" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__", "namespace", "container"]
-		regex         = "(up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_argocd_application_deployment_history_info|kube_cnpg_backup_stopped_at|kube_cnpg_scheduled_backup_last_schedule_time|kube_cronjob_created|kube_cronjob_status_last_schedule_time|kube_cronjob_status_last_successful_time|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kube_pod_status_ready|kube_replicaset_spec_replicas|kube_replicaset_status_ready_replicas|kube_restate_deployment_spec_replicas|kube_restate_deployment_status_ready_replicas|kube_restate_deployment_metadata_generation|kube_restate_deployment_status_observed_generation|kube_service_info|kube_statefulset_status_replicas_ready|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes);.*;.*|container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total);bayn;.*|container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total);torghut;torghut-ws"
+		regex         = "(up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_kargo_stage_last_promotion_info|kube_kargo_stage_current_promotion_started_at|kube_argocd_application_deployment_history_info|kube_cnpg_backup_stopped_at|kube_cnpg_scheduled_backup_last_schedule_time|kube_cronjob_created|kube_cronjob_status_last_schedule_time|kube_cronjob_status_last_successful_time|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kube_pod_status_ready|kube_replicaset_spec_replicas|kube_replicaset_status_ready_replicas|kube_restate_deployment_spec_replicas|kube_restate_deployment_status_ready_replicas|kube_restate_deployment_metadata_generation|kube_restate_deployment_status_observed_generation|kube_service_info|kube_statefulset_status_replicas_ready|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes);.*;.*|container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total);(arc|bayn);.*|container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total);torghut;torghut-ws"
 	}
 }
 

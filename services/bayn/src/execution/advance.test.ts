@@ -25,6 +25,31 @@ const driver = (observation: AutonomousCyclePassObservation, result?: CycleRunRe
 type RecoveredCycle = Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['cycle']
 
 describe('advanceExecutionOnce', () => {
+  test('persists the original issued clock on success, failure, and replay', async () => {
+    for (const observation of [
+      { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: '2026-08-13T17:00:01.000Z' },
+      {
+        result: 'FAILURE',
+        operation: 'reconcile',
+        failure: 'database',
+        message: 'failed',
+        observedAt: '2026-08-13T17:00:01.000Z',
+      },
+    ] as const) {
+      const first = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+      const replay = await Effect.runPromise(
+        advanceExecutionOnce(
+          command,
+          driver({
+            ...observation,
+            executionIssuedAt: '2026-08-13T17:00:00.500Z',
+          }),
+        ),
+      )
+      expect(first.observation.executionIssuedAt).toBe(command.issuedAt)
+      expect(replay).toEqual(first)
+    }
+  })
   for (const failure of ['typed', 'defect', 'interruption'] as const) {
     test(`reports the final stage profile once after ${failure} failure`, async () => {
       const records: Readonly<Record<string, unknown>>[] = []

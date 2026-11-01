@@ -1,3 +1,25 @@
+import registeredAssessmentWindow from '../../migrations/0168_registered_assessment_window'
+import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
+import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
+import observedResistance from '../../migrations/0165_observed_resistance'
+import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
+import jevObservationWindowIndex from '../../migrations/0163_jev_observation_window_index'
+import equityBenchmarkContext from '../../migrations/0162_equity_benchmark_context'
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
+import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
+import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
+import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
+import systemAssessment from '../../migrations/0159_system_assessment'
+import systemRegistration from '../../migrations/0156_system_registration'
+import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
+import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
+import nativeControls from '../../migrations/0155_native_controls'
+import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
+import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
+import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
+import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
+import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
+import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
 import accountBoundEntryFees from '../../migrations/0146_account_bound_entry_fees'
 import currentQuoteBreakout from '../../migrations/0145_current_quote_breakout'
 import alignedSignalPeriods from '../../migrations/0144_aligned_signal_periods'
@@ -148,7 +170,29 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '164_focused_entry_evidence': focusedEntryEvidence,
+  '165_observed_resistance': observedResistance,
+  '166_candidate_entry_evidence': candidateEntryEvidence,
+  '168_registered_assessment_window': registeredAssessmentWindow,
+  '167_chart_structure_before_funding': chartStructureBeforeFunding,
+  '163_jev_observation_window_index': jevObservationWindowIndex,
+  '160_crypto_quote_evidence': cryptoQuoteEvidence,
+  '161_crypto_history_context': cryptoHistoryContext,
+  '162_equity_benchmark_context': equityBenchmarkContext,
+  '157_crypto_entry_ask_cap': cryptoEntryAskCap,
+  '158_equity_entry_ask_cap': equityEntryAskCap,
+  '154_market_entry_questions': marketEntryQuestions,
+  '153_staged_chart_transport': stagedChartTransport,
+  '155_native_controls': nativeControls,
+  '156_system_registration': systemRegistration,
+  '159_system_assessment': systemAssessment,
+  '152_funded_source_anchors': fundedSourceAnchors,
+  '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
+  '150_inference_request_version': inferenceRequestVersion,
+  '148_relative_chart_volume': relativeChartVolume,
+  '149_conditional_base_anchors': conditionalBaseAnchors,
   '145_current_quote_breakout': currentQuoteBreakout,
+  '147_sequential_entry_inference': sequentialEntryInference,
   '146_account_bound_entry_fees': accountBoundEntryFees,
   '143_executable_profit_limits': executableProfitLimits,
   '144_aligned_signal_periods': alignedSignalPeriods,

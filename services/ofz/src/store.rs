@@ -23,6 +23,23 @@ pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_t
 
 mod audit;
 
+const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/0002_platform.sql")),
+    (2, include_str!("../migrations/0003_connections.sql")),
+];
+
+fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {
+    !rows.is_empty()
+        && rows.len() <= PLATFORM_MIGRATIONS.len()
+        && rows
+            .iter()
+            .zip(PLATFORM_MIGRATIONS)
+            .all(|(row, (version, body))| {
+                row.get::<_, i32>(0) == *version
+                    && row.get::<_, Vec<u8>>(1) == Sha256::digest(body.as_bytes()).to_vec()
+            })
+}
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
@@ -131,6 +148,18 @@ impl Database {
                 "control database schema mismatch",
             ));
         }
+        let rows = client
+            .query(
+                "SELECT version,checksum FROM ofz.platform_schema_version ORDER BY version",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?;
+        if rows.len() != PLATFORM_MIGRATIONS.len() || !known_platform_migrations(&rows) {
+            return Err(Status::failed_precondition(
+                "platform database schema mismatch",
+            ));
+        }
         Ok(())
     }
 
@@ -174,6 +203,46 @@ impl Database {
             return Err(Status::failed_precondition(
                 "control schema migration checksum mismatch",
             ));
+        }
+        let platform_exists: bool = tx
+            .query_one(
+                "SELECT to_regclass('ofz.platform_schema_version') IS NOT NULL",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        if !platform_exists {
+            tx.batch_execute(include_str!("../migrations/0002_platform.sql"))
+                .await
+                .map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO ofz.platform_schema_version(version,checksum) VALUES(1,$1)",
+                &[&Sha256::digest(PLATFORM_MIGRATIONS[0].1.as_bytes()).to_vec()],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
+        let rows = tx
+            .query(
+                "SELECT version,checksum FROM ofz.platform_schema_version ORDER BY version",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?;
+        if !known_platform_migrations(&rows) {
+            return Err(Status::failed_precondition(
+                "platform migration checksum mismatch",
+            ));
+        }
+        for (version, body) in &PLATFORM_MIGRATIONS[rows.len()..] {
+            tx.batch_execute(body).await.map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO ofz.platform_schema_version(version,checksum) VALUES($1,$2)",
+                &[version, &Sha256::digest(body.as_bytes()).to_vec()],
+            )
+            .await
+            .map_err(sql_error)?;
         }
         tx.commit().await.map_err(sql_error)?;
         Ok(())
@@ -547,6 +616,10 @@ pub fn receipt(
         recovery_generation: 0,
         policy_command: None,
         revision: String::new(),
+        platform_action: String::new(),
+        platform_resources: Vec::new(),
+        platform_client: String::new(),
+        platform_request_hash: Vec::new(),
     }
 }
 

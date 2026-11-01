@@ -111,6 +111,7 @@ export const runtimeConfigSource = Config.all({
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   jevKey: Config.option(secretString('BAYN_JEV_API_KEY')),
+  openAiKey: Config.option(secretString('BAYN_OPENAI_API_KEY')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
   alpacaProxyUrl: nonEmptyString('BAYN_ALPACA_PROXY_URL').pipe(Config.withDefault('http://bayn-egress-proxy:3128')),
   alpacaRetryAttempts: Config.schema(RetryAttempts, 'BAYN_ALPACA_RETRY_ATTEMPTS').pipe(Config.withDefault(2)),
@@ -123,6 +124,10 @@ export const runtimeConfigSource = Config.all({
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
     Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
   ),
+  nativeArrivalPostgresUrl: Config.option(Config.Redacted('BAYN_NATIVE_ARRIVAL_POSTGRES_URL')),
+  nativeArrivalPostgresCaPath: nonEmptyString('BAYN_NATIVE_ARRIVAL_POSTGRES_CA_PATH').pipe(
+    Config.withDefault('/var/run/secrets/bayn/native-arrival-postgres/ca.crt'),
+  ),
   tigerBeetleClusterId: Config.schema(Schema.BigIntFromString, 'BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
     Config.withDefault(2001n),
   ),
@@ -133,6 +138,7 @@ export const runtimeConfigSource = Config.all({
     (config): ParsedRuntimeConfig => ({
       kafka: config.kafka,
       jevKey: Option.getOrUndefined(config.jevKey),
+      openAiKey: Option.getOrUndefined(config.openAiKey),
       host: config.host,
       port: config.port,
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),
@@ -177,6 +183,13 @@ export const runtimeConfigSource = Config.all({
         tls: config.postgresTls,
         caPath: config.postgresCaPath,
       },
+      nativeArrivalPostgres: Option.isSome(config.nativeArrivalPostgresUrl)
+        ? {
+            url: config.nativeArrivalPostgresUrl.value,
+            tls: config.postgresTls,
+            caPath: config.nativeArrivalPostgresCaPath,
+          }
+        : undefined,
       tigerBeetle: {
         clusterId: config.tigerBeetleClusterId,
         replicaAddresses: config.tigerBeetleReplicaAddresses,

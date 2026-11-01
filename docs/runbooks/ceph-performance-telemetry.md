@@ -83,9 +83,14 @@ not clamped to one or rendered as zero. Network directions are separate because 
 or negative link speeds produce no utilization ratio. Weighted disk I/O time estimates average outstanding work;
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
-`CephOsdReadLatencyHigh` pages through the existing critical email route when an OSD's five-minute mean
-client read latency stays above 500 ms for five minutes. `CephOsdQueueWaitHigh` warns when estimated mean
-queue wait stays above 100 ms for ten minutes. Both retain bounded node/OSD identity. Missing or idle reads
+`CephHostReadLatencyHigh` fires when the highest OSD five-minute mean client read latency on a host stays above
+500 ms for five minutes. One incident per node survives OSD rotation, and the annotation lists the currently slow
+OSDs and their means. Per-OSD recording metrics retain diagnostic detail. The incident holds recovery for ten
+minutes; a relapse during that hold continues the same incident. Its dedicated email route sends the first message
+after ten seconds, batches group updates every fifteen minutes, and repeats unchanged incidents every four hours.
+`CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` retain their general critical route.
+`CephOsdQueueWaitHigh` warns when estimated mean queue wait stays above 100 ms for ten minutes and retains
+node/OSD identity. Missing or idle reads
 produce no latency estimate; use the existing exporter and OSD performance missing-data alerts for telemetry loss.
 Compare reads and processing time with scrub work, mapped RBD activity, and host queues. A low commit-latency
 gauge does not rule out delayed reads. These alerts do not authorize workload throttling or changing scrub policy.
@@ -150,7 +155,8 @@ values are `osd_mclock_override_recovery_settings=false`, `osd_recovery_max_acti
 `osd_recovery_max_active_hdd=3`, `osd_max_backfills=1`, and `osd_scrub_sleep=0`.
 The zero generic recovery value selects the media-specific defaults; it does not disable recovery.
 
-Scrubs remain eligible all day with `osd_max_scrubs=1` to bound HDD contention for database WAL. mClock disables `osd_scrub_sleep`, so retaining
+Scrubs remain eligible all day with `osd_max_scrubs=3` to catch up with overdue deep scrubs. Compare scrub progress with
+database WAL latency because concurrent scans share the HDDs. mClock disables `osd_scrub_sleep`, so retaining
 `0.1` would misrepresent the effective behavior. Removing these overrides is configuration hygiene, not a claim of
 measured throughput gain. Do not alter IOPS capacities without a separately controlled calibration.
 

@@ -52,6 +52,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
   UtcDatabaseInstantSchema,
+  UtcOrderTimestampSchema,
   strictParseOptions,
 } from '../schemas'
 import { MutationEventType } from '../execution/mutations/model'
@@ -191,6 +192,7 @@ const ProtectionChildRow = Schema.Struct({
 })
 
 const DurableFillRow = Schema.Struct({
+  source_timestamp: UtcOrderTimestampSchema,
   fill_id: NonEmptyString,
   broker_order_id: NonEmptyString,
   broker_event_id: Sha256,
@@ -463,8 +465,16 @@ export const verifyBrokerStateVersion = (
         WHERE i.intent_id = ${intentId} AND i.account_id = ${accountId} AND i.side = 'BUY'
           AND i.decision_hash = d.document #>> '{bindings,strategyDecisionHash}'
           AND d.document #>> '{bindings,accountId}' = ${accountId}
-          AND d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
-          AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v23'
+          AND (
+            (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35'))
+          )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
           AND (d.document #> '{strategyDecision,evidence,observation,portfolio,brokerState,account}') ? 'cryptoFeeTier'
@@ -705,6 +715,7 @@ export const makeReconciliation = (
         const durableFillRows = yield* sql<Record<string, unknown>>`
           SELECT
             fill.fill_id,
+            fill.source_timestamp,
             fill.broker_order_id,
             fill.event_id AS broker_event_id,
             transaction.transaction_id,
@@ -748,6 +759,7 @@ export const makeReconciliation = (
             accountId,
             openingCash,
             transactions: accounting.transactions,
+            fillExecutionTimes: new Map(durableFillRows.map((row) => [row.broker_event_id, row.source_timestamp])),
             fees: accounting.fees,
             brokerFeeAccruals: accounting.accruals,
             brokerFeeCashDeltaMicros: accounting.brokerFeeCashDeltaMicros,

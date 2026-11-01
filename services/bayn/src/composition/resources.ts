@@ -8,6 +8,8 @@ import { CandidateObservationStoreLive } from '../db/candidate-observation-postg
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
+import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
+import { DecisionsClient, DecisionsClientLive, DecisionsError } from '../jev/decisions'
 import { JevClient, JevClientLive, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
 import { JevHttpClientLive } from '../jev/http'
@@ -38,6 +40,7 @@ import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
 import { makeNativeArrivalStore } from '../db/native-arrival-postgres'
+import { NativeArrivalArchiveLive } from '../db/native-arrival-archive'
 import type { DatabaseError } from '../db/database-error'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
 import { nativeArrivalCaptureId } from '../market-data/streaming/native-arrival'
@@ -136,15 +139,7 @@ export const WorkerMarketProjectionLive = (
             }),
           )
         }),
-      ).pipe(
-        Layer.provide(
-          Layer.merge(
-            PostgresClientLive(plan.config, { maxConnections: 1, applicationName: 'bayn-native-arrival' }),
-            PostgresMigrationsLive(plan.config),
-          ),
-        ),
-        Layer.provide(NodeServices.layer),
-      )
+      ).pipe(Layer.provide(NativeArrivalArchiveLive(plan.config)), Layer.provide(NodeServices.layer))
 }
 
 const WorkerMarketDataLive = (
@@ -210,6 +205,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
     JevBatchStoreLive.pipe(Layer.provideMerge(JevEvaluationStoreLive)),
+    EntryInferenceJournalLive,
     CandidateObservationStoreLive,
     JevPositionStoreLive,
     ExecutionStoreResourceLive(plan.config),
@@ -221,6 +217,32 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
+    plan.config.openAiKey === undefined
+      ? Layer.succeed(DecisionsClient, {
+          evaluate: () =>
+            Effect.fail(
+              new DecisionsError({
+                category: 'REQUEST',
+                message: 'Entry inference requires the configured OpenAI Decisions credential',
+              }),
+            ),
+        })
+      : DecisionsClientLive(plan.config.openAiKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
+          Layer.provide(JevHttpClientLive(plan.config.alpaca.proxyUrl)),
+          Layer.catch((cause) =>
+            Layer.effect(
+              DecisionsClient,
+              Effect.fail(
+                operationalError({
+                  component: 'config',
+                  operation: 'decisions-client',
+                  message: 'OpenAI inference configuration is invalid',
+                  cause,
+                }),
+              ),
+            ),
+          ),
+        ),
     plan.config.jevKey === undefined
       ? Layer.succeed(JevClient, {
           evaluate: () =>
@@ -249,7 +271,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
         ),
     BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
-    WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
+    WriterFencedCycleStoreResourceLive.pipe(Layer.provide(executionPersistence)),
   ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 

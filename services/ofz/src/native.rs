@@ -118,13 +118,108 @@ impl Native {
         self.schema_hash().await
     }
 
+    pub(crate) async fn retire_domain_connectors(&self) -> Result<(), Status> {
+        let installed = self.schema_text().await?;
+        for (kind, relation, marker) in [
+            ("kube_namespace", None, "definition kube_namespace"),
+            (
+                "connector_connection",
+                None,
+                "definition connector_connection",
+            ),
+            ("platform", Some("kube_broker"), "kube_broker"),
+            ("platform", Some("connector_broker"), "connector_broker"),
+            (
+                "agent_grant",
+                Some("kube_namespace"),
+                "relation kube_namespace",
+            ),
+            (
+                "agent_grant",
+                Some("connector_connection"),
+                "relation connector_connection",
+            ),
+        ] {
+            if installed.contains(marker) {
+                let mut filter = json!({"resourceType":kind});
+                if let Some(relation) = relation {
+                    filter["optionalRelation"] = json!(relation);
+                }
+                self.post(
+                    "/v1/relationships/delete",
+                    json!({"relationshipFilter":filter}),
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn schema_hash(&self) -> Result<Vec<u8>, Status> {
+        Ok(Sha256::digest(self.schema_text().await?.as_bytes()).to_vec())
+    }
+
+    pub(crate) async fn schema_text(&self) -> Result<String, Status> {
         let response = self.post("/v1/schema/read", json!({})).await?;
         let schema = response["schemaText"]
             .as_str()
             .filter(|schema| !schema.is_empty())
             .ok_or_else(|| Status::unavailable("missing installed authorization schema"))?;
-        Ok(Sha256::digest(schema.as_bytes()).to_vec())
+        Ok(schema.to_owned())
+    }
+
+    pub(crate) async fn write_schema(&self, schema: &str) -> Result<(), Status> {
+        self.post("/v1/schema/write", json!({"schema": schema}))
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn policy_relations(
+        &self,
+        kind: &str,
+        id: &str,
+        subject_kind: &str,
+        subject_id: &str,
+    ) -> Result<Vec<String>, Status> {
+        let bytes = self.post_bytes("/v1/relationships/read", json!({
+            "consistency": {"fullyConsistent": true},
+            "relationshipFilter": {"resourceType": kind, "optionalResourceId": id,
+                "optionalSubjectFilter": {"subjectType": subject_kind, "optionalSubjectId": subject_id}},
+            "optionalLimit": 129
+        })).await?;
+        let mut relations = Vec::new();
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let envelope: Value = serde_json::from_slice(line)
+                .map_err(|_| Status::unavailable("invalid native relationship stream"))?;
+            let value = &envelope["result"]["relationship"];
+            if value["subject"]
+                .get("optionalRelation")
+                .is_some_and(|relation| relation != "")
+                || value
+                    .get("optionalCaveat")
+                    .is_some_and(|caveat| !caveat.is_null())
+            {
+                return Err(Status::failed_precondition(
+                    "conditional relationship cannot be edited here",
+                ));
+            }
+            let relationship: Relationship = serde_json::from_value(value.clone())
+                .map_err(|_| Status::unavailable("invalid native relationship"))?;
+            if relationship.resource != Object::new(kind, id)
+                || relationship.subject.object != Object::new(subject_kind, subject_id)
+                || relationship.optional_expires_at.is_some()
+                || relations.len() >= 128
+            {
+                return Err(Status::failed_precondition(
+                    "policy relationship is outside the editable scope",
+                ));
+            }
+            relations.push(relationship.relation);
+        }
+        Ok(relations)
     }
 
     pub(crate) async fn platform_matches(&self, expected: &[Relationship]) -> Result<bool, Status> {

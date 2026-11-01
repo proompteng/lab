@@ -84,9 +84,9 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2"
+              value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "72b942692c5156c48a9fea3a0b834b96d8bebe79a334e759af87e8a27c3b7e60"
+              value: "f9e6e142d22de772dca147cae29c07e17010026ee7c156874c1f6a1cccc32878"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -97,11 +97,11 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"c29257939cd2ace501f0e0c158204eb5840ad1b0f8f1e0689390f40e41762c92","authoredActivation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"},"activation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"}}'
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"ce98123b57957e5ff2c3394debde0a0613fbc825d58897ccfb6574617c4220d2","authoredActivation":{"sourceRevision":"3d33c510e66bca1c5fae247d2e3bf9075916b779","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:f3657c70be3dd14af65ece9f1a61a0aeb53eacc42b64fbad1945baddbbb24c1d"},"activation":{"sourceRevision":"3d33c510e66bca1c5fae247d2e3bf9075916b779","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:f3657c70be3dd14af65ece9f1a61a0aeb53eacc42b64fbad1945baddbbb24c1d"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "0496265d4a4014357cfe8d7e5b42891c294c18e07bf9517279019a6304b4ac27"
+              value: "fd1adaf06499346446c83ee8beb29200bd3d0b3f82155e13ed4c850d153deb89"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -152,6 +152,11 @@ spec:
               value: "true"
             - name: BAYN_POSTGRES_CA_PATH
               value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_NATIVE_ARRIVAL_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-native-arrival-db-app
+                  key: fqdn-uri
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -190,6 +195,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: bayn-jev-auth
+                  key: api-key
+                  optional: true
+            - name: BAYN_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-openai-auth
                   key: api-key
                   optional: true
             - name: VALKEY_PASSWORD
@@ -242,17 +253,27 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
+            - name: native-arrival-postgres-ca
+              mountPath: /var/run/secrets/bayn/native-arrival-postgres
+              readOnly: true
       volumes:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
-            defaultMode: 0440
+            defaultMode: 288
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
+            defaultMode: 444
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: native-arrival-postgres-ca
+          secret:
+            secretName: bayn-native-arrival-db-ca
             defaultMode: 444
             items:
               - key: ca.crt
