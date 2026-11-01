@@ -43,7 +43,7 @@ type AgentsJsonRequestOptions = {
   signal?: AbortSignal | null
 }
 
-export type AgentsHttpMethod = 'GET' | 'POST' | 'PATCH'
+export type AgentsHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
 export type AgentsFetch = (input: URL | string, init?: RequestInit) => Promise<Response>
 
