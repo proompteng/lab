@@ -117,6 +117,402 @@ fn resource(id: &str) -> p::PlatformResource {
         target: String::new(),
     }
 }
+async fn access_requests(
+    owner: &crate::store::Database,
+    database: &crate::store::Database,
+    native: &crate::native::Native,
+    humans: &[(String, String)],
+    administrator: &p::PlatformHumanSession,
+) {
+    use super::requests;
+    let connection = owner.pool.get().await.unwrap();
+    let workspace = crate::registry::configured().unwrap().workspaces[0]
+        .id
+        .clone();
+    let requester = session(&humans[3]);
+    let target = resource("galactic/11111111-1111-4111-8111-111111111111");
+    let mut create = p::CreatePlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        requester: Some(requester.clone()),
+        workspace_id: workspace.clone(),
+        resource: Some(target.clone()),
+        actions: vec![
+            "kubernetes.status.read".into(),
+            "kubernetes.logs.read".into(),
+        ],
+        reason: "Read namespace state for a support investigation".into(),
+    };
+    let caller = crate::registry::configured()
+        .unwrap()
+        .service(policy::BFF_ID)
+        .unwrap();
+    assert!(
+        requests::requestable(native, caller, &requester.human_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|scope| scope.resource.as_ref() == Some(&target))
+    );
+    let first = mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::RequestAccess(create.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(first.decision.allowed);
+    assert!(
+        !native
+            .check(
+                &authorization::resource_checks(
+                    &target,
+                    "kubernetes.status.read",
+                    "human",
+                    &requester.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    create.actions.reverse();
+    let renewed = Uuid::new_v4();
+    crate::control_integration::seed_session(&connection, renewed, &requester.human_id, "4").await;
+    create.requester.as_mut().unwrap().session_id = renewed.to_string();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::RequestAccess(create.clone())
+        )
+        .await
+        .unwrap()
+        .decision
+        .audit_receipt_id,
+        first.decision.audit_receipt_id
+    );
+    let mut duplicate = create.clone();
+    duplicate.operation_id = Uuid::new_v4().to_string();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::RequestAccess(duplicate.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::AlreadyExists
+    );
+    duplicate.workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::RequestAccess(duplicate)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let list = p::ListPlatformAccessRequestsRequest {
+        administrator: Some(administrator.clone()),
+        workspace_id: workspace.clone(),
+    };
+    assert_eq!(
+        requests::list(database, native, ADMIN, list.clone())
+            .await
+            .unwrap()
+            .requests
+            .len(),
+        1
+    );
+    assert_eq!(
+        requests::list(database, native, policy::BFF_ID, list.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let mut review = p::ReviewPlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        administrator: Some(administrator.clone()),
+        workspace_id: workspace.clone(),
+        request_id: create.operation_id.clone(),
+        decision: p::PlatformAccessRequestDecision::Approve as i32,
+        reason: "Approved bounded namespace support reads".into(),
+    };
+    let mut wrong_workspace = review.clone();
+    wrong_workspace.workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(wrong_workspace)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::NotFound
+    );
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .unwrap_err()
+        .message()
+        .contains("multifactor authentication required")
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    connection.batch_execute("CREATE FUNCTION ofz.fixture_interrupt_access_request() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.receipt->>'platform_action'='ofz.access_requests.review' THEN RAISE EXCEPTION 'isolated request interruption'; END IF; RETURN NEW; END $$; CREATE TRIGGER fixture_interrupt_access_request BEFORE INSERT ON ofz.audit FOR EACH ROW EXECUTE FUNCTION ofz.fixture_interrupt_access_request();").await.unwrap();
+    assert!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        native
+            .applied(&format!("platform-command/{}", review.operation_id))
+            .await
+            .unwrap()
+            .0
+    );
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT state FROM ofz.platform_access_requests WHERE id=$1",
+                &[&Uuid::parse_str(&create.operation_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, i16>(0),
+        1
+    );
+    connection.batch_execute("DROP TRIGGER fixture_interrupt_access_request ON ofz.audit; DROP FUNCTION ofz.fixture_interrupt_access_request();").await.unwrap();
+    let approved = mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::ReviewAccess(review.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        native
+            .check(
+                &authorization::resource_checks(
+                    &target,
+                    "kubernetes.status.read",
+                    "human",
+                    &requester.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    assert!(
+        requests::list(database, native, ADMIN, list.clone())
+            .await
+            .unwrap()
+            .requests
+            .is_empty()
+    );
+    let cancel = p::CancelPlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        requester: Some(requester.clone()),
+        request_id: create.operation_id.clone(),
+    };
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::CancelAccess(cancel)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::FailedPrecondition
+    );
+    let version = database.state().await.unwrap().version;
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            version,
+            &[
+                Update::delete(Relationship::new(
+                    "kubernetes_namespace",
+                    &target.id,
+                    "status_reader",
+                    "human",
+                    &requester.human_id,
+                )),
+                Update::delete(Relationship::new(
+                    "kubernetes_namespace",
+                    &target.id,
+                    "log_reader",
+                    "human",
+                    &requester.human_id,
+                )),
+            ],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            ADMIN,
+            Command::ReviewAccess(review.clone())
+        )
+        .await
+        .unwrap()
+        .decision
+        .audit_receipt_id,
+        approved.decision.audit_receipt_id
+    );
+    assert!(
+        !native
+            .check(
+                &authorization::resource_checks(
+                    &target,
+                    "kubernetes.status.read",
+                    "human",
+                    &requester.human_id
+                )
+                .unwrap()
+            )
+            .await
+            .unwrap()
+            .0
+    );
+    create.operation_id = Uuid::new_v4().to_string();
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::RequestAccess(create.clone()),
+    )
+    .await
+    .unwrap();
+    let mut cancel = p::CancelPlatformAccessRequestRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        requester: Some(session(&humans[2])),
+        request_id: create.operation_id.clone(),
+    };
+    assert_eq!(
+        mutations::execute(
+            database,
+            native,
+            policy::BFF_ID,
+            Command::CancelAccess(cancel.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::NotFound
+    );
+    cancel.requester = Some(requester);
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::CancelAccess(cancel.clone()),
+    )
+    .await
+    .unwrap();
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::CancelAccess(cancel),
+    )
+    .await
+    .unwrap();
+    create.operation_id = Uuid::new_v4().to_string();
+    mutations::execute(
+        database,
+        native,
+        policy::BFF_ID,
+        Command::RequestAccess(create.clone()),
+    )
+    .await
+    .unwrap();
+    review.operation_id = Uuid::new_v4().to_string();
+    review.request_id = create.operation_id;
+    review.decision = p::PlatformAccessRequestDecision::Decline as i32;
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    mutations::execute(database, native, ADMIN, Command::ReviewAccess(review))
+        .await
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&administrator.session_id).unwrap()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        requests::list(database, native, ADMIN, list)
+            .await
+            .unwrap()
+            .requests
+            .is_empty()
+    );
+}
 fn check(id: &str) -> p::CheckPlatformAccessRequest {
     p::CheckPlatformAccessRequest {
         operation_id: Uuid::new_v4().to_string(),
@@ -662,6 +1058,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .get::<_, serde_json::Value>(0),
         historical_receipt
     );
+    access_requests(&admin, &database, &native, &humans, &administrators[0]).await;
     let namespace = "11111111-1111-4111-8111-111111111111".to_string();
     let resource_id = format!("galactic/{namespace}");
     assert!(
