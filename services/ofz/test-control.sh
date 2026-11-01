@@ -109,6 +109,16 @@ services['services'].append({
     ],
     'roles': ['platform.client', 'relay.client'],
 })
+services['workspaces'][0]['initial_clients'].append('fixture-client')
+services['workspaces'][0]['resources'].extend([
+    {'kind': 'kubernetes.namespace', 'id': 'galactic/11111111-1111-4111-8111-111111111111', 'name': 'fixture'},
+    {'kind': 'kubernetes.namespace', 'id': 'galactic/22222222-2222-4222-8222-222222222222', 'name': 'approved'},
+])
+services['workspaces'].append({
+    'id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'name': 'Other workspace',
+    'resources': [{'kind': 'kubernetes.namespace', 'id': 'galactic/33333333-3333-4333-8333-333333333333', 'name': 'private'}],
+    'initial_clients': ['fixture-client'], 'import_platform_members': False,
+})
 policies = json.loads(pathlib.Path('platform/policies.json').read_text())
 policies['actions'].append({
     'id': 'fixture.status.read',
@@ -156,7 +166,6 @@ SQL
       if [[ "$fixture_mode" == runtime ]]; then
         cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri "${2:-runtime_shared_state}" -- --ignored --nocapture --test-threads=1
       elif [[ "$fixture_mode" == editor ]]; then
-        export TENGRI_BFF_DATABASE_DSN="postgres://tengri_bff@localhost:$fixture_pg_port/tengri_control"
         bash ../nanoagent/test-vscode-browser.sh "${@:2}"
       elif [[ "$fixture_mode" == failover ]]; then
         # shellcheck source=tests/database-failover.sh
@@ -173,7 +182,7 @@ SQL
       cargo build --locked
       cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri --no-run
       cd ../../apps/landing
-      OFZ_IDENTITY_FIXTURE=1 bun test src/lib/tengri/identity.e2e.test.ts
+      OFZ_IDENTITY_FIXTURE=1 bun test src/lib/tengri/identity.e2e.test.ts src/components/platform/admin-portal.e2e.test.ts
     fi
     exit 0
   fi

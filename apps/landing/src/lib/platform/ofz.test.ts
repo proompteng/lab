@@ -7,8 +7,8 @@ import {
   CheckResponseSchema,
   type CheckRequest,
   type CheckResponse,
-} from './generated/proompteng/authz/v1/authz_pb'
-import { createSpiffeFixture } from './spiffe.fixture'
+} from '../tengri/generated/proompteng/authz/v1/authz_pb'
+import { createSpiffeFixture } from '../tengri/spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
 const { ofzCall, OfzError } = await import('./ofz')

@@ -17,6 +17,7 @@ on:
       - 'apps/landing/src/app/api/auth/**'
       - 'apps/landing/src/lib/tengri/**'
       - 'apps/landing/src/components/tengri/**'
+      - 'apps/landing/src/components/platform/**'
       - 'argocd/applications/keycloak/tengri/**'
       - 'argocd/applications/proompteng/ingressroute.yaml'
       - 'apps/landing/package.json'

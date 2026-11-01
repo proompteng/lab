@@ -17,24 +17,24 @@ async function authRequest(path: string, operationId?: string) {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: operationId ? { 'x-tengri-operation-id': operationId } : {},
+    headers: operationId
+      ? { 'x-platform-operation-id': operationId }
+      : { 'x-platform-return-path': window.location.pathname + window.location.search },
   })
   if (!response.ok) {
     const parsed = errorSchema.safeParse(await response.json().catch(() => null))
-    throw new Error(
-      parsed.success ? parsed.data.error || 'Tengri authentication failed' : 'Tengri authentication failed',
-    )
+    throw new Error(parsed.success ? parsed.data.error || 'Sign-in failed. Try again.' : 'Sign-in failed. Try again.')
   }
   return response
 }
 
-export async function startTengriSignIn(action: 'login' | 'step-up' | 'add-passkey' = 'login') {
+export async function startSignIn(action: 'login' | 'step-up' | 'add-passkey' = 'login') {
   const response = await authRequest(`/api/auth/${action}`)
   const redirect = redirectSchema.parse(await response.json())
   window.location.assign(redirect.url)
 }
 
-export async function signOutTengri() {
+export async function signOut() {
   logoutOperation ??= crypto.randomUUID()
   await authRequest('/api/auth/logout', logoutOperation)
   logoutOperation = undefined

@@ -70,14 +70,21 @@ prepare_database_failover() {
 
 promote_database_containers() {
   local primary="$1" standby="$2" network="$3" primary_ip="$4"
-  fixture_docker exec -i "$primary" psql -XqAt -U postgres -d tengri_control -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
-SET ROLE tengri_bff;
-SELECT tengri.begin_oauth(decode(repeat('51',32),'hex'),decode(repeat('52',32),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid());
+  fixture_docker exec -i "$primary" psql -XqAt -U postgres -d ofz_control -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+SET ROLE ofz_api;
+BEGIN;
+SET LOCAL synchronous_commit='local';
+INSERT INTO ofz.sign_in_attempts (gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms)
+VALUES ('tengri-web',decode(repeat('51',32),'hex'),decode(repeat('52',32),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid(),ofz.now_ms()+300000);
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM tengri.oauth_attempts WHERE state_hash=decode(repeat('51',32),'hex')) THEN
-    RAISE EXCEPTION 'unfinished OAuth attempt missing before promotion';
+  IF NOT EXISTS (SELECT 1 FROM ofz.sign_in_attempts WHERE gateway_service='tengri-web' AND state_hash=decode(repeat('51',32),'hex')) THEN
+    RAISE EXCEPTION 'unfinished Ofz sign-in attempt missing before promotion';
+  END IF;
+  IF has_table_privilege('tengri_bff','ofz.sign_in_attempts','SELECT,INSERT,DELETE') THEN
+    RAISE EXCEPTION 'retired BFF role has Ofz sign-in authority';
   END IF;
 END $$;
+COMMIT;
 SQL
   fixture_docker kill --signal KILL "$primary" >/dev/null
   fixture_docker network disconnect --force "$network" "$primary"
@@ -86,7 +93,7 @@ SQL
   fixture_docker network connect --ip "$primary_ip" --alias "$primary" "$network" "$standby"
   fixture_docker exec "$standby" pg_ctl -D /tmp/ofz-standby promote --wait --timeout=5 >/dev/null
   [[ "$(fixture_docker exec "$standby" psql -XAt -U postgres -c 'SELECT pg_is_in_recovery()')" == f ]]
-  [[ "$(fixture_docker exec "$standby" psql -XAt -U postgres -d tengri_control -c 'SELECT count(*) FROM tengri.oauth_attempts')" == 0 ]]
+  [[ "$(fixture_docker exec "$standby" psql -XAt -U postgres -d ofz_control -c 'SELECT count(*) FROM ofz.sign_in_attempts')" == 0 ]]
 }
 
 promote_database() {
