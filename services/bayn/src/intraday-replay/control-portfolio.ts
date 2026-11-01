@@ -290,6 +290,7 @@ export const triggerControlExit = (input: {
           reason = ControlExit.ProtectiveStop
         else if (input.policy !== ControlPolicy.ResidualShock) {
           const liquidation = yield* jevLiquidationValue({
+            feeAt: new Date(atMs).toISOString(),
             protocol,
             symbol: position.symbol,
             quantityAtoms: BigInt(position.quantityAtoms),

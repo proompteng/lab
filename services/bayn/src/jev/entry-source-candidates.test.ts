@@ -30,6 +30,7 @@ const context = (chart: NativeChartEvidence, bidMicros = 105_500_000n, askMicros
   }
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: chart.symbol,
       bidMicros,

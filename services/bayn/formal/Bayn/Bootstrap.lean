@@ -102,6 +102,12 @@ theorem later_attempts_can_reserve_adequate_resolution : tailResolutionSupported
 
 theorem inadequate_budget_is_not_supported : ¬ tailResolutionSupported 13 3 10000 := by decide
 
+-- A fair two-outcome process with payoffs 1 and -3 has negative mean and zero mean edge over -1.
+-- Its two-win sample has positive profit and paired totals. Executable conformance checks the bootstrap bounds.
+theorem negative_expectancy_has_a_positive_bootstrap_sample :
+    (1 : Int) + (-3) < 0 ∧ ((1 : Int) - (-1)) + ((-3) - (-1)) = 0 ∧
+    sampledTotal #[1, 1] [0, 1] = 2 ∧ pairedSample #[1, 1] #[-1, -1] [0, 1] = 4 := by decide
+
 theorem odd_window_has_exactly_registered_sessions :
     (sampleSessions 3 2 20260921).2.length = 3 ∧ (sampleSessions 21 3 20260921).2.length = 21 := by
   constructor <;> exact sample_has_registered_length _ _ _
