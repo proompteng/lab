@@ -2,11 +2,14 @@
 
 ## Dated fees and statistical claims
 
-Protocol v36 binds the effective-dated TAF model. The image build and runtime expectations use its canonical
-parameter and protocol hashes. The v35 sealed capital request and all financial history remain unchanged, but the
-v36 runtimes do not reference that incompatible request. Broker access stays read-only and capital authority stays
-`none`; this source runs OBSERVE. A new matching capital activation requires its existing separate authorization.
-Image selection and publication still use the normal Kargo path.
+Protocol v36 binds the effective-dated TAF model and retains native PAPER activation through a matching sealed
+request. Its provenance binding continues the original sandbox account and unchanged risk policy and activation
+limits. The native path reconciles the account and appends a successor authority generation; it does not reset
+accounting, loss, turnover or equity-peak history. Broker credentials remain unchanged.
+
+All three runtimes retain the activation request and Kargo build lineage. Their read-only bootstrap configuration
+is the starting state for native PAPER activation, not a replacement for the granted authority. Image publication
+and statistical qualification do not grant capital. Kargo still owns image selection and promotion.
 
 Migration 170 makes new assessments research-only because bootstrap confidence coverage is unestablished. Migration
 171 preserves the existing flat, settled, reconciled protocol cutover boundary before admitting only v36 provider
