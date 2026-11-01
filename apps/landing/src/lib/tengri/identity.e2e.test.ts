@@ -974,7 +974,7 @@ identityTest(
     await browserExpect(page.locator('a[href="https://github.com/account/redirect?user_id=1"]')).toBeVisible()
     await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: false })
     const sessions = await control.query(
-      'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
+      'SELECT s.human_id,s.github_id,s.mfa_at_ms,s.expires_at_ms,s.idle_deadline_ms,c.token_hash FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id AND NOT c.revoked',
     )
     expect(sessions.rowCount).toBe(1)
     expect(establishmentAttempts).toHaveLength(2)
@@ -1478,6 +1478,10 @@ identityTest(
       new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }),
     )
     expect(survivingSession?.session.humanId).toBe(inspected.session.humanId)
+    expect(survivingSession?.session.id).toBe(inspected.session.id)
+    expect(
+      (await control.query('SELECT revoked FROM ofz.sessions WHERE id=$1', [inspected.session.id])).rows[0]?.revoked,
+    ).toBe(false)
     expect(
       (await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [survivingSession?.session.id]))
         .rows[0]?.identity_subject,
@@ -1616,6 +1620,7 @@ identityTest(
         'access.token.claim': 'false',
       },
     })
+    const sessionsBeforeAssuranceDenial = await control.query('SELECT count(*) FROM ofz.sessions')
     const stepUp = await page.evaluate(async () => {
       const response = await fetch('/api/auth/step-up', { method: 'POST' })
       if (!response.ok) throw new Error('The fixture step-up could not start')
@@ -1635,7 +1640,9 @@ identityTest(
         ])
       ).rows[0]?.reason,
     ).toBe('verified passkey assurance required')
-    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('5')
+    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe(
+      sessionsBeforeAssuranceDenial.rows[0]?.count,
+    )
     const mappers = z
       .array(z.object({ id: z.string(), name: z.string() }))
       .parse(await (await adminCall(`/clients/${client.id}/protocol-mappers/models`)).json())
