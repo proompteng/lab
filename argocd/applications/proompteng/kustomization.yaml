@@ -8,7 +8,6 @@ resources:
   - service.yaml
   - ingressroute.yaml
   - ofz-credentials-sealedsecret.yaml
-  - database-ca.yaml
   - pod-disruption-budget.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/proompteng

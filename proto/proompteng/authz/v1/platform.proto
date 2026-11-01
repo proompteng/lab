@@ -7,6 +7,8 @@ import "proompteng/authz/v1/authz.proto";
 option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 
 service PlatformAuthorizationService {
+  rpc BeginSignIn(BeginSignInRequest) returns (BeginSignInResponse);
+  rpc ConsumeSignIn(ConsumeSignInRequest) returns (ConsumeSignInResponse);
   rpc EstablishSession(EstablishSessionRequest) returns (EstablishSessionResponse);
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
@@ -22,6 +24,24 @@ service PlatformAuthorizationService {
   rpc CreatePlatformDelegation(CreatePlatformDelegationRequest) returns (CreatePlatformDelegationResponse);
   rpc ActivatePlatformDelegation(ActivatePlatformDelegationRequest) returns (ActivatePlatformDelegationResponse);
   rpc RevokePlatformDelegation(RevokePlatformDelegationRequest) returns (RevokePlatformDelegationResponse);
+}
+
+message BeginSignInRequest {
+  string state = 1;
+  string binding = 2;
+  string verifier = 3;
+  string nonce = 4;
+  string operation_id = 5;
+}
+message BeginSignInResponse {}
+message ConsumeSignInRequest {
+  string state = 1;
+  string binding = 2;
+}
+message ConsumeSignInResponse {
+  string verifier = 1;
+  string nonce = 2;
+  string operation_id = 3;
 }
 
 message EstablishSessionRequest {

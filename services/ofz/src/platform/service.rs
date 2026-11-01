@@ -34,6 +34,31 @@ impl Service {
 }
 #[tonic::async_trait]
 impl PlatformAuthorizationService for Service {
+    async fn begin_sign_in(
+        &self,
+        request: Request<proto::BeginSignInRequest>,
+    ) -> Result<Response<proto::BeginSignInResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        sessions::begin_sign_in(&self.database, &peer, request.into_inner()).await?;
+        Ok(Response::new(proto::BeginSignInResponse {}))
+    }
+    async fn consume_sign_in(
+        &self,
+        request: Request<proto::ConsumeSignInRequest>,
+    ) -> Result<Response<proto::ConsumeSignInResponse>, Status> {
+        let _capacity = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform policy service is busy"))?;
+        let peer = transport::peer(&request)?;
+        Ok(Response::new(
+            sessions::consume_sign_in(&self.database, &peer, request.into_inner()).await?,
+        ))
+    }
     async fn establish_session(
         &self,
         request: Request<proto::EstablishSessionRequest>,

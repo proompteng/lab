@@ -50,8 +50,13 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all seven migrations through `0007_ephemeral_oauth.sql`; they cannot
-initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
+checksum. The controller and supervisor require all eight migrations through `0008_platform_sign_in.sql`; they cannot
+initialize their own schema. Ofz owns gateway-scoped, single-use PKCE attempts in an unlogged table; the web gateways
+have no database access. The migration drops the replaced Tengri attempt table and revokes the obsolete BFF SQL grants.
+Only these ephemeral attempt transactions use local commit acknowledgement. Session, policy and audit transactions
+retain their existing durability requirements. The browser fixture verifies attempt creation and concurrent single-use
+consumption while the synchronous standby is unavailable. Promote Ofz and complete its migration hook before promoting
+its consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 

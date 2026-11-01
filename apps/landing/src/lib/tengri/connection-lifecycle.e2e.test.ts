@@ -3,8 +3,8 @@ import { beforeEach, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { connectionRequestSchema, type RelayIdentity } from './connections'
-import { SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
 import {
+  SessionSchema,
   PlatformConnectionSchema,
   PlatformDecisionSchema,
   ListPlatformConnectionsResponseSchema,

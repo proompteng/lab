@@ -44,11 +44,9 @@ verifies the signed numeric GitHub identity, active platform membership and auth
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
 
-The BFF's SQL pool serves only OAuth attempt creation and consumption. Five-minute attempts use one shared unlogged
-PostgreSQL table, so sign-in does not wait for WAL or synchronous replication. Consumption remains atomic across BFF
-replicas. A database crash or failover discards unfinished attempts and requires a fresh sign-in; it cannot authorize
-a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
-query deadline, verified database TLS, and existing attempt expiry and capacity limits.
+Ofz owns five-minute PKCE attempts as well as sessions. Attempts are gateway-scoped and consumed atomically through
+SPIFFE mTLS. Their unlogged table tolerates database failover by discarding unfinished sign-ins; established sessions,
+policies and audits remain durable. The web application holds no database password or database connection.
 
 `/access` and Settings → Privacy & Security administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
 Workspace and Platform open with one row per person and focused add/manage actions. Workspace limits show usage

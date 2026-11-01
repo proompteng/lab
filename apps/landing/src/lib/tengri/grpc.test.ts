@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { SessionSchema } from './generated/proompteng/authz/v1/platform_pb'
 import type { TengriIdentity } from './auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'

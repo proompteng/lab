@@ -158,6 +158,9 @@ identityTest(
     const capabilityChecksum = createHash('sha256').update(capabilityMigration).digest()
     const leaseChecksum = createHash('sha256').update(leaseMigration).digest()
     const oauthChecksum = createHash('sha256').update(oauthMigration).digest()
+    const platformSignInChecksum = createHash('sha256')
+      .update(readFileSync(path.join(root, 'services/tengri/migrations/0008_platform_sign_in.sql')))
+      .digest()
     await bffAdmin.query('SET ROLE tengri_migrator')
     await bffAdmin.query(migration.toString())
     await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
@@ -194,7 +197,7 @@ identityTest(
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
       'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(7)
+    expect(versions.rowCount).toBe(8)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
     expect(versions.rows[1]?.version).toBe(2)
@@ -209,18 +212,18 @@ identityTest(
     expect(versions.rows[5]?.checksum.equals(leaseChecksum)).toBe(true)
     expect(versions.rows[6]?.version).toBe(7)
     expect(versions.rows[6]?.checksum.equals(oauthChecksum)).toBe(true)
+    expect(versions.rows[7]?.version).toBe(8)
+    expect(versions.rows[7]?.checksum.equals(platformSignInChecksum)).toBe(true)
     expect(
-      (await bffAdmin.query('SELECT operation_id FROM tengri.oauth_attempts WHERE state_hash=$1', [retainedOAuthState]))
-        .rows,
-    ).toEqual([{ operation_id: retainedOAuthOperation }])
-    await bffAdmin.query('DELETE FROM tengri.oauth_attempts WHERE state_hash=$1', [retainedOAuthState])
+      (await bffAdmin.query("SELECT to_regclass('tengri.oauth_attempts') AS old_attempts")).rows[0]?.old_attempts,
+    ).toBeNull()
     expect(
       (
         await bffAdmin.query<{ relname: string; relpersistence: string }>(
           "SELECT relname,relpersistence FROM pg_class WHERE relnamespace='tengri'::regnamespace AND relkind='r' ORDER BY relname",
         )
       ).rows.filter((row) => row.relpersistence !== 'p'),
-    ).toEqual([{ relname: 'oauth_attempts', relpersistence: 'u' }])
+    ).toEqual([])
     const migratedLease = await bffAdmin.query(
       "SELECT payload->>'lease_id' AS id FROM tengri.previews WHERE workspace_uid=$1",
       [retainedWorkspace],
@@ -584,66 +587,11 @@ identityTest(
       TENGRI_OIDC_CLIENT_SECRET_FILE: secret('oidc-secret', 'fixture-bff-secret-not-production-0000000'),
       TENGRI_OIDC_CONNECT_IP: '127.0.0.1',
       TENGRI_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
-      TENGRI_DATABASE_DSN: `postgres://tengri_bff@localhost:${port}/tengri_control`,
-      TENGRI_DATABASE_PASSWORD_FILE: secret('bff-password', 'fixture-bff'),
-      TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE,
       OFZ_GRPC_ENDPOINT: `localhost:${ofzPort}`,
       SPIFFE_ID: fixture.ownId,
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
       SPIFFE_WORKLOAD_API_PROTO_PATH: fixture.protoPath,
     })
-    expect((await admin.query('SHOW synchronous_standby_names')).rows[0]?.synchronous_standby_names).toBe('')
-    await admin.query("ALTER SYSTEM SET synchronous_standby_names='ANY 1 (oauth_fixture_missing)'")
-    try {
-      await admin.query('SELECT pg_reload_conf()')
-      for (let attempt = 0; ; attempt++) {
-        const setting = (await admin.query('SHOW synchronous_standby_names')).rows[0]?.synchronous_standby_names
-        if (setting === 'ANY 1 (oauth_fixture_missing)') break
-        if (attempt === 100) throw new Error('Fixture synchronous standby setting did not reload')
-        await new Promise((resolve) => setTimeout(resolve, 10))
-      }
-      const started = performance.now()
-      const response = await authRoute.POST(
-        new Request(`${base}/api/auth/login`, {
-          method: 'POST',
-          headers: { host: new URL(base).host, origin: base, 'sec-fetch-site': 'same-origin' },
-        }),
-      )
-      expect(response.status).toBe(200)
-      expect(performance.now() - started).toBeLessThan(1500)
-      const url = new URL(z.object({ url: z.string().url() }).parse(await response.json()).url)
-      const state = z.string().length(43).parse(url.searchParams.get('state'))
-      const binding = z
-        .string()
-        .length(43)
-        .parse(response.headers.getSetCookie()[0]?.match(/^__Host-tengri-oauth=([^;]+);/)?.[1])
-      const { controlDatabase, hashOpaque } = await import('./control-db')
-      const database = await controlDatabase()
-      const remaining = await bffAdmin.query<{ remaining: string }>(
-        'SELECT expires_at_ms-tengri.now_ms() AS remaining FROM tengri.oauth_attempts WHERE state_hash=$1',
-        [hashOpaque(state)],
-      )
-      expect(Number(remaining.rows[0]?.remaining)).toBeGreaterThan(0)
-      expect(Number(remaining.rows[0]?.remaining)).toBeLessThanOrEqual(300000)
-      const consume = () =>
-        database.query(
-          'DELETE FROM tengri.oauth_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at_ms>tengri.now_ms() RETURNING operation_id',
-          [hashOpaque(state), hashOpaque(binding)],
-        )
-      const consuming = performance.now()
-      expect((await Promise.all([consume(), consume()])).map((result) => result.rowCount).sort()).toEqual([0, 1])
-      expect(performance.now() - consuming).toBeLessThan(1500)
-      const replay = await authRoute.GET(
-        new Request(`${base}/api/auth/callback?state=${state}&code=discarded-attempt`, {
-          headers: { host: new URL(base).host, cookie: `__Host-tengri-oauth=${binding}` },
-        }),
-      )
-      expect(replay.status).toBe(401)
-      expect(replay.headers.getSetCookie().some((value) => value.startsWith('__Host-tengri-session='))).toBe(false)
-    } finally {
-      await admin.query('ALTER SYSTEM RESET synchronous_standby_names')
-      await admin.query('SELECT pg_reload_conf()')
-    }
     const freeCachePort = async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
         const candidate = 10000 + Math.floor(Math.random() * 5000)
@@ -845,6 +793,68 @@ identityTest(
     await ofzCall(TengriAuthorizationService.method.getPolicyState, {}).catch((error) => {
       throw new Error('Ofz wire handshake failed', { cause: error.cause || error })
     })
+    expect((await admin.query('SHOW synchronous_standby_names')).rows[0]?.synchronous_standby_names).toBe('')
+    await admin.query("ALTER SYSTEM SET synchronous_standby_names='ANY 1 (oauth_fixture_missing)'")
+    try {
+      await admin.query('SELECT pg_reload_conf()')
+      for (let attempt = 0; ; attempt++) {
+        const setting = (await admin.query('SHOW synchronous_standby_names')).rows[0]?.synchronous_standby_names
+        if (setting === 'ANY 1 (oauth_fixture_missing)') break
+        if (attempt === 100) throw new Error('Fixture synchronous standby setting did not reload')
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      const started = performance.now()
+      const response = await authRoute.POST(
+        new Request(`${base}/api/auth/login`, {
+          method: 'POST',
+          headers: { host: new URL(base).host, origin: base, 'sec-fetch-site': 'same-origin' },
+        }),
+      )
+      if (response.status !== 200) {
+        const databaseErrors = apiLogs
+          .split('\n')
+          .filter((line) => line.includes('sqlstate'))
+          .slice(-8)
+        throw new Error(
+          `Sign-in failed with ${response.status}: ${await response.text()}; ${databaseErrors.join('\n')}`,
+        )
+      }
+      expect(response.status).toBe(200)
+      expect(performance.now() - started).toBeLessThan(1500)
+      const url = new URL(z.object({ url: z.string().url() }).parse(await response.json()).url)
+      const state = z.string().length(43).parse(url.searchParams.get('state'))
+      const binding = z
+        .string()
+        .length(43)
+        .parse(response.headers.getSetCookie()[0]?.match(/^__Host-tengri-oauth=([^;]+);/)?.[1])
+      const remaining = await control.query<{ remaining: string }>(
+        'SELECT expires_at_ms-ofz.now_ms() AS remaining FROM ofz.sign_in_attempts WHERE state_hash=$1',
+        [createHash('sha256').update(state).digest()],
+      )
+      expect(Number(remaining.rows[0]?.remaining)).toBeGreaterThan(0)
+      expect(Number(remaining.rows[0]?.remaining)).toBeLessThanOrEqual(300000)
+      const consuming = performance.now()
+      const results = await Promise.allSettled(
+        [0, 1].map(() => ofzCall(PlatformAuthorizationService.method.consumeSignIn, { state, binding })),
+      )
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+      const rejected = results.find((result) => result.status === 'rejected')
+      expect(
+        z.object({ status: z.literal(401) }).safeParse(rejected?.status === 'rejected' ? rejected.reason : null)
+          .success,
+      ).toBe(true)
+      expect(performance.now() - consuming).toBeLessThan(1500)
+      const replay = await authRoute.GET(
+        new Request(`${base}/api/auth/callback?state=${state}&code=discarded-attempt`, {
+          headers: { host: new URL(base).host, cookie: `__Host-tengri-oauth=${binding}` },
+        }),
+      )
+      expect(replay.status).toBe(401)
+      expect(replay.headers.getSetCookie().some((value) => value.startsWith('__Host-tengri-session='))).toBe(false)
+    } finally {
+      await admin.query('ALTER SYSTEM RESET synchronous_standby_names')
+      await admin.query('SELECT pg_reload_conf()')
+    }
     const browser = await chromium.launch({
       headless: true,
       args: [
@@ -1729,14 +1739,14 @@ identityTest(
       ).rows[0]?.count,
     ).toBe('1')
 
-    const attemptsBefore = (await bffAdmin.query('SELECT count(*) FROM tengri.oauth_attempts')).rows[0]?.count
+    const attemptsBefore = (await control.query('SELECT count(*) FROM ofz.sign_in_attempts')).rows[0]?.count
     expect(
       await page.evaluate(async () => fetch('/api/auth/login', { method: 'HEAD' }).then((response) => response.status)),
     ).toBe(405)
-    expect((await bffAdmin.query('SELECT count(*) FROM tengri.oauth_attempts')).rows[0]?.count).toBe(attemptsBefore)
+    expect((await control.query('SELECT count(*) FROM ofz.sign_in_attempts')).rows[0]?.count).toBe(attemptsBefore)
     expect(
       await page.evaluate(async () =>
-        fetch('/api/auth/callback?state=' + 'a'.repeat(43) + '&code=replay').then((response) => response.status),
+        fetch('/api/auth/callback?state=' + 'A'.repeat(43) + '&code=replay').then((response) => response.status),
       ),
     ).toBe(401)
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()

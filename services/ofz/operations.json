@@ -783,6 +783,18 @@
   },
   {
     "surface": "ofz_platform",
+    "operation": "BeginSignIn",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ConsumeSignIn",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "EstablishSession",
     "internal_only": true,
     "action": "ACTION_SESSION_ESTABLISH"

@@ -64,12 +64,6 @@ spec:
               value: 100.100.244.181
             - name: TENGRI_OIDC_CLIENT_SECRET_FILE
               value: /var/run/tengri/oidc/client-secret
-            - name: TENGRI_DATABASE_DSN
-              value: postgres://tengri_bff@ofz-db-rw.ofz.svc.cluster.local:5432/tengri_control
-            - name: TENGRI_DATABASE_PASSWORD_FILE
-              value: /var/run/tengri/database/password
-            - name: TENGRI_DATABASE_CA_FILE
-              value: /var/run/tengri/database-ca/ca.crt
             - name: NEXT_PUBLIC_CONVEX_URL
               value: https://convex.proompteng.ai
             - name: LANDING_CMS_URL
@@ -128,12 +122,6 @@ spec:
             - mountPath: /var/run/tengri/oidc
               name: oidc
               readOnly: true
-            - mountPath: /var/run/tengri/database
-              name: database
-              readOnly: true
-            - mountPath: /var/run/tengri/database-ca
-              name: database-ca
-              readOnly: true
             - mountPath: /spiffe-workload-api
               name: workload-api
               readOnly: true
@@ -162,14 +150,6 @@ spec:
           secret:
             defaultMode: 288
             secretName: tengri-oidc-client
-        - name: database
-          secret:
-            defaultMode: 288
-            secretName: tengri-bff-db
-        - name: database-ca
-          secret:
-            defaultMode: 288
-            secretName: ofz-database-ca
         - csi:
             driver: csi.spiffe.io
             readOnly: true

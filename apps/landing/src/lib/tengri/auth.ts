@@ -6,7 +6,6 @@ import { request as httpsRequest } from 'node:https'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import type { TengriUser } from './types'
-import { controlDatabase, hashOpaque } from './control-db'
 import { PlatformAuthorizationService, type Session } from './generated/proompteng/authz/v1/platform_pb'
 import { isOfzConfigured, OfzError, ofzCall } from './ofz'
 import { reportServerError } from '../observability/server'
@@ -14,7 +13,6 @@ import { reportServerError } from '../observability/server'
 const SESSION_COOKIE = '__Host-tengri-session'
 const OAUTH_COOKIE = '__Host-tengri-oauth'
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
-const attemptSchema = z.object({ verifier: opaque, nonce: opaque, operation_id: z.uuid() })
 const tokensSchema = z.object({ id_token: z.string().min(1).max(16384) })
 export type TengriIdentity = { subject: string; user: TengriUser; session: Session }
 
@@ -52,11 +50,7 @@ function environment() {
 export function isTengriAuthConfigured() {
   try {
     environment()
-    return Boolean(
-      process.env.TENGRI_DATABASE_DSN &&
-      process.env.TENGRI_DATABASE_PASSWORD_FILE &&
-      process.env.TENGRI_DATABASE_CA_FILE,
-    )
+    return true
   } catch {
     return false
   }
@@ -125,15 +119,13 @@ export async function handleTengriAuth(request: Request) {
         const binding = randomBytes(32).toString('base64url')
         const verifier = randomBytes(32).toString('base64url')
         const nonce = randomBytes(32).toString('base64url')
-        const database = await controlDatabase()
-        // Database time and the single delete/return below work across BFF replicas.
-        await database.query('SELECT tengri.begin_oauth($1,$2,$3,$4,$5)', [
-          hashOpaque(state),
-          hashOpaque(binding),
+        await ofzCall(PlatformAuthorizationService.method.beginSignIn, {
+          state,
+          binding,
           verifier,
           nonce,
-          randomUUID(),
-        ])
+          operationId: randomUUID(),
+        })
         const authorize = new URL(`${env.issuer}/protocol/openid-connect/auth`)
         authorize.search = new URLSearchParams({
           client_id: env.clientId,
@@ -162,14 +154,7 @@ export async function handleTengriAuth(request: Request) {
         const code = z.string().min(1).max(4096).parse(url.searchParams.get('code'))
         const binding = cookie(request.headers, OAUTH_COOKIE)
         if (!binding) throw new OfzError(401)
-        const result = await (
-          await controlDatabase()
-        ).query<{ verifier: unknown; nonce: unknown; operation_id: unknown }>(
-          'DELETE FROM tengri.oauth_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at_ms>tengri.now_ms() RETURNING verifier,nonce,operation_id',
-          [hashOpaque(state), hashOpaque(binding)],
-        )
-        if (result.rowCount !== 1) throw new OfzError(401)
-        const attempt = attemptSchema.parse(result.rows[0])
+        const attempt = await ofzCall(PlatformAuthorizationService.method.consumeSignIn, { state, binding })
         const tokens = await exchangeCode(
           env,
           new URLSearchParams({
@@ -184,7 +169,7 @@ export async function handleTengriAuth(request: Request) {
         const establishment = {
           identityToken: tokens.id_token,
           nonce: attempt.nonce,
-          operationId: attempt.operation_id,
+          operationId: attempt.operationId,
           previousCredential: cookie(request.headers, SESSION_COOKIE) || '',
           credential: randomBytes(32).toString('base64url'),
         }

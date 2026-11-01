@@ -11,12 +11,100 @@ use crate::{
     native::{Check, Native},
     policy,
     proto::{
-        Action, Actor, CommandReceipt, CommandState, EstablishSessionRequest,
-        InspectSessionRequest, RequestContext, RevokeSessionRequest, Session, actor::Identity,
+        Action, Actor, BeginSignInRequest, CommandReceipt, CommandState, ConsumeSignInRequest,
+        ConsumeSignInResponse, EstablishSessionRequest, InspectSessionRequest, RequestContext,
+        RevokeSessionRequest, Session, actor::Identity,
     },
     registry,
     store::{self, Database, sql_error},
 };
+
+fn opaque_hash(value: &str) -> Result<Vec<u8>, Status> {
+    if value.len() != 43
+        || !URL_SAFE_NO_PAD
+            .decode(value)
+            .is_ok_and(|bytes| bytes.len() == 32)
+    {
+        return Err(Status::invalid_argument("256-bit sign-in value required"));
+    }
+    Ok(Sha256::digest(value.as_bytes()).to_vec())
+}
+
+pub async fn begin_sign_in(
+    database: &Database,
+    peer: &str,
+    request: BeginSignInRequest,
+) -> Result<(), Status> {
+    let (gateway, _) = registry::configured()?.session_gateway(peer)?;
+    let state_hash = opaque_hash(&request.state)?;
+    let binding_hash = opaque_hash(&request.binding)?;
+    opaque_hash(&request.verifier)?;
+    opaque_hash(&request.nonce)?;
+    let operation = decision::parse_uuid(&request.operation_id)?;
+    let mut client = database
+        .pool
+        .get()
+        .await
+        .map_err(|_| Status::unavailable("sign-in database unavailable"))?;
+    let tx = client.transaction().await.map_err(sql_error)?;
+    // Only disposable sign-in state changes here; failover discards this unlogged table.
+    tx.batch_execute("SET LOCAL synchronous_commit='local'")
+        .await
+        .map_err(sql_error)?;
+    tx.query_one(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+        &[&format!("ofz.sign-in:{gateway}")],
+    )
+    .await
+    .map_err(sql_error)?;
+    tx.execute(
+        "DELETE FROM ofz.sign_in_attempts WHERE gateway_service=$1 AND expires_at_ms<=ofz.now_ms()",
+        &[&gateway],
+    )
+    .await
+    .map_err(sql_error)?;
+    let count: i64 = tx
+        .query_one(
+            "SELECT count(*) FROM ofz.sign_in_attempts WHERE gateway_service=$1",
+            &[&gateway],
+        )
+        .await
+        .map_err(sql_error)?
+        .get(0);
+    if count >= 2000 {
+        return Err(Status::resource_exhausted(
+            "sign-in attempt capacity exhausted",
+        ));
+    }
+    tx.execute("INSERT INTO ofz.sign_in_attempts(gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,ofz.now_ms()+300000)", &[&gateway,&state_hash,&binding_hash,&request.verifier,&request.nonce,&operation]).await.map_err(sql_error)?;
+    tx.commit().await.map_err(sql_error)
+}
+
+pub async fn consume_sign_in(
+    database: &Database,
+    peer: &str,
+    request: ConsumeSignInRequest,
+) -> Result<ConsumeSignInResponse, Status> {
+    let (gateway, _) = registry::configured()?.session_gateway(peer)?;
+    let state_hash = opaque_hash(&request.state)?;
+    let binding_hash = opaque_hash(&request.binding)?;
+    let mut client = database
+        .pool
+        .get()
+        .await
+        .map_err(|_| Status::unavailable("sign-in database unavailable"))?;
+    let tx = client.transaction().await.map_err(sql_error)?;
+    tx.batch_execute("SET LOCAL synchronous_commit='local'")
+        .await
+        .map_err(sql_error)?;
+    let row = tx.query_opt("DELETE FROM ofz.sign_in_attempts WHERE gateway_service=$1 AND state_hash=$2 AND binding_hash=$3 AND expires_at_ms>ofz.now_ms() RETURNING verifier,nonce,operation_id", &[&gateway,&state_hash,&binding_hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("sign-in attempt expired or consumed"))?;
+    tx.commit().await.map_err(sql_error)?;
+    Ok(ConsumeSignInResponse {
+        verifier: row.get(0),
+        nonce: row.get(1),
+        operation_id: row.get::<_, Uuid>(2).to_string(),
+    })
+}
 
 #[derive(Clone)]
 pub struct Issuer {

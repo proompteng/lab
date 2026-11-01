@@ -738,6 +738,7 @@ async fn control_integration_durability_authority_and_quota() {
         service,
     };
     Box::pin(verify_maintenance_state_during_audit(&fixture)).await;
+    Box::pin(verify_sign_in_attempts(&fixture)).await;
     Box::pin(verify_browser_gateways(&fixture)).await;
     Box::pin(verify_session_bootstrap(&fixture)).await;
     let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
@@ -1546,6 +1547,120 @@ async fn verify_offboarding_during_enrollment(fixture: &ControlFixture) {
     assert_eq!(retained.get::<_, i64>(0), 1);
     assert_eq!(retained.get::<_, i64>(1), 0);
     assert_eq!(retained.get::<_, i64>(2), HOME_BYTES as i64);
+}
+
+async fn verify_sign_in_attempts(fixture: &ControlFixture) {
+    let admin_peer = "spiffe://proompteng.ai/ns/platform-admin/sa/platform-admin";
+    let token = |label: &str| URL_SAFE_NO_PAD.encode(Sha256::digest(label.as_bytes()));
+    let request = BeginSignInRequest {
+        state: token("state"),
+        binding: token("binding"),
+        verifier: token("verifier"),
+        nonce: token("nonce"),
+        operation_id: Uuid::new_v4().to_string(),
+    };
+    let consume = ConsumeSignInRequest {
+        state: request.state.clone(),
+        binding: request.binding.clone(),
+    };
+    sessions::begin_sign_in(&fixture.database, BFF_ID, request.clone())
+        .await
+        .unwrap();
+    for (peer, attempt) in [
+        (admin_peer, consume.clone()),
+        (
+            BFF_ID,
+            ConsumeSignInRequest {
+                binding: token("other"),
+                ..consume.clone()
+            },
+        ),
+    ] {
+        assert_eq!(
+            sessions::consume_sign_in(&fixture.database, peer, attempt)
+                .await
+                .unwrap_err()
+                .code(),
+            Code::Unauthenticated
+        );
+    }
+    let (first, second) = tokio::join!(
+        sessions::consume_sign_in(&fixture.database, BFF_ID, consume.clone()),
+        sessions::consume_sign_in(&fixture.database, BFF_ID, consume.clone()),
+    );
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let value = first.as_ref().or(second.as_ref()).unwrap();
+    assert_eq!(value.operation_id, request.operation_id);
+    assert_eq!(value.verifier, request.verifier);
+    assert_eq!(value.nonce, request.nonce);
+    assert_eq!(
+        first.err().or(second.err()).unwrap().code(),
+        Code::Unauthenticated
+    );
+
+    sessions::begin_sign_in(
+        &fixture.database,
+        admin_peer,
+        BeginSignInRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            ..request.clone()
+        },
+    )
+    .await
+    .unwrap();
+    let client = fixture.admin.pool.get().await.unwrap();
+    client.execute("UPDATE ofz.sign_in_attempts SET expires_at_ms=ofz.now_ms()-1 WHERE gateway_service='platform-admin'", &[]).await.unwrap();
+    assert_eq!(
+        sessions::consume_sign_in(&fixture.database, admin_peer, consume)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        sessions::begin_sign_in(&fixture.database, CONTROLLER_ID, request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        sessions::begin_sign_in(
+            &fixture.database,
+            BFF_ID,
+            BeginSignInRequest {
+                verifier: "guess".into(),
+                ..request.clone()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::InvalidArgument
+    );
+
+    client.execute("INSERT INTO ofz.sign_in_attempts SELECT 'tengri-web',decode(md5(i::text)||md5(i::text),'hex'),decode(md5(i::text)||md5(i::text),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid(),ofz.now_ms()+300000 FROM generate_series(1,2000) i", &[]).await.unwrap();
+    assert_eq!(
+        sessions::begin_sign_in(&fixture.database, BFF_ID, request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::ResourceExhausted
+    );
+    sessions::begin_sign_in(
+        &fixture.database,
+        admin_peer,
+        BeginSignInRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            ..request
+        },
+    )
+    .await
+    .unwrap();
+    client
+        .execute("DELETE FROM ofz.sign_in_attempts", &[])
+        .await
+        .unwrap();
 }
 
 async fn verify_browser_gateways(fixture: &ControlFixture) {
