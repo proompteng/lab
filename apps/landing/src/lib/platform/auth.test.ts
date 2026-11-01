@@ -5,19 +5,20 @@ import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:te
 import * as Sentry from '@sentry/node'
 
 void mock.module('server-only', () => ({}))
-const { getTengriIdentity, handleTengriAuth } = await import('./auth')
+const { getPlatformIdentity, handlePlatformAuth } = await import('./auth')
 const directory = mkdtempSync(path.join(tmpdir(), 'tengri-auth-'))
 const settings = {
-  TENGRI_DESKTOP_ORIGIN: 'https://proompteng.ai',
-  TENGRI_OIDC_ISSUER: 'https://auth.proompteng.ai/realms/tengri',
-  TENGRI_OIDC_CLIENT_SECRET_FILE: path.join(directory, 'oidc-secret'),
+  PLATFORM_WEB_ORIGIN: 'https://proompteng.ai',
+  PLATFORM_OIDC_ISSUER: 'https://auth.proompteng.ai/realms/tengri',
+  PLATFORM_OIDC_CLIENT_SECRET_FILE: path.join(directory, 'oidc-secret'),
+  PLATFORM_OIDC_CLIENT_ID: 'tengri-bff',
   OFZ_GRPC_ENDPOINT: 'ofz-api.ofz.svc.cluster.local:9443',
   SPIFFE_ENDPOINT_SOCKET: 'unix:///unavailable-fixture.sock',
   SPIFFE_ID: 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng',
 }
 const prior = new Map(Object.keys(settings).map((name) => [name, process.env[name]]))
 beforeAll(() => {
-  writeFileSync(settings.TENGRI_OIDC_CLIENT_SECRET_FILE, 'fixture-oidc-client-secret-with-over-32-bytes', {
+  writeFileSync(settings.PLATFORM_OIDC_CLIENT_SECRET_FILE, 'fixture-oidc-client-secret-with-over-32-bytes', {
     mode: 0o600,
   })
   Object.assign(process.env, settings)
@@ -33,9 +34,9 @@ afterAll(() => {
 describe('Ofz-backed browser authentication boundary', () => {
   test('reports a caught authentication outage while preserving its 503 response', async () => {
     const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
-    process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = path.join(directory, 'missing-secret')
+    process.env.PLATFORM_OIDC_CLIENT_SECRET_FILE = path.join(directory, 'missing-secret')
     try {
-      const response = await handleTengriAuth(
+      const response = await handlePlatformAuth(
         new Request('https://proompteng.ai/api/auth/login', {
           method: 'POST',
           headers: { host: 'proompteng.ai', origin: 'https://proompteng.ai', 'sec-fetch-site': 'same-origin' },
@@ -51,7 +52,7 @@ describe('Ofz-backed browser authentication boundary', () => {
       })
       expect(body).not.toContain('missing-secret')
     } finally {
-      process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = settings.TENGRI_OIDC_CLIENT_SECRET_FILE
+      process.env.PLATFORM_OIDC_CLIENT_SECRET_FILE = settings.PLATFORM_OIDC_CLIENT_SECRET_FILE
       capture.mockRestore()
     }
   })
@@ -62,13 +63,13 @@ describe('Ofz-backed browser authentication boundary', () => {
       `__Host-tengri-session=${'a'.repeat(43)}; __Host-tengri-session=${'b'.repeat(43)}`,
       'tengri.session_token=old-better-auth-credential',
     ]) {
-      expect(await getTengriIdentity(new Headers({ cookie: value }))).toBeNull()
+      expect(await getPlatformIdentity(new Headers({ cookie: value }))).toBeNull()
     }
   })
   test.each(['login', 'step-up', 'add-passkey'])(
     'cross-origin %s is denied before issuing OAuth state',
     async (action) => {
-      const response = await handleTengriAuth(
+      const response = await handlePlatformAuth(
         new Request(`https://proompteng.ai/api/auth/${action}`, {
           method: 'POST',
           headers: { host: 'proompteng.ai', origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
@@ -80,7 +81,7 @@ describe('Ofz-backed browser authentication boundary', () => {
     },
   )
   test('callback requires a full random state and code', async () => {
-    const response = await handleTengriAuth(
+    const response = await handlePlatformAuth(
       new Request('https://proompteng.ai/api/auth/callback?state=guess&code=code', {
         headers: { host: 'proompteng.ai' },
       }),
@@ -89,7 +90,7 @@ describe('Ofz-backed browser authentication boundary', () => {
     expect(response.headers.get('cache-control')).toContain('no-store')
   })
   test('cancelled OIDC callbacks clear the attempt cookie without requiring an authorization code', async () => {
-    const response = await handleTengriAuth(
+    const response = await handlePlatformAuth(
       new Request(`https://proompteng.ai/api/auth/callback?error=access_denied&state=${'a'.repeat(43)}`, {
         headers: { host: 'proompteng.ai', cookie: `__Host-tengri-oauth=${'b'.repeat(43)}` },
       }),
@@ -103,7 +104,7 @@ describe('Ofz-backed browser authentication boundary', () => {
   test.each(['http://0.0.0.0:3000', 'https://0.0.0.0:3000'])(
     'accepts the public Host behind Next internal URL %s',
     async (internalOrigin) => {
-      const response = await handleTengriAuth(
+      const response = await handlePlatformAuth(
         new Request(`${internalOrigin}/api/auth/callback?error=access_denied`, {
           headers: { host: 'proompteng.ai' },
         }),
@@ -117,7 +118,7 @@ describe('Ofz-backed browser authentication boundary', () => {
   test.each(['untrusted.invalid', 'proompteng.ai.evil.invalid', 'proompteng.ai:3000', ''])(
     'rejects the wrong public Host %s even with a forged forwarded host',
     async (host) => {
-      const response = await handleTengriAuth(
+      const response = await handlePlatformAuth(
         new Request('http://0.0.0.0:3000/api/auth/login', {
           method: 'POST',
           headers: {
@@ -133,7 +134,7 @@ describe('Ofz-backed browser authentication boundary', () => {
     },
   )
   test('old direct-provider and stateless-session endpoints have been removed', async () => {
-    const response = await handleTengriAuth(
+    const response = await handlePlatformAuth(
       new Request('https://proompteng.ai/api/auth/sign-in/social', {
         method: 'POST',
         headers: { host: 'proompteng.ai', origin: 'https://proompteng.ai' },

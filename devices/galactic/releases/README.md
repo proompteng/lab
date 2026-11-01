@@ -13,32 +13,63 @@ Use the signed catalog in `devices/nuc/image-factory/release.json` and the insta
 extensions, Tailscale, kernel arguments, disk selectors and network configuration.
 
 Run `verify-installer.sh <profile> <evidence-directory>` for all three profiles before maintenance.
+The steps below record the November 1 manual rollout. They are not a safe recipe for another manual version
+handoff on Omni 1.11.0: unlocking after changing the Cluster target raced stale derived install targets and staged
+1.14.0 on Turin, despite its running 1.14.5 kernel. See the
+[incident and acceptance record](talos-v1.14.5-acceptance.md#omni-handoff-race).
+Future version changes use Omni's rolling lifecycle from the currently running version, with standalone workspaces
+fenced for retained-home recovery. Do not pre-upgrade them under an older locked desired version.
+
 The current drain inventory contains PDB-blocked singleton services and standalone Turin Pods. In particular,
-Tengri's retained guest snapshots live in Pod-local disk-backed volumes; evicting their Pods would discard that
-state. This patch therefore uses the existing locked custom-installer procedure, rather than Omni's automatic drain.
+Tengri's guest snapshots live in Pod-local disk-backed volumes. Both eviction and graceful node shutdown terminate
+these Pods and discard their local state. Sleeping a guest and extending `NoExecute` tolerations do not preserve its
+snapshot through `talosctl reboot`. The November 1 rollout used locked custom installers and required explicit
+retained-home recovery; the unsafe version-handoff assumption is withdrawn above.
 
 1. Require no active Omni lifecycle operation, then lock `galactic` while its live desired Talos version remains
    `1.14.0`. Keep Kubernetes at `1.37.0` throughout. Do not sync the new target while installations are incomplete.
-2. Use the signed-in workspace Sleep action and require the guest's `GuestStopped` condition. Preserve the MicroVM,
-   retained-home PVC and standalone Pod UIDs. Before Turin's reboot, temporarily extend the existing not-ready and
-   unreachable `NoExecute` toleration seconds to `3600` on its six slot Pods and standalone performance-test Pod,
-   using UID/resourceVersion preconditions. Restore the exact original tolerations after Turin returns.
+2. Complete active work, use the signed-in workspace Sleep action and require `GuestStopped`. Plan a
+   [fenced retained-home cold boot](../../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+   for Turin. Preserve the MicroVM, Lease, home PVC, owner grant and guest image. The replacement Pod gets a new UID;
+   files and conversations remain on the home PVC, while memory snapshots and unsaved process state cannot survive.
+   A pending active-run record requires explicit recovery, not deletion of the activity pin or a fabricated completion.
 3. Upgrade Ryzen, Turin and Altra one at a time. Before each target, verify three healthy etcd members, its system-disk
    serial, Kubernetes readiness, KVM and current storage state. Cordon and gracefully drain controller-managed Pods
-   with the authorized PDB bypass. On Turin, exclude `app.kubernetes.io/name=tengri-slot` and `app=bayn-perf-test`
-   from the drain. Keep their Pod UIDs and disk-backed volumes across the reboot. Never use `--force` or delete a PVC.
+   with the authorized PDB bypass. Exclude `app=rook-ceph-osd` from the client drain so local OSDs remain available
+   while clients flush and unmount. The subsequent node shutdown stops the OSDs. Inventory every standalone Pod's
+   local data before maintenance; excluding it from drain does not preserve that data through shutdown.
+   Never use `--force`, delete a PVC or force-detach a volume. Require storage redundancy before the next host.
 4. Use the exact target installer index from `talos-v1.14.5.json` with
    `talosctl upgrade --drain=false --no-reboot --wait --progress=plain`. Require a completed installation before
    `talosctl reboot --drain=false --wait --progress=plain`. Apply the recorded hardware recovery procedure only for
    an observed matching failure. Verify the new kernel, disk identity, etcd, storage, GPU and all four Kata runtimes
    before uncordoning the target and continuing.
-5. After all three pass, render the committed template with existing secrets. Require its dry run to update only
-   the Talos version semantically and remove the maintenance lock in the same Cluster update. Sync that reviewed
-   template, verify Omni convergence and resume the original workspace through its authenticated control.
+5. The attempted atomic target/unlock sync caused the handoff race above. Recovery restored the lock with the
+   desired version already at 1.14.5, corrected Turin's staged boot image without rebooting and waited for all
+   derived targets to agree. Before releasing that lock, require the Cluster target, each
+   `MachineConfigGenOptions.installimage.talosversion`, applied `ClusterMachineConfigStatus.talosversion` and live
+   node version to be 1.14.5. Require valid matching schematics, no config errors or pending reboot markers, correct
+   persistent boot payloads, and restored storage redundancy. The next dry run must remove only the lock. Do not
+   edit controller-owned status to manufacture adoption. Resume the retained workspace through authenticated control.
 
 The operator explicitly requested no manual backups for this patch rollout. Preserve data, placement,
-workload concurrency, durability and `osd_max_scrubs=3`. Temporary Pod tolerations protect existing state during
-maintenance; they do not change node placement, replica counts, permissions or the saved power preference.
+workload concurrency, durability and `osd_max_scrubs=3`. Keep replica counts, permissions and the saved power
+preference unchanged. Restore any temporary maintenance settings after recovery.
+
+### Observed Turin shutdown behavior
+
+On 2026-11-01, the six standalone slot Pods retained their UIDs through the client drain, but kubelet marked them
+`Failed`, reason `Terminated`, during Talos's `stopAllPods` shutdown task. Their message was
+`Pod was terminated in response to imminent node shutdown.` The retained workspace's local journal was absent after
+reboot, despite its extended tolerations. Its original home PVC remained bound with the same UID. Recovery fenced
+the old writer, verified volume detachment and retained the original MicroVM, Lease, home, image and active-run pin
+before allowing the controller to create a new Pod. This was a cold boot, not a successful snapshot restore.
+
+Turin also returned with two active Ceph LVs missing their `/dev` nodes. OSD 0's `expand-bluefs` init container failed
+with `Operation not permitted`. After confirming the original disks and active LV identities, `vgmknodes` for only
+the affected VGs recreated the device nodes. Restoring their existing Ceph ownership and normally replacing the
+failed OSD Pod let all six OSDs start. No disk was formatted, replaced or force-detached. Verify clean PGs before
+continuing maintenance; six OSDs reporting up does not establish recovered redundancy.
 
 The original 1.14.0 transition below is historical; it is not the patch-upgrade execution path.
 

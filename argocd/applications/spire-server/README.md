@@ -15,7 +15,7 @@ The nested PVC template's generated `apiVersion` and `kind` are excluded from di
 fields from its predicted state. Capacity, storage class, access modes, and retention remain compared.
 
 SPIRE and Istio use the single trust domain `proompteng.ai`. There is no default registration for other pods.
-The controller registers Proompteng and Tengri application containers, their native Istio proxies, and the two
+The controller registers Proompteng, the separate workspace admin portal and Tengri application containers, their native Istio proxies, and the two
 existing Istio gateways through explicit `ClusterSPIFFEID` resources. Namespace, Pod,
 service-account, and container selectors constrain each registration. Tengri controllers and Restate run workers
 share the existing `tengri` service-account identity; both their application containers and native proxies are registered.
@@ -23,6 +23,8 @@ X.509-SVID lifetimes are two minutes.
 Application containers use the Workload API directly; Istio proxies obtain their identities and trust bundles through
 SPIRE's Envoy SDS API on a separate read-only CSI mount. Native sidecar injection uses the existing Istio CNI, so
 restricted application Pods do not require a privileged network init container.
+Each injected gateway needs its separate proxy registration; an application-container selector cannot authorize
+the proxy's SDS request. A missing proxy registration keeps the native sidecar, and therefore the application, from starting.
 Proompteng and Tengri opt in through the `sidecar.istio.io/inject: "true"` Pod label. Their namespaces are not enrolled
 globally; an injection annotation alone does not match Istio's object admission webhook in these namespaces.
 

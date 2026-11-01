@@ -4275,9 +4275,9 @@ data:
             severity: warning
           annotations:
             summary: Bayn native operation metrics are unavailable
-            description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older
-              retained workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress
-              allowance.
+            description: An API-advertised source revision has no recent native metrics heartbeat for this service. Compare API and
+              controller revisions and rollout or activation progress first; a fresh heartbeat from another revision does not
+              satisfy this alert. If revisions match, check export failure logs, Mimir and the existing gateway path.
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynGenerationIndexUnavailable
           expr: ((min(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or sum(absent(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}))

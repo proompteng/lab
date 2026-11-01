@@ -1,6 +1,6 @@
 import { asRecord, asString, readNested } from '../primitives'
 import type { KubernetesClient } from '../kube-types'
-import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../../runner/spec'
+import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../../runner-result'
 
 export type RunnerTerminalPhase = 'succeeded' | 'failed' | 'cancelled'
 

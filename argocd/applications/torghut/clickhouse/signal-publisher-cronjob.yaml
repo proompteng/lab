@@ -41,7 +41,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: publish
-              image: registry.ide-newton.ts.net/lab/signal-publisher@sha256:4433dc5a732379eedd192d4872ae7132c31be6c01e333575e1a660f4f07e612d
+              image: registry.ide-newton.ts.net/lab/signal-publisher@sha256:be44426332a2a1647b66978fc17567fd6df5c01f503d08e277b0ad6c1d37d8a8
               imagePullPolicy: IfNotPresent
               args:
                 - daily
@@ -72,11 +72,11 @@ spec:
                       name: bayn-universe-v2
                       key: HISTORY_FEED
                 - name: SIGNAL_CODE_REVISION
-                  value: 6d81cfec5e5ef78456d75e351978f4e28731a34e
+                  value: 65698e1ee1e63356e4899763dc5cdb41c2b0eef4
                 - name: SIGNAL_IMAGE_REPOSITORY
                   value: registry.ide-newton.ts.net/lab/signal-publisher
                 - name: SIGNAL_IMAGE_DIGEST
-                  value: sha256:4433dc5a732379eedd192d4872ae7132c31be6c01e333575e1a660f4f07e612d
+                  value: sha256:be44426332a2a1647b66978fc17567fd6df5c01f503d08e277b0ad6c1d37d8a8
                 - name: SIGNAL_CLICKHOUSE_URL
                   value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
                 - name: SIGNAL_CLICKHOUSE_USERNAME
