@@ -4,8 +4,8 @@ Ofz owns platform authorization, service registration, policy onboarding and dur
 SpiceDB. [The platform package](platform/README.md) explains service/policy onboarding and relationship management;
 [the architecture and cutover guide](../../docs/platform/ofz-relay.md) covers Relay and its clients.
 
-`PlatformAuthorizationService` is the extensible platform contract. `TengriAuthorizationService` owns Tengri's existing
-identity, workspace lifecycle, session and content-access operations. The former `AuthorizationService` and its
+`PlatformAuthorizationService` owns browser sessions and the extensible platform authorization contract.
+`TengriAuthorizationService` owns Tengri's workspace lifecycle and content-access operations. The former `AuthorizationService` and its
 Tengri connector API are removed. Kubernetes connector execution goes through the separate Relay service.
 Ofz and its existing Tengri consumers retain their coordinated image release cohort.
 
@@ -50,8 +50,13 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all seven migrations through `0007_ephemeral_oauth.sql`; they cannot
-initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
+checksum. The controller and supervisor require all eight migrations through `0008_platform_sign_in.sql`; they cannot
+initialize their own schema. Ofz owns gateway-scoped, single-use PKCE attempts in an unlogged table; the web gateways
+have no database access. The migration drops the replaced Tengri attempt table and revokes the obsolete BFF SQL grants.
+Only these ephemeral attempt transactions use local commit acknowledgement. Session, policy and audit transactions
+retain their existing durability requirements. The browser fixture verifies attempt creation and concurrent single-use
+consumption while the synchronous standby is unavailable. Promote Ofz and complete its migration hook before promoting
+its consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 
@@ -146,6 +151,10 @@ The BFF supplies a fresh 256-bit credential when establishing a session and reus
 RPC retries. Ofz binds its operation ID to the credential hash and full request fingerprint. A committed retry returns
 the same still-active credential without consuming another OIDC nonce, creating a session, extending idle time, or
 writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
+Ordinary browser sign-in may reuse the issuer's verified passkey SSO. Ofz still requires a token issued within two
+minutes, the gateway's audience and authorized party, and level-two assurance authenticated within eight hours.
+The absolute session deadline never exceeds that authentication time plus eight hours; SSO cannot slide it forward.
+Sensitive changes retain their separate fresh-MFA requirement.
 A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
 
 `AuthorizeCommand` checks human command permission before the BFF resolves an external subject. It produces an audit

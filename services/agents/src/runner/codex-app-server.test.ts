@@ -210,83 +210,104 @@ describe('codex app-server runner adapter', () => {
     })
   })
 
-  it('waits for the app-server thread to settle before reporting success', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
-    const runPath = join(dir, 'run.json')
-    const statusPath = join(dir, 'status.json')
-    await writeFile(
-      runPath,
-      `${JSON.stringify({
-        implementation: { text: 'continue until the session is actually done' },
-        agentRun: { name: 'run-continuation' },
-      })}\n`,
-      'utf8',
-    )
+  it.each(['full', 'notLoaded'] as const)(
+    'retains the settled continuation result with %s items',
+    async (itemsView) => {
+      const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+      const runPath = join(dir, 'run.json')
+      const statusPath = join(dir, 'status.json')
+      await writeFile(
+        runPath,
+        `${JSON.stringify({
+          implementation: { text: 'continue until the session is actually done' },
+          agentRun: { name: 'run-continuation' },
+        })}\n`,
+        'utf8',
+      )
 
-    let waitedForThreadId: string | null = null
-    const fakeClient: CodexAppServerRunnerClient = {
-      runTurnStream: async () => ({
-        stream: makeStream(),
-        turnId: 'turn-initial',
-        threadId: 'thread-continuation',
-      }),
-      waitForThreadIdle: async (threadId) => {
-        waitedForThreadId = threadId
-        return {
-          lastTurn: {
-            ...makeTurn('completed'),
-            items: [
-              {
-                type: 'agentMessage',
-                id: 'final-message',
-                text: 'completed after continuation',
-                phase: 'final_answer',
-                memoryCitation: null,
-                delivery: null,
-                questions: null,
-              },
-            ],
+      let waitedForThreadId: string | null = null
+      const fakeClient: CodexAppServerRunnerClient = {
+        runTurnStream: async () => ({
+          stream: makeStream(),
+          turnId: 'turn-initial',
+          threadId: 'thread-continuation',
+        }),
+        waitForThreadIdle: async (threadId) => {
+          waitedForThreadId = threadId
+          return {
+            lastTurn: {
+              ...makeTurn('completed'),
+              itemsView,
+              items:
+                itemsView === 'full'
+                  ? [
+                      {
+                        type: 'agentMessage',
+                        id: 'final-message',
+                        text: 'completed after continuation',
+                        phase: 'final_answer',
+                        memoryCitation: null,
+                        delivery: null,
+                        questions: null,
+                      },
+                    ]
+                  : [],
+            },
+          }
+        },
+        getTurnItems: async (threadId, turnId) => {
+          expect([threadId, turnId]).toEqual(['thread-continuation', 'turn-completed'])
+          return [
+            {
+              type: 'agentMessage',
+              id: 'final-message',
+              text: 'completed after continuation',
+              phase: 'final_answer',
+              memoryCitation: null,
+              delivery: null,
+              questions: null,
+            },
+          ]
+        },
+        stop: () => undefined,
+      }
+
+      const exitCode = await runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: {
+            eventFilePath: runPath,
           },
-        }
-      },
-      stop: () => undefined,
-    }
-
-    const exitCode = await runCodexAppServerAdapter(
-      {
-        provider: 'codex-runner',
-        payloads: {
-          eventFilePath: runPath,
+          artifacts: {
+            statusPath,
+            resultPath: join(dir, 'result.json'),
+          },
         },
-        artifacts: {
-          statusPath,
-          resultPath: join(dir, 'result.json'),
+        {
+          prompt: 'continue until the session is actually done',
         },
-      },
-      {
-        prompt: 'continue until the session is actually done',
-      },
-      {
-        createClient: () => fakeClient,
-        uploadArtifacts: async (artifacts) => artifacts,
-      },
-    )
+        {
+          createClient: () => fakeClient,
+          uploadArtifacts: async (artifacts) => artifacts,
+        },
+      )
 
-    expect(exitCode).toBe(0)
-    expect(waitedForThreadId).toBe('thread-continuation')
-    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
-    expect(status).toMatchObject({
-      status: 'succeeded',
-      threadId: 'thread-continuation',
-      turnId: 'turn-completed',
-      turnStatus: 'completed',
-    })
-    expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toMatchObject({
-      turnId: 'turn-completed',
-      responseText: 'completed after continuation',
-      responseTruncated: false,
-    })
-  })
+      expect(exitCode).toBe(0)
+      expect(waitedForThreadId).toBe('thread-continuation')
+      const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+      expect(status).toMatchObject({
+        status: 'succeeded',
+        threadId: 'thread-continuation',
+        turnId: 'turn-completed',
+        turnStatus: 'completed',
+      })
+      expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toMatchObject({
+        turnId: 'turn-completed',
+        responseText: 'completed after continuation',
+        responseTruncated: false,
+      })
+    },
+  )
 
   it('fails when an automatic app-server continuation fails before the thread settles', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))

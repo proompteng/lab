@@ -4,7 +4,7 @@ let
     root = repoRoot;
     fileset = lib.fileset.unions (map (path: repoRoot + "/${path}") [
       "services/relay/Cargo.toml" "services/relay/Cargo.lock" "services/relay/src"
-      "packages/platform-client" "proto/proompteng/authz/v1/platform.proto" "proto/proompteng/relay"
+      "packages/platform-client" "proto/proompteng/authz" "proto/proompteng/relay"
     ]);
   };
 in pkgs.rustPlatform.buildRustPackage {
