@@ -1,7 +1,7 @@
 # System assessment
 
-These modules evaluate a registered PAPER policy against its economic, matched-control, reliability, safety, and
-realism requirements. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
+These modules report a registered PAPER policy against its economic, matched-control, reliability, safety, and
+realism requirements. Current bootstrap outputs are research diagnostics, not a coverage certificate. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
 immutable source records. An assessment never admits an order or grants capital authority.
 
 ## Economics
@@ -141,10 +141,13 @@ turnover, control-profit ratios, best-session removal, ten-basis-point stress, a
 Missing stress evidence leaves that diagnostic unresolved; supplied contradictory evidence still rejects binding.
 There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
 including losses, downtime, blocked decisions, and zero-trade costs. The bootstrap preregisters its dependence block,
-seed, and finite work budget; its error allowance covers absolute profit and selected comparisons across all attempts.
+seed, and finite work budget. Its nominal error allocation covers absolute profit and selected comparisons across attempts only if the constituent bounds have valid coverage.
 See the [statistical procedure](../../../../docs/bayn/jev-migration-validation.md#statistical-comparison).
 
-Only complete economic, statistical, operational, safety, and realistic evidence can produce `QUALIFIED_PAPER`.
+Current assessments include `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, retain observed profit and bootstrap diagnostics,
+and cannot emit established edge or `QUALIFIED_PAPER`. Known violations still reject; otherwise the result is
+inconclusive. No fixed calendar length or activity quota repairs the missing coverage argument. A future inferential
+method requires its own justified assumptions and versioned policy before it can establish qualification.
 A complete failed window and an incomplete window retain distinct outcomes. Source calendar evidence must support
 the market and hours claimed. The supported reference calendar remains broker-observed US regular sessions;
 that scope does not establish continuous-market performance.
@@ -191,9 +194,9 @@ its prospectively registered operation timeout; the CLI does not replace it with
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
 assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
-Migration 169 admits only current v3 registrations, preserves ordered attempts and append-only financial history,
-and supports selected controls and preregistered bootstrap terms. New registrations require the current policy.
-Retained v2/v3 acceptance records keep their original terms and policy identities;
+Migrations 169 and 170 admit only current v3 registrations under the research-only qualification policy, preserve ordered attempts and append-only financial history,
+and support selected controls and preregistered bootstrap terms. New registrations require the current policy.
+Retained v2/v3/v4 acceptance records keep their original terms and policy identities;
 they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
@@ -249,3 +252,8 @@ The tests include arithmetic properties, positive trading profit consumed by cos
 missing cost evidence, absent scheduled work, independent class targets, future inputs, unsupported liquidity,
 partial fills, timing contradictions, source substitution, invoice reuse, late settlement, retained replay stages,
 immutable assessment receipts, and rejection of a transaction that commits after its first market open.
+
+Historical runtime decoding accepts the exact retained v28 through v35 protocol contracts and original control
+prompt identities. New registration and replay execution require the current protocol. Historical policy selection
+uses both acceptance and qualification identities before reproducing an immutable receipt. Original bytes, hashes,
+failed attempts, and financial records are never upgraded to current semantics.

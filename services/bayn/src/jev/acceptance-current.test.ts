@@ -49,6 +49,54 @@ const inputFixture = () => {
 }
 
 describe('fully costed economic qualification', () => {
+  test('a negative-expectancy process can pass bootstrap diagnostics without a coverage certificate', () => {
+    const base = inputFixture()
+    for (const payoffs of [
+      [1, 1],
+      [1, -3],
+      [-3, 1],
+      [-3, -3],
+    ]) {
+      const input = {
+        ...base,
+        registration: {
+          ...base.registration,
+          sessions: base.registration.sessions.slice(0, 2),
+          analysis: {
+            ...base.registration.analysis,
+            bootstrap: { blockLengthSessions: 1, replicates: 80, seed: 20260921 },
+          },
+        },
+        policies: base.policies.slice(0, 2).map((policy) => {
+          let equity = 100000
+          return {
+            ...policy,
+            sessions: policy.sessions.slice(0, 2).map((session, index) => {
+              const pnl = policy.policy === JevResearchPolicy.Candidate ? (payoffs[index] ?? 0) : -1
+              const opening = equity
+              equity += pnl
+              return {
+                ...session,
+                netPnlUsd: pnl,
+                openingEquityUsd: opening,
+                closingEquityUsd: equity,
+                minimumEquityUsd: Math.min(opening, equity),
+                maximumEquityUsd: Math.max(opening, equity),
+                maximumDrawdownUsd: Math.max(0, -pnl),
+              }
+            }),
+          }
+        }),
+      }
+      const report = Result.getOrThrow(evaluateJevAcceptance(input))
+      expect(report.statisticalEvidence?.status).toBe('RESEARCH_ONLY')
+      expect(report.verdict).toBe(payoffs.every((p) => p > 0) ? JevNumericalVerdict.Passed : JevNumericalVerdict.Missed)
+      if (!('confidence' in report)) throw new Error('Expected numerical diagnostics')
+      expect(report.confidence.meanNetPnlUsdLowerBound).toBe(payoffs.every((p) => p > 0) ? 1 : -3)
+    }
+    expect((1 + -3) / 2).toBe(-1)
+    expect(0.5 * 0.5).toBe(0.25)
+  })
   test('low activity, low turnover, small positive net edge and a failed cost stress are not rejected research targets', () => {
     const result = Result.getOrThrow(evaluateJevAcceptance(inputFixture()))
     expect(result.verdict).toBe(JevNumericalVerdict.Passed)

@@ -200,6 +200,7 @@ export const evaluateEntrySourceFeasibility = (
 ) =>
   Result.gen(function* () {
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol: input.protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(input.funding.bidMicros),
@@ -267,6 +268,7 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
 ) =>
   Result.gen(function* () {
     const economics = yield* jevEntryEconomics({
+      feeAt: chart.windowEndAt,
       protocol: input.protocol,
       symbol: chart.symbol,
       bidMicros: BigInt(input.funding.bidMicros),

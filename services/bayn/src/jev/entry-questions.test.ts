@@ -42,6 +42,7 @@ const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structu
   const assessments = chartAssessmentsFixture(chartSource)
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: chart.symbol,
       bidMicros: 104_000_000n,

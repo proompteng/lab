@@ -158,10 +158,41 @@ import { formalModelExecutable, runFormalModel as model } from './formal-model.t
 import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { decisionAdmissionWitnesses } from './decision-admissions'
+import { equityTafRate } from '../strategy/execution-model/fees'
+import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strategy/intraday-market'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('dated fees and retained rates agree with Lean at every effective boundary', () => {
+    const cases = [
+      { at: '2026-06-30', day: '20260630', retained: false },
+      { at: '2026-09-30', day: '20260930', retained: false },
+      { at: '2026-10-01T03:59:59.000Z', day: '20260930', retained: false },
+      { at: '2026-10-01T04:00:00.000Z', day: '20261001', retained: false },
+      { at: '2026-12-31', day: '20261231', retained: false },
+      { at: '2027-01-01', day: '20270101', retained: false },
+      { at: '2029-01-01', day: '20290101', retained: false },
+      { at: '2026-11-01', day: '20261101', retained: true },
+    ]
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'datedEquityTafRate',
+          retained: c.retained,
+          sessionDate: c.day,
+          baseRate: '195',
+        })),
+      ),
+    ).toEqual(
+      cases.map((c) =>
+        Result.match(equityTafRate(c.retained ? retainedIntradayExecutionModel : intradayExecutionModel, c.at), {
+          onFailure: () => null,
+          onSuccess: (rate) => String(rate),
+        }),
+      ),
+    )
+  })
   test('committed admission bounds preserve ownership and causal routing without comparing database clocks', async () => {
     const document = await Effect.runPromise(persistenceDocumentFixture)
     const { cut: base } = emptySourceCutFixture()
@@ -2915,6 +2946,7 @@ formal('pinned Lean executable conformance', () => {
     incompleteSources.delete(input.obligationCoverageHash)
     const shorter = supportedAssessmentFixture(7)
     const longer = supportedAssessmentFixture(21)
+    const retained = supportedAssessmentFixture(4, registrationFixture(undefined, 4, JevAcceptanceVersion.RetainedV4))
     const reports = [
       [input, verifiedSources],
       [unsafe, verifiedSources],
@@ -2926,6 +2958,11 @@ formal('pinned Lean executable conformance', () => {
       if (!(sources instanceof Set)) throw new Error('Expected verified source set')
       return Result.getOrThrow(evaluateSystemAssessment(data, sources))
     })
+    reports.push(
+      Result.getOrThrow(
+        evaluateSystemAssessment(retained.input, retained.verifiedSources, JevAcceptanceVersion.RetainedV4),
+      ),
+    )
     const micros = (usd: number) => String(Math.round(usd * 1_000_000))
     const lean = model(
       reports.map((report) => {
@@ -2959,7 +2996,7 @@ formal('pinned Lean executable conformance', () => {
       }),
     )
     expect(lean).toEqual(reports.map((report) => report.verdict === 'QUALIFIED_PAPER'))
-    expect(lean).toEqual([true, false, false, false, true, true])
+    expect(lean).toEqual([false, false, false, false, false, false, true])
   })
   test('integer economics, reliability error budgets, and negative expectancy agree across languages', () => {
     const cash = fc
@@ -3067,6 +3104,22 @@ formal('pinned Lean executable conformance', () => {
         },
       ]),
     ).toEqual([Result.getOrThrow(binaryTradeEdge(edge))])
+  })
+
+  test('the negative-expectancy counterexample retains positive sample bounds in the executable model', () => {
+    expect(
+      model([
+        {
+          operation: 'bootstrap',
+          candidate: ['1', '1'],
+          controls: [['-1', '-1']],
+          attemptIndex: '1',
+          blockLengthSessions: '1',
+          replicates: '80',
+          seed: '20260921',
+        },
+      ]),
+    ).toEqual([{ lowerProfitTotalMicros: '2', lowerIncrementalTotalsMicros: ['4'] }])
   })
 
   test.each([

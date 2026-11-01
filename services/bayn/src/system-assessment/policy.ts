@@ -8,6 +8,7 @@ import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
   entryAblationQuestionPolicyHash,
+  historicalAblationQuestionPolicyHash,
 } from '../jev/entry-ablation-policy'
 
 import { canonicalHashV1Result } from '../hash'
@@ -17,9 +18,11 @@ import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
 import { InferenceRateCardSchema, inferenceRatesCoverWindow, prepareInferenceRateCard } from '../inference-costs'
 import { MarketKind } from '../instruments'
+import { JevProtocolSchema } from '../jev/protocol'
 import {
   JevAcceptanceInputSchema,
   JevAcceptanceVersion,
+  usesLegacyAcceptance,
   JevResearchPolicy,
   jevAcceptanceProtocolHash,
   jevAcceptanceInferenceRateFloor,
@@ -40,7 +43,8 @@ import {
 } from './frozen-control-identity'
 
 export const systemQualificationPolicy = {
-  schemaVersion: 'bayn.system-qualification-policy.v3',
+  schemaVersion: 'bayn.system-qualification-policy.v4',
+  statisticalQualificationRule: 'BOOTSTRAP_RESEARCH_ONLY_COVERAGE_UNESTABLISHED',
   evaluationWindowRule: 'PROSPECTIVE_NONEMPTY_REGISTERED_CALENDAR',
   program: 'BAYN_SYSTEM_QUALIFICATION',
   environment: 'PAPER',
@@ -139,6 +143,8 @@ export type SystemRegistration = typeof SystemRegistrationSchema.Type
 export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
     // Exact pre-window policy identity for immutable historical evidence. New admission always uses Current.
+    if (version === JevAcceptanceVersion.RetainedV4)
+      return '7013c86f0b60da5ccc98cc82e4c9b077c8ab7a5c242f846a598bb77058782635'
     if (version === JevAcceptanceVersion.RetainedV3)
       return '81379af13f662669fc056164502d1e04c38e80e003f1c88f1b8a41a6552608fd'
     if (version === JevAcceptanceVersion.RetainedV2)
@@ -158,8 +164,13 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       Result.mapError((cause) => new SystemAssessmentError({ message: 'System registration is malformed', cause })),
     )
     const candidatePolicy = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
-    const legacy = version !== JevAcceptanceVersion.Current
+    const legacy = usesLegacyAcceptance(version)
     const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    if (
+      version === JevAcceptanceVersion.Current &&
+      !Schema.is(JevProtocolSchema)(registration.obligations.configuration.protocol)
+    )
+      return yield* invalid('New registration requires the current execution protocol')
     if (
       registration.policyHash !== (yield* systemQualificationPolicyHash(version)) ||
       registration.acceptanceProtocolHash !== (yield* jevAcceptanceProtocolHash(version)) ||
@@ -192,8 +203,12 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       markets.some((market) => !registration.calendar.tradingMarkets.includes(market))
     )
       return yield* invalid('Registered trading markets must include the complete native policy')
+    const ablationQuestionHash =
+      version === JevAcceptanceVersion.Current
+        ? entryAblationQuestionPolicyHash
+        : yield* historicalAblationQuestionPolicyHash(registration.obligations.configuration.protocol)
     const ablationIdentity = yield* entryAblationStrategyIdentity(
-      makeEntryAblationPolicy(registration.obligations.configuration.protocol),
+      makeEntryAblationPolicy(registration.obligations.configuration.protocol, ablationQuestionHash),
     )
     const momentumIdentity = yield* repeatedMomentumStrategyIdentity(
       makeRepeatedMomentumPolicy(registration.obligations.configuration.protocol),
@@ -255,7 +270,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
         (policy.strategyHash !== ablationIdentity.strategy.behaviorHash ||
           policy.parametersHash !== ablationIdentity.strategy.parameterHash ||
           policy.protocolHash !== ablationIdentity.protocolHash ||
-          policy.promptsHash !== entryAblationQuestionPolicyHash ||
+          policy.promptsHash !== ablationQuestionHash ||
           policy.executionModelHash !==
             (yield* canonicalHashV1Result(registration.obligations.configuration.protocol.executionModel)))
       )
@@ -356,11 +371,21 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
     )(input).pipe(
       Result.mapError((cause) => new SystemAssessmentError({ message: 'Stored registration is malformed', cause })),
     )
-    const versions = [JevAcceptanceVersion.Current, JevAcceptanceVersion.RetainedV3, JevAcceptanceVersion.RetainedV2]
+    const versions = Object.values(JevAcceptanceVersion)
     const identities = yield* Result.all(
-      versions.map((version) => Result.map(jevAcceptanceProtocolHash(version), (hash) => ({ version, hash }))),
+      versions.map((version) =>
+        Result.gen(function* () {
+          return {
+            version,
+            hash: yield* jevAcceptanceProtocolHash(version),
+            policyHash: yield* systemQualificationPolicyHash(version),
+          }
+        }),
+      ),
     )
-    const selected = identities.find((identity) => identity.hash === decoded.acceptanceProtocolHash)
+    const selected = identities.find(
+      (identity) => identity.hash === decoded.acceptanceProtocolHash && identity.policyHash === decoded.policyHash,
+    )
     if (selected === undefined)
       return yield* Result.fail(
         new SystemAssessmentError({ message: 'Stored registration has an unknown acceptance policy' }),
