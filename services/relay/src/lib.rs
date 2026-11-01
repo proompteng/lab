@@ -1,5 +1,12 @@
+pub mod cli;
 pub mod config;
 pub mod connector;
+mod credentials;
 pub mod enrollment;
+pub mod http;
 pub mod kubernetes;
+pub mod mcp;
+mod mcp_http;
+pub mod process;
+pub mod registered;
 pub mod service;
