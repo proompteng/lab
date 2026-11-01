@@ -42,6 +42,13 @@ type evidence struct {
 type fileReader func(string) ([]byte, error)
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "codex-process" {
+		if err := runCodexProcess(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "browser-mcp" {
 		if err := runBrowserMCP(os.Stdin, os.Stdout, os.Getenv("HOME")); err != nil {
 			fmt.Fprintln(os.Stderr, err)

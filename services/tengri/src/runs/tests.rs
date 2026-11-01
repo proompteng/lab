@@ -7,6 +7,61 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
+#[test]
+fn a_dead_generation_requires_confirmed_command_cleanup() {
+    for value in [
+        serde_json::json!({"generationAlive": false}),
+        serde_json::json!({"generationAlive": false, "processesStopped": false}),
+        serde_json::json!({"generationAlive": true, "processesStopped": true}),
+        serde_json::json!({"generationAlive": false, "processesStopped": "true"}),
+        serde_json::json!({"processesStopped": true}),
+    ] {
+        assert_eq!(observed_operation(&value, "accepted-turn"), None);
+    }
+    assert!(matches!(
+        observed_operation(
+            &serde_json::json!({"generationAlive":false,"processesStopped":true}),
+            "accepted-turn"
+        ),
+        Some(State::Failed { turn_id, reason })
+            if turn_id == "accepted-turn" && reason.contains("work may be incomplete")
+    ));
+    assert_eq!(
+        observed_operation(
+            &serde_json::json!({"terminalStatus":"interrupted"}),
+            "accepted-turn"
+        ),
+        Some(State::Cancelled {
+            turn_id: "accepted-turn".into()
+        })
+    );
+}
+
+#[tokio::test]
+async fn durable_recovery_does_not_inherit_the_server_pause_budget() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let endpoint = run_endpoint(Arc::new(fixture())).build();
+    let server = tokio::spawn(async move { HttpServer::new(endpoint).serve(listener).await });
+    let response = reqwest::Client::builder()
+        .http2_prior_knowledge()
+        .build()
+        .unwrap()
+        .get(format!("http://{address}/discover"))
+        .header("accept", "application/vnd.restate.endpointmanifest.v4+json")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let manifest: serde_json::Value = response.json().await.unwrap();
+    let services = manifest["services"].as_array().unwrap();
+    assert_eq!(services.len(), 3);
+    for service in services {
+        assert_eq!(service["retryPolicyMaxAttempts"], u64::MAX, "{service}");
+    }
+    server.abort();
+}
+
 fn fixture() -> ControlPlane {
     let (service, mut handle) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
     tokio::spawn(async move {
@@ -559,14 +614,7 @@ async fn fixture_worker() {
     )
     .unwrap();
     let service = Arc::new(service);
-    let endpoint = Endpoint::builder()
-        .bind(TengriAgentRun {
-            service: service.clone(),
-        })
-        .bind(TengriRunControl)
-        .bind(TengriWorkspaceRuns {
-            service: service.clone(),
-        })
+    let endpoint = run_endpoint(service.clone())
         .bind(StopAuthorityProof { service })
         .build();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
@@ -710,6 +758,12 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         "127.0.0.1::9070",
         "--tmpfs",
         "/restate-data",
+        "--env",
+        "RESTATE_DEFAULT_RETRY_POLICY__INITIAL_INTERVAL=1ms",
+        "--env",
+        "RESTATE_DEFAULT_RETRY_POLICY__MAX_INTERVAL=1ms",
+        "--env",
+        "RESTATE_DEFAULT_RETRY_POLICY__MAX_ATTEMPTS=2",
     ]);
     if cfg!(target_os = "linux") {
         command.args(["--add-host", "host.docker.internal:host-gateway"]);
@@ -735,6 +789,24 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let http = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let original_deployment = register(&http, &admin, port, deadline).await;
+    let registered: serde_json::Value = http
+        .get(format!("{admin}/services/TengriAgentRun"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(registered["retry_policy"]["max_attempts"], u64::MAX);
+    let default_policy: serde_json::Value = http
+        .get(format!("{admin}/services/StopAuthorityProof"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(default_policy["retry_policy"]["max_attempts"], 2);
     let mut service = fixture();
     service.auth =
         crate::auth::Authenticator::new(&key_file, "https://proompteng.ai".into()).unwrap();
@@ -1041,6 +1113,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .invocation_handle();
     let queued_admission = tokio::spawn(async move { queued_admission.attach().await });
     let queued_control = tokio::spawn(async move { queued_control.attach().await });
+    tokio::time::sleep(Duration::from_millis(400)).await;
     std::fs::write(&key_file, "69".repeat(32)).unwrap();
     assert!(
         service

@@ -1419,21 +1419,11 @@ impl ControlPlane {
             }
         };
         let operation = guest.codex_call("tengri/operation", serde_json::json!({"threadId":input.thread_id,"operationId":input.id,"turnId":turn_id})).await.ok();
-        if let Some(status) = operation
+        if let Some(outcome) = operation
             .as_ref()
-            .and_then(|value| value.get("terminalStatus"))
-            .and_then(serde_json::Value::as_str)
-            .filter(|status| matches!(*status, "completed" | "failed" | "interrupted"))
+            .and_then(|value| observed_operation(value, turn_id))
         {
-            if status == "interrupted" {
-                return State::Cancelled {
-                    turn_id: turn_id.into(),
-                };
-            }
-            return observed_turn(
-                &serde_json::json!({"thread":{"turns":[{"id":turn_id,"status":status}]}}),
-                turn_id,
-            );
+            return outcome;
         }
         let metadata = match guest
             .codex_call(
@@ -1578,6 +1568,27 @@ impl ControlPlane {
     }
 }
 
+fn observed_operation(value: &serde_json::Value, turn_id: &str) -> Option<State> {
+    match value.get("terminalStatus").and_then(serde_json::Value::as_str) {
+        Some("completed" | "failed") => Some(observed_turn(
+            &serde_json::json!({"thread":{"turns":[{"id":turn_id,"status":value["terminalStatus"]}]}}),
+            turn_id,
+        )),
+        Some("interrupted") => Some(State::Cancelled {
+            turn_id: turn_id.into(),
+        }),
+        _ if value.get("generationAlive").and_then(serde_json::Value::as_bool) == Some(false)
+            && value.get("processesStopped").and_then(serde_json::Value::as_bool) == Some(true) =>
+        {
+            Some(State::Failed {
+                turn_id: turn_id.into(),
+                reason: "The Codex process ended and its commands have stopped. Previous work may be incomplete; review the conversation before continuing.".into(),
+            })
+        }
+        _ => None,
+    }
+}
+
 fn turn_id(state: &State) -> Option<&str> {
     match state {
         State::Running { turn_id }
@@ -1679,11 +1690,9 @@ fn terminal(status: Status) -> TerminalError {
     TerminalError::new_with_code(code, status.message())
 }
 
-pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
-    let key = env::var("RESTATE_REQUEST_IDENTITY_KEYS")?;
-    let service = Arc::new(service);
-    let endpoint = Endpoint::builder()
-        .identity_key(&key)?
+fn run_endpoint(service: Arc<ControlPlane>) -> restate_sdk::endpoint::Builder {
+    // The SDK requires a finite count; accepted runs must not inherit the server's pause budget.
+    Endpoint::builder()
         .bind(
             TengriAgentRun {
                 service: service.clone(),
@@ -1691,6 +1700,7 @@ pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
             .into_service_definition()
             .options(
                 restate_sdk::endpoint::ServiceOptions::default()
+                    .retry_policy_max_attempts(u64::MAX)
                     .journal_retention(Duration::from_secs(7 * 24 * 60 * 60))
                     .idempotency_retention(Duration::from_secs(7 * 24 * 60 * 60)),
             ),
@@ -1698,6 +1708,7 @@ pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
         .bind(
             TengriRunControl.into_service_definition().options(
                 restate_sdk::endpoint::ServiceOptions::default()
+                    .retry_policy_max_attempts(u64::MAX)
                     .journal_retention(Duration::from_secs(7 * 24 * 60 * 60))
                     .idempotency_retention(Duration::from_secs(7 * 24 * 60 * 60)),
             ),
@@ -1705,9 +1716,16 @@ pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
         .bind(
             TengriWorkspaceRuns { service }
                 .into_service_definition()
-                .options(restate_sdk::endpoint::ServiceOptions::default()),
+                .options(
+                    restate_sdk::endpoint::ServiceOptions::default()
+                        .retry_policy_max_attempts(u64::MAX),
+                ),
         )
-        .build();
+}
+
+pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
+    let key = env::var("RESTATE_REQUEST_IDENTITY_KEYS")?;
+    let endpoint = run_endpoint(Arc::new(service)).identity_key(&key)?.build();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:9080").await?;
     HttpServer::new(endpoint)
         .serve_with_cancel(listener, async {

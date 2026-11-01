@@ -161,6 +161,15 @@ to the accepting generation. Missing ownership or an ended generation requires r
 cleanup against a replacement process. Terminal receipt version 2 records `processesStopped: true` only after this
 confirmation; old receipts and unconfirmed interrupted history cannot release a durable run's workspace or sleep pin.
 
+On Linux, each Codex process runs under a separate child subreaper. Its generation receipt records the kernel boot ID
+before Codex starts. If Codex exits or Nanoagent disappears, the subreaper kills and reaps its remaining descendants,
+including commands that detach into another session or clear their environment. It uses the existing pidfd identity
+checks and writes confirmed cleanup only after the kernel reports no remaining children. Unrelated guest processes
+are outside this ownership. A changed kernel boot ID also proves that the old generation's processes ended; snapshot
+resume preserves that ID and supplies no such proof. Missing or invalid receipts retain reconciliation.
+Stop reaches only a turn tracked by the current Codex generation. An ended generation with confirmed cleanup reports
+failure with incomplete work, so Tengri can release that conversation without replaying its model request.
+
 Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
 requests. `CodexCall` method `tengri/resolveApproval` delivers identified controls through a durable receipt and the same
 generation-fenced reply path. Approval IDs include a random process identity; native request ID reuse cannot revive
