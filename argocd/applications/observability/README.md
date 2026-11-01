@@ -21,6 +21,13 @@ The topic has three partitions, replication factor three, and minimum ISR two. T
 application; Mimir's bundled Kafka chart is disabled. Increase topic partitions before scaling ingesters above three.
 The [shared Kafka migration runbook](../../../docs/runbooks/mimir-shared-kafka.md) describes the hard cutover,
 offset handling, and verification. Historical Kafka snapshot/restore PVCs remain as retained data without a workload.
+
+Distributors and the ruler's internal distributor use a 15-second downstream budget, allowing Kafka's existing
+10-second write timeout plus two-second overhead to finish within Alloy's 30-second client timeout. The former
+HTTP distributor budget was five seconds; the ruler's was ten. Component arguments limit this change to
+distributor and ruler rollouts. Verify their effective `/config` values and fresh samples after deployment;
+Kafka write failures and stale telemetry remain failures.
+
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
 [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
@@ -179,6 +186,10 @@ incomplete ingestion. The shared tenant has a bounded 300,000-series runtime all
 removed to reduce recurring cardinality. See the [alert delivery RCA](../../../docs/incidents/2026-10-26-alert-delivery-and-bayn-projection.md).
 Apply a fallback configuration update before a separately
 reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
+
+Ceph host read-latency incidents have a dedicated route with ten-second first delivery, fifteen-minute updates and
+four-hour repeats. Their stable node identity and ten-minute recovery hold avoid OSD membership churn while the
+annotations retain individual OSD latencies. Other critical Ceph alerts keep the general critical route.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`

@@ -42,5 +42,5 @@ images:
     newTag: v0.11.3
     digest: sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: kargo-sha-1306877c7de71a2ff29d17d4b60a649cc1a90962-run-40283676914
-    digest: sha256:90fec0bfeeb755797f0dd94dfc6e8cd8c515d19e95bbeaea2accd5eed435e781
+    newTag: kargo-sha-b73ba918f412953640fdbfd4a430834fe500f709-run-41254711744
+    digest: sha256:6a81d39849c662a9e5fc9f423761a8872ee53bbc865799e848cc64d161c89303

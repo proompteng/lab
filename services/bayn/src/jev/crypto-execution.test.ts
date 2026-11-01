@@ -13,7 +13,7 @@ import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeInitialCycle } from '../cycle/store/decisions'
 import { continuousMarketHours, continuousExecutionPolicy, tradingWindow } from '../market-hours'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { adverseQuotePrices, executionMarketDataBinding } from '../observe-composition/intraday-market-data'
 import {
   planTargets,
@@ -39,11 +39,13 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     `${symbol} honors model abstention and retains exact reducing precision with first-minute history=%s`,
     async (firstMinute) => {
       const { cut, query, snapshot } = cryptoMarketFixture(symbol, { firstMinute, observedPriceChoices: true })
-      expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 30)
+      expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 61)
       const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
       const { protocol, portfolio, observedAt } = native
       const broker = portfolio.brokerState
-      const policy = await Effect.runPromise(loadExecutionRiskPolicy(broker.account.accountId, protocol.universe))
+      const policy = await Effect.runPromise(
+        Effect.fromResult(makeExecutionRiskPolicy(broker.account.accountId, protocol.universe)),
+      )
       const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
       if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
         throw new Error('Expected current policy')
@@ -85,7 +87,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       const batchPlan = Result.getOrThrow(
         makeJevTradingSignalBatch({
           observation,
-          planVersion: JevBatchPlanVersion.V7,
+          planVersion: JevBatchPlanVersion.V8,
           expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
         }),
       )
@@ -98,13 +100,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
           decidedAt,
         }),
       )
-      const {
-        candidateSymbols: _candidates,
-        candidateEvidencePolicy: _evidencePolicy,
-        benchmarkEvidencePolicy: _benchmarkPolicy,
-        benchmarkSymbols: _benchmarkSymbols,
-        ...pricingQuery
-      } = query
+      const { candidateSymbols: _candidates, candidateEvidencePolicy: _evidencePolicy, ...pricingQuery } = query
       const pricingSnapshot = Result.getOrThrow(
         constructStreamingSnapshot(cut, {
           ...pricingQuery,

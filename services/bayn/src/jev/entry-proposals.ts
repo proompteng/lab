@@ -9,7 +9,7 @@ import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError } from './contract'
 import type { JevEntryEconomics } from './entry-economics'
 import { jevExitLimitValue } from './liquidation-economics'
-import type { JevProtocol } from './protocol'
+import type { JevProtocolMaterial } from './protocol'
 
 export enum EntrySetup {
   SupportRecovery = 'SUPPORT_RECOVERY',
@@ -90,7 +90,7 @@ const sourcePrice = (value: number) =>
 type ProposalFundingInput = {
   readonly symbol: string
   readonly economics: JevEntryEconomics
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocolMaterial
   readonly bidMicros: bigint
   readonly stop: bigint
   readonly target: bigint
@@ -124,10 +124,11 @@ const fundProposalPrices = (input: ProposalFundingInput) =>
     } as const
   })
 
-export const mayHaveFundableSourceProposal = (input: {
+// Reproduce the preflight of immutable v2 and v3 financial evidence.
+export const mayHaveRetainedFundableSourceProposal = (input: {
   readonly chart: NativeChartEvidence
   readonly economics: JevEntryEconomics
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocolMaterial
   readonly bidMicros: bigint
 }) =>
   Result.gen(function* () {
@@ -176,11 +177,137 @@ export const mayHaveFundableSourceProposal = (input: {
     return false
   })
 
+export interface EntrySourceCandidates {
+  readonly supportBarIds: readonly string[]
+  readonly resistanceBarIds: readonly string[]
+  readonly baseWindows: readonly {
+    readonly firstBarId: string
+    readonly lastBarId: string
+  }[]
+}
+
+export const makeEntrySourceCandidates = (input: {
+  readonly chart: NativeChartEvidence
+  readonly economics: JevEntryEconomics
+  readonly protocol: JevProtocolMaterial
+  readonly bidMicros: bigint
+}) =>
+  Result.gen(function* () {
+    const { chart, economics, protocol, bidMicros } = input
+    const prices = chart.bars.map((bar) => ({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
+    let highest = 0n
+    for (const price of prices)
+      if (Result.isSuccess(price.high) && price.high.success > highest) highest = price.high.success
+    const supportBarIds: string[] = []
+    const resistanceBarIds: string[] = []
+    const baseWindows: { firstBarId: string; lastBarId: string }[] = []
+    if (highest === 0n) return { supportBarIds, resistanceBarIds, baseWindows } satisfies EntrySourceCandidates
+    let admittedStop: bigint | undefined
+    const greatestTarget = quantizeInstrumentPriceMicros(chart.symbol, highest - 1n, 'DOWN')
+    for (const [index, price] of prices.entries()) {
+      const bar = chart.bars[index]
+      if (bar === undefined || Result.isFailure(price.low)) continue
+      const stop = quantizeInstrumentPriceMicros(chart.symbol, price.low.success - 1n, 'DOWN')
+      const funding = yield* fundProposalPrices({ ...input, symbol: chart.symbol, stop, target: greatestTarget })
+      if (funding.status === 'FUNDED') {
+        supportBarIds.push(bar.id)
+        admittedStop ??= stop
+      }
+    }
+    if (admittedStop !== undefined)
+      for (const [index, price] of prices.entries()) {
+        const bar = chart.bars[index]
+        if (bar === undefined || Result.isFailure(price.high)) continue
+        const target = quantizeInstrumentPriceMicros(chart.symbol, price.high.success - 1n, 'DOWN')
+        const funding = yield* fundProposalPrices({ ...input, symbol: chart.symbol, stop: admittedStop, target })
+        if (funding.status === 'FUNDED') resistanceBarIds.push(bar.id)
+      }
+    for (const [first, initial] of prices.entries()) {
+      const firstBar = chart.bars[first]
+      if (firstBar === undefined || Result.isFailure(initial.high) || Result.isFailure(initial.low)) continue
+      let high = initial.high.success
+      let low = initial.low.success
+      for (let last = first + 1; last < prices.length - 1; last++) {
+        const previousBar = chart.bars[last - 1]
+        const lastBar = chart.bars[last]
+        const price = prices[last]
+        if (
+          previousBar === undefined ||
+          lastBar === undefined ||
+          price === undefined ||
+          Result.isFailure(price.high) ||
+          Result.isFailure(price.low) ||
+          previousBar.minuteBeforeWindowEnd !== lastBar.minuteBeforeWindowEnd + 1
+        )
+          break
+        high = price.high.success > high ? price.high.success : high
+        low = price.low.success < low ? price.low.success : low
+        if (high <= low || bidMicros <= high) continue
+        const funding = yield* fundProposalPrices({
+          symbol: chart.symbol,
+          economics,
+          protocol,
+          bidMicros,
+          stop: quantizeInstrumentPriceMicros(chart.symbol, low - 1n, 'DOWN'),
+          target: quantizeInstrumentPriceMicros(chart.symbol, high + high - low, 'DOWN'),
+        })
+        if (funding.status === 'FUNDED') baseWindows.push({ firstBarId: firstBar.id, lastBarId: lastBar.id })
+      }
+    }
+    return { supportBarIds, resistanceBarIds, baseWindows } satisfies EntrySourceCandidates
+  })
+
+export const makeChartSourceCandidates = (input: {
+  readonly chart: NativeChartEvidence
+  readonly bidMicros: bigint
+}) => {
+  const { chart, bidMicros } = input
+  const prices = chart.bars.map((bar) => ({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
+  const supportBarIds: string[] = []
+  const resistanceBarIds: string[] = []
+  const baseWindows: { firstBarId: string; lastBarId: string }[] = []
+  for (const [index, price] of prices.entries()) {
+    const bar = chart.bars[index]
+    if (bar === undefined) continue
+    if (Result.isSuccess(price.low)) {
+      const stop = quantizeInstrumentPriceMicros(chart.symbol, price.low.success - 1n, 'DOWN')
+      if (stop > 0n && stop < bidMicros) supportBarIds.push(bar.id)
+    }
+    if (BigDecimal.isGreaterThan(BigDecimal.fromNumberUnsafe(bar.high), BigDecimal.make(bidMicros, 6)))
+      resistanceBarIds.push(bar.id)
+  }
+  for (const [first, initial] of prices.entries()) {
+    const firstBar = chart.bars[first]
+    if (firstBar === undefined || Result.isFailure(initial.high) || Result.isFailure(initial.low)) continue
+    let high = initial.high.success
+    let low = initial.low.success
+    for (let last = first + 1; last < prices.length - 1; last++) {
+      const previousBar = chart.bars[last - 1]
+      const lastBar = chart.bars[last]
+      const price = prices[last]
+      if (
+        previousBar === undefined ||
+        lastBar === undefined ||
+        price === undefined ||
+        Result.isFailure(price.high) ||
+        Result.isFailure(price.low) ||
+        previousBar.minuteBeforeWindowEnd !== lastBar.minuteBeforeWindowEnd + 1
+      )
+        break
+      high = price.high.success > high ? price.high.success : high
+      low = price.low.success < low ? price.low.success : low
+      if (high > low && bidMicros > high && quantizeInstrumentPriceMicros(chart.symbol, low - 1n, 'DOWN') > 0n)
+        baseWindows.push({ firstBarId: firstBar.id, lastBarId: lastBar.id })
+    }
+  }
+  return { supportBarIds, resistanceBarIds, baseWindows } satisfies EntrySourceCandidates
+}
+
 export const makeEntryProposals = (input: {
   readonly chart: NativeChartEvidence
   readonly assessments: ChartAssessmentsMaterial
   readonly economics: JevEntryEconomics
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocolMaterial
   readonly bidMicros: bigint
 }) =>
   Result.gen(function* () {

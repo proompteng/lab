@@ -15,6 +15,7 @@ export interface ExecutionIntentPricingInput {
   readonly referencePriceMicros: bigint
   readonly limitSlippageBps: bigint
   readonly minimumSellPriceMicros?: bigint
+  readonly maximumBuyPriceMicros?: bigint
 }
 
 export interface ExecutionIntentPricing {
@@ -30,7 +31,7 @@ export type ExecutionIntentPricingFailure =
     }
   | {
       readonly _tag: 'InvalidQuoteBoundIntent'
-      readonly reason: 'invalid-quantity-or-price' | 'invalid-slippage' | 'invalid-sell-floor'
+      readonly reason: 'invalid-quantity-or-price' | 'invalid-slippage' | 'invalid-sell-floor' | 'invalid-buy-ceiling'
       readonly quantityAtoms: bigint
       readonly referencePriceMicros: bigint
     }
@@ -73,6 +74,14 @@ export const deriveExecutionIntentPricing = (
       referencePriceMicros: input.referencePriceMicros,
     })
   }
+  if (input.maximumBuyPriceMicros !== undefined && (!buy || input.maximumBuyPriceMicros <= 0n)) {
+    return Result.fail({
+      _tag: 'InvalidQuoteBoundIntent',
+      reason: 'invalid-buy-ceiling',
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.referencePriceMicros,
+    })
+  }
   const boundary = input.referencePriceMicros * (10_000n + (buy ? input.limitSlippageBps : -input.limitSlippageBps))
   const quotePrice = quantizeInstrumentPriceMicros(
     input.symbol,
@@ -83,7 +92,11 @@ export const deriveExecutionIntentPricing = (
     input.minimumSellPriceMicros === undefined
       ? quotePrice
       : quantizeInstrumentPriceMicros(input.symbol, input.minimumSellPriceMicros, 'UP')
-  const price = quotePrice < floor ? floor : quotePrice
+  const ceiling =
+    input.maximumBuyPriceMicros === undefined
+      ? quotePrice
+      : quantizeInstrumentPriceMicros(input.symbol, input.maximumBuyPriceMicros, 'DOWN')
+  const price = buy ? (quotePrice > ceiling ? ceiling : quotePrice) : quotePrice < floor ? floor : quotePrice
   const notionalLimitMicros = (input.quantityAtoms * price + (buy ? quantityScale - 1n : 0n)) / quantityScale
   if (price <= 0n || notionalLimitMicros <= 0n)
     return Result.fail({

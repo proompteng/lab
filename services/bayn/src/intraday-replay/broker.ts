@@ -210,16 +210,18 @@ const reconcileProtectionGroups = (orders: readonly ReplayBrokerOrder[], at: str
           order: { ...order, status: OrderStatus.Canceled, canceledAt: at, updatedAt: at, observedAt: at },
         }
       const active = terms._tag === 'Oco' ? parent.firstArrivedAt !== undefined : parent.status === OrderStatus.Filled
+      const quantityAtoms =
+        order.brokerOrderId === stop.brokerOrderId
+          ? (original - BigInt(profit.filledQuantityAtoms)).toString()
+          : order.quantityAtoms
+      const activated = active && (order.status === OrderStatus.Held || order.firstArrivedAt === undefined)
       return {
         ...entry,
         order: {
           ...order,
-          ...(order.brokerOrderId === stop.brokerOrderId
-            ? { quantityAtoms: (original - BigInt(profit.filledQuantityAtoms)).toString() }
-            : {}),
-          ...(active && (order.status === OrderStatus.Held || order.firstArrivedAt === undefined)
-            ? { status: OrderStatus.New, firstArrivedAt: at, updatedAt: at, observedAt: at }
-            : {}),
+          quantityAtoms,
+          ...(activated ? { status: OrderStatus.New, firstArrivedAt: at } : {}),
+          ...(activated || quantityAtoms !== order.quantityAtoms ? { updatedAt: at, observedAt: at } : {}),
         },
       }
     })
@@ -357,15 +359,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         })),
       )
       .toSorted((a, b) => a.date.localeCompare(b.date))
-    const sessionFor = (order: ReplayOrder) =>
-      sessions.find((session) => session?.date === newYorkDate.format(Date.parse(order.submittedAt)))
+    const sessionFor = (order: ReplayOrder) => {
+      const date = newYorkDate.format(Date.parse(order.submittedAt))
+      return sessions.find((session) => session?.date === date)
+    }
     const expirationAt = (order: ReplayOrder) => {
+      if (order.timeInForce !== TimeInForce.Day || !isWorking(order)) return undefined
       const session = sessionFor(order)
-      return order.timeInForce !== TimeInForce.Day || !isWorking(order) || session === undefined
-        ? undefined
-        : order.extendedHours
-          ? session.sessionCloseAt
-          : session.regularCloseAt
+      return session === undefined ? undefined : order.extendedHours ? session.sessionCloseAt : session.regularCloseAt
     }
     const expireOrders = (atMs: number) =>
       Effect.gen(function* () {
@@ -1043,225 +1044,278 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         }).pipe(Effect.mapError((cause) => readFailure('fee-activities', 'Replay fee read failed', cause))),
     }
 
+    const recordRouting = <A extends { readonly evidence: { readonly observedAt: string } }>(
+      operation: MutationOperation,
+      request: (
+        mark: (at: string) => Effect.Effect<void>,
+      ) => Effect.Effect<A, BrokerMutationError | ReplayBrokerFailure>,
+    ) =>
+      Effect.gen(function* () {
+        const startedAt = yield* now
+        const dispatched = yield* Ref.make<string | null>(null)
+        const mark = (at: string) => Ref.set(dispatched, at)
+        const result = yield* request(mark).pipe(Effect.result)
+        const completedAt = yield* now
+        const routing = { startedAt, requestDispatchedAt: yield* Ref.get(dispatched), completedAt }
+        if (Result.isFailure(result)) {
+          const error = result.failure
+          if (!(error instanceof BrokerMutationError)) return yield* error
+          return yield* new BrokerMutationError({
+            failure: error.failure,
+            outcome: error.outcome,
+            message: error.message,
+            operation,
+            ...(error.requestHash === undefined ? {} : { requestHash: error.requestHash }),
+            ...(error.brokerOrderId === undefined ? {} : { brokerOrderId: error.brokerOrderId }),
+            ...(error.brokerCode === undefined ? {} : { brokerCode: error.brokerCode }),
+            ...(error.denialReason === undefined ? {} : { denialReason: error.denialReason }),
+            ...(error.cause === undefined ? {} : { cause: error.cause }),
+            evidence: { ...error.evidence, observedAt: completedAt, routing },
+          })
+        }
+        return { ...result.success, evidence: { ...result.success.evidence, observedAt: completedAt, routing } }
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof BrokerMutationError
+            ? cause
+            : new BrokerMutationError({
+                operation,
+                failure: MutationFailure.Unknown,
+                outcome: MutationOutcome.Unknown,
+                message: 'Simulated mutation routing clock failed; reconcile before retrying',
+                cause: causeSummary(cause),
+              }),
+        ),
+      )
+
     const mutation: BrokerMutationShape = {
       submit: (intent: Intent) =>
-        Effect.gen(function* () {
-          yield* readState
-          const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId))
-          const request = prepared.request
-          if (!config.fractionalTrading && orderRequestRequiresFractionalTrading(request))
-            return yield* mutationFailure(
-              MutationOperation.Submit,
-              'Replay account configuration disables fractional trading',
-            )
-          const observedAt = yield* config.submissionTime ?? now
-          const metadata = asset(intent.symbol)
-          if (metadata === undefined || !metadata.tradable)
-            return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')
-          const limit = yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
-          const brokerOrderId = simulatedUuid(
-            yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId: intent.clientOrderId })),
-          )
-          const pending: ReplayOrder = {
-            accountId,
-            brokerOrderId,
-            clientOrderId: intent.clientOrderId,
-            createdAt: observedAt,
-            updatedAt: observedAt,
-            submittedAt: observedAt,
-            assetId: metadata.assetId,
-            symbol: intent.symbol,
-            assetClass: metadata.assetClass,
-            quantityAtoms: intent.quantityAtoms,
-            filledQuantityAtoms: '0',
-            orderClass:
-              request.order_class === 'bracket'
-                ? OrderClass.Bracket
-                : request.order_class === 'oco'
-                  ? OrderClass.OneCancelsOther
-                  : OrderClass.Simple,
-            orderType: request.type,
-            ...(intent.protection === undefined ? {} : { nativeProtection: intent.protection }),
-            ...(intent.protection?._tag === 'StopLimit' ? { stopPriceMicros: intent.protection.stopPriceMicros } : {}),
-            side: request.side,
-            timeInForce: request.time_in_force,
-            limitPriceMicros: limit,
-            status: OrderStatus.New,
-            extendedHours: request.extended_hours,
-            observedAt,
-          }
-          const children: ReplayBrokerOrder[] = []
-          if (intent.protection !== undefined && intent.protection._tag !== 'StopLimit') {
-            const terms = intent.protection
-            for (const kind of terms._tag === 'Bracket' ? ['profit', 'stop'] : ['stop']) {
-              const clientOrderId = `${intent.clientOrderId}-${kind}`
-              const childId = simulatedUuid(yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId })))
-              const { nativeProtection: _terms, ...base } = pending
-              children.push({
-                requestHash: prepared.requestHash,
-                executions: [],
-                order: {
-                  ...base,
-                  clientOrderId,
-                  brokerOrderId: childId,
-                  parentBrokerOrderId: brokerOrderId,
-                  side: OrderSide.Sell,
-                  orderClass: OrderClass.Simple,
-                  orderType: kind === 'stop' ? OrderType.StopLimit : OrderType.Limit,
-                  limitPriceMicros: kind === 'stop' ? terms.stopLimitPriceMicros : terms.profitLimitPriceMicros,
-                  ...(kind === 'stop' ? { stopPriceMicros: terms.stopPriceMicros } : {}),
-                  status: terms._tag === 'Bracket' ? OrderStatus.Held : OrderStatus.New,
-                },
-              })
-            }
-          }
-          const existing = yield* SynchronizedRef.modify(state, (current) => {
-            const previous = current.orders.find((entry) => entry.order.clientOrderId === intent.clientOrderId)
-            return [
-              previous,
-              previous === undefined
-                ? {
-                    ...current,
-                    orders: [
-                      ...current.orders,
-                      { requestHash: prepared.requestHash, order: pending, executions: [] },
-                      ...children,
-                    ],
-                  }
-                : current,
-            ] as const
-          })
-          if (existing !== undefined && existing.requestHash !== prepared.requestHash)
-            return yield* mutationFailure(
-              MutationOperation.Submit,
-              'Client order ID conflicts with a different replay request',
-            )
-          if (existing === undefined) {
-            const delivery = yield* Effect.gen(function* () {
-              const submittedAtMs = Date.parse(observedAt)
-              const sessionDate = newYorkDate.format(submittedAtMs)
-              const calendar = yield* read.marketCalendar({ start: sessionDate, end: sessionDate })
-              const session = calendar.value.providerSessions.find((value) => value.date === sessionDate)
-              const continuous = instrumentMarket(intent.symbol) === MarketKind.Crypto
-              const closeMs = continuous
-                ? Number.POSITIVE_INFINITY
-                : session === undefined
-                  ? submittedAtMs
-                  : Date.parse(request.extended_hours ? session.sessionCloseAt : session.regularCloseAt)
-              // A regular-session IOC still in transit expires at the close. It cannot fill after the session.
-              const expectedArrivalMs = Math.max(
-                submittedAtMs,
-                Math.min(submittedAtMs + config.assumptions.latencyMs, closeMs),
+        recordRouting(MutationOperation.Submit, (mark) =>
+          Effect.gen(function* () {
+            yield* readState
+            const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId))
+            const request = prepared.request
+            if (!config.fractionalTrading && orderRequestRequiresFractionalTrading(request))
+              return yield* mutationFailure(
+                MutationOperation.Submit,
+                'Replay account configuration disables fractional trading',
               )
-              if (config.advanceToArrival === undefined) yield* Effect.sleep(expectedArrivalMs - submittedAtMs)
-              else {
-                yield* config.advanceToArrival(expectedArrivalMs)
-                if ((yield* Clock.currentTimeMillis) !== expectedArrivalMs)
-                  return yield* new ReplayBrokerFailure({
-                    message: 'Historical arrival scheduler did not reach the exact broker delivery time',
-                  })
-              }
-              const arrivedAtMs = yield* Clock.currentTimeMillis
-              const arrivedAt = yield* now
-              const sessionOpen =
-                continuous ||
-                (session !== undefined &&
-                  submittedAtMs >= Date.parse(request.extended_hours ? session.sessionOpenAt : session.regularOpenAt) &&
-                  arrivedAtMs < closeMs)
-              const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs, null) : undefined
-              const unavailableReason = sessionOpen
-                ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
-                    ...config.protocol,
-                    ...jevMarketForSymbol(intent.symbol),
-                  })
-                : 'outside-regular-session'
-              yield* settleOrderAndChildren(brokerOrderId, arrivedAt, quote, unavailableReason, true)
-            }).pipe(
-              Effect.onExit((exit) =>
-                Exit.isSuccess(exit)
-                  ? Effect.void
-                  : Effect.gen(function* () {
-                      const failedAt = yield* now
-                      yield* updateCommittedState(failedAt, (current) => ({
-                        ...current,
-                        orders: reconcileProtectionGroups(
-                          current.orders.map((entry) =>
-                            entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
-                              ? {
-                                  ...entry,
-                                  deliveryFailure: causeSummary(Cause.squash(exit.cause)),
-                                  order: {
-                                    ...entry.order,
-                                    status: OrderStatus.Canceled,
-                                    canceledAt: failedAt,
-                                    updatedAt: failedAt,
-                                    observedAt: failedAt,
-                                  },
-                                }
-                              : entry,
-                          ),
-                          failedAt,
-                        ),
-                      }))
-                    }),
-              ),
-              Effect.forkIn(brokerScope, { startImmediately: true }),
+            const observedAt = yield* config.submissionTime ?? now
+            yield* mark(observedAt)
+            const metadata = asset(intent.symbol)
+            if (metadata === undefined || !metadata.tradable)
+              return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')
+            const limit = yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
+            const brokerOrderId = simulatedUuid(
+              yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId: intent.clientOrderId })),
             )
-            yield* Fiber.join(delivery)
-          }
-          const receipt = yield* read.orderById(brokerOrderId)
-          return { requestHash: prepared.requestHash, order: receipt.value, evidence: receipt.evidence }
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause instanceof BrokerMutationError
-              ? cause
-              : new BrokerMutationError({
-                  operation: MutationOperation.Submit,
-                  failure: MutationFailure.Unknown,
-                  outcome: MutationOutcome.Unknown,
-                  message: 'Simulated broker submit failed; recover through order lookup',
-                  cause: causeSummary(cause),
-                }),
+            const pending: ReplayOrder = {
+              accountId,
+              brokerOrderId,
+              clientOrderId: intent.clientOrderId,
+              createdAt: observedAt,
+              updatedAt: observedAt,
+              submittedAt: observedAt,
+              assetId: metadata.assetId,
+              symbol: intent.symbol,
+              assetClass: metadata.assetClass,
+              quantityAtoms: intent.quantityAtoms,
+              filledQuantityAtoms: '0',
+              orderClass:
+                request.order_class === 'bracket'
+                  ? OrderClass.Bracket
+                  : request.order_class === 'oco'
+                    ? OrderClass.OneCancelsOther
+                    : OrderClass.Simple,
+              orderType: request.type,
+              ...(intent.protection === undefined ? {} : { nativeProtection: intent.protection }),
+              ...(intent.protection?._tag === 'StopLimit'
+                ? { stopPriceMicros: intent.protection.stopPriceMicros }
+                : {}),
+              side: request.side,
+              timeInForce: request.time_in_force,
+              limitPriceMicros: limit,
+              status: OrderStatus.New,
+              extendedHours: request.extended_hours,
+              observedAt,
+            }
+            const children: ReplayBrokerOrder[] = []
+            if (intent.protection !== undefined && intent.protection._tag !== 'StopLimit') {
+              const terms = intent.protection
+              for (const kind of terms._tag === 'Bracket' ? ['profit', 'stop'] : ['stop']) {
+                const clientOrderId = `${intent.clientOrderId}-${kind}`
+                const childId = simulatedUuid(yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId })))
+                const { nativeProtection: _terms, ...base } = pending
+                children.push({
+                  requestHash: prepared.requestHash,
+                  executions: [],
+                  order: {
+                    ...base,
+                    clientOrderId,
+                    brokerOrderId: childId,
+                    parentBrokerOrderId: brokerOrderId,
+                    side: OrderSide.Sell,
+                    orderClass: OrderClass.Simple,
+                    orderType: kind === 'stop' ? OrderType.StopLimit : OrderType.Limit,
+                    limitPriceMicros: kind === 'stop' ? terms.stopLimitPriceMicros : terms.profitLimitPriceMicros,
+                    ...(kind === 'stop' ? { stopPriceMicros: terms.stopPriceMicros } : {}),
+                    status: terms._tag === 'Bracket' ? OrderStatus.Held : OrderStatus.New,
+                  },
+                })
+              }
+            }
+            const existing = yield* SynchronizedRef.modify(state, (current) => {
+              const previous = current.orders.find((entry) => entry.order.clientOrderId === intent.clientOrderId)
+              return [
+                previous,
+                previous === undefined
+                  ? {
+                      ...current,
+                      orders: [
+                        ...current.orders,
+                        { requestHash: prepared.requestHash, order: pending, executions: [] },
+                        ...children,
+                      ],
+                    }
+                  : current,
+              ] as const
+            })
+            if (existing !== undefined && existing.requestHash !== prepared.requestHash)
+              return yield* mutationFailure(
+                MutationOperation.Submit,
+                'Client order ID conflicts with a different replay request',
+              )
+            if (existing === undefined) {
+              const delivery = yield* Effect.gen(function* () {
+                const submittedAtMs = Date.parse(observedAt)
+                const sessionDate = newYorkDate.format(submittedAtMs)
+                const calendar = yield* read.marketCalendar({ start: sessionDate, end: sessionDate })
+                const session = calendar.value.providerSessions.find((value) => value.date === sessionDate)
+                const continuous = instrumentMarket(intent.symbol) === MarketKind.Crypto
+                const closeMs = continuous
+                  ? Number.POSITIVE_INFINITY
+                  : session === undefined
+                    ? submittedAtMs
+                    : Date.parse(request.extended_hours ? session.sessionCloseAt : session.regularCloseAt)
+                // A regular-session IOC still in transit expires at the close. It cannot fill after the session.
+                const expectedArrivalMs = Math.max(
+                  submittedAtMs,
+                  Math.min(submittedAtMs + config.assumptions.latencyMs, closeMs),
+                )
+                if (config.advanceToArrival === undefined) yield* Effect.sleep(expectedArrivalMs - submittedAtMs)
+                else {
+                  yield* config.advanceToArrival(expectedArrivalMs)
+                  if ((yield* Clock.currentTimeMillis) !== expectedArrivalMs)
+                    return yield* new ReplayBrokerFailure({
+                      message: 'Historical arrival scheduler did not reach the exact broker delivery time',
+                    })
+                }
+                const arrivedAtMs = yield* Clock.currentTimeMillis
+                const arrivedAt = yield* now
+                const sessionOpen =
+                  continuous ||
+                  (session !== undefined &&
+                    submittedAtMs >=
+                      Date.parse(request.extended_hours ? session.sessionOpenAt : session.regularOpenAt) &&
+                    arrivedAtMs < closeMs)
+                const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs, null) : undefined
+                const unavailableReason = sessionOpen
+                  ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
+                      ...config.protocol,
+                      ...jevMarketForSymbol(intent.symbol),
+                    })
+                  : 'outside-regular-session'
+                yield* settleOrderAndChildren(brokerOrderId, arrivedAt, quote, unavailableReason, true)
+              }).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit)
+                    ? Effect.void
+                    : Effect.gen(function* () {
+                        const failedAt = yield* now
+                        yield* updateCommittedState(failedAt, (current) => ({
+                          ...current,
+                          orders: reconcileProtectionGroups(
+                            current.orders.map((entry) =>
+                              entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
+                                ? {
+                                    ...entry,
+                                    deliveryFailure: causeSummary(Cause.squash(exit.cause)),
+                                    order: {
+                                      ...entry.order,
+                                      status: OrderStatus.Canceled,
+                                      canceledAt: failedAt,
+                                      updatedAt: failedAt,
+                                      observedAt: failedAt,
+                                    },
+                                  }
+                                : entry,
+                            ),
+                            failedAt,
+                          ),
+                        }))
+                      }),
+                ),
+                Effect.forkIn(brokerScope, { startImmediately: true }),
+              )
+              yield* Fiber.join(delivery)
+            }
+            const receipt = yield* read.orderById(brokerOrderId)
+            return { requestHash: prepared.requestHash, order: receipt.value, evidence: receipt.evidence }
+          }).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof BrokerMutationError
+                ? cause
+                : new BrokerMutationError({
+                    operation: MutationOperation.Submit,
+                    failure: MutationFailure.Unknown,
+                    outcome: MutationOutcome.Unknown,
+                    message: 'Simulated broker submit failed; recover through order lookup',
+                    cause: causeSummary(cause),
+                  }),
+            ),
           ),
         ),
       cancel: (brokerOrderId) =>
-        Effect.gen(function* () {
-          const prepared = yield* Effect.fromResult(prepareCancel(brokerOrderId))
-          const observedAt = yield* now
-          yield* read.orderById(brokerOrderId)
-          const target = (yield* readState).orders.find((entry) => entry.order.brokerOrderId === brokerOrderId)?.order
-          const groupId = target?.parentBrokerOrderId ?? brokerOrderId
-          yield* updateCommittedState(observedAt, (current) => ({
-            ...current,
-            orders: current.orders.map((entry) =>
-              (entry.order.brokerOrderId === groupId || entry.order.parentBrokerOrderId === groupId) &&
-              isWorking(entry.order)
-                ? {
-                    ...entry,
-                    order: {
-                      ...entry.order,
-                      observedAt,
-                      updatedAt: observedAt,
-                      canceledAt: observedAt,
-                      status: OrderStatus.Canceled,
-                    },
-                  }
-                : entry,
+        recordRouting(MutationOperation.Cancel, (mark) =>
+          Effect.gen(function* () {
+            const prepared = yield* Effect.fromResult(prepareCancel(brokerOrderId))
+            const observedAt = yield* now
+            yield* read.orderById(brokerOrderId)
+            yield* mark(yield* now)
+            const target = (yield* readState).orders.find((entry) => entry.order.brokerOrderId === brokerOrderId)?.order
+            const groupId = target?.parentBrokerOrderId ?? brokerOrderId
+            yield* updateCommittedState(observedAt, (current) => ({
+              ...current,
+              orders: current.orders.map((entry) =>
+                (entry.order.brokerOrderId === groupId || entry.order.parentBrokerOrderId === groupId) &&
+                isWorking(entry.order)
+                  ? {
+                      ...entry,
+                      order: {
+                        ...entry.order,
+                        observedAt,
+                        updatedAt: observedAt,
+                        canceledAt: observedAt,
+                        status: OrderStatus.Canceled,
+                      },
+                    }
+                  : entry,
+              ),
+            }))
+            return yield* Effect.fromResult(
+              classifyCancelResponse({
+                ...prepared,
+                status: 204,
+                requestId: `replay-cancel-${prepared.requestHash}`,
+                observedAt,
+              }),
+            )
+          }).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof BrokerMutationError
+                ? cause
+                : mutationFailure(MutationOperation.Cancel, 'Simulated cancel failed'),
             ),
-          }))
-          return yield* Effect.fromResult(
-            classifyCancelResponse({
-              ...prepared,
-              status: 204,
-              requestId: `replay-cancel-${prepared.requestHash}`,
-              observedAt,
-            }),
-          )
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause instanceof BrokerMutationError
-              ? cause
-              : mutationFailure(MutationOperation.Cancel, 'Simulated cancel failed'),
           ),
         ),
       orderById: read.orderById,
@@ -1321,6 +1375,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       const observedAt = yield* now
       return yield* Effect.fromResult(makeReplayBrokerCheckpoint(config, yield* readState, observedAt))
     })
+    const advanceToArrival = config.advanceToArrival
+    const waitForSnapshotRetry = (milliseconds: number) =>
+      advanceToArrival === undefined
+        ? Effect.sleep(milliseconds)
+        : Clock.currentTimeMillis.pipe(
+            Effect.flatMap((at) => advanceToArrival(at + milliseconds)),
+            Effect.mapError((cause) => readFailure('preflight', 'Replay snapshot retry could not advance', cause)),
+          )
     return {
       accountId,
       sourceManifestHash: config.sourceManifestHash,
@@ -1330,7 +1392,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           fresh: read,
           invalidate: Effect.void,
           withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-          snapshot: readStableBrokerSnapshot(read, now).pipe(
+          snapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
             Effect.mapError((cause) => readFailure('preflight', 'Replay broker snapshot failed', cause)),
           ),
           submissionSnapshot: () =>

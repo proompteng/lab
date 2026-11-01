@@ -309,44 +309,51 @@ pub fn preview_router(state: GatewayState) -> Router {
 
 async fn readiness(State(state): State<GatewayState>) -> StatusCode {
     let agents: Api<MicroVM> = Api::namespaced(state.client.clone(), &state.namespace);
-    let checks = async {
-        tokio::try_join!(
-            async { state.authorization.ready().await.map_err(|_| ()) },
-            async { state.tickets.stats().await.map(|_| ()).map_err(|_| ()) },
-            async {
-                agents
-                    .list(&ListParams::default().limit(1))
-                    .await
-                    .map(|_| ())
-                    .map_err(|_| ())
-            },
-        )?;
-        Ok::<(), ()>(())
-    };
-
-    match tokio::time::timeout(READINESS_TIMEOUT, checks).await {
-        Ok(Ok(())) => StatusCode::NO_CONTENT,
-        Ok(Err(_)) | Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+    let parameters = ListParams::default();
+    let (authorization, tickets, agents) = tokio::join!(
+        readiness_dependency(
+            metrics::Dependency::Authorization,
+            state.authorization.ready()
+        ),
+        readiness_dependency(metrics::Dependency::Database, state.tickets.stats()),
+        readiness_dependency(metrics::Dependency::Kubernetes, agents.list(&parameters)),
+    );
+    match (authorization, tickets, agents) {
+        (Ok(()), Ok(tickets), Ok(agents)) => {
+            metrics::global().update_inventory(&agents.items, tickets);
+            StatusCode::NO_CONTENT
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
 
-async fn export_metrics(State(state): State<GatewayState>) -> impl IntoResponse {
-    let agents: Api<MicroVM> = Api::namespaced(state.client.clone(), &state.namespace);
-    let agents = match agents.list(&ListParams::default()).await {
-        Ok(agents) => agents.items,
-        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "metrics unavailable").into_response(),
-    };
-    let tickets = match state.tickets.stats().await {
-        Ok(stats) => stats,
-        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "metrics unavailable").into_response(),
-    };
+async fn readiness_dependency<T, E>(
+    dependency: metrics::Dependency,
+    check: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, ()> {
+    match tokio::time::timeout(READINESS_TIMEOUT, check).await {
+        Ok(Ok(value)) => Ok(value),
+        failure => {
+            let timed_out = failure.is_err();
+            metrics::global().readiness_failed(dependency, timed_out);
+            tracing::warn!(
+                dependency = dependency.name(),
+                timed_out,
+                "readiness dependency failed"
+            );
+            Err(())
+        }
+    }
+}
+
+async fn export_metrics() -> impl IntoResponse {
     (
         StatusCode::OK,
         [(
             header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        metrics::global().render(&agents, tickets),
+        metrics::global().render(),
     )
         .into_response()
 }
@@ -1527,6 +1534,49 @@ mod tests {
             )
             .await
             .expect("gateway response")
+    }
+
+    #[tokio::test]
+    async fn metrics_scrape_does_not_wait_for_kubernetes_or_database() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let state = test_gateway_state(Client::new(service, "tengri"));
+        let response = tokio::time::timeout(
+            Duration::from_millis(100),
+            router_response(control_router(state), "/metrics", "tengri.proompteng.ai"),
+        )
+        .await
+        .expect("metrics must not query unavailable dependencies");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("tengri_guest_failures_total"));
+        assert!(text.contains("tengri_readiness_failures_total"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_dependencies_keep_the_existing_deadline_and_fail_closed() {
+        assert!(
+            readiness_dependency(metrics::Dependency::Database, async { Ok::<_, ()>(()) })
+                .await
+                .is_ok()
+        );
+        assert!(
+            readiness_dependency(metrics::Dependency::Authorization, async {
+                Err::<(), _>(())
+            })
+            .await
+            .is_err()
+        );
+        let started = tokio::time::Instant::now();
+        assert!(
+            readiness_dependency(
+                metrics::Dependency::Kubernetes,
+                std::future::pending::<Result<(), ()>>()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(started.elapsed(), READINESS_TIMEOUT);
     }
 
     #[tokio::test]

@@ -106,7 +106,11 @@ const parseFeeMultiplier = (value: number): Result.Result<bigint, IntradayReplay
     : invalid('feeMultiplierPpm', value, 'invalid-fee-multiplier')
 
 const sessionDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-const cumulativeFees = (fills: readonly EconomicReplayFill[], model: ExecutionModel, multiplier: bigint) =>
+const cumulativeFees = (
+  fills: readonly EconomicReplayFill[],
+  model: Pick<ExecutionModel, 'fees'>,
+  multiplier: bigint,
+) =>
   Result.gen(function* () {
     const sessions = new Map<string, FeeInput[]>()
     for (const fill of fills) {
@@ -160,7 +164,7 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   ledger: ReplayLedger<Fill>,
   fill: Fill,
   requestedQuantityAtoms: string,
-  executionModel: ExecutionModel,
+  executionModel: Pick<ExecutionModel, 'fees'>,
   feeMultiplierPpm: number,
 ): Result.Result<ReplayLedger<Fill>, IntradayReplayLedgerFailure> => {
   const feeMultiplier = parseFeeMultiplier(feeMultiplierPpm)

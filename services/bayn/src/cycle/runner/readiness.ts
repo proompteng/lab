@@ -1,9 +1,11 @@
+import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
 import { Schema } from 'effect'
 
 import { UtcInstantSchema } from '../../schemas'
 import { Reason as RiskReason } from '../../risk'
 import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
+import type { JevPositionHold } from '../../jev/hold'
 
 export enum DecisionReadinessReason {
   AccountProtection = 'ACCOUNT_PROTECTION',
@@ -115,6 +117,8 @@ export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
 export type CycleWaitingDetails = {
   readonly maximumHoldDueAt?: string
   readonly maximumHoldEvaluatedAt?: string
+  readonly positionHold?: JevPositionHold
+  readonly entryAbstention?: ProtectedEntryTarget
 } & (
   | { readonly waitReason: CycleWaitReason; readonly readiness?: never }
   | { readonly readiness: DecisionReadiness; readonly waitReason?: never }

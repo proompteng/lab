@@ -4,7 +4,7 @@ import { instrumentMarket, MarketKind } from '../instruments'
 import type { ExecutionModel } from '../execution-model-contract'
 import { quantityScale } from '../quantity'
 import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
-import type { JevFundedExitPlan } from './strategy-exit-plan'
+import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 import { JevContractError } from './contract'
 
 export const maximumAllocatedBuyQuantities = (input: {
@@ -44,7 +44,7 @@ export const maximumAllocatedBuyQuantities = (input: {
 
 export const maximumFundedBuyQuantities = (
   input: Parameters<typeof maximumAllocatedBuyQuantities>[0] & {
-    readonly plans: Readonly<Record<string, JevFundedExitPlan>>
+    readonly plans: Readonly<Record<string, FundedEntryExitPlan>>
   },
 ) =>
   Result.gen(function* () {

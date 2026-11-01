@@ -124,6 +124,10 @@ export const runtimeConfigSource = Config.all({
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
     Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
   ),
+  nativeArrivalPostgresUrl: Config.option(Config.Redacted('BAYN_NATIVE_ARRIVAL_POSTGRES_URL')),
+  nativeArrivalPostgresCaPath: nonEmptyString('BAYN_NATIVE_ARRIVAL_POSTGRES_CA_PATH').pipe(
+    Config.withDefault('/var/run/secrets/bayn/native-arrival-postgres/ca.crt'),
+  ),
   tigerBeetleClusterId: Config.schema(Schema.BigIntFromString, 'BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
     Config.withDefault(2001n),
   ),
@@ -179,6 +183,13 @@ export const runtimeConfigSource = Config.all({
         tls: config.postgresTls,
         caPath: config.postgresCaPath,
       },
+      nativeArrivalPostgres: Option.isSome(config.nativeArrivalPostgresUrl)
+        ? {
+            url: config.nativeArrivalPostgresUrl.value,
+            tls: config.postgresTls,
+            caPath: config.nativeArrivalPostgresCaPath,
+          }
+        : undefined,
       tigerBeetle: {
         clusterId: config.tigerBeetleClusterId,
         replicaAddresses: config.tigerBeetleReplicaAddresses,
