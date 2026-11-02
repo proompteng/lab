@@ -81,6 +81,10 @@ export class DecisionsError extends Data.TaggedError('DecisionsError')<{
   readonly requestHash?: string
   readonly status?: number
   readonly responseHash?: string
+  readonly providerErrorCode?: string
+  readonly providerErrorType?: string
+  readonly providerRequestId?: string
+  readonly providerRetryAtMs?: number
   readonly usage?: typeof DecisionsUsageSchema.Type
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
@@ -209,6 +213,23 @@ export class DecisionsClient extends Context.Service<
 >()('@proompteng/bayn/DecisionsClient') {}
 
 const metering = Schema.Struct({ model: Schema.Literal(decisionsModel), usage: DecisionsUsageSchema })
+const ProviderCode = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.:-]{1,128}$/))
+const ProviderError = Schema.Struct({
+  error: Schema.Struct({
+    code: Schema.optionalKey(Schema.NullOr(ProviderCode)),
+    type: Schema.optionalKey(Schema.NullOr(ProviderCode)),
+  }),
+})
+const providerRetryAtMs = (header: string | undefined, observedAt: number): number | undefined => {
+  if (header === undefined) return undefined
+  const value = header.trim()
+  const until = /^\d+(?:\.\d+)?$/.test(value)
+    ? observedAt + Math.ceil(Number(value) * 1_000)
+    : value.includes(':')
+      ? Date.parse(value)
+      : NaN
+  return Number.isSafeInteger(until) ? Math.max(observedAt, until) : undefined
+}
 
 export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: number) =>
   Layer.effect(
@@ -234,6 +255,10 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
             let status: number | undefined
             let usage: typeof DecisionsUsageSchema.Type | undefined
             let responseHash: string | undefined
+            let providerRequestId: string | undefined
+            let retryAtMs: number | undefined
+            let providerErrorCode: string | undefined
+            let providerErrorType: string | undefined
             return yield* Effect.gen(function* () {
               const response = yield* http.execute(
                 HttpClientRequest.post(decisionsEndpoint).pipe(
@@ -243,7 +268,10 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
                 ),
               )
               status = response.status
-              const raw = yield* response.stream.pipe(
+              const requestId = response.headers['x-request-id']
+              if (requestId !== undefined && /^[A-Za-z0-9_-]{1,128}$/.test(requestId)) providerRequestId = requestId
+              retryAtMs = providerRetryAtMs(response.headers['retry-after'], yield* Clock.currentTimeMillis)
+              const body = yield* response.stream.pipe(
                 Stream.runFoldEffect(
                   () => Buffer.alloc(0),
                   (body, chunk) =>
@@ -256,28 +284,33 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
                         )
                       : Effect.succeed(Buffer.concat([body, chunk])),
                 ),
-                Effect.flatMap((body) =>
-                  Effect.try({
-                    try: (): unknown => JSON.parse(body.toString('utf8')),
-                    catch: (cause) =>
-                      new DecisionsError({
-                        category: 'RESPONSE',
-                        message: 'Decisions response is not JSON',
-                        cause: Redacted.make(cause),
-                      }),
-                  }),
-                ),
               )
+              const parsed = Result.try({
+                try: (): unknown => JSON.parse(body.toString('utf8')),
+                catch: (cause) =>
+                  new DecisionsError({
+                    category: response.status === 200 ? 'RESPONSE' : 'STATUS',
+                    message: `OpenAI Decisions returned HTTP ${response.status} with a non-JSON response`,
+                    cause: Redacted.make(cause),
+                  }),
+              })
+              const raw = yield* Effect.fromResult(parsed)
               const hash = canonicalHashV1Result(raw)
               if (Result.isSuccess(hash)) responseHash = hash.success
               const observedUsage = Schema.decodeUnknownResult(metering)(raw)
               if (Result.isSuccess(observedUsage) && validDecisionsUsage(observedUsage.success.usage))
                 usage = observedUsage.success.usage
-              if (response.status !== 200)
+              if (response.status !== 200) {
+                const error = Schema.decodeUnknownResult(ProviderError)(raw)
+                if (Result.isSuccess(error)) {
+                  providerErrorCode = error.success.error.code ?? undefined
+                  providerErrorType = error.success.error.type ?? undefined
+                }
                 return yield* new DecisionsError({
                   category: 'STATUS',
-                  message: 'Decisions returned an unsuccessful status',
+                  message: `OpenAI Decisions returned HTTP ${response.status}${providerErrorCode === undefined ? '' : ` (${providerErrorCode})`}`,
                 })
+              }
               const decoded = yield* Effect.fromResult(decodeDecisionsResponse(prepared.request, raw))
               const verifiedHash = yield* Effect.fromResult(canonicalHashV1Result(decoded)).pipe(
                 Effect.mapError(
@@ -323,8 +356,29 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
                     ...(status === undefined ? {} : { status }),
                     ...(usage === undefined ? {} : { usage }),
                     ...(responseHash === undefined ? {} : { responseHash }),
+                    ...(providerErrorCode === undefined ? {} : { providerErrorCode }),
+                    ...(providerErrorType === undefined ? {} : { providerErrorType }),
+                    ...(providerRequestId === undefined ? {} : { providerRequestId }),
+                    ...(retryAtMs === undefined ? {} : { providerRetryAtMs: retryAtMs }),
                     cause: Redacted.make(cause),
                   }),
+              ),
+              Effect.tapError((failure) =>
+                Effect.logWarning('OpenAI Decisions request failed').pipe(
+                  Effect.annotateLogs({
+                    event: 'bayn.decisions.failure.v1',
+                    model: decisionsModel,
+                    requestHash: prepared.requestHash,
+                    category: failure.category,
+                    httpStatus: failure.status ?? null,
+                    providerErrorCode: failure.providerErrorCode ?? null,
+                    providerErrorType: failure.providerErrorType ?? null,
+                    providerRequestId: failure.providerRequestId ?? null,
+                    providerRetryAtMs: failure.providerRetryAtMs ?? null,
+                    responseHash: failure.responseHash ?? null,
+                  }),
+                  Effect.catchDefect(() => Effect.void),
+                ),
               ),
             )
           }),

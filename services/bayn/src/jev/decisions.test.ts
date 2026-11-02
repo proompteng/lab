@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Fiber, Layer, Redacted, Result } from 'effect'
+import { Effect, Fiber, Layer, Logger, Redacted, References, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
@@ -215,6 +215,216 @@ describe('native OpenAI Decisions contract', () => {
         expect(JSON.stringify(result.failure)).not.toContain('private-key')
         expect(JSON.stringify(result.failure)).not.toContain('do not retain provider text')
       }
+    }
+  })
+
+  test('identifies exhausted OpenAI credit without retaining provider message text or retrying', async () => {
+    const body = {
+      error: {
+        message:
+          'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.',
+        type: 'insufficient_quota',
+        param: null,
+        code: 'credit_balance_exhausted',
+      },
+    }
+    let dispatches = 0
+    const logs: Readonly<Record<string, unknown>>[] = []
+    const http = HttpClient.make((sent) => {
+      dispatches++
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          sent,
+          new Response(JSON.stringify(body), { status: 429, headers: { 'x-request-id': 'req_credit_exhausted' } }),
+        ),
+      )
+    })
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* DecisionsClient).evaluate(request, 250).pipe(Effect.result)
+      }).pipe(
+        Effect.provide(layerFor(http)),
+        Effect.provide(
+          Logger.layer([Logger.make(({ fiber }) => logs.push(fiber.getRef(References.CurrentLogAnnotations)))]),
+        ),
+      ),
+    )
+    expect(dispatches).toBe(1)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        category: 'STATUS',
+        status: 429,
+        providerErrorCode: 'credit_balance_exhausted',
+        providerErrorType: 'insufficient_quota',
+        providerRequestId: 'req_credit_exhausted',
+        responseHash: 'd1e7b430e2a2dfabfe3d3e55559e6b3a5de1af81bbf97f1387184fc0df7abfd3',
+      })
+      expect(result.failure.message).toContain('credit_balance_exhausted')
+      expect(result.failure.usage).toBeUndefined()
+    }
+    const serialized = JSON.stringify({ result, logs })
+    expect(serialized).toContain('credit_balance_exhausted')
+    expect(serialized).not.toContain(body.error.message)
+    expect(serialized).not.toContain('private-key')
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toMatchObject({
+      event: 'bayn.decisions.failure.v1',
+      requestHash: prepared().requestHash,
+      providerErrorCode: 'credit_balance_exhausted',
+      providerRequestId: 'req_credit_exhausted',
+      httpStatus: 429,
+    })
+  })
+
+  test.each(['2', 'Thu, 01 Jan 1970 00:00:02 GMT'])(
+    'preserves Retry-After %s without extending the original deadline',
+    async (retryAfter) => {
+      let dispatches = 0
+      const http = HttpClient.make((sent) => {
+        dispatches++
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            sent,
+            new Response(JSON.stringify({ error: { type: 'rate_limit_error', code: 'slow_down' } }), {
+              status: 429,
+              headers: { 'retry-after': retryAfter, 'x-request-id': 'req_rate_limited' },
+            }),
+          ),
+        )
+      })
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* DecisionsClient).evaluate(request, 250).pipe(Effect.result)
+        }).pipe(Effect.provide(layerFor(http)), Effect.provide(TestClock.layer())),
+      )
+      expect(dispatches).toBe(1)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result))
+        expect(result.failure).toMatchObject({
+          status: 429,
+          providerErrorCode: 'slow_down',
+          providerRequestId: 'req_rate_limited',
+          providerRetryAtMs: 2_000,
+        })
+    },
+  )
+
+  test('retains HTTP status and request identity for a non-JSON rejection without exposing its body', async () => {
+    const http = HttpClient.make((sent) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          sent,
+          new Response('private provider body', {
+            status: 429,
+            headers: { 'x-request-id': 'req_non_json', 'retry-after': '-1' },
+          }),
+        ),
+      ),
+    )
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* DecisionsClient).evaluate(request, 250).pipe(Effect.result)
+      }).pipe(Effect.provide(layerFor(http))),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({ category: 'STATUS', status: 429, providerRequestId: 'req_non_json' })
+      expect(result.failure.providerRetryAtMs).toBeUndefined()
+      expect(result.failure.responseHash).toBeUndefined()
+      expect(JSON.stringify(result.failure)).not.toContain('private provider body')
+    }
+  })
+
+  test('a rejected request does not prevent a later admitted request from succeeding after funding is restored', async () => {
+    let dispatches = 0
+    const http = HttpClient.make((sent) => {
+      dispatches++
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          sent,
+          dispatches === 1
+            ? new Response(JSON.stringify({ error: { code: 'credit_balance_exhausted' } }), { status: 429 })
+            : new Response(JSON.stringify(response)),
+        ),
+      )
+    })
+    const results = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* DecisionsClient
+        const rejected = yield* client.evaluate(request, 250).pipe(Effect.result)
+        const recovered = yield* client.evaluate(request, 250)
+        return { rejected, recovered }
+      }).pipe(Effect.provide(layerFor(http))),
+    )
+    expect(dispatches).toBe(2)
+    expect(Result.isFailure(results.rejected)).toBe(true)
+    expect(results.recovered.requestHash).toBe(prepared().requestHash)
+    expect(results.recovered.response).toEqual(response)
+  })
+
+  test('a broken diagnostic logger preserves the original provider failure', async () => {
+    const http = HttpClient.make((sent) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          sent,
+          new Response(JSON.stringify({ error: { code: 'credit_balance_exhausted' } }), { status: 429 }),
+        ),
+      ),
+    )
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* DecisionsClient).evaluate(request, 250).pipe(Effect.result)
+      }).pipe(
+        Effect.provide(layerFor(http)),
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              throw new Error('logger unavailable')
+            }),
+          ]),
+        ),
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.providerErrorCode).toBe('credit_balance_exhausted')
+  })
+
+  test('retains rejection headers when the response body stalls past the original deadline', async () => {
+    let canceled = 0
+    const http = HttpClient.make((sent) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          sent,
+          new Response(
+            new ReadableStream({
+              cancel: () => {
+                canceled++
+              },
+            }),
+            { status: 503, headers: { 'x-request-id': 'req_stalled_body', 'retry-after': '2' } },
+          ),
+        ),
+      ),
+    )
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* DecisionsClient
+        const fiber = yield* client.evaluate(request, 250).pipe(Effect.result, Effect.forkChild)
+        yield* TestClock.adjust(250)
+        return yield* Fiber.join(fiber)
+      }).pipe(Effect.provide(layerFor(http)), Effect.provide(TestClock.layer())),
+    )
+    expect(canceled).toBe(1)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        category: 'DEADLINE',
+        status: 503,
+        providerRequestId: 'req_stalled_body',
+        providerRetryAtMs: 2_000,
+      })
+      expect(result.failure.usage).toBeUndefined()
     }
   })
 
