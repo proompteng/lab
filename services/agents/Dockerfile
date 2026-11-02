@@ -322,6 +322,7 @@ CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
 
 FROM controller AS agents-shell
 ARG UV_VERSION
+ARG TARGETARCH
 
 COPY --from=pstack-bundle /opt/agents-shell/pstack-source/plugins/pstack /opt/agents-shell/pstack
 
@@ -349,6 +350,20 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   yq; \
   ln -sf /usr/bin/python3 /usr/local/bin/python; \
   rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+  case "${TARGETARCH}" in \
+    amd64) TALOS_SHA=ff432b68986709e6b69c563a08a2ced4232d5196b0dccd6d2e783e9d714d7d7d; OMNI_SHA=358e8b102fda75c9a4298ac6720379276bb19c9da8fdf0fe7a490342b4ea1754 ;; \
+    arm64) TALOS_SHA=dfd3aa33c3159810e216fc39afb685d4d120c8f2728e017d8c7f7635d3139382; OMNI_SHA=f579346cf9a6030ef6c23b583d2a6a2ab32241d633b6cc16f44cb196d660dcb7 ;; \
+    *) echo "unsupported agents-shell architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 3 "https://github.com/siderolabs/talos/releases/download/v1.14.5/talosctl-linux-${TARGETARCH}" -o /usr/local/bin/talosctl; \
+  echo "${TALOS_SHA}  /usr/local/bin/talosctl" | sha256sum -c -; \
+  curl -fsSL --retry 3 "https://github.com/siderolabs/omni/releases/download/v1.11.0/omnictl-linux-${TARGETARCH}" -o /usr/local/bin/omnictl; \
+  echo "${OMNI_SHA}  /usr/local/bin/omnictl" | sha256sum -c -; \
+  chmod 0755 /usr/local/bin/talosctl /usr/local/bin/omnictl; \
+  talosctl version --client; \
+  omnictl --version
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}" \
   && uv --version
