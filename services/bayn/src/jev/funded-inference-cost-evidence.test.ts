@@ -68,7 +68,17 @@ test('funded v25 history keeps two-stage identities and checkpoint quotes after 
       requestId: request.requestId,
       claimHash: claim.claimHash,
       recordedAt: completion.handoff.recordedAt,
-      outcome: { status: 'RECEIVED', inference: completion.handoff.disposition.visual },
+      outcome: {
+        status: 'RECEIVED',
+        inference: {
+          ...completion.handoff.disposition.visual,
+          response: (() => {
+            const response = completion.handoff.disposition.visual.response
+            if (response.model !== 'gpt-6-luna') throw new Error('Expected retained Decisions receipt')
+            return response
+          })(),
+        },
+      },
     }),
   )
   const checkpoint = { claim, terminal }
@@ -108,7 +118,14 @@ test('funded v25 history keeps two-stage identities and checkpoint quotes after 
   ).toBe(true)
   const { requestId: _id, ...wrongRequest } = {
     ...request,
-    request: { ...request.request, protocol: { ...request.request.protocol, schemaVersion: 'bayn.jev.protocol.v26' } },
+    request: {
+      ...request.request,
+      protocol: {
+        ...request.request.protocol,
+        schemaVersion: 'bayn.jev.protocol.v26',
+        entrySignalPolicy: 'openai-decisions-then-jev' as const,
+      },
+    },
   }
   expect(
     Result.isFailure(

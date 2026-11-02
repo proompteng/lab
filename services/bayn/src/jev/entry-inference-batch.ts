@@ -6,7 +6,6 @@ import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import { JevClient, type JevError } from './client'
 import { decodeJevResponse, JevFailure, JevResponseSchema } from './contract'
-import { DecisionsClient } from './decisions'
 import {
   deriveEntryHandoffDisposition,
   EntryInferenceError,
@@ -70,7 +69,7 @@ const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['
         category: 'DEADLINE',
         message: 'Original evidence window expired while committing visual admission',
       })
-    const client = yield* DecisionsClient
+    const client = yield* JevClient
     const response = yield* client.evaluate(request.request, expires - dispatchAt).pipe(
       Effect.timeoutOrElse({
         duration: expires - dispatchAt,
@@ -93,10 +92,26 @@ const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['
           failure instanceof EntryInferenceError
             ? { category: 'DEADLINE', httpStatus: null, responseHash: null, usage: null }
             : {
-                category: failure.category,
+                category:
+                  failure.failure === JevFailure.Timeout
+                    ? 'DEADLINE'
+                    : failure.failure === JevFailure.NotDispatched
+                      ? 'REQUEST'
+                      : failure.failure,
                 httpStatus: failure.status ?? null,
                 responseHash: failure.requestHash === request.requestHash ? (failure.responseHash ?? null) : null,
-                usage: failure.requestHash === request.requestHash ? (failure.usage ?? null) : null,
+                usage:
+                  failure.requestHash === request.requestHash && failure.rejectedResponse !== undefined
+                    ? (() => {
+                        const decoded = Schema.decodeUnknownResult(
+                          Schema.Struct({
+                            model: JevResponseSchema.fields.model,
+                            usage: JevResponseSchema.fields.usage,
+                          }),
+                        )(Redacted.value(failure.rejectedResponse))
+                        return Result.isSuccess(decoded) ? decoded.success.usage : null
+                      })()
+                    : null,
               },
       }
     } else {
