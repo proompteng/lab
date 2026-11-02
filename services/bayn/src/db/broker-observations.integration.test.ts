@@ -110,6 +110,36 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
+  test.each([60_000, 60_001])('expired available metadata at %sms fails before reading cache bytes', async (ageMs) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        const value = snapshot(ticket)
+        yield* store.publish(ticket, value, 0)
+        let reads = 0
+        const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
+          ...cacheFixture.cache,
+          get: (key) => Effect.sync(() => reads++).pipe(Effect.andThen(cacheFixture.cache.get(key))),
+        })
+        yield* advanceToTicket(ticket, 59_999)
+        expect(yield* measured.read).toEqual(value)
+        expect(yield* measured.readState).toEqual(observedBrokerState(value))
+        expect(reads).toBe(2)
+        reads = 0
+        yield* advanceToTicket(ticket, ageMs)
+        for (const read of [measured.read, measured.readState, measured.readForSubmit('expired-cut-intent')]) {
+          const failure = yield* Effect.flip(read)
+          expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(failure.retryable).toBe(true)
+          expect(failure.observationFailure).toBeUndefined()
+        }
+        expect(reads).toBe(0)
+      }),
+    ),
+  )
+
   test('missing or corrupt Valkey bytes fail without a database payload fallback', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {
