@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kafka
 resources:
+  - webull-market-data-topic.yaml
   # Strimzi operator install (pinned to 1.2.0) - remote raw files
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/1.2.0/install/cluster-operator/010-ServiceAccount-strimzi-cluster-operator.yaml
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/1.2.0/install/cluster-operator/020-ClusterRole-strimzi-cluster-operator-role.yaml
