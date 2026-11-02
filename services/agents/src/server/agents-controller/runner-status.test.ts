@@ -63,6 +63,7 @@ describe('runner status extraction', () => {
       exitCode: 0,
     })
     const kube = {
+      logs: vi.fn(async () => ''),
       list: vi.fn(async () => ({
         items: [
           {
@@ -91,6 +92,30 @@ describe('runner status extraction', () => {
       status: 'failed',
       error: 'first attempt failed',
     })
+  })
+
+  it('retries an unresolved status reference instead of accepting incomplete metadata', async () => {
+    const kube = {
+      logs: vi.fn(async () => '{"event":{"type":"runner_terminal_status","status":{"status":"succeeded"}}}\n'),
+      list: vi.fn(async () => ({
+        items: [
+          {
+            metadata: { name: 'pod' },
+            status: {
+              containerStatuses: [
+                {
+                  name: 'agent-runner',
+                  state: { terminated: { message: JSON.stringify({ runnerStatusDigest: 'a'.repeat(64) }) } },
+                },
+              ],
+            },
+          },
+        ],
+      })),
+    }
+    await expect(extractRunnerStatusFromJobPods(kube, 'agents', 'job')).rejects.toThrow(
+      'runner status log reference could not be resolved',
+    )
   })
 
   it('maps failed and cancelled statuses to AgentRun terminal outcomes', () => {
