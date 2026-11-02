@@ -4299,7 +4299,7 @@ for (const phase of ['running', 'accepted'] as const) {
         .toBeGreaterThan(1)
       await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
       await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
-      await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+      await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
     })
   }
 }
@@ -11968,7 +11968,7 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   const chat = page.getByRole('region', { name: 'Tengri window' })
   const stop = chat.getByRole('button', { name: 'Stop response', exact: true })
   await expect(stop).toBeEnabled()
-  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  const composer = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
   await composer.fill('Keep this follow-up draft while stopping.')
   const image = await pasteClipboardImage(page, composer)
   const attachment = chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')
