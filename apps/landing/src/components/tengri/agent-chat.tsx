@@ -2203,6 +2203,17 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     onRetry={() => setModelReload((version) => version + 1)}
                     selection={selection}
                   />
+                  {canStopRun && !showStopAction ? (
+                    <button
+                      type="button"
+                      aria-label="Stop response"
+                      disabled={interrupting}
+                      onClick={() => void interruptTurn()}
+                      className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full text-zinc-400 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+                    >
+                      <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <button
                     type={showStopAction ? 'button' : 'submit'}
                     aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}

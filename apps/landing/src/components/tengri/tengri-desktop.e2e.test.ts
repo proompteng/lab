@@ -4000,7 +4000,7 @@ test('ignores obsolete browser registry entries when recovering a native session
     .toEqual([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt: now + 100, unavailable: true }])
 })
 
-test('uses one composer control for sending, steering, and stopping a response', async ({ page }, testInfo) => {
+test('keeps sending, steering, and stopping in the composer', async ({ page }, testInfo) => {
   const mock = await mockTengri(page)
   await page.goto('/')
   const composer = page.getByRole('form', { name: 'Message composer' })
@@ -4048,8 +4048,9 @@ test('uses one composer control for sending, steering, and stopping a response',
   await testInfo.attach('conversation-polish', { path: surfacePath, contentType: 'image/png' })
 
   await prompt.fill('Only inspect the current directory.')
-  await expect(action).toHaveAccessibleName('Steer turn')
-  await action.click()
+  await expect(composer.getByRole('button')).toHaveCount(2)
+  await expect(composer.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await composer.getByRole('button', { name: 'Steer turn', exact: true }).click()
   await expect
     .poll(() => mock.actions.some((item) => item.action === 'steer-turn' && item.turnId === 'turn-1'))
     .toBe(true)
@@ -4151,7 +4152,7 @@ for (const phase of ['running', 'accepted'] as const) {
     })
     await expect(activity).toHaveCount(0)
     await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
-    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
     const prompt = chat.getByRole('textbox', { name: 'Message your agent' })
     await prompt.fill('The next draft stays editable.')
     const send = chat.getByRole('button', { name: 'Send message', exact: true })
@@ -4161,6 +4162,7 @@ for (const phase of ['running', 'accepted'] as const) {
     await expect(activity).toHaveCount(0)
     run.state = { phase: 'succeeded', turnId: 'turn-finishing' }
     await expect(send).toBeEnabled()
+    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
     await expect(prompt).toHaveValue('The next draft stays editable.')
   })
 }
@@ -11966,6 +11968,12 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   const chat = page.getByRole('region', { name: 'Tengri window' })
   const stop = chat.getByRole('button', { name: 'Stop response', exact: true })
   await expect(stop).toBeEnabled()
+  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await composer.fill('Keep this follow-up draft while stopping.')
+  const image = await pasteClipboardImage(page, composer)
+  const attachment = chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')
+  await expect(attachment).toHaveAttribute('src', `data:image/png;base64,${image}`)
+  await expect(stop).toBeEnabled()
   unavailable = true
   await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(0)
   await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(0)
@@ -11982,6 +11990,8 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(2)
   const stops = mock.actions.filter((action) => action.action === 'interrupt-turn')
   expect(stops[1]?.operationId).not.toBe(stops[0]?.operationId)
+  await expect(composer).toHaveValue('Keep this follow-up draft while stopping.')
+  await expect(attachment).toHaveAttribute('src', `data:image/png;base64,${image}`)
   await emitCodexEvent(page, {
     sequence: 51,
     kind: 'assistant-text',
@@ -11994,7 +12004,7 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
     text: 'Acknowledged the stop request.',
   } satisfies TengriCodexEvent)
   await expect(chat.getByText('Acknowledged the stop request.', { exact: true })).toBeVisible()
-  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  expect(mock.actions.some((action) => action.action === 'send-turn' || action.action === 'steer-turn')).toBe(false)
 })
 
 test('opens saved conversation file links and preserves the draft through preview and pinning', async ({ page }) => {
