@@ -20,12 +20,22 @@ import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
+  isWorkspaceApp,
+  openSplitWorkspace,
+  splitWorkspaceWindowAction,
+  splitWorkspaceWindows,
+  WORKSPACE_APPS,
+  type SplitWorkspace,
+  type WorkspaceApp,
+} from '@/lib/tengri/split-workspace'
+import {
   APP_TITLES,
   initialWindowState,
   MAX_DESKTOP_WINDOWS,
   type Bounds,
   type DesktopWindow,
   type TengriApp,
+  type WindowAction,
   type WindowManagerState,
   windowIdForOpen,
   windowReducer,
@@ -259,6 +269,8 @@ export function ReadyDesktop({
   const [windowState, dispatch] = useReducer(windowReducer, desktopViewportRef.current, (viewport) =>
     initialWindowState(viewport, ['finder', 'tengri']),
   )
+  const [splitWorkspace, setSplitWorkspace] = useState<SplitWorkspace | null>(null)
+  const [splitViewport, setSplitViewport] = useState<Bounds | null>(desktopViewportRef.current)
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
   useEffect(() => {
     if (busyAction !== null) return
@@ -374,6 +386,7 @@ export function ReadyDesktop({
   const appendDesktopWindow = useCallback(
     (app: TengriApp) => {
       if (!requireWindowCapacity(true)) return false
+      setSplitWorkspace(null)
       dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
       return true
     },
@@ -384,6 +397,16 @@ export function ReadyDesktop({
     (app: TengriApp) => {
       const alreadyOpen = windowStateRef.current.windows.some((candidate) => candidate.app === app)
       if (!requireWindowCapacity(!alreadyOpen)) return false
+      const targetId = windowIdForOpen(windowStateRef.current, app)
+      setSplitWorkspace((current) =>
+        current
+          ? app === 'tengri'
+            ? { ...current, chatWindowId: targetId }
+            : isWorkspaceApp(app)
+              ? { ...current, workWindowId: targetId }
+              : null
+          : null,
+      )
       dispatch({ type: 'open', app, title: APP_TITLES[app], viewport: viewport() })
       focusActiveContent()
       return true
@@ -402,6 +425,7 @@ export function ReadyDesktop({
 
   useLayoutEffect(() => {
     const measuredViewport = viewport()
+    setSplitWorkspace(null)
     if (!desktopId) {
       setHydratedDesktopId(null)
       dispatch({
@@ -445,6 +469,7 @@ export function ReadyDesktop({
   )
 
   const closeWindow = useCallback((desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
+    setSplitWorkspace(null)
     if (desktopWindow.app === 'code') {
       const guard = codeGuardsRef.current.get(desktopWindow.id)
       if (!guard) return
@@ -495,9 +520,15 @@ export function ReadyDesktop({
           desktopRef.current?.style.removeProperty('--tengri-viewport-height')
           desktopRef.current?.style.removeProperty('--tengri-viewport-offset')
         }
-        if (mobile) return
+        if (mobile) {
+          setSplitViewport(null)
+          return
+        }
         const next = viewport()
         if (next.width <= 0 || next.height <= 0) return
+        setSplitViewport((current) =>
+          current?.width === next.width && current.height === next.height ? current : next,
+        )
         if (next.width !== previousWidth || next.height !== previousHeight) {
           previousWidth = next.width
           previousHeight = next.height
@@ -549,6 +580,18 @@ export function ReadyDesktop({
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [menuOpen])
 
+  const dispatchWindowAction = useCallback(
+    (action: WindowAction) => {
+      const current = windowStateRef.current
+      const selection = splitWorkspaceWindows(current.windows, splitWorkspace, splitViewport) ? splitWorkspace : null
+      const presentedAction = splitWorkspaceWindowAction(current, selection, action)
+      if (action.type === 'minimize' || action.type === 'toggle-maximize' || action.type === 'move')
+        setSplitWorkspace(null)
+      dispatch(presentedAction)
+    },
+    [splitViewport, splitWorkspace],
+  )
+
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const command = event.metaKey
     if (command && event.code === 'Space') {
@@ -579,6 +622,7 @@ export function ReadyDesktop({
     }
     if (event.key === 'Tab') {
       event.preventDefault()
+      setSplitWorkspace(null)
       const frontmostByApp = new Map<TengriApp, DesktopWindow>()
       for (const candidate of [...windowState.windows].sort((left, right) => right.z - left.z)) {
         if (!frontmostByApp.has(candidate.app)) frontmostByApp.set(candidate.app, candidate)
@@ -596,12 +640,14 @@ export function ReadyDesktop({
       closeWindow(active)
     } else if (event.code === 'KeyM') {
       event.preventDefault()
+      setSplitWorkspace(null)
       dispatch({ type: 'minimize', id: active.id })
     } else if (event.ctrlKey && event.code === 'KeyF') {
       event.preventDefault()
-      dispatch({ type: 'toggle-maximize', id: active.id, viewport: viewport() })
+      dispatchWindowAction({ type: 'toggle-maximize', id: active.id, viewport: viewport() })
     } else if (event.code === 'Backquote') {
       event.preventDefault()
+      setSplitWorkspace(null)
       const siblings = [...windowState.windows]
         .filter((candidate) => candidate.app === active.app)
         .sort((left, right) => right.z - left.z)
@@ -624,6 +670,30 @@ export function ReadyDesktop({
   }, [desktopId, hydratedDesktopId, openSettings])
 
   const openChrome = useCallback(() => void openDesktopApp('chrome'), [openDesktopApp])
+  const openChat = useCallback(() => void openDesktopApp('tengri'), [openDesktopApp])
+
+  const showSplitWorkspace = useCallback(
+    (app: WorkspaceApp) => {
+      const next = openSplitWorkspace(windowStateRef.current, app, viewport())
+      if (!next) {
+        setError('Close a window to make room for Chat + work.')
+        return
+      }
+      next.actions.forEach(dispatch)
+      setSplitWorkspace(next.selection)
+      setMenuOpen(null)
+      setSpotlightOpen(false)
+    },
+    [viewport],
+  )
+  const toggleSplitWorkspace = useCallback(() => {
+    if (splitWorkspace) setSplitWorkspace(null)
+    else {
+      const app = windowStateRef.current.activeApp
+      showSplitWorkspace(isWorkspaceApp(app) ? app : 'chrome')
+    }
+    setMenuOpen(null)
+  }, [showSplitWorkspace, splitWorkspace])
 
   const openFinder = useCallback(
     (path?: string) => {
@@ -781,15 +851,17 @@ export function ReadyDesktop({
     if (active) closeWindow(active)
   }, [closeWindow])
   const minimizeActiveWindow = useCallback(() => {
+    setSplitWorkspace(null)
     const activeId = windowStateRef.current.activeWindowId
     if (activeId) dispatch({ type: 'minimize', id: activeId })
   }, [])
   const toggleMaximizeActiveWindow = useCallback(() => {
     const activeId = windowStateRef.current.activeWindowId
-    if (activeId) dispatch({ type: 'toggle-maximize', id: activeId, viewport: viewport() })
-  }, [viewport])
+    if (activeId) dispatchWindowAction({ type: 'toggle-maximize', id: activeId, viewport: viewport() })
+  }, [dispatchWindowAction, viewport])
   const activateWindow = useCallback(
     (id: string) => {
+      setSplitWorkspace(null)
       dispatch({ type: 'restore', id, viewport: viewport() })
       setMenuOpen(null)
       focusActiveContent()
@@ -807,6 +879,14 @@ export function ReadyDesktop({
   const handleSignOut = useCallback(() => void signOut(), [signOut])
   const handleSleep = useCallback(() => void mutate('sleep-agent'), [mutate])
   const layoutReady = desktopId !== null && hydratedDesktopId === desktopId
+  const splitWindows = splitWorkspaceWindows(
+    windowState.windows,
+    splitWorkspace,
+    splitViewport,
+    connectionWarning || (error && activeWindow?.app !== 'settings') ? 92 : 48,
+  )
+  const splitWorkApp = windowState.windows.find((candidate) => candidate.id === splitWorkspace?.workWindowId)?.app
+  const desktopMaximized = splitWindows === null && activeWindow?.mode === 'maximized'
 
   if (committedTransition) {
     return (
@@ -848,7 +928,7 @@ export function ReadyDesktop({
         <DesktopWallpaper />
         <MenuBar
           activeApp={activeApp}
-          activeWindow={activeWindow}
+          activeWindow={activeWindow ? (splitWindows?.get(activeWindow.id) ?? activeWindow) : undefined}
           agent={agent}
           connectionWarning={connectionWarning}
           menuOpen={menuOpen}
@@ -860,16 +940,51 @@ export function ReadyDesktop({
           onOpenSpotlight={openSpotlight}
           onSignOut={handleSignOut}
           onToggleMaximize={toggleMaximizeActiveWindow}
+          onToggleSplitWorkspace={
+            splitViewport && splitViewport.width >= 960 && splitViewport.height >= 440
+              ? toggleSplitWorkspace
+              : undefined
+          }
+          splitWorkspace={splitWindows !== null}
           onActivateWindow={activateWindow}
           windows={windowState.windows}
           userName={user.name}
         />
 
         <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-visible">
+          {splitWindows ? (
+            <div
+              role="toolbar"
+              aria-label="Chat and work layout"
+              className="absolute inset-x-3 top-2 z-[1600] flex h-8 items-center justify-between gap-3 rounded-lg border border-white/15 bg-zinc-900/90 px-2 text-xs shadow-lg backdrop-blur-xl"
+            >
+              <span className="px-1 font-medium text-zinc-100">Tengri chat + work</span>
+              <div className="flex items-center gap-1" role="group" aria-label="Work view">
+                {(Object.entries(WORKSPACE_APPS) as [WorkspaceApp, string][]).map(([app, label]) => (
+                  <button
+                    key={app}
+                    type="button"
+                    aria-pressed={splitWorkApp === app}
+                    onClick={() => showSplitWorkspace(app)}
+                    className={`rounded px-3 py-1 focus-visible:outline-2 focus-visible:outline-sky-300 ${splitWorkApp === app ? 'bg-white/15 text-white' : 'text-zinc-300 hover:bg-white/10'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-zinc-200 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-300"
+                onClick={() => setSplitWorkspace(null)}
+              >
+                Back to desktop
+              </button>
+            </div>
+          ) : null}
           {connectionWarning ? (
             <p
               role="status"
-              className="absolute top-3 left-1/2 z-[1000] max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 truncate rounded-full border border-amber-200/16 bg-amber-950/55 px-4 py-1.5 text-xs text-amber-100 shadow-lg backdrop-blur-xl"
+              className={`absolute ${splitWindows ? 'top-12' : 'top-3'} left-1/2 z-[1000] max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 truncate rounded-full border border-amber-200/16 bg-amber-950/55 px-4 py-1.5 text-xs text-amber-100 shadow-lg backdrop-blur-xl`}
               title={connectionWarning}
             >
               Connection interrupted. Using the last confirmed agent state.
@@ -878,7 +993,7 @@ export function ReadyDesktop({
           {error && activeWindow?.app !== 'settings' ? (
             <p
               role="alert"
-              className="absolute top-3 left-1/2 z-[1001] max-w-[min(42rem,calc(100%-2rem))] -translate-x-1/2 truncate rounded-full border border-red-200/16 bg-red-950/65 px-4 py-1.5 text-xs text-red-100 shadow-lg backdrop-blur-xl"
+              className={`absolute ${splitWindows ? 'top-12' : 'top-3'} left-1/2 z-[1001] max-w-[min(42rem,calc(100%-2rem))] -translate-x-1/2 truncate rounded-full border border-red-200/16 bg-red-950/65 px-4 py-1.5 text-xs text-red-100 shadow-lg backdrop-blur-xl`}
               title={error}
             >
               {error}
@@ -887,12 +1002,14 @@ export function ReadyDesktop({
           {windowState.windows.map((desktopWindow) => (
             <DesktopWindowFrame
               active={desktopWindow.id === windowState.activeWindowId}
-              dispatch={dispatch}
+              dispatch={dispatchWindowAction}
+              layoutHidden={splitWindows !== null && !splitWindows.has(desktopWindow.id)}
+              layoutLocked={splitWindows?.has(desktopWindow.id) ?? false}
               key={desktopWindow.id}
               onCloseRequest={() => closeWindow(desktopWindow)}
               stageRef={stageRef}
               viewport={viewport}
-              window={desktopWindow}
+              window={splitWindows?.get(desktopWindow.id) ?? desktopWindow}
             >
               {desktopWindow.app === 'finder' ? (
                 <MemoizedFinderApp
@@ -922,6 +1039,7 @@ export function ReadyDesktop({
                   lifecycleBusy={busyAction !== null}
                   previewGatewayOrigin={previewGatewayOrigin}
                   onFocus={(id) => dispatch({ type: 'focus', id })}
+                  onOpenChat={openChat}
                   onDirtyChange={handleCodeDirtyChange}
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                   windowId={desktopWindow.id}
@@ -954,15 +1072,15 @@ export function ReadyDesktop({
         <div
           data-tengri-dock-container
           className={`pointer-events-none group/dock absolute inset-x-0 bottom-0 z-[1500] flex justify-center ${
-            activeWindow?.mode === 'maximized' ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
+            desktopMaximized ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
           }`}
         >
-          {activeWindow?.mode === 'maximized' ? (
+          {desktopMaximized ? (
             <div aria-hidden="true" className="pointer-events-auto absolute inset-x-0 bottom-0 h-1" />
           ) : null}
           <div
             className={`pb-3 ${
-              activeWindow?.mode === 'maximized'
+              desktopMaximized
                 ? 'translate-y-full transition-transform group-hover/dock:translate-y-0 group-focus-within/dock:translate-y-0 motion-reduce:transition-none'
                 : ''
             }`}

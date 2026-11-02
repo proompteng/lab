@@ -156,6 +156,7 @@ export type CodexAppServerOptions = {
   persistExtendedHistory?: boolean
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  onNotification?: (notification: { method: string; params?: unknown }) => void
   onRequestUserInput?: (
     params: ToolRequestUserInputParams,
   ) => ToolRequestUserInputResponse | Promise<ToolRequestUserInputResponse>
@@ -488,6 +489,7 @@ export class CodexAppServerClient {
   private bootstrapTimeout: ReturnType<typeof setTimeout> | null = null
   private bootstrapTimeoutMs: number
   private logger: CodexAppServerOptions['logger']
+  private onNotification: CodexAppServerOptions['onNotification']
   private sandbox: SandboxMode
   private approval: AskForApproval
   private defaultModel: string
@@ -517,6 +519,7 @@ export class CodexAppServerClient {
     persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
+    onNotification,
     onRequestUserInput,
     onDynamicToolCall,
     dynamicTools,
@@ -526,6 +529,7 @@ export class CodexAppServerClient {
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
+    this.onNotification = onNotification
     this.sandbox = normalizeSandboxMode(sandbox)
     this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
@@ -1064,6 +1068,7 @@ export class CodexAppServerClient {
   }
 
   private handleNotification(notification: JsonRpcNotification): void {
+    this.onNotification?.(notification)
     const { method } = notification
     const params = notification.params
 

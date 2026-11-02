@@ -17,8 +17,6 @@ on:
       - 'nix/images/bayn-runtime-root.nix'
       - 'flake.nix'
       - 'flake.lock'
-      - '.github/workflows/opencode*.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
       - 'argocd/applications/opencode/**'
 jobs:
   migration:
