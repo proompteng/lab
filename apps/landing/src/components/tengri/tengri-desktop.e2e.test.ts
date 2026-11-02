@@ -4597,9 +4597,10 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
     })
   }
 
-  await expect(page.getByText(promptText, { exact: true })).toHaveCount(1)
-  await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
-  await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
+  const transcript = page.getByRole('log', { name: 'Conversation', exact: true })
+  await expect(transcript.getByText(promptText, { exact: true })).toHaveCount(1)
+  await expect(transcript.getByText(progressText, { exact: true })).toHaveCount(1)
+  await expect(transcript.getByText(finalText, { exact: true })).toHaveCount(1)
   await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Weekly 90% left · Credits: 62,307', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(0)
@@ -12239,4 +12240,129 @@ test('does not let late initial run discovery steal a directly submitted new con
   await expect.poll(() => page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-1')
   await expect(chat.locator('[data-conversation-id="thread-1"]')).toHaveAttribute('aria-current', 'true')
   await expect(chat.locator('[data-conversation-id="thread-existing"]')).not.toHaveAttribute('aria-current', 'true')
+})
+
+test('reconciles a finished background run without coupling its failures to the selected conversation', async ({
+  page,
+}) => {
+  const background: TengriCodexRun = {
+    runId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    agentId: 'microvm-ada',
+    threadId: 'thread-alpha',
+    state: { phase: 'running', turnId: 'turn-alpha' },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: background,
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+  })
+  let observingBackground = false
+  let outcome: 'unavailable' | 'mismatched' | 'terminal' = 'unavailable'
+  let failedReads = 0
+  let mismatchedReads = 0
+  let terminalReads = 0
+  let selectedReads = 0
+  let releaseTerminal = () => {}
+  const terminalResponse = new Promise<void>((resolve) => {
+    releaseTerminal = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action === 'active-codex-runs' && action.threadId === 'thread-beta') selectedReads += 1
+    if (!observingBackground || action.action !== 'codex-run' || action.runId !== background.runId)
+      return route.fallback()
+    if (outcome === 'unavailable') {
+      failedReads += 1
+      return route.fulfill({ status: 503, json: { error: 'Background status is unavailable' } })
+    }
+    if (outcome === 'mismatched') {
+      mismatchedReads += 1
+      return route.fulfill({
+        json: {
+          result: {
+            ...background,
+            threadId: 'thread-beta',
+            state: { phase: 'succeeded', turnId: 'turn-alpha' },
+          },
+        },
+      })
+    }
+    terminalReads += 1
+    await terminalResponse
+    return route.fulfill({ json: { result: background } })
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const sidebar = chat.getByTestId('agent-conversation-sidebar')
+  const archiveAlpha = sidebar.getByRole('button', { name: 'Archive Alpha', exact: true })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  observingBackground = true
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('Read the Beta workspace')
+  await expect.poll(() => failedReads).toBeGreaterThan(0)
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
+  await sidebar.getByRole('button', { name: 'Alpha', exact: true }).hover()
+  await expect(archiveAlpha).toBeDisabled()
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      threadId: 'thread-beta',
+      text: 'Read the Beta workspace',
+    })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await composer.fill('Keep the selected conversation draft')
+  const mismatchedResponse = page.waitForResponse(
+    async (response) =>
+      response.status() === 200 &&
+      response.url().endsWith('/api/tengri') &&
+      response.request().method() === 'POST' &&
+      response.request().postDataJSON().action === 'codex-run' &&
+      response.request().postDataJSON().runId === background.runId &&
+      (await response.json()).result?.threadId === 'thread-beta',
+  )
+  outcome = 'mismatched'
+  await expect.poll(() => mismatchedReads).toBe(1)
+  await (await mismatchedResponse).finished()
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  )
+  await expect(archiveAlpha).toBeDisabled()
+  await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  try {
+    background.state = { phase: 'succeeded', turnId: 'turn-alpha' }
+    outcome = 'terminal'
+    await emitCodexEvent(page, {
+      sequence: 70,
+      kind: 'thread-state',
+      method: 'turn/completed',
+      threadId: 'thread-alpha',
+      turnId: 'turn-alpha',
+      itemId: '',
+      approvalId: '',
+      text: '',
+      rawJson: '{}',
+    } satisfies TengriCodexEvent)
+    await expect.poll(() => terminalReads).toBe(1)
+    const readsBefore = selectedReads
+    await expect.poll(() => selectedReads).toBeGreaterThan(readsBefore + 1)
+    expect(terminalReads).toBe(1)
+    await expect(archiveAlpha).toBeDisabled()
+    await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  } finally {
+    releaseTerminal()
+  }
+  await expect(archiveAlpha).toBeEnabled()
+  await expect(sidebar.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
+  await expect(composer).toHaveValue('Keep the selected conversation draft')
+  await expect(chat.getByRole('alert')).toHaveCount(0)
+  expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })

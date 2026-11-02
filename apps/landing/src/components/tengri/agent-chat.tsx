@@ -4,6 +4,7 @@ import { watchTengriEvents } from './event-stream'
 
 import { reportBrowserFailure } from '@/lib/observability/client'
 import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
+import { TENGRI_UNARY_TIMEOUT_MS } from '@/lib/tengri/limits'
 
 import {
   Select,
@@ -194,6 +195,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [runRecovered, setRunRecovered] = useState(false)
   const recoverInitialRun = useRef(true)
   const [workspaceRuns, setWorkspaceRuns] = useState<TengriCodexRun[]>([])
+  const backgroundRunObservers = useRef(new Map<string, { stop: () => void }>())
   const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
   const [runObservations, setRunObservations] = useState<Record<string, CodexRunObservation>>({})
@@ -402,6 +404,81 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       if (timer) clearTimeout(timer)
     }
   }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
+
+  useEffect(() => {
+    const observers = backgroundRunObservers.current
+    const backgroundRuns = new Map(
+      workspaceRuns
+        .filter(
+          (candidate) =>
+            account?.authenticated &&
+            candidate.agentId === agentId &&
+            candidate.threadId !== threadId &&
+            !codexRunIsTerminal(candidate),
+        )
+        .map((candidate) => [JSON.stringify([candidate.agentId, candidate.threadId, candidate.runId]), candidate]),
+    )
+    for (const [key, observer] of observers) {
+      if (backgroundRuns.has(key)) continue
+      observer.stop()
+      observers.delete(key)
+    }
+    for (const [key, candidate] of backgroundRuns) {
+      // Preserve in-flight reads and retry timers when the selected conversation polls.
+      if (observers.has(key)) continue
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const observer = {
+        stop: () => {
+          controller.abort()
+          if (timer) clearTimeout(timer)
+        },
+      }
+      observers.set(key, observer)
+      const current = () =>
+        !controller.signal.aborted && observers.get(key) === observer && threadIdRef.current !== candidate.threadId
+      async function refresh() {
+        try {
+          const next = await runTengriAction<TengriCodexRun | null>(
+            { action: 'codex-run', agentId: candidate.agentId, runId: candidate.runId },
+            AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)]),
+          )
+          if (!current()) return
+          if (
+            next?.agentId === candidate.agentId &&
+            next.threadId === candidate.threadId &&
+            next.runId === candidate.runId &&
+            codexRunIsTerminal(next)
+          ) {
+            setWorkspaceRuns((runs) =>
+              current()
+                ? runs.filter(
+                    (run) =>
+                      run.agentId !== candidate.agentId ||
+                      run.threadId !== candidate.threadId ||
+                      run.runId !== candidate.runId,
+                  )
+                : runs,
+            )
+            return
+          }
+        } catch {
+          // Keep the last confirmed busy state. A background outage must never
+          // change recovery, admission, or errors in the selected conversation.
+        }
+        if (current()) timer = setTimeout(() => void refresh(), 5_000)
+      }
+      void refresh()
+    }
+  }, [account?.authenticated, agentId, threadId, workspaceRuns])
+
+  useEffect(() => {
+    const observers = backgroundRunObservers.current
+    return () => {
+      for (const observer of observers.values()) observer.stop()
+      observers.clear()
+    }
+  }, [])
 
   useEffect(() => {
     if (!runMatchesThread || !run || !codexRunIsTerminal(run)) return
