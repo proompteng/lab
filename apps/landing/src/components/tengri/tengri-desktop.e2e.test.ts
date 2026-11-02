@@ -9113,7 +9113,7 @@ test('ignores invalid persisted resources without reading their paths', async ({
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
   await expect(chat.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeEnabled()
-  await expect(chat.getByRole('tab')).toHaveText(['Chat', 'Results'])
+  await expect(chat.getByRole('tab')).toHaveText(['Chat'])
   await expect(chat.getByRole('navigation', { name: 'Pinned resources', exact: true })).toHaveCount(0)
   expect(mock.actions.filter((action) => action.action === 'read-file')).toHaveLength(0)
 })
@@ -9187,7 +9187,7 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   )
   expect(reads.get('/workspace/README.md')).toBe(1)
   await expect.poll(() => reads.get('/workspace/notes.md')).toBe(1)
-  await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'Results · 3', 'README.md', 'notes.md'])
+  await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
   const tabs = tengri.getByRole('tablist', { name: 'Agent views' })
   const tabWidths = await tabs
     .getByRole('tab')
@@ -10388,13 +10388,9 @@ test('shows concise response activity and keeps detailed waiting reasons collaps
   run.state = { phase: 'waiting_for_guest', reason: 'waiting to protect the active run from automatic sleep' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Connecting')
   await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
-  const status = chat.getByRole('region', { name: 'Task status', exact: true })
-  await expect(status).toContainText('Preparing workspace')
   run.state = { phase: 'recovering', turnId: 'turn-current', reason: 'waiting for the authorized guest' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Reconnecting')
   await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
-  await status.getByText('Details', { exact: true }).click()
-  await expect(status.getByText(run.state.reason, { exact: true })).toBeVisible()
   run.state = { phase: 'cancelling', turnId: 'turn-current', reason: 'waiting for command cleanup receipt' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Stopping')
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
@@ -11899,114 +11895,6 @@ for (const { outcome, repair } of [
   })
 }
 
-test('switches Chat + work panes without reloading unsaved editor or browser state', async ({ page }) => {
-  await mockTengri(page)
-  const sessions = [
-    { action: 'browser-session', id: '8'.repeat(24), channel: 'tengri-browser-v1', label: 'Browser draft' },
-    { action: 'editor-session', id: '9'.repeat(24), channel: 'tengri-vscode-v1', label: 'Unsaved code' },
-  ]
-  const creations = new Map<string, number>()
-  const launchOrigins = Object.fromEntries(
-    sessions.map((session, index) => [previewTicket(index + 100), `https://tengri-${session.id}.proompteng.ai`]),
-  )
-  await page.route('**/api/tengri', async (route) => {
-    if (route.request().method() !== 'POST') return route.fallback()
-    const action = route.request().postDataJSON()
-    const index = sessions.findIndex((session) => session.action === action.action)
-    if (index < 0) return route.fallback()
-    const session = sessions[index]!
-    creations.set(session.action, (creations.get(session.action) ?? 0) + 1)
-    await route.fulfill({
-      json: {
-        result: {
-          id: session.id,
-          launchUrl: `https://tengri.proompteng.ai/v1/preview/open#${previewTicket(index + 100)}`,
-          previewOrigin: `https://tengri-${session.id}.proompteng.ai`,
-          expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
-        },
-      },
-    })
-  })
-  await page.route('https://tengri.proompteng.ai/v1/preview/open**', (route) =>
-    route.fulfill({
-      contentType: 'text/html',
-      body: `<script>location.replace(${JSON.stringify(launchOrigins)}[location.hash.slice(1)])</script>`,
-    }),
-  )
-  for (const session of sessions) {
-    await page.route(`https://tengri-${session.id}.proompteng.ai/**`, (route) =>
-      route.fulfill({
-        contentType: 'text/html',
-        body: `<!doctype html><label>${session.label}<input></label><script>
-          const input = document.querySelector('input');
-          const send = () => parent.postMessage({channel:'${session.channel}', sessionId:'${session.id}', type:'${session.action === 'editor-session' ? 'state' : 'ready'}', dirty:input.value.length > 0}, ${JSON.stringify(desktopOrigin)});
-          input.oninput = send;
-          addEventListener('message', send);
-          parent.postMessage({channel:'tengri-preview-lease-v1', sessionId:'${session.id}', type:'renewed', nonce:'', leaseId:'88888888-8888-4888-8888-888888888888', expiresInMs:1800000}, ${JSON.stringify(desktopOrigin)});
-          send();
-        </script>`,
-      }),
-    )
-  }
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
-  const chrome = page.getByRole('region', { name: 'Chrome window', exact: true })
-  const browserDraft = chrome.frameLocator('iframe[title="Chrome browser"]').getByLabel('Browser draft')
-  await browserDraft.fill('Keep the current page')
-  const originalBounds = await chrome.boundingBox()
-  await page.getByRole('button', { name: 'Chat + work', exact: true }).click()
-  const toolbar = page.getByRole('toolbar', { name: 'Chat and work layout' })
-  await expect(toolbar).toBeVisible()
-  const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
-  await expect(chat).toBeVisible()
-  const left = await chat.boundingBox()
-  const right = await chrome.boundingBox()
-  expect(left!.x + left!.width).toBeLessThan(right!.x)
-  await toolbar.getByRole('button', { name: 'Code', exact: true }).click()
-  const code = page.getByRole('region', { name: 'Code window', exact: true })
-  const codeDraft = code.frameLocator('iframe[title="VS Code workbench"]').getByLabel('Unsaved code')
-  await codeDraft.fill('Unsaved work survives layout changes')
-  await expect(code.getByRole('button', { name: 'Open Tengri chat' })).toBeVisible()
-  await toolbar.getByRole('button', { name: 'Files', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Finder window', exact: true })).toBeVisible()
-  await toolbar.getByRole('button', { name: 'Code', exact: true }).click()
-  await expect(codeDraft).toHaveValue('Unsaved work survives layout changes')
-  await toolbar.getByRole('button', { name: 'Browser', exact: true }).click()
-  await expect(browserDraft).toHaveValue('Keep the current page')
-  await toolbar.getByRole('button', { name: 'Back to desktop', exact: true }).focus()
-  await page.keyboard.press('Enter')
-  await expect(toolbar).not.toBeVisible()
-  await expect
-    .poll(() =>
-      chrome.evaluate((element) => element === document.activeElement || element.contains(document.activeElement)),
-    )
-    .toBe(true)
-  expect(await chrome.boundingBox()).toEqual(originalBounds)
-  await chrome.getByRole('button', { name: 'Maximize Chrome', exact: true }).click()
-  const maximizedBounds = await chrome.boundingBox()
-  for (const control of ['button', 'title', 'menu', 'shortcut']) {
-    await page.getByRole('button', { name: 'Chat + work', exact: true }).click()
-    await expect(toolbar).toBeVisible()
-    await expect(chrome.getByRole('button', { name: 'Maximize Chrome', exact: true })).toBeVisible()
-    if (control === 'button') await chrome.getByRole('button', { name: 'Maximize Chrome', exact: true }).click()
-    else if (control === 'title') await chrome.locator('header[data-window-drag-region]').dblclick()
-    else if (control === 'menu') {
-      await page.getByRole('menuitem', { name: 'View', exact: true }).click()
-      await page.getByRole('menuitem', { name: /^Fill Window/ }).click()
-    } else {
-      await chrome.focus()
-      await page.keyboard.press('Control+Meta+f')
-    }
-    await expect(toolbar).not.toBeVisible()
-    await expect(chrome.locator('..')).toHaveAttribute('data-window-mode', 'maximized')
-    expect(await chrome.boundingBox()).toEqual(maximizedBounds)
-  }
-  await chrome.getByRole('button', { name: 'Restore Chrome', exact: true }).click()
-  expect(await chrome.boundingBox()).toEqual(originalBounds)
-  expect(creations.get('browser-session')).toBe(1)
-  expect(creations.get('editor-session')).toBe(1)
-})
-
 test('scopes recovery to the selected conversation and permits independent new work during another outage', async ({
   page,
 }) => {
@@ -12033,7 +11921,7 @@ test('scopes recovery to the selected conversation and permits independent new w
   const chat = page.getByRole('region', { name: 'Tengri window' })
   const sidebar = chat.getByTestId('agent-conversation-sidebar')
   const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
-  await expect(chat.getByRole('region', { name: 'Task status', exact: true })).toContainText('Status unavailable')
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Status unavailable')
   await composer.fill('Keep this unavailable conversation draft')
   await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
   await sidebar.locator('[data-conversation-id="thread-ready"]').click()
@@ -12050,7 +11938,6 @@ test('scopes recovery to the selected conversation and permits independent new w
       threadId: 'thread-1',
       text: 'Read the workspace in a fresh conversation',
     })
-  await expect(chat.getByRole('region', { name: 'Task status', exact: true })).toContainText('Since submitted:')
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
 
@@ -12077,33 +11964,21 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
   })
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
-  const status = chat.getByRole('region', { name: 'Task status', exact: true })
-  await expect(status.getByRole('button', { name: 'Stop task', exact: true })).toBeEnabled()
-  await expect(status).toContainText('Last checked')
-  await expect(status).not.toContainText('Since submitted')
-  await expect(status).not.toContainText('Last update received')
+  const stop = chat.getByRole('button', { name: 'Stop response', exact: true })
+  await expect(stop).toBeEnabled()
   unavailable = true
   await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(0)
   await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(0)
-  await expect(status).toContainText('Status unavailable')
-  await expect(status).toContainText('Existing work may still be running')
-  await expect(status.getByRole('button', { name: 'Retry status', exact: true })).toBeEnabled()
-  const lastChecked = await status.locator('time').getAttribute('datetime')
-  const failedListBaseline = failedLists
-  const failedStatusBaseline = failedStatuses
-  await status.getByRole('button', { name: 'Retry status', exact: true }).click()
-  await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(failedListBaseline)
-  await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(failedStatusBaseline)
-  await expect(status.locator('time')).toHaveAttribute('datetime', lastChecked!)
-  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
-  await status.getByRole('button', { name: 'Stop task', exact: true }).click()
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Status unavailable')
+  await expect(stop).toBeEnabled()
+  await stop.click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(1)
   expect(mock.actions.find((action) => action.action === 'interrupt-turn')?.runId).toBe(run.runId)
   unavailable = false
   run.state = { phase: 'cancelling', turnId: 'turn-recovered', reason: 'waiting for command cleanup receipt' }
-  await expect(status).toContainText('Stop requested', { timeout: 10_000 })
-  await expect(status).toContainText('commands')
-  await status.getByRole('button', { name: 'Retry stop', exact: true }).click()
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Stopping', { timeout: 10_000 })
+  await expect(stop).toBeEnabled()
+  await stop.click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(2)
   const stops = mock.actions.filter((action) => action.action === 'interrupt-turn')
   expect(stops[1]?.operationId).not.toBe(stops[0]?.operationId)
@@ -12118,12 +11993,11 @@ test('keeps known Stop usable during observation loss and allows renewed Stop wh
     rawJson: '{}',
     text: 'Acknowledged the stop request.',
   } satisfies TengriCodexEvent)
-  await expect(status).toContainText('Last update received')
-  await expect(status).not.toContainText('Since submitted')
+  await expect(chat.getByText('Acknowledged the stop request.', { exact: true })).toBeVisible()
   expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
 })
 
-test('opens recorded Results in existing file previews and preserves the conversation draft', async ({ page }) => {
+test('opens saved conversation file links and preserves the draft through preview and pinning', async ({ page }) => {
   const mock = await mockTengri(page, {
     resumeThreadRawJson: JSON.stringify({
       thread: {
@@ -12155,30 +12029,27 @@ test('opens recorded Results in existing file previews and preserves the convers
       },
     }),
   })
-  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-results'))
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-preview'))
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
   const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
   await expect(composer).toBeEnabled()
   await composer.fill('Keep the next question unsent')
-  await chat.getByRole('tab', { name: 'Results · 3', exact: true }).click()
-  const results = chat.getByRole('region', { name: 'Conversation results', exact: true })
-  await expect(results).toBeVisible()
-  await expect(results).not.toContainText('not-produced.md')
-  await expect(results.getByRole('link', { name: 'Review change', exact: true })).toHaveAttribute(
+  await expect(chat.getByRole('tab')).toHaveText(['Chat'])
+  await expect(chat.getByRole('link', { name: 'Review change', exact: true })).toHaveAttribute(
     'href',
     'https://github.com/proompteng/lab/pull/123',
   )
-  await results.getByRole('article', { name: 'Codex changes', exact: true }).locator('summary').click()
-  await expect(results.getByRole('article', { name: 'Codex changes', exact: true })).toContainText('+new')
-  await results.getByRole('button', { name: 'Pin /workspace/README.md', exact: true }).click()
-  await expect(chat.getByRole('navigation', { name: 'Pinned resources', exact: true })).toContainText('README.md')
-  await results.getByRole('button', { name: 'Workspace report', exact: true }).click()
+  await chat.getByRole('article', { name: 'Codex changes', exact: true }).locator('summary').click()
+  await expect(chat.getByRole('article', { name: 'Codex changes', exact: true })).toContainText('+new')
+  await chat.getByRole('button', { name: 'Workspace report', exact: true }).click()
   await expect(chat.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect(chat.getByRole('region', { name: 'File preview' })).toContainText('persistent')
+  const preview = chat.getByRole('region', { name: 'File preview' })
+  await expect(preview).toContainText('persistent')
+  await preview.getByRole('button', { name: 'Pin /workspace/README.md', exact: true }).click()
+  await expect(chat.getByRole('navigation', { name: 'Pinned resources', exact: true })).toContainText('README.md')
   await chat.getByRole('button', { name: 'Close /workspace/README.md', exact: true }).click()
-  await expect(chat.getByRole('tab', { name: 'Results · 3', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await chat.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await expect(chat.getByRole('tab', { name: 'Chat', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(composer).toHaveValue('Keep the next question unsent')
   expect(mock.actions.filter((action) => action.action === 'read-file').map((action) => action.path)).toEqual([
     '/workspace/README.md',
