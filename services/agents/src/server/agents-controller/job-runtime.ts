@@ -1,3 +1,4 @@
+import { RUNNER_TELEMETRY_KEY, RUNNER_TELEMETRY_LABEL } from '../../runner-telemetry'
 import { createHash } from 'node:crypto'
 
 import { asRecord, asString, readNested } from '../primitives'
@@ -837,6 +838,26 @@ export const submitJobRun = async (
   )
   if (existingJobRef) return existingJobRef
 
+  const telemetryConfigName =
+    agentRunnerSpec?.adapter?.type === 'codex-app-server' && runUid && !serviceAccountToken
+      ? makeName(jobName, 'telemetry')
+      : null
+  if (telemetryConfigName) {
+    await kube.apply({
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name: telemetryConfigName,
+        namespace,
+        labels: { ...mergedLabels, [RUNNER_TELEMETRY_LABEL]: 'true' },
+        ownerReferences: [
+          { apiVersion: 'agents.proompteng.ai/v1alpha1', kind: 'AgentRun', name: runName, uid: runUid },
+        ],
+      },
+      data: { [RUNNER_TELEMETRY_KEY]: 'null' },
+    })
+  }
+
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
   const configVolumeMounts = [] as Record<string, unknown>[]
@@ -998,6 +1019,14 @@ export const submitJobRun = async (
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
           { name: 'CODEX_HOME', value: codexHomePath },
+          ...(telemetryConfigName
+            ? [
+                { name: 'AGENT_RUN_TELEMETRY_CONFIGMAP', value: telemetryConfigName },
+                { name: 'AGENT_RUN_NAMESPACE', value: namespace },
+                { name: 'AGENT_RUN_UID', value: runUid },
+                { name: 'AGENT_RUN_POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } },
+              ]
+            : []),
           ...(authSecret ? [{ name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) }] : []),
           ...env,
           ...(systemPromptRef
