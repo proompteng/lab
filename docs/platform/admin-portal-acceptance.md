@@ -83,7 +83,7 @@ All major pages were captured at 390, 768 and 1440px. Representative retained ca
 - [Tablet resource grants](admin-portal-screenshots/resources-768.png)
 - [Phone approval](admin-portal-screenshots/request-review-phone.png)
 - [Activity](admin-portal-screenshots/activity-1440.png)
-- [Loading](admin-portal-screenshots/people-loading-390.png), [denied](admin-portal-screenshots/people-denied-390.png),
+- [Recoverable error](admin-portal-screenshots/overview-error.png), [loading](admin-portal-screenshots/people-loading-390.png), [denied](admin-portal-screenshots/people-denied-390.png),
   [empty filtered collection](admin-portal-screenshots/people-empty-768.png)
 
 These are synthetic fixture identities and resources, not production screenshots. Fixture proof is not live Ofz proof.

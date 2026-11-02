@@ -940,6 +940,8 @@ test('refresh retries failed overview summaries and updates successful summaries
   try {
     await page.goto(`${base}/workspaces/${workspace}/overview`)
     await browserExpect(page.getByRole('alert')).toContainText('Summary temporarily unavailable.')
+    if (process.env.PLATFORM_UI_SCREENSHOT_DIR)
+      await page.screenshot({ path: `${process.env.PLATFORM_UI_SCREENSHOT_DIR}/overview-error.png`, fullPage: true })
     summaryFailure = false
     const before = summaryReads
     await page.getByRole('button', { name: 'Refresh workspace' }).click()
