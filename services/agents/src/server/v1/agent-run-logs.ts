@@ -3,6 +3,9 @@ import { Context, Data, Effect, Layer } from 'effect'
 import { errorResponse, okResponse } from '../http'
 import { createKubernetesClient, type KubernetesClient } from '../kube-types'
 import { asRecord, asString } from '../primitives'
+import { createPrimitivesStore } from '../primitives-store'
+import { readRetainedRunLogs, RetainedRunLogsNotFound } from '../retained-run-logs'
+import type { AgentRunRecord } from './agent-run-store'
 
 export type PodContainer = {
   name: string
@@ -37,6 +40,13 @@ type AgentRunLogsSuccess = {
 export type AgentRunLogsDependencies = {
   kubeClient?: KubernetesClient
   kubeClientFactory?: () => KubernetesClient
+  storeFactory?: () => {
+    ready: Promise<unknown>
+    close: () => Promise<unknown>
+    getAgentRunByExternalRunId: (name: string) => Promise<AgentRunRecord | null>
+  }
+  env?: NodeJS.ProcessEnv
+  fetch?: typeof fetch
 }
 
 type AgentRunLogsKubeOperation = 'create-client' | 'list-pods' | 'read-pod-logs'
@@ -285,6 +295,37 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
   const result = await Effect.runPromise(
     getAgentRunLogsEffect(request).pipe(Effect.provide(makeAgentRunLogsKubeLayer(deps)), Effect.either),
   )
-  if (result._tag === 'Right') return okResponse(result.right)
+  if (result._tag === 'Right' && result.right.pods.length > 0) {
+    return okResponse({ ...result.right, source: 'pod', truncated: false, artifact: null })
+  }
+  if (result._tag === 'Right') {
+    const parsed = await Effect.runPromise(parseRequest(request))
+    let store: ReturnType<NonNullable<AgentRunLogsDependencies['storeFactory']>> | undefined
+    try {
+      store = (deps.storeFactory ?? createPrimitivesStore)()
+      await store.ready
+      const record = await store.getAgentRunByExternalRunId(parsed.name)
+      if (!record) throw new RetainedRunLogsNotFound('AgentRun logs not found')
+      const kube = deps.kubeClient ?? deps.kubeClientFactory?.() ?? createKubernetesClient()
+      const retained = await readRetainedRunLogs({
+        record,
+        namespace: parsed.namespace,
+        kube,
+        env: deps.env,
+        fetch: deps.fetch,
+        tailLines: parsed.tailLines,
+        pod: parsed.pod,
+        container: parsed.container,
+      })
+      return okResponse({ ...result.right, ...retained, container: 'agent-runner', source: 'artifact' })
+    } catch (error) {
+      return errorResponse(
+        error instanceof Error ? error.message : 'retained log read failed',
+        error instanceof RetainedRunLogsNotFound ? 404 : 502,
+      )
+    } finally {
+      await store?.close()
+    }
+  }
   return errorResponse(errorMessage(result.left), errorStatus(result.left), errorDetails(result.left))
 }

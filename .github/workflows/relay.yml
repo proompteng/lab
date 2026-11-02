@@ -15,7 +15,6 @@ on:
       - 'argocd/applications/relay/**'
       - 'nix/packages/relay.nix'
       - 'nix/images/relay.nix'
-      - '.github/workflows/relay.yml'
   push:
     branches: [main]
     paths:
@@ -30,14 +29,12 @@ on:
       - 'proto/proompteng/authz/**'
       - 'proto/proompteng/relay/**'
       - 'argocd/applications/relay/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
-      - 'nix/**'
       - 'flake.nix'
       - 'flake.lock'
-      - '.github/workflows/relay.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
+      - nix/packages/relay.nix
+      - nix/images/relay.nix
+      - nix/packages.nix
 permissions:
   contents: read
 concurrency:

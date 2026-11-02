@@ -325,6 +325,8 @@ env:
     AGENTS_MEMORY_DB_POOL_MAX: "2"
     PGQUERY_TIMEOUT_MS: "90000"
     AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
     OPENAI_API_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_MODEL: qwen3-embedding-saigak:8b

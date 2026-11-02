@@ -70,6 +70,7 @@ describe('agents controller job-runtime module', () => {
       {
         metadata: { name: 'codex-linear' },
         spec: {
+          adapter: { type: 'codex-app-server', codex: { prompt: 'demo prompt' } },
           workload: {
             serviceAccountName: 'codex-linear-runner',
             serviceAccountToken: {
@@ -96,6 +97,10 @@ describe('agents controller job-runtime module', () => {
 
     expect(podSpec.serviceAccountName).toBe('codex-linear-runner')
     expect(podSpec.automountServiceAccountToken).toBe(false)
+    expect(env).toContainEqual({ name: 'AGENT_RUN_UID', value: 'run-uid-1' })
+    expect(
+      applied.some((item) => (item.metadata as Record<string, unknown>)?.name === 'linear-run-job-telemetry'),
+    ).toBe(false)
     expect(env).toContainEqual({
       name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
       value: '/var/run/secrets/agents-linear-mcp/token',
@@ -225,6 +230,11 @@ describe('agents controller job-runtime module', () => {
     const agentRunnerEnv = (((env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>)?.env ??
       []) as Record<string, unknown>[]
     const agentRunnerContainer = (env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>
+
+    expect(agentRunnerEnv).toContainEqual({ name: 'AGENT_RUN_UID', value: 'run-uid-1' })
+    expect(applied.some((item) => (item.metadata as Record<string, unknown>)?.name === 'run-1-job-telemetry')).toBe(
+      false,
+    )
 
     expect(runnerSpec).toMatchObject({
       schemaVersion: 'agents.proompteng.ai/runner/v1',
