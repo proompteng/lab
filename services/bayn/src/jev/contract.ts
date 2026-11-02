@@ -57,6 +57,18 @@ export const JevRequestSchema = Schema.Struct({
   questions: Schema.Record(QuestionName, Question).check(
     Schema.makeFilter((value) => Object.keys(value).length >= 1 && Object.keys(value).length <= 32),
   ),
+  assets: Schema.optionalKey(
+    Schema.Record(
+      Schema.String.check(Schema.isPattern(/^bayn_chart_image_[0-9a-f]{64}$/)),
+      Schema.Struct({
+        type: Schema.Literal('image'),
+        format: Schema.Literal('png'),
+        data_base64: Schema.NonEmptyString.check(
+          Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+        ),
+      }),
+    ).check(Schema.makeFilter((value) => Object.keys(value).length === 1)),
+  ),
 })
 
 export type JevRequest = typeof JevRequestSchema.Type

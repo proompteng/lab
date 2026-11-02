@@ -10,7 +10,6 @@ import { makeInitialChartStageRequest } from '../src/jev/staged-chart-questions'
 import { IsoDateSchema } from '../src/schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from '../src/jev/chart-evidence'
 import { JevClient } from '../src/jev/client'
-import { DecisionsClient } from '../src/jev/decisions'
 import { decodeEntryInferenceCompletion } from '../src/jev/entry-inference-evidence'
 import { prepareEntryInferenceInput } from '../src/jev/entry-inference-input'
 import { EntryInferenceJournal, type EntryHandoff } from '../src/jev/entry-inference'
@@ -72,6 +71,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     const protocol = {
       ...input.protocol,
       schemaVersion: defaultJevProtocolDocument.schemaVersion,
+      entrySignalPolicy: defaultJevProtocolDocument.entrySignalPolicy,
       executionModel: defaultJevProtocolDocument.executionModel,
       inputDefinition: defaultJevProtocolDocument.inputDefinition,
       lookbackMinutes: defaultJevProtocolDocument.lookbackMinutes,
@@ -173,16 +173,11 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
             }),
           ),
       }),
-      Effect.provideService(DecisionsClient, {
-        evaluate: () =>
-          Effect.sync(() => {
-            attemptedChartBranches++
-          }).pipe(Effect.andThen(Effect.die('OFFLINE_CHART_BRANCH_SENTINEL'))),
-      }),
       Effect.provideService(JevClient, {
-        evaluate: () =>
+        evaluate: (request) =>
           Effect.sync(() => {
-            attemptedJevBranches++
+            if (typeof request === 'object' && request !== null && 'assets' in request) attemptedChartBranches++
+            else attemptedJevBranches++
           }).pipe(Effect.andThen(Effect.die('OFFLINE_JEV_BRANCH_SENTINEL'))),
       }),
       Effect.exit,

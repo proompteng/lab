@@ -26,7 +26,7 @@ test('Restate image promotion requires native build proofs and uploaded release 
   const runtime = build.steps.find((step: { name?: string }) => step.name === 'Build runtime')
   expect(runtime.with.push).toBe("${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
   expect(runtime.with.load).toBeUndefined()
-  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/cli.ts')
+  expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toBe(mainOnly)
   expect(publish.needs).toEqual(['build'])

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { writeFile } from 'node:fs/promises'
-import { parseArgs } from 'node:util'
+import { isDeepStrictEqual, parseArgs } from 'node:util'
 
 const { values } = parseArgs({
   options: {
@@ -24,7 +24,7 @@ const marker = `ORACLE_ACCEPTANCE_${deliveryId}`
 const task =
   mode === 'cancel'
     ? `Cancellation acceptance. Run a shell command that prints ${marker} and sleeps for 600 seconds. Make no source or cluster changes. Do not inspect credentials or spawn subagents.`
-    : `Read-only Oracle delegation and telemetry acceptance. Use two native goal turns. In your first turn, run codex --version and hostname, then end the turn with CHECKPOINT without completing the goal. On the automatic goal continuation, run one shell command that prints ${marker} and sleeps for 35 seconds. Finally return exactly one line containing ${marker}, the actual Codex version, and the hostname, and complete the Codex goal. Make no source or cluster changes. Do not inspect credentials or spawn subagents.`
+    : `Read-only Oracle delegation and telemetry acceptance. Use two native goal turns. In your first turn, run codex --version and hostname, then end the turn with CHECKPOINT without completing the goal. On the automatic goal continuation, run one shell command that prints ${marker} and sleeps for 35 seconds. Set yield_time_ms to 30000 for that command and any wait calls; do not poll with shorter waits. Finally return exactly one line containing ${marker}, the actual Codex version, and the hostname, and complete the Codex goal. Make no source or cluster changes. Do not inspect credentials or spawn subagents.`
 const payload = {
   agentRef: { name: 'codex-agent' },
   namespace: 'agents',
@@ -170,10 +170,10 @@ if (current.resource) throw new Error('AgentRun cleanup did not finish before th
 if (text(record(current.agentRun).status) !== expected) throw new Error('Terminal status was lost after cleanup')
 if (mode === 'success' && resultArtifactUrl(current) !== expectedArtifactUrl)
   throw new Error('Result artifact reference was lost after cleanup')
-if (mode === 'success' && JSON.stringify(resultPreview(current)) !== JSON.stringify(resultPreview(terminal))) {
+if (mode === 'success' && !isDeepStrictEqual(resultPreview(current), resultPreview(terminal))) {
   throw new Error('Worker result preview was lost after cleanup')
 }
-if (mode !== 'cancel' && JSON.stringify(telemetry(current)) !== JSON.stringify(telemetry(terminal))) {
+if (mode !== 'cancel' && !isDeepStrictEqual(telemetry(current), telemetry(terminal))) {
   throw new Error('Final telemetry was lost after cleanup')
 }
 let retainedLogs: Record<string, unknown> | null = null

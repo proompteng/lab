@@ -3,35 +3,41 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
-import { JevContractError } from './contract'
+import {
+  JevContractError,
+  JevRequestSchema,
+  jevModel,
+  prepareJevRequest,
+  type JevRequest,
+  type JevResponse,
+} from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import type { EntryInferenceInput } from './entry-inference-input'
 import type { JevProtocolMaterial } from './protocol'
 import { makeChartSourceCandidates, makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
-import {
-  DecisionsRequestSchema,
-  decisionsModel,
-  prepareDecisionsRequest,
-  type DecisionsRequest,
-  type DecisionsResponse,
-} from './decisions'
+type SourceChoice = {
+  type: 'choice'
+  name: string
+  instructions: string
+  choices: { value: string; description: string }[]
+}
 
 const presenceQuestions = [
   {
-    type: 'predicate',
+    type: 'noul',
     name: 'support_present',
     instructions:
       'Does the recent price sequence show a defended support level? A defended level has an observable rebound after price tests it. A low at the end of an ongoing decline is not a defended level.',
   },
   {
-    type: 'predicate',
+    type: 'noul',
     name: 'resistance_present',
     instructions:
       'Does the chart show an identifiable resistance level above executionReference.bidUsd? Repeated rejection at a level is resistance. The latest completed close is historical; use the supplied current quote in USD. A hypothetical price above the chart is not observed resistance.',
   },
   {
-    type: 'predicate',
+    type: 'noul',
     name: 'base_present',
     instructions:
       'Is there a completed consolidation before the newest directional move? A consolidation is a contiguous period of overlapping candles trading in a bounded range. An uninterrupted directional move is not a consolidation.',
@@ -63,7 +69,7 @@ const baseStartInstructions =
 const sharedInstructions =
   'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Anchor choices describe source price structure independently of fees and funding. Code checks whether a proposal based on the selected structure covers all modeled trading costs. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
 export const chartQuestionPolicy = {
-  model: decisionsModel,
+  model: jevModel,
   candidatePolicy: 'source-structure-with-funded-proposal-preflight-v3',
   presenceQuestions,
   anchorQuestions,
@@ -87,14 +93,11 @@ type PreparedChartRequest = {
 const preparedChartRequests = new Map<string, PreparedChartRequest>()
 const detachedChartRequest = (prepared: PreparedChartRequest) =>
   Schema.decodeUnknownResult(
-    Schema.fromJsonString(DecisionsRequestSchema),
+    Schema.fromJsonString(JevRequestSchema),
     strictParseOptions,
   )(prepared.body).pipe(Result.map((request) => ({ ...prepared, request })))
 
-export const buildChartDecisionsRequest = (
-  source: ChartDecisionSource,
-  stage: 'CHART' | { readonly selectedEnd: string },
-) =>
+export const buildChartJevRequest = (source: ChartDecisionSource, stage: 'CHART' | { readonly selectedEnd: string }) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
     // Revalidation must hash actual source content; claimed chart hashes cannot establish cache identity.
@@ -115,7 +118,7 @@ export const buildChartDecisionsRequest = (
         ? { supportBarIds: [], resistanceBarIds: [], baseWindows: [] }
         : yield* makeEntrySourceCandidates({ chart, protocol, economics, bidMicros: BigInt(funding.bidMicros) })
     const candidates = makeChartSourceCandidates({ chart, bidMicros: BigInt(funding.bidMicros) })
-    const anchors: DecisionsRequest['questions'][number][] = anchorQuestions.flatMap((question) => {
+    const anchors: SourceChoice[] = anchorQuestions.flatMap((question) => {
       const ids = question.name === 'support_anchor' ? candidates.supportBarIds : candidates.resistanceBarIds
       if (ids.length === 0) return []
       return [
@@ -141,7 +144,7 @@ export const buildChartDecisionsRequest = (
       ]
     })
     const baseEnds = chart.bars.filter((bar) => candidates.baseWindows.some((span) => span.lastBarId === bar.id))
-    const baseQuestions: DecisionsRequest['questions'][number][] =
+    const baseQuestions: SourceChoice[] =
       baseEnds.length === 0
         ? []
         : [
@@ -184,40 +187,44 @@ export const buildChartDecisionsRequest = (
                     ],
                   }))),
           ]
-    const prepared = yield* prepareDecisionsRequest({
-      model: decisionsModel,
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: sharedInstructions,
-            },
-            { type: 'input_image', image_url: chart.image },
-            {
-              type: 'input_json',
-              data: {
-                symbol: chart.symbol,
-                windowEndAt: chart.windowEndAt,
-                barsHash: chart.barsHash,
-                pngHash: chart.pngHash,
-                bars: chart.bars,
-                executionReference: {
-                  bidUsd: Number(BigInt(funding.bidMicros)) / 1_000_000,
-                  askUsd: Number(BigInt(funding.askMicros)) / 1_000_000,
-                  maximumEntryPriceUsd: economics?.maximumEntryPriceUsd ?? null,
-                  bidMicros: funding.bidMicros,
-                  askMicros: funding.askMicros,
-                  maximumEntryPriceMicros: economics?.maximumEntryPriceMicros ?? null,
-                  maximumHoldingMinutes: protocol.maximumHoldingMinutes,
-                },
-              },
-            },
-          ],
+    const reference = `bayn_chart_image_${chart.pngHash}`
+    const choices = typeof stage === 'object' ? baseQuestions : [...anchors, ...baseQuestions]
+    const prepared = yield* prepareJevRequest({
+      model: jevModel,
+      state: {
+        instructions: sharedInstructions,
+        chart: reference,
+        source: {
+          symbol: chart.symbol,
+          windowEndAt: chart.windowEndAt,
+          barsHash: chart.barsHash,
+          pngHash: chart.pngHash,
+          bars: chart.bars,
+          executionReference: {
+            bidUsd: Number(BigInt(funding.bidMicros)) / 1_000_000,
+            askUsd: Number(BigInt(funding.askMicros)) / 1_000_000,
+            maximumEntryPriceUsd: economics?.maximumEntryPriceUsd ?? null,
+            bidMicros: funding.bidMicros,
+            askMicros: funding.askMicros,
+            maximumEntryPriceMicros: economics?.maximumEntryPriceMicros ?? null,
+            maximumHoldingMinutes: protocol.maximumHoldingMinutes,
+          },
         },
-      ],
-      questions: typeof stage === 'object' ? baseQuestions : [...presenceQuestions, ...anchors, ...baseQuestions],
+      },
+      assets: {
+        [reference]: { type: 'image', format: 'png', data_base64: chart.image.slice('data:image/png;base64,'.length) },
+      },
+      questions: Object.fromEntries([
+        ...(typeof stage === 'object' ? [] : presenceQuestions.map(({ name, ...question }) => [name, question])),
+        ...choices.map(({ name, instructions, choices }) => [
+          name,
+          {
+            type: 'choice',
+            instructions,
+            criteria: Object.fromEntries(choices.map(({ value, description }) => [value, description])),
+          },
+        ]),
+      ]),
     })
     const reusable = {
       body: prepared.body,
@@ -270,30 +277,22 @@ export type ChartAssessmentsMaterial =
   | RetainedConditionalChartAssessmentsMaterial
   | import('./retained-funded-chart-questions').ChartAssessments
 
-export const chartAssessmentsFromResponse = (
-  chart: NativeChartEvidence,
-  response: DecisionsResponse,
-  request: DecisionsRequest,
-) =>
+export const chartAssessmentsFromResponse = (chart: NativeChartEvidence, response: JevResponse, request: JevRequest) =>
   Result.gen(function* () {
-    const asked = new Set(request.questions.map((question) => question.name))
+    const asked = new Set(Object.keys(request.questions))
     const invalid = () =>
       Result.fail(new JevContractError({ message: 'Chart assessment does not match its source-bound question' }))
     const presence = (name: string): Result.Result<typeof Presence.Type, JevContractError> => {
-      const answer = response.answers.find((value) => value.name === name)
-      if (answer?.type === 'refusal') return Result.succeed({ status: 'REFUSED' })
-      return answer?.type === 'predicate'
-        ? Result.succeed({ status: 'ASSESSED', probability: answer.probability })
-        : invalid()
+      const answer = response.answers[name]
+      return answer?.type === 'noul' ? Result.succeed({ status: 'ASSESSED', probability: answer.noul }) : invalid()
     }
     const anchor = (name: string): Result.Result<typeof Anchor.Type, JevContractError> => {
       if (!asked.has(name)) return Result.succeed({ status: 'NOT_IDENTIFIED' })
-      const answer = response.answers.find((value) => value.name === name)
-      if (answer?.type === 'refusal') return Result.succeed({ status: 'REFUSED' })
+      const answer = response.answers[name]
       if (answer?.type !== 'choice' || typeof answer.choice !== 'string') return invalid()
       if (['no_base', 'no_support', 'no_resistance'].includes(answer.choice))
         return Result.succeed({ status: 'NOT_IDENTIFIED' })
-      const probability = answer.probabilities.find((value) => value.value === answer.choice)?.probability
+      const probability = answer.probabilities[answer.choice]
       return probability === undefined
         ? invalid()
         : Result.succeed({ status: 'ASSESSED', barId: answer.choice, probability })

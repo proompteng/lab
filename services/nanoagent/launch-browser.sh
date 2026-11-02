@@ -53,7 +53,7 @@ cleanup() {
   done
 }
 trap cleanup EXIT INT TERM
-Xtigervnc "$DISPLAY" ${XKB_CONFIG_ROOT:+-xkbdir "$XKB_CONFIG_ROOT"} -geometry 1280x800 -depth 24 -nolisten tcp -auth "$XAUTHORITY" \
+Xtigervnc "$DISPLAY" ${XKB_CONFIG_ROOT:+-xkbdir "$XKB_CONFIG_ROOT"} -geometry 2560x1600 -depth 24 -nolisten tcp -auth "$XAUTHORITY" \
   -rfbport -1 -rfbunixpath "$browser_root/rfb.sock" -rfbunixmode 0600 \
   -SecurityTypes None -AlwaysShared -desktop Chrome &
 browser_pids+=("$!")
@@ -82,7 +82,7 @@ if [[ ! -f "$browser_local_state" ]]; then printf '{}\n' > "$browser_local_state
 jq '.browser.hovercard.memory_usage_enabled=false' "$browser_local_state" > "$browser_local_state.tmp"
 mv "$browser_local_state.tmp" "$browser_local_state"
 "$CHROMIUM_BINARY" --user-data-dir="$browser_root/profile" --no-first-run --no-default-browser-check \
-  --start-maximized --disable-dev-shm-usage --disable-infobars --force-dark-mode --ozone-platform=x11 about:blank &
+  --start-maximized --disable-dev-shm-usage --disable-infobars --force-dark-mode --force-device-scale-factor=2 --ozone-platform=x11 about:blank &
 browser_pids+=("$!")
 for ((browser_attempt=0; browser_attempt<150; browser_attempt++)); do
   if xdotool search --onlyvisible --class 'chromium|chrome' >/dev/null 2>&1; then
