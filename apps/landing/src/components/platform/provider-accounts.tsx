@@ -21,11 +21,13 @@ export function ProviderAccount({
   profile,
   principalId,
   disabled,
+  showConnect = true,
   onChanged,
 }: {
   profile: ProviderConnection
   principalId: string
   disabled?: boolean
+  showConnect?: boolean
   onChanged: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
@@ -102,7 +104,7 @@ export function ProviderAccount({
             {pending?.kind === 'disconnect' ? 'Retry disconnect' : 'Disconnect account'}
           </Button>
         ) : null}
-        {profile.state !== ProviderConnectionState.READY || pending?.kind === 'begin' ? (
+        {showConnect && (profile.state !== ProviderConnectionState.READY || pending?.kind === 'begin') ? (
           <Button
             type="button"
             size="sm"
