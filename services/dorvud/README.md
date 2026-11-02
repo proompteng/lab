@@ -9,6 +9,7 @@ Dorvud ingests market data, calculates technical signals, and archives source re
 - `technical-analysis`: shared payloads, serializers, and calculation utilities used by the Flink job.
 - `platform`: shared envelopes, timestamps, and Kafka configuration.
 - `hyperliquid-feed`: the separate Hyperliquid ingestion module.
+- [`webull-feed`](webull-feed/README.md): free Webull US stock/ETF ingestion into its own Kafka topic and raw archive.
 - `flink-integration`: integration support.
 
 Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
