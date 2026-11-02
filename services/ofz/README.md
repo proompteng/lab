@@ -33,7 +33,9 @@ bash test-policy.sh
 bash test-control.sh
 ```
 
-The policy fixture starts a disposable, loopback-only SpiceDB and an isolated PostgreSQL using the same pinned images as the cluster.
+The policy and platform fixtures start disposable, loopback-only SpiceDB and PostgreSQL processes using the production
+versions packaged in `nix build .#ofz-fixture-tools`. Add the resulting `bin` directory to `PATH`, or use the
+[AgentRun environment](../../docs/agents/runner-environment.md). These callers require no Docker daemon.
 It never reads or modifies production relationships. It checks the complete human role matrix, platform membership
 revocation, workspace isolation, and native grant expiration. API, crash, broker and product acceptance are
 separate gates; a schema fixture does not establish deployed application enforcement.

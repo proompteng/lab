@@ -18,6 +18,7 @@ data class WebullObservation(
 data class WebullPayload(
   val channel: String,
   val observations: List<WebullObservation>,
+  val outOfWindowBars: Int = 0,
 )
 
 private fun protobufFields(bytes: ByteArray): Map<Int, List<ByteArray>> {
@@ -78,9 +79,10 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
         val basic = protobufFields(payload[1]?.singleOrNull() ?: error("missing Webull basic record"))
         val observedSymbol = symbol(basic.text(1))
         basic.text(2).also { require(it.isNotBlank()) { "missing Webull instrument id" } }
-        val sourceTime = if (source.topic == "tick") payload.text(2) else basic.text(3)
+        val sourceTime = basic.text(3)
         require(sourceTime.isNotBlank()) { "missing Webull provider timestamp" }
         if (source.topic == "tick") {
+          require(payload.text(2).isNotBlank()) { "missing Webull trade clock" }
           decimal(payload.text(3), positive = true)
           decimal(payload.text(4), positive = true)
         } else {
@@ -112,6 +114,7 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
           val end = Instant.ofEpochMilli(request.text("end_time").toLong()).plusMillis(1)
           require(start < end && end <= Instant.parse(capture.receivedAt)) { "unfinished Webull bar request" }
           val groups = body["result"] as? JsonArray ?: error("missing Webull bar groups")
+          var outOfWindowBars = 0
           val observations =
             groups.flatMap { group ->
               val item = group.jsonObject
@@ -119,7 +122,7 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
               require(observedSymbol in source.requestedSymbols) { "unexpected Webull bar symbol" }
               require(item.text("delay_minutes") == "0") { "Webull bars do not have the real-time entitlement" }
               val bars = item["result"] as? JsonArray ?: error("missing Webull bars")
-              bars.map { raw ->
+              bars.mapNotNull { raw ->
                 val bar = raw.jsonObject
                 for (price in listOf("open", "high", "low", "close")) decimal(bar.text(price), positive = true)
                 decimal(bar.text("volume"))
@@ -129,13 +132,16 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
                   "inconsistent Webull OHLC"
                 }
                 val time = webullProviderInstant(bar.text("time")) ?: error("invalid Webull bar timestamp")
-                require(time >= start && time.plusSeconds(60) <= end && time.epochSecond % 60 == 0L && time.nano == 0) {
-                  "Webull bar is outside the completed request window"
+                require(time.epochSecond % 60 == 0L && time.nano == 0) { "Webull M1 bar is not aligned to a minute" }
+                if (time < start || time.plusSeconds(60) > end) {
+                  outOfWindowBars++
+                  null
+                } else {
+                  WebullObservation(observedSymbol, bar.text("time"))
                 }
-                WebullObservation(observedSymbol, bar.text("time"))
               }
             }
-          WebullPayload("bars", observations)
+          WebullPayload("bars", observations, outOfWindowBars)
         }
         else -> error("unsupported Webull payload endpoint")
       }

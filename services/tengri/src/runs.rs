@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::{auth::Principal, grpc::ControlPlane};
 
 // Query expiry limits admission; an authorized response may arrive later.
-const STATUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
 const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 
 async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
@@ -25,9 +25,19 @@ where
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
         let mut backoff = Duration::from_millis(100);
         loop {
-            match tokio::time::timeout(STATUS_RESPONSE_TIMEOUT, request()).await {
-                Ok(Ok(value)) => return Ok(value),
-                Ok(Err(error))
+            let response = request();
+            tokio::pin!(response);
+            let result =
+                match tokio::time::timeout(STATUS_RESPONSE_WARNING, response.as_mut()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        tracing::warn!(operation, "durable run read response remains pending");
+                        response.await
+                    }
+                };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(error)
                     if !matches!(
                         error.code(),
                         tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
@@ -35,8 +45,7 @@ where
                 {
                     return Err(error);
                 }
-                Ok(Err(_)) => {}
-                Err(_) => tracing::warn!(operation, "durable run read response timed out"),
+                Err(_) => {}
             }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(1));
