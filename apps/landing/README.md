@@ -69,6 +69,8 @@ Settings → Privacy & Security contains personal workspace sharing, scoped diag
 management. `/access` opens the administration portal. Product policy/quota/global-audit editors and their replaced
 handlers are removed. Settings → Connections records consent to already-approved resource access; it never grants
 permissions. Forms use the shared design components, and dropdowns use `components/platform/settings-select.tsx`.
+Kubernetes resources use readable service names with their exact namespace and purpose, including **Ofz infrastructure**
+and **OpenCode infrastructure**. Their listed actions remain the authority for what access is being requested.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
@@ -125,6 +127,11 @@ loads behind a message-shaped skeleton instead of flashing the empty-conversatio
 reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs or its submission is pending. Late thread creation and send replies
 cannot replace the selected conversation or its draft; Stop remains bound to the selected conversation's run.
+Active-run recovery filters the authoritative claims by the selected conversation before reading snapshots. An unreadable
+unrelated run cannot block that conversation. Initial discovery can recover a running conversation in a new browser,
+but a new submission takes precedence over a delayed discovery response. New drafts do not wait for unrelated status.
+Navigation cancels outstanding status reads through the BFF and gRPC transport. A known nonterminal task remains
+stoppable while status or history observation is unavailable; cancellation still waits for confirmed cleanup.
 Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
@@ -251,6 +258,9 @@ control; Terminal is ready for typing when opened. Minimize preserves the window
 Maximized windows fill the desktop below the menu bar with square corners and no margins. The Dock hides until the
 pointer reaches the bottom edge or a Dock control receives keyboard focus. Normal windows remain above the Dock.
 The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
+The menu bar's **Chat + work** control arranges Tengri chat beside **Browser**, **Code**, or **Files** on a wide desktop.
+Switching work views keeps the existing windows and sessions mounted, including unsaved editor contents. **Back to desktop**
+restores the ordinary window layout and focus. Narrow or touch layouts retain the existing single-window presentation.
 
 Finder's toolbar, sidebar proportions, row density, action menu, and icon view were compared directly with Finder
 on macOS 26.5.2. The toolbar shows the current folder; Go to Folder opens a validated location dialog. Sortable
@@ -294,6 +304,8 @@ Code runs the upstream VS Code workbench through [code-server 4.135.0](https://g
 (Code 1.135.0) inside the user's Nanoagent guest. Explorer, tabs, search, Source Control, integrated terminals, language
 servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
 may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
+The editor identifies itself as **VS Code editor**, explains that its assistants have a separate history, and provides
+**Open Tengri chat**. This distinction is supplied by the desktop shell and also applies to retained guest editors.
 
 The composer's **Approvals** selector offers **Ask first** and **Auto approve**. The browser remembers this per
 workspace and automatically resolves advertised action confirmations while the chat is open. Questions remain manual:
@@ -307,16 +319,26 @@ Resolved approvals and answers stay retired for the open workspace, including ac
 run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
 navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
-Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
-stay out of these activity labels. Brief event-stream or run-status interruptions retry quietly. A connection warning
-appears after three seconds of continuous interruption and clears after recovery. Authentication and permission
-failures keep their original errors. A follow-up confirmed undispatched because its previous turn finished waits for
+The task-status panel explains the last confirmed execution state and its next action, with reason details available
+when the controller supplies them. **Status unavailable** describes a failed observation and retains the last known
+state; it never reports that the task has stopped. **Retry status**, **Stop task**, and **Retry stop** act on the selected
+task. **Since submitted** uses the actual recorded first submission attempt, preserved across uncertain retries in
+display metadata separate from the durable operation identity. Recovered tasks without that observation omit elapsed
+time. **Last update received** comes from new matching task events, while **Last checked** records successful status reads.
+Brief event-stream interruptions retry quietly. A connection warning appears after three seconds of continuous
+interruption and clears after recovery. Authentication and permission failures keep their original errors.
+A follow-up confirmed undispatched because its previous turn finished waits for
 that exact run's terminal state, then submits the message once with a fresh operation identity. Uncertain dispatches
 retain their original identity. An approval confirmed undispatched after its exact run finishes is removed without
 approving another turn.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
+
+The **Results** tab gathers referenced files, web links, and recorded changes from loaded assistant and tool output in
+the selected conversation. Prompts, plans, and proposed commands are not treated as results. File references reuse the
+authenticated preview and pin controls; opening a reference reads its current contents. Recorded diffs remain distinct
+from current file contents, and a reference alone does not assert that a file exists or a task succeeded.
 
 Local `/workspace/...` links in agent messages open file tabs above the conversation. The sidebar remains visible,
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
@@ -390,3 +412,10 @@ refetching; reopening an existing file preserves tab order. A failed inline imag
 Desktop preview startup and lease renewal keep retrying transient network, timeout, rate-limit and server failures,
 with a maximum 30-second backoff. Authentication and authorization failures stop retries. The Chrome display
 reconnects its own transport without reloading the retained browser document.
+
+## Runtime image cache
+
+The standalone Next server resolves inside the immutable Nix runtime. Its packaged `.next/cache` is a symlink to
+`/var/cache/proompteng`, where both the desktop and administration deployments mount a bounded writable cache volume.
+The root filesystem stays read-only. Image publication verifies the cache link at the actual standalone server path
+inside the built archive; rollout verification also checks writes through that resolved path in the deployed container.

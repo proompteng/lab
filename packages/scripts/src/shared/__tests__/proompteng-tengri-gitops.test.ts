@@ -50,17 +50,23 @@ test('Proompteng withholds Kargo discovery until the coordinated Tengri cutover 
 })
 
 test('Proompteng keeps the Next.js runtime cache writable on a read-only root filesystem', () => {
-  const deployment = readManifest('argocd/applications/proompteng/deployment.yaml')
-  const podSpec = deployment.spec.template.spec
-  const container = podSpec.containers.find((candidate: Record<string, any>) => candidate.name === 'proompteng')
+  for (const [manifest, name] of [
+    ['deployment.yaml', 'proompteng'],
+    ['admin-deployment.yaml', 'platform-admin'],
+  ]) {
+    const deployment = readManifest(`argocd/applications/proompteng/${manifest}`)
+    const podSpec = deployment.spec.template.spec
+    const container = podSpec.containers.find((candidate: Record<string, any>) => candidate.name === name)
 
-  expect(container.securityContext.readOnlyRootFilesystem).toBe(true)
-  expect(container.volumeMounts).toContainEqual({
-    name: 'next-cache',
-    mountPath: '/app/apps/landing/.next/cache',
-  })
-  expect(podSpec.volumes).toContainEqual({
-    name: 'next-cache',
-    emptyDir: { sizeLimit: '256Mi' },
-  })
+    expect(container.securityContext.readOnlyRootFilesystem).toBe(true)
+    expect(podSpec.securityContext).toMatchObject({ runAsUser: 1001, runAsGroup: 1001, fsGroup: 1001 })
+    expect(container.volumeMounts).toContainEqual({
+      name: 'next-cache',
+      mountPath: '/var/cache/proompteng',
+    })
+    expect(podSpec.volumes).toContainEqual({
+      name: 'next-cache',
+      emptyDir: { sizeLimit: '256Mi' },
+    })
+  }
 })
