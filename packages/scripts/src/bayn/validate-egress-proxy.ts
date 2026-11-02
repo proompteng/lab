@@ -2,7 +2,6 @@ const requiredHosts = new Set([
   'paper-api.alpaca.markets',
   'api.alpaca.markets',
   'data.alpaca.markets',
-  'api.openai.com',
   'api.typesafe.ai',
   'www.sec.gov',
   'data.sec.gov',

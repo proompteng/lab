@@ -340,18 +340,10 @@ export const nativeLatencyBacktestFixture = (
   )
   const inferenceTariff = replayRateCardFixture({
     jev:
-      policy === JevResearchPolicy.Candidate
+      policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation
         ? { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
         : null,
-    chart:
-      policy !== JevResearchPolicy.Momentum
-        ? {
-            inputMicrosPerMillionTokens: '100000',
-            outputMicrosPerMillionTokens: '0',
-            cachedInputMicrosPerMillionTokens: '0',
-            cacheWriteInputMicrosPerMillionTokens: '0',
-          }
-        : null,
+    chart: null,
   })
   const registration = withRegistrationCommitments({
     ...f.registration,
@@ -385,7 +377,7 @@ export const nativeLatencyBacktestFixture = (
   }
   const configuration = registration.obligations.configuration
   const input = Schema.decodeUnknownSync(BacktestInputSchema)({
-    schemaVersion: 'bayn.backtest.v10',
+    schemaVersion: 'bayn.backtest.v11',
     policy,
     latencyStress: { registration, sourceCut: cut, brokerIdentity: f.identity },
     jevInstructionsHash: testHash(jevInstructions),
@@ -394,7 +386,7 @@ export const nativeLatencyBacktestFixture = (
       recording,
       recordingHash: testHash(recording),
       maximumCalls: 100,
-      models: { jev: 'jev-1.13.0', chart: 'gpt-6-luna' },
+      models: { jev: 'jev-1.13.0' },
       inputDefinition: 'bayn.jev-entry-state.v23',
       costs: inferenceTariff,
     },

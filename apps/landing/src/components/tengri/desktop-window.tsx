@@ -35,6 +35,8 @@ export function DesktopWindowFrame({
   active,
   children,
   dispatch,
+  layoutHidden = false,
+  layoutLocked = false,
   onCloseRequest,
   stageRef,
   viewport,
@@ -43,6 +45,8 @@ export function DesktopWindowFrame({
   active: boolean
   children: ReactNode
   dispatch: (action: WindowAction) => void
+  layoutHidden?: boolean
+  layoutLocked?: boolean
   onCloseRequest?: () => void
   stageRef: RefObject<HTMLDivElement | null>
   viewport: () => Bounds
@@ -56,11 +60,11 @@ export function DesktopWindowFrame({
   const [minimizeTarget, setMinimizeTarget] = useState({ x: 0, y: 0, scale: 0.1 })
 
   useLayoutEffect(() => {
-    if (!active || window.mode === 'minimized') return
+    if (!active || layoutHidden || window.mode === 'minimized') return
     // Expose restored content before focusing; Motion paints its visible target on the next frame.
     if (elementRef.current) elementRef.current.style.visibility = 'visible'
     focusWindowContent(frameRef.current)
-  }, [active, window.mode, window.z])
+  }, [active, layoutHidden, layoutLocked, window.mode, window.z])
 
   useLayoutEffect(() => {
     if (window.mode !== 'minimized' || reducedMotion) return
@@ -93,6 +97,7 @@ export function DesktopWindowFrame({
   const begin = useCallback(
     (event: ReactPointerEvent<HTMLElement>, edge: ResizeEdge | null) => {
       if (
+        layoutLocked ||
         window.mode !== 'normal' ||
         event.button !== 0 ||
         globalThis.window.matchMedia('(max-width:767px), (pointer:coarse)').matches
@@ -115,7 +120,7 @@ export function DesktopWindowFrame({
       }
       if (elementRef.current) elementRef.current.style.willChange = edge ? 'left, top, width, height' : 'translate'
     },
-    [dispatch, viewport, window.bounds, window.id, window.mode],
+    [dispatch, layoutLocked, viewport, window.bounds, window.id, window.mode],
   )
 
   const move = useCallback((event: ReactPointerEvent<HTMLElement>) => {
@@ -160,6 +165,7 @@ export function DesktopWindowFrame({
     <motion.div
       data-tengri-window-frame
       data-window-mode={window.mode}
+      data-window-layout={layoutLocked ? 'split' : 'desktop'}
       ref={elementRef}
       className="absolute overflow-visible"
       initial={false}
@@ -177,6 +183,7 @@ export function DesktopWindowFrame({
       }
       transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 440, damping: 38, mass: 0.8 }}
       style={{
+        display: layoutHidden ? 'none' : undefined,
         left: bounds.x - RESIZE_GUTTER,
         top: bounds.y - RESIZE_GUTTER,
         width: bounds.width + RESIZE_GUTTER * 2,
@@ -189,8 +196,8 @@ export function DesktopWindowFrame({
         tabIndex={-1}
         data-window-id={window.id}
         aria-label={`${window.title} window`}
-        aria-hidden={window.mode === 'minimized'}
-        inert={window.mode === 'minimized' ? true : undefined}
+        aria-hidden={layoutHidden || window.mode === 'minimized'}
+        inert={layoutHidden || window.mode === 'minimized' ? true : undefined}
         data-active={active}
         data-app={window.app}
         className={cn(
@@ -210,7 +217,7 @@ export function DesktopWindowFrame({
           if (!active) dispatch({ type: 'focus', id: window.id })
         }}
         onPointerDown={(event) => {
-          if (window.mode === 'normal' && isWindowDragTarget(event.target)) begin(event, null)
+          if (!layoutLocked && window.mode === 'normal' && isWindowDragTarget(event.target)) begin(event, null)
           else dispatch({ type: 'focus', id: window.id })
         }}
         onDoubleClick={(event) => {
@@ -251,7 +258,7 @@ export function DesktopWindowFrame({
         </header>
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </section>
-      {window.mode === 'normal'
+      {window.mode === 'normal' && !layoutLocked
         ? (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const).map((edge) => (
             <div
               key={edge}
