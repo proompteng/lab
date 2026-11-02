@@ -337,6 +337,7 @@ let
   serviceRuntimeSourceFilter = rel: type:
     runtimeSourceFilter rel type
     && !(lib.hasPrefix "services/agents/scripts/codex/" rel
+      || rel == "services/agents/scripts/runner-acceptance.sh"
       || lib.hasPrefix "services/agents/src/runner/" rel);
 
   serviceBuildCommands = [

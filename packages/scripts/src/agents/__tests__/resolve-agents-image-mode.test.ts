@@ -85,6 +85,15 @@ describe('classifyAgentsImageMode', () => {
     ])
   })
 
+  it('rebuilds all images that embed the shared patch helper', () => {
+    expect(classifyAgentsImageMode(['services/agents/scripts/apply_patch.py']).imageTargets).toEqual([
+      'control-plane',
+      'controller',
+      'runner',
+      'agents-shell',
+    ])
+  })
+
   it('builds the service pair for control-plane dependencies', () => {
     const result = classifyAgentsImageMode([
       'packages/agent-contracts/src/control-plane-status.ts',

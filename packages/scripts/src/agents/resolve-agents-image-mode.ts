@@ -48,6 +48,7 @@ const STATIC_EXACT_PATHS = new Set([
 
 const ALL_IMAGE_EXACT_PATHS = new Set([
   'services/agents/package.json',
+  'services/agents/scripts/apply_patch.py',
   'flake.lock',
   'flake.nix',
   'nix/images/agents.nix',
