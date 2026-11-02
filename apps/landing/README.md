@@ -258,9 +258,6 @@ control; Terminal is ready for typing when opened. Minimize preserves the window
 Maximized windows fill the desktop below the menu bar with square corners and no margins. The Dock hides until the
 pointer reaches the bottom edge or a Dock control receives keyboard focus. Normal windows remain above the Dock.
 The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
-The menu bar's **Chat + work** control arranges Tengri chat beside **Browser**, **Code**, or **Files** on a wide desktop.
-Switching work views keeps the existing windows and sessions mounted, including unsaved editor contents. **Back to desktop**
-restores the ordinary window layout and focus. Narrow or touch layouts retain the existing single-window presentation.
 
 Finder's toolbar, sidebar proportions, row density, action menu, and icon view were compared directly with Finder
 on macOS 26.5.2. The toolbar shows the current folder; Go to Folder opens a validated location dialog. Sortable
@@ -304,8 +301,6 @@ Code runs the upstream VS Code workbench through [code-server 4.135.0](https://g
 (Code 1.135.0) inside the user's Nanoagent guest. Explorer, tabs, search, Source Control, integrated terminals, language
 servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
 may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
-The editor identifies itself as **VS Code editor**, explains that its assistants have a separate history, and provides
-**Open Tengri chat**. This distinction is supplied by the desktop shell and also applies to retained guest editors.
 
 The composer's **Approvals** selector offers **Ask first** and **Auto approve**. The browser remembers this per
 workspace and automatically resolves advertised action confirmations while the chat is open. Questions remain manual:
@@ -319,12 +314,6 @@ Resolved approvals and answers stay retired for the open workspace, including ac
 run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
 navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
-The task-status panel explains the last confirmed execution state and its next action, with reason details available
-when the controller supplies them. **Status unavailable** describes a failed observation and retains the last known
-state; it never reports that the task has stopped. **Retry status**, **Stop task**, and **Retry stop** act on the selected
-task. **Since submitted** uses the actual recorded first submission attempt, preserved across uncertain retries in
-display metadata separate from the durable operation identity. Recovered tasks without that observation omit elapsed
-time. **Last update received** comes from new matching task events, while **Last checked** records successful status reads.
 Brief event-stream interruptions retry quietly. A connection warning appears after three seconds of continuous
 interruption and clears after recovery. Authentication and permission failures keep their original errors.
 A follow-up confirmed undispatched because its previous turn finished waits for
@@ -334,11 +323,6 @@ approving another turn.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
-
-The **Results** tab gathers referenced files, web links, and recorded changes from loaded assistant and tool output in
-the selected conversation. Prompts, plans, and proposed commands are not treated as results. File references reuse the
-authenticated preview and pin controls; opening a reference reads its current contents. Recorded diffs remain distinct
-from current file contents, and a reference alone does not assert that a file exists or a task succeeded.
 
 Local `/workspace/...` links in agent messages open file tabs above the conversation. The sidebar remains visible,
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source

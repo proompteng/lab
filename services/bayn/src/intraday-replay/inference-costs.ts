@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { JevFailure, jevModel, JevResponseSchema } from '../jev/contract'
 import { decisionsModel, validDecisionsUsage } from '../jev/decisions'
+import type { JevProtocolMaterial } from '../jev/protocol'
 import {
   InferenceCostError,
   type InferenceRateCardSchema,
@@ -19,17 +20,19 @@ export const registeredReplayInferenceTariff = (
   rateCard: unknown,
   interval: { readonly startAt: string; readonly endAt: string },
   policy: JevResearchPolicy,
+  protocol: Pick<JevProtocolMaterial, 'entrySignalPolicy'>,
 ) =>
   Result.gen(function* () {
     const { rates } = yield* prepareInferenceRateCard(rateCard)
+    const jevOnly = protocol.entrySignalPolicy === 'jev-only'
     const requiredModels =
       policy === JevResearchPolicy.Candidate
         ? [
             { provider: 'typesafe', model: jevModel },
-            { provider: 'openai', model: decisionsModel },
+            ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
           ]
         : policy === JevResearchPolicy.Ablation
-          ? [{ provider: 'openai', model: decisionsModel }]
+          ? [jevOnly ? { provider: 'typesafe', model: jevModel } : { provider: 'openai', model: decisionsModel }]
           : []
     if (
       interval.startAt >= interval.endAt ||
@@ -74,7 +77,7 @@ const UsageReceiptSchema = Schema.Struct({
 })
 
 const verifiedUsage = (call: ReplayInferenceCall) => {
-  if (call.stage !== 'JEV') {
+  if (call.schemaVersion !== 'bayn.replay-inference-call.v4' && call.stage !== 'JEV') {
     const outcome = call.outcome
     const usage =
       outcome.status === 'RECEIVED'
@@ -135,7 +138,7 @@ export const calculateReplayInferenceCosts = (
     const tariff = Result.isSuccess(prepared)
       ? prepared.success.rates.find(
           ({ rate }) =>
-            rate.provider === (call.stage === 'JEV' ? 'typesafe' : 'openai') &&
+            rate.provider === (call.request.model === jevModel ? 'typesafe' : 'openai') &&
             rate.model === call.request.model &&
             rate.effectiveFrom <= call.simulatedStartedAt &&
             call.simulatedStartedAt < rate.effectiveUntil,

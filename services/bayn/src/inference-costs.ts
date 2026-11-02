@@ -13,7 +13,7 @@ import { JevOutcome } from './jev/evidence'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
 import { readSequentialInferenceCostEvidence } from './jev/sequential-inference-cost-evidence'
 import { JevFailure, jevModel } from './jev/contract'
-import { decisionsModel } from './jev/decisions'
+import { decisionsModel, DecisionsUsageSchema } from './jev/decisions'
 import {
   ChartCheckpointSchema,
   decodeChartCheckpointForSource,
@@ -219,8 +219,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       })
       const visual: Stage[] = visualStages.map((stage) => ({
         stage: stage.stage === 'CHART' ? InferenceStage.Chart : InferenceStage.BaseStart,
-        provider: 'openai',
-        model: decisionsModel,
+        provider: request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ? 'typesafe' : 'openai',
+        model: request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ? jevModel : decisionsModel,
         purpose: InferencePurpose.Entry,
         tariffAt: stage.tariffAt,
         recordedStartedAt: stage.recordedStartedAt,
@@ -234,8 +234,12 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
                     stage.usage,
                     stage.outcome === 'RECEIVED' ? InferenceUsageStatus.Received : InferenceUsageStatus.Rejected,
                   ),
-                  cachedInputTokens: BigInt(stage.usage.input_tokens_details.cached_tokens),
-                  cacheWriteInputTokens: BigInt(stage.usage.input_tokens_details.cache_write_tokens),
+                  cachedInputTokens: BigInt(
+                    'input_tokens_details' in stage.usage ? stage.usage.input_tokens_details.cached_tokens : 0,
+                  ),
+                  cacheWriteInputTokens: BigInt(
+                    'input_tokens_details' in stage.usage ? stage.usage.input_tokens_details.cache_write_tokens : 0,
+                  ),
                 },
         stageClaimHash: stage.claimHash,
         stageTerminalHash: stage.terminalHash,
@@ -362,17 +366,20 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
               : null
         chartStartedAt = disposition.status === 'VISUAL_FAILED' ? request.observedAt : disposition.visual.startedAt
         chartRecordedStartedAt = disposition.status === 'VISUAL_FAILED' ? undefined : disposition.visual.startedAt
-        if (metering !== null)
+        if (metering !== null) {
+          const decodedUsage = Schema.decodeUnknownResult(DecisionsUsageSchema)(metering)
+          if (Result.isFailure(decodedUsage)) return yield* failure('Retired chart usage does not reproduce')
           chartUsage = {
             ...usage(
-              metering,
+              decodedUsage.success,
               disposition.status === 'VISUAL_FAILED' || disposition.status === 'PREPARATION_FAILED'
                 ? InferenceUsageStatus.Rejected
                 : InferenceUsageStatus.Received,
             ),
-            cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
-            cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
+            cachedInputTokens: BigInt(decodedUsage.success.input_tokens_details.cached_tokens),
+            cacheWriteInputTokens: BigInt(decodedUsage.success.input_tokens_details.cache_write_tokens),
           }
+        }
       }
     }
     if (checkpoint !== undefined) {
@@ -392,8 +399,12 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
                 metering,
                 terminal?.outcome.status === 'RECEIVED' ? InferenceUsageStatus.Received : InferenceUsageStatus.Rejected,
               ),
-              cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
-              cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
+              cachedInputTokens: BigInt(
+                'input_tokens_details' in metering ? metering.input_tokens_details.cached_tokens : 0,
+              ),
+              cacheWriteInputTokens: BigInt(
+                'input_tokens_details' in metering ? metering.input_tokens_details.cache_write_tokens : 0,
+              ),
             }
       if (terminal?.outcome.status === 'RECEIVED') {
         chartStartedAt = terminal.outcome.inference.startedAt

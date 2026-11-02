@@ -290,14 +290,15 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       if (policy.costAllocationRuleHash !== (yield* canonicalHashV1Result(costAttributionRule)))
         return yield* invalid('Registration must freeze the executable service-period cost attribution rule')
       const { rates } = yield* prepareInferenceRateCard(policy.inferenceRateCard)
+      const jevOnly = registration.obligations.configuration.protocol.schemaVersion === 'bayn.jev.protocol.v37'
       const requiredModels =
         policy.policy === JevResearchPolicy.Candidate
           ? [
               { provider: 'typesafe', model: jevModel },
-              { provider: 'openai', model: decisionsModel },
+              ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
             ]
           : policy.policy === JevResearchPolicy.Ablation
-            ? [{ provider: 'openai', model: decisionsModel }]
+            ? [jevOnly ? { provider: 'typesafe', model: jevModel } : { provider: 'openai', model: decisionsModel }]
             : []
       const firstSession = registration.calendar.sessions[0]
       const lastSession = registration.calendar.sessions.at(-1)
