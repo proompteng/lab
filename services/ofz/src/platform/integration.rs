@@ -224,6 +224,7 @@ async fn access_requests(
     let list = p::ListPlatformAccessRequestsRequest {
         administrator: Some(administrator.clone()),
         workspace_id: workspace.clone(),
+        ..Default::default()
     };
     assert_eq!(
         requests::list(database, native, ADMIN, list.clone())
@@ -360,6 +361,100 @@ async fn access_requests(
             .requests
             .is_empty()
     );
+    let history_request = p::ListPlatformAccessRequestsRequest {
+        history: true,
+        ..list.clone()
+    };
+    let history = requests::list(database, native, ADMIN, history_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(history.requests.len(), 1);
+    assert_eq!(
+        history.requests[0].state,
+        p::PlatformAccessRequestState::Approved as i32
+    );
+    assert_eq!(history.requests[0].decision_reason, review.reason);
+    let direct = requests::list(
+        database,
+        native,
+        ADMIN,
+        p::ListPlatformAccessRequestsRequest {
+            request_id: create.operation_id.clone(),
+            ..list.clone()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(direct.requests.len(), 1);
+    assert_eq!(direct.requests[0].id, create.operation_id);
+    assert_eq!(
+        direct.requests[0].state,
+        p::PlatformAccessRequestState::Approved as i32
+    );
+    assert!(
+        requests::list(
+            database,
+            native,
+            ADMIN,
+            p::ListPlatformAccessRequestsRequest {
+                request_id: Uuid::new_v4().to_string(),
+                ..list.clone()
+            }
+        )
+        .await
+        .unwrap()
+        .requests
+        .is_empty()
+    );
+
+    // Equal timestamps exercise the UUID tie breaker rather than relying on clock precision.
+    connection.execute("INSERT INTO ofz.platform_access_requests(id,issuer_id,client_service,workspace_id,resource,actions,scope_hash,reason,state,decision_reason,created_at_ms,updated_at_ms) SELECT gen_random_uuid(),issuer_id,client_service,workspace_id,resource,actions,scope_hash,'fixture history page',state,decision_reason,created_at_ms,updated_at_ms FROM ofz.platform_access_requests CROSS JOIN generate_series(1,129) WHERE id=$1", &[&Uuid::parse_str(&create.operation_id).unwrap()]).await.unwrap();
+    let first = requests::list(database, native, ADMIN, history_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.requests.len(), 128);
+    assert!(!first.cursor.is_empty());
+    let second = requests::list(
+        database,
+        native,
+        ADMIN,
+        p::ListPlatformAccessRequestsRequest {
+            cursor: first.cursor.clone(),
+            ..history_request.clone()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(second.requests.len(), 2);
+    assert!(second.cursor.is_empty());
+    assert!(
+        second
+            .requests
+            .iter()
+            .all(|item| !first.requests.iter().any(|previous| previous.id == item.id))
+    );
+    assert_eq!(
+        requests::list(
+            database,
+            native,
+            ADMIN,
+            p::ListPlatformAccessRequestsRequest {
+                cursor: "invalid".into(),
+                ..history_request
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::InvalidArgument
+    );
+    connection
+        .execute(
+            "DELETE FROM ofz.platform_access_requests WHERE reason='fixture history page'",
+            &[],
+        )
+        .await
+        .unwrap();
     let cancel = p::CancelPlatformAccessRequestRequest {
         operation_id: Uuid::new_v4().to_string(),
         requester: Some(requester.clone()),
@@ -726,11 +821,49 @@ async fn workspace_administration(
             administrator: Some(sessions[2].clone()),
             workspace_id: workspace.clone(),
             cursor: String::new(),
+            ..Default::default()
         },
     )
     .await
     .unwrap();
     assert!(!activity.receipts.is_empty());
+    let filtered = workspaces::activity(
+        database,
+        native,
+        ADMIN,
+        p::ReadWorkspaceActivityRequest {
+            administrator: Some(sessions[2].clone()),
+            workspace_id: workspace.clone(),
+            action: "ofz.relationships.write".into(),
+            outcome: "allowed".into(),
+            actor_id: sessions[0].human_id.clone(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!filtered.receipts.is_empty());
+    assert!(filtered.receipts.iter().all(|receipt| receipt.allowed
+        && receipt.platform_action == "ofz.relationships.write"
+        && receipt.actor.as_ref().unwrap().identity
+            == Some(p::actor::Identity::HumanId(sessions[0].human_id.clone()))));
+    assert_eq!(
+        workspaces::activity(
+            database,
+            native,
+            ADMIN,
+            p::ReadWorkspaceActivityRequest {
+                administrator: Some(sessions[2].clone()),
+                workspace_id: workspace.clone(),
+                outcome: "invalid".into(),
+                ..Default::default()
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::InvalidArgument
+    );
     for receipt in &activity.receipts {
         let stored = connection
             .query_one(
@@ -760,7 +893,8 @@ async fn workspace_administration(
             p::ReadWorkspaceActivityRequest {
                 administrator: Some(sessions[2].clone()),
                 workspace_id: other.into(),
-                cursor: String::new()
+                cursor: String::new(),
+                ..Default::default()
             }
         )
         .await
