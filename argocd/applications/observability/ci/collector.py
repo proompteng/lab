@@ -17,6 +17,15 @@ import urllib.parse
 import urllib.request
 
 UTC = dt.timezone.utc
+NIX_CACHE_FIELDS = {
+    "attic_substitutions": "Attic substitutions",
+    "nixos_substitutions": "cache.nixos.org substitutions",
+    "local_builds": "Local derivation builds",
+    "attic_upload_successes": "Attic upload successes",
+    "attic_upload_failures": "Attic upload failures",
+    "attic_download_failures": "Attic download failures",
+    "nixos_download_failures": "cache.nixos.org download failures",
+}
 BUCKETS = (1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 14400)
 RUN_FIELDS = (
     "id",
@@ -90,6 +99,10 @@ METRICS = {
     "ci_job_oldest_queue_seconds": (
         "gauge",
         "Age of the oldest currently queued job in a cohort.",
+    ),
+    "ci_job_oldest_execution_seconds": (
+        "gauge",
+        "Age of the oldest currently running job in a cohort.",
     ),
     "ci_observability_pending_attempts": (
         "gauge",
@@ -259,16 +272,15 @@ def cache_evidence(log):
             "durations": dict(durations),
         }
     data = {}
-    for key, title in {
-        "attic_substitutions": "Attic substitutions",
-        "nixos_substitutions": "cache.nixos.org substitutions",
-        "local_builds": "Local derivation builds",
-    }.items():
+    for key, title in NIX_CACHE_FIELDS.items():
         values = re.findall(r"\| " + re.escape(title) + r" \| (\d+) \|", log)
         if values:
             if len(values[-1]) <= 10:
                 data[key] = int(values[-1])
-    if len(data) == 3:
+    if all(
+        key in data
+        for key in ("attic_substitutions", "nixos_substitutions", "local_builds")
+    ):
         return {
             "source": "nix_derivations",
             "state": "nix_builds" if data["local_builds"] else "nix_no_builds",
@@ -634,11 +646,9 @@ class Store:
                             )
                         ] += value
                 elif cache["source"] == "nix_derivations":
-                    for key in (
-                        "attic_substitutions",
-                        "nixos_substitutions",
-                        "local_builds",
-                    ):
+                    for key in NIX_CACHE_FIELDS:
+                        if key not in cache:
+                            continue
                         cache_counts[
                             (
                                 "ci_nix_cache_events",
@@ -957,6 +967,7 @@ class Collector:
                 self.store.discover(run, now)
         self.active_runs = active
         counts, oldest = collections.Counter(), collections.defaultdict(float)
+        running = collections.defaultdict(float)
         for run in active.values():
             workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
             run_attrs = {
@@ -988,6 +999,10 @@ class Collector:
                     oldest[encoded] = max(
                         oldest[encoded], now - timestamp(job["created_at"])
                     )
+                if state == "in_progress" and timestamp(job.get("started_at")):
+                    running[encoded] = max(
+                        running[encoded], now - timestamp(job["started_at"])
+                    )
         self.active_metrics = "".join(
             exposition(metric, value, json.loads(encoded))
             for (metric, encoded), value in counts.items()
@@ -999,6 +1014,10 @@ class Collector:
                 json.loads(encoded),
             )
             for encoded, value in oldest.items()
+        )
+        self.active_metrics += "".join(
+            exposition("ci_job_oldest_execution_seconds", value, json.loads(encoded))
+            for encoded, value in running.items()
         )
         today = dt.datetime.fromtimestamp(now, UTC).date()
         for run in self.api.runs(
