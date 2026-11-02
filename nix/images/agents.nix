@@ -312,6 +312,9 @@ let
     "services/agents/src/linear-mcp/contract.ts"
     "services/agents/src/runner"
     "services/agents/src/runner-result.ts"
+    "services/agents/src/runner-status.ts"
+    "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];
 
@@ -450,9 +453,17 @@ let
     "$out/usr/bin/env" --version >/dev/null
   '';
 
+  agentsShellIdentity = pkgs.runCommand "agents-shell-identity" { } ''
+    mkdir -p "$out/etc"
+    printf 'agents-shell:x:1000:1000:Agent Shell:/workspace/.agents-shell/home:/bin/bash\n' > "$out/etc/passwd"
+    printf 'agents-shell:x:1000:\n' > "$out/etc/group"
+  '';
+
   agentsShellContents = commonContents ++ [
+    agentsShellIdentity
     exact.talosctl
     exact.omnictl
+    pkgs.ipmitool
     agentsShellInterpreterCompat
     applyPatch
     pstackBundle

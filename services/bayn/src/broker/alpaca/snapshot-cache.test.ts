@@ -277,7 +277,13 @@ describe('durable broker observations', () => {
         const sql = (() =>
           Effect.sync(() => {
             queries += 1
-            return [{ state_hash: snapshotHash, snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)) }]
+            return [
+              {
+                state_hash: snapshotHash,
+                snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)),
+                observedAt: value.observedAt,
+              },
+            ]
           })) as unknown as PgClient.PgClient
         const store = makeBrokerObservationStore(
           sql,

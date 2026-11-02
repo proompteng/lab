@@ -32,8 +32,8 @@ const response = {
   answers: { enter: { type: 'noul' as const, noul: 0.7 } },
   usage: { input_tokens: 100, output_tokens: 0 },
 }
-const call = (): Extract<ReplayInferenceCall, { readonly stage: 'JEV' }> => ({
-  schemaVersion: 'bayn.replay-inference-call.v2',
+const call = (): ReplayInferenceCall & { readonly stage: 'JEV' } => ({
+  schemaVersion: 'bayn.replay-inference-call.v4',
   stage: 'JEV',
   request: request.request,
   requestHash: request.requestHash,
@@ -293,8 +293,8 @@ test.each(['CHART', 'BASE_START'] as const)(
     const retainedCall: ReplayInferenceCall = {
       ...call(),
       ...(stage === 'CHART'
-        ? { schemaVersion: 'bayn.replay-inference-call.v2' as const, stage: 'CHART' as const }
-        : { schemaVersion: 'bayn.replay-inference-call.v3' as const, stage: 'BASE_START' as const }),
+        ? { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'CHART' as const }
+        : { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'BASE_START' as const }),
       request: prepared.request,
       requestHash: inference.requestHash,
       outcome: { status: 'RECEIVED', inference },
@@ -303,8 +303,8 @@ test.each(['CHART', 'BASE_START'] as const)(
       {
         ...retainedCall,
         ...(stage === 'CHART'
-          ? { schemaVersion: 'bayn.replay-inference-call.v3' as const, stage: 'BASE_START' as const }
-          : { schemaVersion: 'bayn.replay-inference-call.v2' as const, stage: 'CHART' as const }),
+          ? { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'BASE_START' as const }
+          : { schemaVersion: 'bayn.replay-inference-call.v4' as const, stage: 'CHART' as const }),
       },
     ])
     expect(Result.isFailure(validateReplayInferenceRecording(relabeled, hash(relabeled)))).toBe(true)
@@ -316,9 +316,9 @@ test.each(['CHART', 'BASE_START'] as const)(
         const timing = yield* makeReplayInferenceTiming({
           providers: {
             ...f.providers,
-            chart: {
+            jev: {
               evaluate: (raw, budget) =>
-                Deferred.succeed(started, undefined).pipe(Effect.andThen(f.providers.chart.evaluate(raw, budget))),
+                Deferred.succeed(started, undefined).pipe(Effect.andThen(f.providers.jev.evaluate(raw, budget))),
             },
           },
           budget: makeReplayInferenceBudget(1),
@@ -332,9 +332,7 @@ test.each(['CHART', 'BASE_START'] as const)(
               recorded.push(value)
             }),
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
-        const evaluated = yield* timing
-          .run(timing.clients.chart.evaluate(prepared.request, 1000))
-          .pipe(Effect.forkChild)
+        const evaluated = yield* timing.run(timing.clients.jev.evaluate(prepared.request, 1000)).pipe(Effect.forkChild)
         yield* Deferred.await(started)
         yield* f.providerClock.adjust(50)
         const result = yield* Fiber.join(evaluated)

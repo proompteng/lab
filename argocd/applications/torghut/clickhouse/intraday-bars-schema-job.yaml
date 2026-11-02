@@ -50,6 +50,32 @@ spec:
               "${client[@]}" --multiquery --query "
                 CREATE DATABASE IF NOT EXISTS signal ON CLUSTER default;
 
+                CREATE TABLE IF NOT EXISTS signal.webull_market_events_v1 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  feed LowCardinality(String),
+                  capture_id UUID,
+                  channel LowCardinality(String),
+                  received_at DateTime64(9, 'UTC'),
+                  archived_at DateTime64(9, 'UTC') DEFAULT now64(9),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  payload_sha256 FixedString(64),
+                  symbols Array(String),
+                  source_times Array(String),
+                  validation_status LowCardinality(String),
+                  validation_error LowCardinality(String),
+                  capture String CODEC(ZSTD(3))
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_webull_market_events_v1',
+                  '{replica}'
+                )
+                PARTITION BY toYYYYMM(received_at)
+                ORDER BY (source_topic, source_partition, source_offset)
+                TTL toDateTime(received_at) + INTERVAL 30 DAY DELETE;
+
                 CREATE TABLE IF NOT EXISTS signal.crypto_market_features_v1 ON CLUSTER default
                 (
                   feature_id FixedString(64),
