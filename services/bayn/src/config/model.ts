@@ -21,7 +21,6 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 
 export interface RuntimeConfig {
   readonly jevKey?: Redacted.Redacted<string> | undefined
-  readonly openAiKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -78,7 +77,6 @@ export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelec
 
 export interface ParsedRuntimeConfig {
   readonly jevKey?: Redacted.Redacted<string> | undefined
-  readonly openAiKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined

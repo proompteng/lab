@@ -1,9 +1,9 @@
+import { entryProviderFixture } from './entry-inference.test-support'
 import { expect, test } from 'bun:test'
 import { Effect, Exit, Layer, Logger, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { operationalError } from '../errors'
 import { JevClient } from './client'
-import { DecisionsClient, type DecisionsError } from './decisions'
 import {
   EntryInferenceJournal,
   EntrySourceFeasibilityReason,
@@ -92,25 +92,25 @@ test.each([
     fixture: entryEvaluationRequestFixture,
     feasible: true,
     reason: EntrySourceFeasibilityReason.Feasible,
-    requestHash: 'b6188bbdb158b08d553c5bef2903b7420278e08b2dadd7aed94f5bb1c86182e6',
-    claimHash: '1a8d6e3a0a55dfa33b12488df0346c0f35f2e1328675e4e1107170175fe09dcb',
+    requestHash: '61550e4d90b8e028f0328faa79906392d1c0b7316b4265ea75a4370cceb2f793',
+    claimHash: 'c282d8c7152987bb100de0cbc984dd6fac7275bb664d0e17bf24481506a6836d',
   },
   {
     fixture: noQuantityRequest,
     feasible: false,
     reason: EntrySourceFeasibilityReason.NoExecutableQuantity,
-    requestHash: '9985d975030c45ef7644f47661bcf84cf9504379be82a38ec5ee62ae8474d870',
+    requestHash: '1e662df92b8b3c5fd0ce3539e9b6d762a8d9bae9cb27056fc6d708e4ff6195a0',
     claimHash: null,
   },
   {
     fixture: quietCryptoRequest,
     feasible: false,
     reason: EntrySourceFeasibilityReason.NoFundedSourceStructure,
-    requestHash: 'bceb7e8aee80eb1098ba113580dcf5aeaca6a8167dd07a4de013314b6cb1a397',
+    requestHash: '51dbdf7d92723006ac65faf481f2bca765035af9bfbe00f0980b0d3e7c55618e',
     claimHash: null,
   },
 ])(
-  'pins current v36 feasibility and identity oracles for $reason',
+  'pins current v37 feasibility and identity oracles for $reason',
   ({ fixture, feasible, reason, requestHash, claimHash }) => {
     const request = fixture()
     const prepared = prepare(request)
@@ -144,7 +144,7 @@ test('feasibility diagnostic preserves invalid economics as failure rather than 
 
 test.each(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE'] as const)(
   'projects only the closed visual failure category %s',
-  async (category: DecisionsError['category']) => {
+  async (category: NonNullable<EntryHandoff['disposition'] & { status: 'VISUAL_FAILED' }>['failure']['category']) => {
     const request = entryEvaluationRequestFixture()
     const handoff: EntryHandoff = {
       ...entryCompletionFixture(request).handoff,
@@ -190,7 +190,7 @@ test('projects authentic ready and unfunded derivations without provider or fina
   const request = entryEvaluationRequestFixture()
   const ready = entryCompletionFixture(request).handoff
   expect(ready.disposition.status).toBe('READY')
-  expect(ready.handoffHash).toBe('cfffd396c57e72ac3ae35a3c4ff224340a7682a093ecda7c503aee5e2438d71a')
+  expect(ready.handoffHash).toBe('2d147d929d22967679165be04c371c08e9d141606c439ab6b8904db30fa3ff29')
   const diagnostic = entryHandoffDiagnostic(request.cycleId, ready, prepare(request).sourceFeasibility)
   expect(diagnostic.disposition).toBe('READY')
   expect(diagnostic.proposalCount).toBeGreaterThan(0)
@@ -281,8 +281,14 @@ const runSourceInfeasible = async (
           return transitions.map(() => ({ requestId: request.requestId, dispatchAllowed: mode !== 'replay' }))
         }),
     }),
-    Layer.succeed(DecisionsClient, { evaluate: () => Effect.die('Unexpected paid visual call') }),
-    Layer.succeed(JevClient, { evaluate: () => Effect.die('Unexpected paid judgment call') }),
+
+    Layer.succeed(
+      JevClient,
+      entryProviderFixture(
+        { evaluate: () => Effect.die('Unexpected paid judgment call') },
+        { evaluate: () => Effect.die('Unexpected paid visual call') },
+      ),
+    ),
     Layer.succeed(JevEvaluationStore, {
       read: () => Effect.die('Unexpected read'),
       abandon: () => Effect.die('Unexpected abandon'),

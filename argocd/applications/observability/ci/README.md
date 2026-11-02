@@ -75,6 +75,15 @@ produce explicit `unknown` evidence. Timings and outcomes remain collectible whe
 Signed-log HTTP errors, timeouts and rate-limit backoff are optional-evidence failures. They increment the cache
 error counter and preserve job timings rather than blocking collection.
 
+Nix summaries also export Attic upload outcomes and exhausted Attic/public-cache download failures. Historical records
+without those fields retain unknown outcomes; they do not become successful zero-error uploads. The shared image workflow
+uploads the completed derivation's build outputs and dependencies, including build-time paths, after main-branch publication.
+The Nix panel displays these outcomes beside substitution attempts. These are log-derived events, not byte hit rates.
+
+The existing Alloy collector probes Attic's internal cache metadata endpoint every thirty seconds and forwards probe
+availability, latency, and HTTP status to Mimir. It ships the Attic application container's logs to Loki with namespace,
+pod, container, and service labels. Routine informational SQL statements are dropped; warnings and errors remain visible.
+
 Rolling p50/p95 and sample counts use actual completion times. `1h` covers the latest hour; `7d_baseline` covers the
 preceding seven days, excluding that hour. These gauges provide an immediate baseline during backfill. They are the single timing export. Detailed phase,
 BuildKit and workflow histograms are not exported because their label combinations exhausted the shared Mimir
@@ -97,6 +106,11 @@ and ten baseline samples, then a median above 1.5 times baseline plus 60 seconds
 outlier cannot move a five-sample median enough to create that condition on its own.
 The initial historical scan and backfill must complete before duration alerts can fire. Loki outbox delivery
 continues when GitHub polling fails; GitHub collection continues during a Loki outage.
+
+Independent alerts cover failed or missing Attic probes, unsuccessful build-cache uploads, and exhausted cache download
+retries. `CiBuildStalled` alerts when one active push image build exceeds twenty minutes for two minutes, without requiring
+baseline samples. All use the existing email route. Completed cache errors remain visible for the one-hour event window;
+active build ages disappear on completion. Stale GitHub polling cannot trigger build/cache-event alerts.
 
 Queue alerts select image build jobs and aggregate by namespace, runner pool and architecture. Workflow and job-family
 changes do not create new alert identities. The first alert still requires a queue over ten minutes for five minutes

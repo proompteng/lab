@@ -1,5 +1,23 @@
 # Exception tracking
 
+## Jev-only inference
+
+Protocol v37 moves CHART and conditional BASE_START to pinned Jev 1.13 image assets. The final proposal judgments
+also use Jev, with one TypeSafe client and credential. Image support is experimental upstream. Verified bars,
+source hashes, durable stage admissions, the original ten-second deadline, prices, dated fees and all risk limits
+remain enforced. Migration 172 requires the existing terminal, flat, settled and freshly reconciled cutover boundary.
+It preserves original provider receipts, late costs, authority generations and all financial history. Historical
+OpenAI codecs and tariffs remain read-only; its transport, key wiring, ExternalSecret and proxy host are removed.
+
+The sealed v37 request binds the same sandbox account, unchanged risk policy and unchanged activation limits to the
+first published immutable v37 image. Kargo carries that authored request into subsequent build lineages. Native
+activation appends a successor authority generation and preserves accounting, loss, turnover and equity-peak history.
+The read-only bootstrap remains the starting configuration for verified native PAPER activation.
+
+Protocol cutovers use OBSERVE bootstrap while the previous mandate is incompatible. Completion requires restored
+PAPER authority, unchanged limits and natural successful Jev-only native receipts. A source merge or OBSERVE rollout
+alone does not complete delivery. Reliability remains 99.9%, with zero safety violations.
+
 ## Dated fees and statistical claims
 
 Protocol v36 binds the effective-dated TAF model and retains native PAPER activation through a matching sealed
@@ -320,9 +338,9 @@ fields. Let Rook provision its native claim and Bayn follow normal Kargo promoti
 operation to succeed. Report any pre-existing Ceph deep-scrub health warning separately. Preserve all retained storage
 and credentials during recovery, and keep the expanded database size during a code rollback.
 
-## Jev protocol activation
+## Historical Jev protocol activation
 
-The replacement implementation uses `bayn.jev.protocol.v26`, `bayn.chart-first-entry.behavior.v1`, entry state v22,
+The historical v26 implementation used `bayn.jev.protocol.v26`, `bayn.chart-first-entry.behavior.v1`, entry state v22,
 batch v7 and pinned `jev-1.13.0`, retaining the 15-minute holding limit. OpenAI Decisions API judgments identify chart
 structure and source anchors. Code funds source-anchored recovery and breakout proposals, commits the exact dependent
 Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
@@ -412,9 +430,9 @@ and fresh flat/exact reconciliation before replacing the account-keyed controlle
 reviewed published source and image into all runtime activation lineages. Retained evidence remains immutable.
 Rollback requires a reviewed source/mandate pair and fresh flat/exact preflight; never rewrite evidence or reset turnover.
 
-The execution worker receives `BAYN_JEV_API_KEY` from `bayn-jev-auth` and `BAYN_OPENAI_API_KEY` from `bayn-openai-auth`.
+The execution and research workers receive only `BAYN_JEV_API_KEY` from `bayn-jev-auth` for inference.
 Both inference clients use the scoped HTTP CONNECT client through the existing egress proxy. Its allowlist contains
-the three exact Alpaca API hosts, `api.typesafe.ai` and `api.openai.com`; direct external worker access remains unavailable. A missing
+the three exact Alpaca API hosts, `api.typesafe.ai`; direct external worker access remains unavailable. A missing
 credential or unavailable provider blocks new entries while deterministic position-reducing management remains active.
 The public status service and activation hook do not receive the model credential.
 

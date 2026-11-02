@@ -20,9 +20,7 @@ const workflow = parseDocument(readFileSync(join(repoRoot, '.github/workflows/ni
 const steps = workflow.getIn(['jobs', 'build-platform', 'steps'])
 const environment = workflow.getIn(['jobs', 'build-platform', 'env'])
 if (!isSeq(steps) || !isMap(environment)) throw new Error('Missing native image build job')
-const warmStep = steps.items.find(
-  (step) => isMap(step) && step.get('name') === 'Warm Nix image archive output in Attic',
-)
+const warmStep = steps.items.find((step) => isMap(step) && step.get('name') === 'Warm Nix build outputs in Attic')
 const warmScript = isMap(warmStep) ? warmStep.get('run') : undefined
 if (typeof warmScript !== 'string') throw new Error('Missing image cache upload command')
 const stepEnvironment = isMap(warmStep) ? warmStep.get('env') : undefined
@@ -114,18 +112,25 @@ ln -s "$NIX_TEST_ARCHIVE" "$out_link"
   }
 })
 
-it.each([0, 17, 'stall'])('bounds a multi-GiB archive upload and records Attic result %s', (uploadStatus) => {
+it.each([0, 17, 'stall', 'query-error'])('bounds a build-cache upload and records Attic result %s', (uploadStatus) => {
   const dir = mkdtempSync(join(tmpdir(), 'nix-image-cache-'))
   try {
     const bin = join(dir, 'bin')
     const logs = join(dir, 'logs')
     const archive = join(dir, 'image.tar.gz')
+    const compiled = join(dir, 'compiled-service')
     const pushed = join(dir, 'pushed.txt')
     mkdirSync(bin)
     mkdirSync(logs)
     writeFileSync(archive, '')
     truncateSync(archive, 3 * 1024 ** 3)
-    writeFileSync(join(logs, 'image-paths-amd64.txt'), `${archive}\n`)
+    writeFileSync(compiled, 'reusable compiled service')
+    writeFileSync(join(bin, 'nix'), '#!/usr/bin/env bash\nprintf "%s\\n" "$NIX_TEST_DERIVATION"\n', { mode: 0o755 })
+    writeFileSync(
+      join(bin, 'nix-store'),
+      '#!/usr/bin/env bash\nif [[ "$ATTIC_TEST_STATUS" == query-error ]]; then exit 42; fi\nprintf "%s\\n" "$NIX_TEST_CLOSURE"\n',
+      { mode: 0o755 },
+    )
     writeFileSync(
       join(bin, 'attic'),
       '#!/usr/bin/env bash\nif [[ "$1" == login ]]; then exit 0; fi\nprintf "%s\\n" "$@" > "$ATTIC_TEST_PUSHED"\nif [[ "$ATTIC_TEST_STATUS" == stall ]]; then sleep 10; fi\nexit "$ATTIC_TEST_STATUS"\n',
@@ -142,23 +147,59 @@ it.each([0, 17, 'stall'])('bounds a multi-GiB archive upload and records Attic r
         ATTIC_TOKEN: 'test-token',
         ATTIC_TEST_PUSHED: pushed,
         ATTIC_TEST_STATUS: String(uploadStatus),
+        PACKAGE_ATTR: 'fixture-image',
+        NIX_TEST_DERIVATION: `${compiled}.drv`,
+        NIX_TEST_CLOSURE: `${compiled}.drv\n${compiled}\n${archive}`,
         NIX_OCI_LOG_DIR: logs,
       },
       timeout: 10_000,
     })
     expect(result.exitCode).toBe(0)
     expect(readFileSync(join(logs, 'image-cache-push-status-amd64.txt'), 'utf8')).toBe(
-      uploadStatus === 0 ? 'succeeded\t0\n' : `failed\t${uploadStatus === 'stall' ? 124 : uploadStatus}\n`,
+      uploadStatus === 0
+        ? 'succeeded\t0\n'
+        : `failed\t${uploadStatus === 'stall' ? 124 : uploadStatus === 'query-error' ? 42 : uploadStatus}\n`,
     )
+    if (uploadStatus === 'query-error') {
+      expect(existsSync(pushed)).toBe(false)
+      return
+    }
     expect(readFileSync(pushed, 'utf8').split('\n')).toEqual([
       'push',
       '--jobs',
       '1',
       '--no-closure',
       'lab-ci:lab',
+      compiled,
       archive,
       '',
     ])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('reports exhausted cache downloads and unsuccessful uploads in the Nix summary', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nix-cache-summary-'))
+  try {
+    writeFileSync(
+      join(dir, 'build-image-arm64.log'),
+      [
+        "warning: unable to download 'https://cache.nixos.org/nar/temporary.nar': HTTP error 503; retrying",
+        "error: unable to download 'https://cache.nixos.org/nar/final.nar': HTTP error 200 (curl error: Failure when receiving data from the peer)",
+        "error: unable to download 'http://attic.attic.svc.cluster.local/lab/nar/final.nar': HTTP error 503",
+      ].join('\n'),
+    )
+    writeFileSync(join(dir, 'image-cache-push-status-arm64.txt'), 'failed\t124\n')
+    const result = Bun.spawnSync(['bash', 'nix/ci-nix-oci-summary.sh'], {
+      cwd: repoRoot,
+      env: { ...process.env, NIX_OCI_LOG_DIR: dir, GITHUB_STEP_SUMMARY: '' },
+    })
+    expect(result.exitCode).toBe(0)
+    for (const row of ['Attic upload failures', 'Attic download failures', 'cache.nixos.org download failures']) {
+      expect(result.stdout.toString()).toContain(`| ${row} | 1 |`)
+    }
+    expect(result.stdout.toString()).toContain('| Attic upload successes | 0 |')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

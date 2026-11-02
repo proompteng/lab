@@ -26,6 +26,12 @@ choice. The public sources above do not establish that those products use VNC, W
 owner-bound preview grant for the reserved browser port `13339`. Generic workspace previews cannot select that
 port. The grant bootstraps a cookie on its isolated preview origin. Chrome renders noVNC in an iframe on that origin.
 
+Chromium renders at a fixed 2× device scale. The desktop gives its iframe twice the visible width and height, then
+scales the iframe down by half. noVNC resizes the guest to that physical resolution through its normal resize API;
+browser input coordinates follow the iframe transform. This keeps the toolbar and pages at their normal visible
+size while supplying Retina detail. Viewer controls use the same 2× scale. Agent screenshots and input coordinates
+remain in physical guest pixels. Displays above 2× use this same bounded resolution.
+
 Chrome and Code bind their preview origin to the login session, workspace, runtime epoch, desktop and window.
 Their cookies and SQL leases last at most 30 minutes. The desktop renews halfway through the confirmed lease,
 using a new authenticated launch ticket and the same origin. A hidden bootstrap frame replaces the HttpOnly cookie;

@@ -9,7 +9,6 @@ import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
-import { DecisionsClient, DecisionsClientLive, DecisionsError } from '../jev/decisions'
 import { JevClient, JevClientLive, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
 import { JevHttpClientLive } from '../jev/http'
@@ -217,32 +216,6 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
-    plan.config.openAiKey === undefined
-      ? Layer.succeed(DecisionsClient, {
-          evaluate: () =>
-            Effect.fail(
-              new DecisionsError({
-                category: 'REQUEST',
-                message: 'Entry inference requires the configured OpenAI Decisions credential',
-              }),
-            ),
-        })
-      : DecisionsClientLive(plan.config.openAiKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
-          Layer.provide(JevHttpClientLive(plan.config.alpaca.proxyUrl)),
-          Layer.catch((cause) =>
-            Layer.effect(
-              DecisionsClient,
-              Effect.fail(
-                operationalError({
-                  component: 'config',
-                  operation: 'decisions-client',
-                  message: 'OpenAI inference configuration is invalid',
-                  cause,
-                }),
-              ),
-            ),
-          ),
-        ),
     plan.config.jevKey === undefined
       ? Layer.succeed(JevClient, {
           evaluate: () =>

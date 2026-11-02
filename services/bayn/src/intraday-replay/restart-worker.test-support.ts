@@ -1,5 +1,4 @@
-import { DecisionsClient } from '../jev/decisions'
-import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
 import { makeReplayCheckpointStore } from './checkpoint-store.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
@@ -194,13 +193,15 @@ const main = Effect.scoped(
         { flag: 'wx' },
       )
     }).pipe(
-      Effect.provideService(DecisionsClient, chartProviderFixture),
-      Effect.provideService(JevClient, {
-        evaluate: (request) =>
-          Clock.currentTimeMillis.pipe(
-            Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
-          ),
-      }),
+      Effect.provideService(
+        JevClient,
+        entryProviderFixture({
+          evaluate: (request) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
+            ),
+        }),
+      ),
       Effect.provide(Layer.mergeAll(stores, TestClock.layer())),
     )
   }),
