@@ -58,17 +58,47 @@ its own service account, SPIFFE identity, confidential OIDC client and host-only
 Relay executor, database, HMAC or guest credential. The issuer can reuse existing verified passkey SSO across clients;
 Ofz keeps their session authority separate. Step-up returns to the same local page.
 
-The portal's workspace selector controls the visible context. Ofz separately checks the administrator's current role
-for every resource, person, client and activity request. People & access manages workspace membership and prevents
-removing the last active administrator. Integrations enrolls clients and grants named resource operations to workspace
-members, individual people or registered clients. Activity shows changes, execution outcomes and denied access;
-receipt IDs stay inside details. Access changes require a reason and contextual fresh verification. Unconfirmed changes
-retain their exact operation in per-person, per-workspace browser storage until reconciled.
+The administration console has addressable Overview, People & access, Integrations, Resource access, Connections,
+Access requests, Activity and Settings pages under `/workspaces/<id>/<section>`. The responsive shadcn sidebar and
+workspace switcher preserve the selected area while resetting workspace-specific query state. Search, filters,
+collection pages and detail selections use URL state; reads are cancelled or superseded on context changes.
+Ofz separately checks current authority on every request. The initial directory and workspace reads run concurrently
+on the server, and heavy panels load only when selected.
+
+Membership uses admitted GitHub identities, not email invitations, and preserves the last-active-administrator
+invariant. Registered clients can be enrolled or disabled; enrollment is not a health check or a resource grant.
+Resource grants cover named operations for members, individual people and clients. The editor shows direct grants,
+not an unsupported effective-access calculation. Provider connections record consent and never add permissions.
+Destructive changes require confirmation, and access changes require reasons and contextual fresh verification.
+Unconfirmed changes retain their original operation ID and exact payload across reload and authentication; a
+permission failure does not discard an uncertain operation. Renewed sessions can reconcile the original Ofz intent.
+
+Access requests have a bounded pending queue, cursor-paginated decided history and workspace-scoped detail lookup.
+Activity filters exact action, actor and allowed/denied outcome **before** the 100-receipt cursor page. Successful
+administration reads are excluded. Receipt IDs and technical fields stay inside details; historical serialized
+command receipts render only known resource/grant fields, never an arbitrary request dump.
+Administration workspace names, registered identities, resource ceilings and provider destinations remain reviewed
+Ofz registry configuration, not editable VM or global-policy controls. See the
+[capability matrix and acceptance evidence](../../docs/platform/admin-portal-acceptance.md).
+
+Run the real Chromium/axe platform fixture separately from the Tengri Playwright test directory:
+
+```sh
+node .github/scripts/install-tengri-chromium.mjs
+PLATFORM_UI_SCREENSHOT_DIR=/tmp/admin-portal-screenshots bun run --cwd apps/landing test:admin
+```
+
+`test:admin` also runs the isolated admin/provider BFF contract tests. The PR landing gate invokes it and uploads
+synthetic screenshots. `PLATFORM_UI_CHROMIUM` optionally selects an already-installed compatible Chromium executable.
+Fixture proof does not replace `bash services/ofz/test-control.sh platform`, policy qualification or authorized live
+portal acceptance. No production account, grant, provider consent or credential needs to be changed to run these tests.
 
 Settings → Privacy & Security contains personal workspace sharing, scoped diagnostics, ownership transfer and passkey
 management. `/access` opens the administration portal. Product policy/quota/global-audit editors and their replaced
 handlers are removed. Settings → Connections records consent to already-approved resource access; it never grants
 permissions. Forms use the shared design components, and dropdowns use `components/platform/settings-select.tsx`.
+Kubernetes resources use readable service names with their exact namespace and purpose, including **Ofz infrastructure**
+and **OpenCode infrastructure**. Their listed actions remain the authority for what access is being requested.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
@@ -125,6 +155,11 @@ loads behind a message-shaped skeleton instead of flashing the empty-conversatio
 reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs or its submission is pending. Late thread creation and send replies
 cannot replace the selected conversation or its draft; Stop remains bound to the selected conversation's run.
+Active-run recovery filters the authoritative claims by the selected conversation before reading snapshots. An unreadable
+unrelated run cannot block that conversation. Initial discovery can recover a running conversation in a new browser,
+but a new submission takes precedence over a delayed discovery response. New drafts do not wait for unrelated status.
+Navigation cancels outstanding status reads through the BFF and gRPC transport. A known nonterminal task remains
+stoppable while status or history observation is unavailable; cancellation still waits for confirmed cleanup.
 Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
@@ -307,10 +342,9 @@ Resolved approvals and answers stay retired for the open workspace, including ac
 run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
 navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
-Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
-stay out of these activity labels. Brief event-stream or run-status interruptions retry quietly. A connection warning
-appears after three seconds of continuous interruption and clears after recovery. Authentication and permission
-failures keep their original errors. A follow-up confirmed undispatched because its previous turn finished waits for
+Brief event-stream interruptions retry quietly. A connection warning appears after three seconds of continuous
+interruption and clears after recovery. Authentication and permission failures keep their original errors.
+A follow-up confirmed undispatched because its previous turn finished waits for
 that exact run's terminal state, then submits the message once with a fresh operation identity. Uncertain dispatches
 retain their original identity. An approval confirmed undispatched after its exact run finishes is removed without
 approving another turn.
@@ -390,3 +424,10 @@ refetching; reopening an existing file preserves tab order. A failed inline imag
 Desktop preview startup and lease renewal keep retrying transient network, timeout, rate-limit and server failures,
 with a maximum 30-second backoff. Authentication and authorization failures stop retries. The Chrome display
 reconnects its own transport without reloading the retained browser document.
+
+## Runtime image cache
+
+The standalone Next server resolves inside the immutable Nix runtime. Its packaged `.next/cache` is a symlink to
+`/var/cache/proompteng`, where both the desktop and administration deployments mount a bounded writable cache volume.
+The root filesystem stays read-only. Image publication verifies the cache link at the actual standalone server path
+inside the built archive; rollout verification also checks writes through that resolved path in the deployed container.

@@ -103,7 +103,24 @@ let catalogRequestStarted: (() => void) | null = null
 let catalogRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
+let codexRunReadStarted: (() => void) | null = null
+let codexRunReadCancelled: (() => void) | null = null
 let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
+
+function waitForCodexRunReadCancellation(
+  call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+  callback: grpc.sendUnaryData<Record<string, unknown>>,
+) {
+  codexRunReadStarted?.()
+  const timer = setTimeout(
+    () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'test run read was not cancelled'), null),
+    2_000,
+  )
+  call.on('cancelled', () => {
+    clearTimeout(timer)
+    codexRunReadCancelled?.()
+  })
+}
 
 beforeAll(async () => {
   fixture = await createSpiffeFixture()
@@ -495,6 +512,10 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.id === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -515,6 +536,10 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.agentId === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -803,8 +828,25 @@ describe('Tengri gRPC BFF transport', () => {
         state: { phase: 'running', turnId: 'turn-selected' },
       },
     ])
-    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: '' })
     expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
+  })
+  test('carries the selected conversation in the signed active-run request', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    const runs = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.threadId).toBe('thread-selected')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
+    expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+    expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
+  })
+  test('rejects an out-of-scope active-run response instead of treating the selected conversation as idle', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await rejection(getActiveCodexRuns(identity, 'agent-test', 'thread-another'))).toMatchObject({
+      message: 'Invalid active run scope',
+      status: 503,
+    })
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
@@ -1713,6 +1755,41 @@ describe('Tengri gRPC BFF transport', () => {
     ])
     codexAccountRequestStarted = null
     codexAccountRequestCancelled = null
+  })
+
+  test.each(['active runs', 'run status'] as const)('cancels %s gRPC when the browser request aborts', async (kind) => {
+    const { getActiveCodexRuns, getCodexRun } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      codexRunReadStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      codexRunReadCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = (
+      kind === 'active runs'
+        ? getActiveCodexRuns(identity, 'codex-run-read-cancel', 'thread-selected', controller.signal)
+        : getCodexRun(identity, 'codex-run-read-cancel', '11111111-1111-4111-8111-111111111111', controller.signal)
+    ).catch((error: unknown) => error)
+    try {
+      await started
+      controller.abort()
+      expect(
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Run read cancellation timed out')), 500),
+          ),
+        ]),
+      ).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+      await Promise.race([
+        cancelled,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Run read gRPC was not cancelled')), 500)),
+      ])
+    } finally {
+      codexRunReadStarted = null
+      codexRunReadCancelled = null
+    }
   })
 
   test('cancels the model catalog gRPC when the browser request aborts', async () => {

@@ -1,3 +1,4 @@
+import { entryProviderFixture } from './entry-inference.test-support'
 import { defaultJevProtocolDocument } from './protocol'
 import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
@@ -303,8 +304,9 @@ describe('Jev entry execution quote eligibility', () => {
           recordAll: () => unused,
           abandon: () => unused,
         }),
-        Effect.provideService(JevClient, { evaluate: () => unused }),
         Effect.provide(entryInferenceFixtureLayer),
+        Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => unused })),
+
         Effect.provide(TestClock.layer()),
       ),
     )
