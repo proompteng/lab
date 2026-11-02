@@ -2,7 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevFailure, jevModel, JevResponseSchema } from '../jev/contract'
-import { validDecisionsUsage } from '../jev/decisions'
+import { decisionsModel, validDecisionsUsage } from '../jev/decisions'
+import type { JevProtocolMaterial } from '../jev/protocol'
 import {
   InferenceCostError,
   type InferenceRateCardSchema,
@@ -19,13 +20,20 @@ export const registeredReplayInferenceTariff = (
   rateCard: unknown,
   interval: { readonly startAt: string; readonly endAt: string },
   policy: JevResearchPolicy,
+  protocol: Pick<JevProtocolMaterial, 'entrySignalPolicy'>,
 ) =>
   Result.gen(function* () {
     const { rates } = yield* prepareInferenceRateCard(rateCard)
+    const jevOnly = protocol.entrySignalPolicy === 'jev-only'
     const requiredModels =
-      policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation
-        ? [{ provider: 'typesafe', model: jevModel }]
-        : []
+      policy === JevResearchPolicy.Candidate
+        ? [
+            { provider: 'typesafe', model: jevModel },
+            ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
+          ]
+        : policy === JevResearchPolicy.Ablation
+          ? [jevOnly ? { provider: 'typesafe', model: jevModel } : { provider: 'openai', model: decisionsModel }]
+          : []
     if (
       interval.startAt >= interval.endAt ||
       requiredModels.some(

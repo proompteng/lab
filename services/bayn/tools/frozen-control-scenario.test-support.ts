@@ -82,6 +82,7 @@ if (mode === 'prepare') {
         prepared.definition.inferenceRateCard,
         { startAt: first.openAt, endAt: last.closeAt },
         JevResearchPolicy.Deployed,
+        prepared.stress.registration.obligations.configuration.protocol,
       ),
     ),
     sessions: policy.sessions.map((session) => ({ ...session.operatingCosts, trading: null })),

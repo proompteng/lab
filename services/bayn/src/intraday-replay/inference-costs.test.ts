@@ -1,10 +1,11 @@
+import { defaultJevProtocolDocument, RetainedJevProtocolV36Schema } from '../jev/protocol'
 import {
   chartInferenceFixture as retainedInference,
   entryEvaluationRequestFixture as retainedRequest,
 } from '../jev/conditional-entry.test-support'
 import { makeRetainedConditionalChartDecisionsRequest } from '../jev/retained-conditional-chart-questions'
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
@@ -24,13 +25,18 @@ import { stageResponseIdentity } from '../jev/staged-checkpoint'
 test('registered replay tariffs require Jev for current inference and retain historical rates for the whole window without overlapping or substituted rates', () => {
   const card = { ...costs, rates: costs.rates.filter((rate) => rate.provider === 'typesafe') }
   const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
-  expect(Result.getOrThrow(registeredReplayInferenceTariff(card, interval, JevResearchPolicy.Candidate))).toEqual(card)
+  expect(
+    Result.getOrThrow(
+      registeredReplayInferenceTariff(card, interval, JevResearchPolicy.Candidate, defaultJevProtocolDocument),
+    ),
+  ).toEqual(card)
   expect(
     Result.getOrThrow(
       registeredReplayInferenceTariff(
         { ...card, rates: [...card.rates].reverse() },
         interval,
         JevResearchPolicy.Candidate,
+        defaultJevProtocolDocument,
       ),
     ),
   ).toEqual(card)
@@ -42,10 +48,19 @@ test('registered replay tariffs require Jev for current inference and retain his
     { ...card, rates: card.rates.map((rate) => ({ ...rate, effectiveFrom: '2026-11-02T14:30:00.001Z' })) },
     { ...card, rates: card.rates.map((rate) => ({ ...rate, model: 'different-model' })) },
   ])
-    expect(Result.isFailure(registeredReplayInferenceTariff(changed, interval, JevResearchPolicy.Candidate))).toBe(true)
+    expect(
+      Result.isFailure(
+        registeredReplayInferenceTariff(changed, interval, JevResearchPolicy.Candidate, defaultJevProtocolDocument),
+      ),
+    ).toBe(true)
   expect(
     Result.isFailure(
-      registeredReplayInferenceTariff(card, { ...interval, endAt: interval.startAt }, JevResearchPolicy.Candidate),
+      registeredReplayInferenceTariff(
+        card,
+        { ...interval, endAt: interval.startAt },
+        JevResearchPolicy.Candidate,
+        defaultJevProtocolDocument,
+      ),
     ),
   ).toBe(true)
 })
@@ -78,6 +93,7 @@ test('registered replay tariffs retain adjacent periods with their own effective
           endAt: '2026-11-27T21:00:00.000Z',
         },
         JevResearchPolicy.Candidate,
+        defaultJevProtocolDocument,
       ),
     ),
   ).toBe(true)
@@ -89,7 +105,9 @@ test('controls bind only their own providers and an unexpected call remains an u
       ...costs,
       rates: policy === JevResearchPolicy.Ablation ? costs.rates.filter((rate) => rate.provider === 'typesafe') : [],
     }
-    const tariff = Result.getOrThrow(registeredReplayInferenceTariff(expected, interval, policy))
+    const tariff = Result.getOrThrow(
+      registeredReplayInferenceTariff(expected, interval, policy, defaultJevProtocolDocument),
+    )
     expect(tariff).toEqual(expected)
     expect(calculateReplayInferenceCosts([], tariff)).toMatchObject({ knownCostMicros: '0', unresolvedCallCount: 0 })
     expect(calculateReplayInferenceCosts([call(100)], tariff)).toMatchObject({
@@ -105,6 +123,7 @@ test('controls bind only their own providers and an unexpected call remains an u
         replayRateCardFixture({ jev: null, chart: null }),
         interval,
         JevResearchPolicy.Ablation,
+        defaultJevProtocolDocument,
       ),
     ),
   ).toBe(true)
@@ -430,4 +449,21 @@ test('a metered rejected chart and interrupted Jev retain known chart costs and 
     unresolvedCallCount: 1,
     knownCostMicros: '0',
   })
+})
+
+test('historical candidate and ablation tariffs retain their original provider schedule and bytes', () => {
+  const protocol = Schema.decodeUnknownSync(RetainedJevProtocolV36Schema)({
+    ...defaultJevProtocolDocument,
+    schemaVersion: 'bayn.jev.protocol.v36',
+    entrySignalPolicy: 'openai-decisions-then-jev',
+    entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
+  })
+  const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
+  for (const policy of [JevResearchPolicy.Candidate, JevResearchPolicy.Ablation]) {
+    const original = {
+      ...costs,
+      rates: costs.rates.filter((rate) => policy === JevResearchPolicy.Candidate || rate.provider === 'openai'),
+    }
+    expect(Result.getOrThrow(registeredReplayInferenceTariff(original, interval, policy, protocol))).toEqual(original)
+  }
 })

@@ -90,7 +90,12 @@ const RetainedRequest = Schema.Struct({
     }),
     Schema.Struct({
       ...AblationEntryInferenceInputSchema.fields,
-      protocol: Schema.Union([RetainedMarketProtocol, RetainedJevProtocolV34Schema, RetainedJevProtocolV35Schema]),
+      protocol: Schema.Union([
+        RetainedMarketProtocol,
+        RetainedJevProtocolV34Schema,
+        RetainedJevProtocolV35Schema,
+        RetainedJevProtocolV36Schema,
+      ]),
     }),
   ]),
 })

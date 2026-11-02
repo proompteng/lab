@@ -199,7 +199,12 @@ export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) 
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
-    const costs = yield* registeredReplayInferenceTariff(supplied.inference.costs, supplied.interval, supplied.policy)
+    const costs = yield* registeredReplayInferenceTariff(
+      supplied.inference.costs,
+      supplied.interval,
+      supplied.policy,
+      defaultJevProtocolDocument,
+    )
     const decoded = {
       ...supplied,
       inference: {

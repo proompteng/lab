@@ -1,3 +1,4 @@
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { registeredReplayInferenceTariff } from './inference-costs'
@@ -331,6 +332,7 @@ test('registered latency replay preserves every equity session and the exact can
       },
       input.interval,
       JevResearchPolicy.Candidate,
+      defaultJevProtocolDocument,
     ),
   )
   const scheduledRegistration = {

@@ -574,7 +574,7 @@ durableTest.each(
           ? yield* makeReplayInferenceTiming({
               budget: makeReplayInferenceBudget(1000),
               measureDatabaseTime: (operation) => operation,
-              providers: { jev: entryProviderFixture(provider, chartProvider) },
+              providers: { jev: provider },
               providerClock,
               advanceTo: (atMs) =>
                 advanceMarketTo(atMs).pipe(
@@ -773,7 +773,7 @@ durableTest.each(
         }
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
-          Effect.provideService(JevClient, entryProviderFixture(timing?.clients.jev ?? provider)),
+          Effect.provideService(JevClient, timing?.clients.jev ?? provider),
 
           (operation) => (timing === undefined ? operation : timing.run(operation)),
           Effect.map((engine) => ({
@@ -1125,9 +1125,7 @@ durableTest.each(
           })
           expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
           expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
-          const restarted = yield* createRuntime.pipe(
-            Effect.provideService(JevClient, entryProviderFixture(timing?.clients.jev ?? provider)),
-          )
+          const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.clients.jev ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
           yield* passUnavailableCryptoAdmission(restarted)
@@ -2066,49 +2064,52 @@ durableTest.each(
         Effect.scoped,
         Effect.provideService(
           JevClient,
-          entryProviderFixture({
-            evaluate: (raw) =>
-              Effect.gen(function* () {
-                if (ablation || momentum || mode === 'missing-candidate')
-                  return yield* Effect.die('This control must not dispatch a Jev provider request')
-                const started = yield* Clock.currentTimeMillis
-                const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
-                const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
-                  request.state,
-                ).pipe(Effect.orDie)
-                if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
-                  managementCalls += 1
-                  throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
-                }
-                if (measured) {
-                  if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
-                  yield* measuredProviderClock.adjust(100)
-                }
-                const now = yield* Clock.currentTimeMillis
-                if (scenario === 'failed-model-response') {
-                  const rejected = {
-                    ...nativeJevInference(raw, utcInstantFromEpochMillis(now), true).response,
-                    answers: {},
+          entryProviderFixture(
+            {
+              evaluate: (raw) =>
+                Effect.gen(function* () {
+                  if (ablation || momentum || mode === 'missing-candidate')
+                    return yield* Effect.die('This control must not dispatch a Jev provider request')
+                  const started = yield* Clock.currentTimeMillis
+                  const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
+                  const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+                    request.state,
+                  ).pipe(Effect.orDie)
+                  if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
+                    managementCalls += 1
+                    throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
                   }
-                  return yield* new JevError({
-                    failure: JevFailure.Response,
-                    message: 'Response has billed usage but no valid decision answers',
-                    requestHash,
-                    responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
-                    rejectedResponse: Redacted.make(rejected),
-                  })
-                }
-                return {
-                  ...nativeJevInference(
-                    raw,
-                    utcInstantFromEpochMillis(now),
-                    noTrade || !['AAPL', 'AMZN'].includes(symbol) ? false : true,
-                    symbol === 'AMZN' ? 0.8 : 0.9,
-                  ),
-                  startedAt: utcInstantFromEpochMillis(started),
-                }
-              }),
-          }),
+                  if (measured) {
+                    if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
+                    yield* measuredProviderClock.adjust(100)
+                  }
+                  const now = yield* Clock.currentTimeMillis
+                  if (scenario === 'failed-model-response') {
+                    const rejected = {
+                      ...nativeJevInference(raw, utcInstantFromEpochMillis(now), true).response,
+                      answers: {},
+                    }
+                    return yield* new JevError({
+                      failure: JevFailure.Response,
+                      message: 'Response has billed usage but no valid decision answers',
+                      requestHash,
+                      responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
+                      rejectedResponse: Redacted.make(rejected),
+                    })
+                  }
+                  return {
+                    ...nativeJevInference(
+                      raw,
+                      utcInstantFromEpochMillis(now),
+                      noTrade || !['AAPL', 'AMZN'].includes(symbol) ? false : true,
+                      symbol === 'AMZN' ? 0.8 : 0.9,
+                    ),
+                    startedAt: utcInstantFromEpochMillis(started),
+                  }
+                }),
+            },
+            chartProvider,
+          ),
         ),
         Effect.provide(stores),
         Effect.provide(TestClock.layer()),

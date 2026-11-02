@@ -1,3 +1,4 @@
+import { EntryAblationSelection } from './entry-inference-input'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
@@ -53,8 +54,13 @@ const fixture = (
     | 'bayn.jev.protocol.v34'
     | 'bayn.jev.protocol.v36'
     | 'bayn.jev.protocol.v35' = 'bayn.jev.protocol.v26',
+  ablation = false,
 ) => {
-  const current = entryEvaluationRequestFixture()
+  const current = entryEvaluationRequestFixture(
+    undefined,
+    undefined,
+    ablation ? EntryAblationSelection.LowestModeledLoss : undefined,
+  )
   const baseProtocol = {
     ...current.request.protocol,
     entrySignalPolicy: 'openai-decisions-then-jev' as const,
@@ -127,17 +133,24 @@ const fixture = (
   const input = {
     ...current.request,
     numericalState: { ...current.request.numericalState, schemaVersion: protocol.inputDefinition },
-    schemaVersion:
-      schemaVersion === 'bayn.jev.protocol.v35' || schemaVersion === 'bayn.jev.protocol.v36'
-        ? ('bayn.entry-inference-input.v8' as const)
-        : schemaVersion === 'bayn.jev.protocol.v34'
-          ? ('bayn.entry-inference-input.v7' as const)
-          : schemaVersion === 'bayn.jev.protocol.v30' ||
-              schemaVersion === 'bayn.jev.protocol.v31' ||
-              schemaVersion === 'bayn.jev.protocol.v32' ||
-              schemaVersion === 'bayn.jev.protocol.v33'
-            ? ('bayn.entry-inference-input.v6' as const)
-            : ('bayn.entry-inference-input.v5' as const),
+    ...(ablation
+      ? {
+          schemaVersion: 'bayn.entry-ablation-input.v1' as const,
+          selectionPolicy: EntryAblationSelection.LowestModeledLoss,
+        }
+      : {
+          schemaVersion:
+            schemaVersion === 'bayn.jev.protocol.v35' || schemaVersion === 'bayn.jev.protocol.v36'
+              ? ('bayn.entry-inference-input.v8' as const)
+              : schemaVersion === 'bayn.jev.protocol.v34'
+                ? ('bayn.entry-inference-input.v7' as const)
+                : schemaVersion === 'bayn.jev.protocol.v30' ||
+                    schemaVersion === 'bayn.jev.protocol.v31' ||
+                    schemaVersion === 'bayn.jev.protocol.v32' ||
+                    schemaVersion === 'bayn.jev.protocol.v33'
+                  ? ('bayn.entry-inference-input.v6' as const)
+                  : ('bayn.entry-inference-input.v5' as const),
+        }),
     protocol,
   }
   const { requestId: _, ...originalRequest } = current
@@ -197,7 +210,11 @@ const fixture = (
     completedAt: request.expiresAt,
     outcome: {
       status: JevOutcome.Completed,
-      completion: { handoff, completedAt: request.expiresAt, jev: { status: 'NOT_DISPATCHED' } },
+      completion: {
+        handoff,
+        completedAt: request.expiresAt,
+        jev: { status: ablation ? 'OMITTED_BY_POLICY' : 'NOT_DISPATCHED' },
+      },
     },
   }
   const receipt = { ...receiptMaterial, receiptHash: hash(receiptMaterial) }
@@ -261,6 +278,19 @@ test.each([
     expect(Result.isFailure(decodeStagedCheckpoint(row.request, row.stagedCheckpoint))).toBe(true)
   },
 )
+
+test('v36 ablation financial history retains both original paid visual stages and the omitted final stage', () => {
+  const row = fixture(true, 'bayn.jev.protocol.v36', true)
+  const decoded = Result.getOrThrow(readStagedInferenceCostEvidence(row))
+  expect(decoded.request.requestId).toBe(row.request.requestId)
+  expect(decoded.receipt?.receiptHash).toBe(row.receipt.receiptHash)
+  expect(decoded.visualStages.map((stage) => stage.outcome)).toEqual(['RECEIVED', 'RECEIVED'])
+  expect(decoded.receipt?.outcome).toMatchObject({
+    status: JevOutcome.Completed,
+    completion: { jev: { status: 'OMITTED_BY_POLICY' } },
+  })
+  expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
+})
 
 test('financial reader initializes independently under the production Node module order', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bayn-financial-reader-'))
