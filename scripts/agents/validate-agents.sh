@@ -95,7 +95,7 @@ import yaml
 
 role = next(doc for doc in yaml.safe_load_all(open(sys.argv[1])) if doc['kind'] == 'Role')
 write_rules = [rule for rule in role['rules'] if set(rule['verbs']) & {'create', 'update', 'patch', 'delete', '*'}]
-assert write_rules == [{'apiGroups': [''], 'resources': ['configmaps'], 'verbs': ['patch']}], write_rules
+assert write_rules == [], write_rules
 PY
 rm -f "${runner_rbac_render}"
 

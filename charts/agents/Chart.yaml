@@ -209,7 +209,7 @@ annotations:
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
     - kind: fixed
-      description: "Allow the chart-managed runner account to publish AgentRun telemetry heartbeats."
+      description: "Keep runner permissions read-only by publishing AgentRun progress to artifact storage."
     - kind: changed
       description: "Use GPT-6 Astra in the Codex provider examples."
     - kind: changed

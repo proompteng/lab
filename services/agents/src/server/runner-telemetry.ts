@@ -1,37 +1,36 @@
-import { parseRunnerTelemetry, RUNNER_TELEMETRY_KEY, RUNNER_TELEMETRY_LABEL } from '../runner-telemetry'
+import { ArtifactStorageError, getS3ObjectTail } from '../artifact-storage'
+import { parseRunnerTelemetry, runnerTelemetryKey } from '../runner-telemetry'
 
 import type { KubernetesClient } from './kube-types'
 import { asRecord, asString, readNested } from './primitives'
+import { hasRunArtifactStorage, readRunArtifactStorage } from './run-artifact-storage'
 
 export const withRunnerTelemetry = async (
-  kube: KubernetesClient,
+  kube: Pick<KubernetesClient, 'get'>,
   resource: Record<string, unknown>,
   namespace: string,
+  options: { env?: NodeJS.ProcessEnv; fetch?: typeof fetch } = {},
 ) => {
   if (readNested(resource, ['spec', 'runtime', 'type']) !== 'job') return resource
   const status = asRecord(resource.status) ?? {}
   if (['Succeeded', 'Failed', 'Cancelled'].includes(asString(status.phase) ?? '')) return resource
-  const metadata = asRecord(resource.metadata) ?? {}
-  const name = asString(metadata.name)
-  const uid = asString(metadata.uid)
-  if (!name || !uid) return resource
-  const maps = await kube.list(
-    'configmaps',
-    namespace,
-    `${RUNNER_TELEMETRY_LABEL}=true,agents.proompteng.ai/agent-run=${name}`,
-  )
-  const snapshots = []
-  for (const value of Array.isArray(maps.items) ? maps.items : []) {
-    const map = asRecord(value) ?? {}
-    const owners = readNested(map, ['metadata', 'ownerReferences'])
-    if (!Array.isArray(owners) || !owners.some((owner) => asRecord(owner)?.uid === uid)) continue
-    const raw = asString(readNested(map, ['data', RUNNER_TELEMETRY_KEY]))
-    if (!raw || raw === 'null') continue
-    const snapshot = parseRunnerTelemetry(JSON.parse(raw))
-    if (!snapshot) throw new Error('runner telemetry snapshot is invalid')
-    snapshots.push(snapshot)
-  }
-  const telemetry = snapshots.sort((a, b) => b.heartbeatAt.localeCompare(a.heartbeatAt))[0]
-  if (!telemetry) return resource
+  const uid = asString(readNested(resource, ['metadata', 'uid']))
+  const secrets = readNested(resource, ['spec', 'secrets'])
+  if (!uid || !hasRunArtifactStorage(secrets)) return resource
+  const config = await readRunArtifactStorage(kube, namespace, secrets, options.env ?? process.env)
+  const tail = await getS3ObjectTail({
+    config,
+    key: runnerTelemetryKey(namespace, uid),
+    fetch: options.fetch ?? fetch,
+    now: new Date(),
+    maxBytes: 32768,
+  }).catch((error: unknown) => {
+    if (error instanceof ArtifactStorageError && error.status === 404) return null
+    throw error
+  })
+  if (!tail) return resource
+  if (tail.truncated) throw new Error('runner telemetry exceeds its byte budget')
+  const telemetry = parseRunnerTelemetry(JSON.parse(tail.text))
+  if (!telemetry) throw new Error('runner telemetry snapshot is invalid')
   return { ...resource, status: { ...status, runner: { ...asRecord(status.runner), telemetry } } }
 }
