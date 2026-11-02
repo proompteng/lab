@@ -4,7 +4,20 @@ import { policyReasonSchema } from '@/lib/platform/policies'
 
 import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Button, Checkbox, Field, FieldError, FieldLabel, Input } from '@proompteng/design/ui'
+import {
+  Button,
+  Checkbox,
+  Field,
+  FieldError,
+  FieldLabel,
+  Input,
+  Table,
+  TableHeader,
+  TableHead,
+  TableRow,
+  TableBody,
+  TableCell,
+} from '@proompteng/design/ui'
 import { useEffect, useId, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -18,15 +31,20 @@ import {
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 import { PolicyMutationStatus, usePolicyMutation } from './policy-mutation'
 import { SettingsSelect } from './settings-select'
+import { useCollection, CollectionToolbar, CollectionPagination } from './collection-view'
+import { accessActionName } from '@/lib/platform/access-requests'
 
 const schema = z.object({
   recipient: z.string().min(1, 'Choose who needs access'),
   resource: z.string().min(1, 'Choose a resource'),
   relations: z.record(z.string(), z.boolean()),
   reason: policyReasonSchema,
+  confirmed: z.boolean(),
 })
 type Form = z.infer<typeof schema>
 type Recipient = { key: string; name: string; kind: 'human' | 'workload' | 'workspace'; ids: string[] }
+const resourceIdentity = (resource: { kind: string; id: string } | undefined) =>
+  resource ? JSON.stringify([resource.kind, resource.id]) : ''
 const permissionNames: Record<string, string> = {
   status_reader: 'Pod status',
   log_reader: 'Pod logs',
@@ -46,15 +64,26 @@ export function ResourceAccessPanel({
 }) {
   const workspace = detail.workspace!
   const id = useId()
+  const collection = useCollection(workspace.resources, (entry) => entry.name)
+  const resourceParam =
+    collection.query.get('resource') ||
+    (workspace.resources.length === 1 ? resourceIdentity(workspace.resources[0]!.resource) : '')
+  const recipientParam = collection.query.get('recipient') || 'workspace'
   const form = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: {
-      recipient: 'workspace',
-      resource: workspace.resources.length === 1 ? '0' : '',
+      recipient: recipientParam,
+      resource: resourceParam,
+      confirmed: false,
       relations: {},
       reason: '',
     },
   })
+  useEffect(() => {
+    form.setValue('recipient', recipientParam)
+    form.setValue('resource', resourceParam)
+    form.setValue('confirmed', false)
+  }, [recipientParam, resourceParam, form])
   const recipientKey = form.watch('recipient')
   const resourceKey = form.watch('resource')
   const [catalog, setCatalog] = useState<z.infer<typeof policyCatalogSchema>>()
@@ -82,7 +111,7 @@ export function ResourceAccessPanel({
       })),
   ]
   const recipient = recipients.find((entry) => entry.key === recipientKey)
-  const target = resourceKey === '' ? undefined : workspace.resources[Number(resourceKey)]
+  const target = workspace.resources.find((entry) => resourceIdentity(entry.resource) === resourceKey)
   const key = JSON.stringify([recipientKey, resourceKey])
   const saved = snapshot?.key === key ? snapshot.values : undefined
   const relations =
@@ -168,6 +197,10 @@ export function ResourceAccessPanel({
           enabled: value.relations[relation.name]!,
         })),
     )
+    if (relationships.some((change) => !change.enabled) && !value.confirmed) {
+      form.setError('confirmed', { message: 'Confirm the access revocation' })
+      return
+    }
     await mutation.save({
       operationId: crypto.randomUUID(),
       workspaceId: workspace.id,
@@ -184,6 +217,51 @@ export function ResourceAccessPanel({
           Approve what members and clients can use through Relay. Connecting never adds permissions.
         </p>
       </div>
+      <CollectionToolbar label="resources" state={collection} />
+      <div className="rounded-lg border border-zinc-800">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Resource</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Operations</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {collection.rows.map((entry) => (
+              <TableRow key={resourceIdentity(entry.resource)}>
+                <TableCell>
+                  <button
+                    className="min-h-10 text-left underline underline-offset-4"
+                    onClick={() => collection.change({ resource: resourceIdentity(entry.resource) })}
+                  >
+                    {entry.name}
+                  </button>
+                </TableCell>
+                <TableCell>{entry.resource?.kind.replaceAll('.', ' ')}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {catalog?.actions
+                    .filter((action) => action.resourceKind === entry.resource?.kind)
+                    .map((action) => accessActionName(action.id))
+                    .join(' · ') || 'See resource details'}
+                </TableCell>
+              </TableRow>
+            ))}
+            {!collection.rows.length ? (
+              <TableRow>
+                <TableCell colSpan={3} className="py-8 text-center text-zinc-400">
+                  No registered resources match these filters.
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
+      <CollectionPagination state={collection} />
+      {resourceKey && !target ? <p role="alert">This resource is not registered in this workspace.</p> : null}
+      {recipientKey && !recipient ? (
+        <p role="alert">This recipient is not currently eligible in this workspace.</p>
+      ) : null}
       <form onSubmit={submit} className="space-y-4">
         <fieldset disabled={blocked} className="grid gap-4 sm:grid-cols-2">
           <Field>
@@ -194,7 +272,10 @@ export function ResourceAccessPanel({
               render={({ field }) => (
                 <SettingsSelect
                   {...field}
-                  onValueChange={field.onChange}
+                  onValueChange={(value) => {
+                    field.onChange(value)
+                    collection.change({ recipient: value })
+                  }}
                   id={`${id}-recipient`}
                   options={recipients.map((entry) => ({ value: entry.key, label: entry.name }))}
                 />
@@ -209,10 +290,16 @@ export function ResourceAccessPanel({
               render={({ field }) => (
                 <SettingsSelect
                   {...field}
-                  onValueChange={field.onChange}
+                  onValueChange={(value) => {
+                    field.onChange(value)
+                    collection.change({ resource: value })
+                  }}
                   id={`${id}-resource`}
                   placeholder="Choose a resource"
-                  options={workspace.resources.map((entry, index) => ({ value: String(index), label: entry.name }))}
+                  options={workspace.resources.map((entry) => ({
+                    value: resourceIdentity(entry.resource),
+                    label: entry.name,
+                  }))}
                 />
               )}
             />
@@ -241,7 +328,16 @@ export function ResourceAccessPanel({
                     )
                   }
                 />
-                {permissionNames[relation.name] || relation.name.replaceAll('_', ' ')}
+                {permissionNames[relation.name] ||
+                  catalog?.actions
+                    .filter(
+                      (action) =>
+                        action.resourceKind === target.resource?.kind &&
+                        (action.grantRelation === relation.name || action.workspaceGrantRelation === relation.name),
+                    )
+                    .map((action) => accessActionName(action.id))
+                    .join(', ') ||
+                  relation.name.replaceAll('_', ' ')}
               </label>
             ))}
             {!saved && !error ? (
@@ -255,6 +351,35 @@ export function ResourceAccessPanel({
               </p>
             ) : null}
           </fieldset>
+        ) : null}
+        {target ? (
+          <div className="space-y-2 text-sm text-zinc-400">
+            <p>
+              These are direct grants for the selected recipient, not an effective-access calculation. People may also
+              inherit workspace grants. An unchecked direct grant does not prove an operation is denied.
+            </p>
+            <details>
+              <summary className="cursor-pointer">Resource details</summary>
+              <p className="mt-2 break-all">
+                {target.resource?.kind} / {target.resource?.id}
+              </p>
+            </details>
+          </div>
+        ) : null}
+        {Object.values(selected).some((value) => !value) ? (
+          <Field>
+            <label className="flex items-start gap-3 text-sm">
+              <Controller
+                name="confirmed"
+                control={form.control}
+                render={({ field }) => (
+                  <Checkbox checked={field.value} onCheckedChange={field.onChange} disabled={blocked} />
+                )}
+              />
+              Revoke the unchecked direct grants. Existing operations relying on these grants will be denied.
+            </label>
+            <FieldError errors={[form.formState.errors.confirmed]} />
+          </Field>
         ) : null}
         <Field>
           <FieldLabel htmlFor={`${id}-reason`}>Reason for this change</FieldLabel>
