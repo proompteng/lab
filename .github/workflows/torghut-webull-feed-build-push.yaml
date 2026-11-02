@@ -18,7 +18,6 @@ on:
       - 'nix/images/dorvud-jvm-service.nix'
       - 'nix/images/torghut-webull-feed.nix'
       - 'argocd/applications/torghut-webull-feed/**'
-      - '.github/workflows/torghut-webull-feed-build-push.yaml'
       - 'flake.nix'
       - 'flake.lock'
   workflow_dispatch:
@@ -36,6 +35,8 @@ jobs:
       package_attr: torghut-webull-feed-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
+      kargo_tag_include_run_id: true
+      release_artifact_name: torghut-webull-feed-release
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets: inherit

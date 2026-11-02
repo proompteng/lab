@@ -6,4 +6,3 @@ resources:
   - git-credentials.yaml
   - warehouses.yaml
   - stages.yaml
-  - webull-feed.yaml
