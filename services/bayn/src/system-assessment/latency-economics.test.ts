@@ -32,8 +32,8 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate) => {
     },
   }
   const inferenceTariff = replayRateCardFixture({
-    jev: policy === JevResearchPolicy.Candidate ? fullTariff.jev : null,
-    chart: policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation ? fullTariff.chart : null,
+    jev: policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation ? fullTariff.jev : null,
+    chart: null,
   })
   const registration = {
     ...input.registration,

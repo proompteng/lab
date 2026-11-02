@@ -60,7 +60,13 @@ test('extended crypto evidence reproduces real sparse history without padding mi
 test('the current protocol rejects the retired shared history contract', () => {
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, lookbackMinutes: 30 }))).toBe(true)
   expect(
-    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v29' })),
+    Result.isFailure(
+      decodeJevProtocol({
+        ...defaultJevProtocolDocument,
+        schemaVersion: 'bayn.jev.protocol.v29',
+        entrySignalPolicy: 'openai-decisions-then-jev' as const,
+      }),
+    ),
   ).toBe(true)
   for (const lookbackMinutes of [
     { equity: 120, crypto: 120 },

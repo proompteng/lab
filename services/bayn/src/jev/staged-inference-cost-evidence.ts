@@ -13,7 +13,7 @@ import {
 } from './evidence'
 import { decodeJevResolution } from './resolution'
 import { decodeStagedCheckpointForRequest, type StagedCheckpoint } from './staged-checkpoint'
-import type { DecisionsUsageSchema } from './decisions'
+import type { ChartStageUsageSchema } from './chart-stage-contract'
 import {
   AblationEntryInferenceInputSchema,
   CandidateEntryInferenceInputSchema,
@@ -27,9 +27,11 @@ import {
   RetainedJevProtocolV33Schema,
   RetainedJevProtocolV34Schema,
   RetainedJevProtocolV35Schema,
+  RetainedJevProtocolV36Schema,
 } from './protocol'
 import * as retainedChartStages from './retained-filtered-staged-chart-questions'
 import * as currentChartStages from './staged-chart-questions'
+import * as observedChartStages from './retained-observed-staged-chart-questions'
 import * as retainedCandidateChartStages from './retained-candidate-staged-chart-questions'
 import { makeEntryJudgmentRequest } from './entry-questions'
 import {
@@ -59,7 +61,10 @@ const RetainedMarketProtocol = Schema.Union([
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: Schema.Union([
-    Schema.Struct({ ...CandidateEntryInferenceInputSchema.fields, protocol: RetainedJevProtocolV35Schema }),
+    Schema.Struct({
+      ...CandidateEntryInferenceInputSchema.fields,
+      protocol: Schema.Union([RetainedJevProtocolV35Schema, RetainedJevProtocolV36Schema]),
+    }),
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
       schemaVersion: Schema.Literal('bayn.entry-inference-input.v7'),
@@ -149,7 +154,7 @@ export interface VisualCostStage {
   readonly tariffAt: string | undefined
   readonly recordedStartedAt: string | undefined
   readonly outcome: 'UNKNOWN' | 'NOT_DISPATCHED' | 'RECEIVED' | 'REJECTED'
-  readonly usage: typeof DecisionsUsageSchema.Type | null
+  readonly usage: typeof ChartStageUsageSchema.Type | null
   readonly handoffHash: string | null
   readonly receiptHash: string | null
   readonly resolutionHash: string | null
@@ -182,12 +187,14 @@ export const readStagedInferenceCostEvidence = (row: {
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
     const retainedQuestions =
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
         ? makeEntryJudgmentRequest
         : identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
           ? makeRetainedFundedEntryJudgmentRequest
@@ -197,12 +204,15 @@ export const readStagedInferenceCostEvidence = (row: {
       : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
     const request = decoded.request
     const stages =
-      decoded._tag === 'Current' || request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35'
+      decoded._tag === 'Current'
         ? currentChartStages
-        : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
-            request.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
-          ? retainedCandidateChartStages
-          : retainedChartStages
+        : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+            request.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
+          ? observedChartStages
+          : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+              request.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
+            ? retainedCandidateChartStages
+            : retainedChartStages
     const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint, stages)
     const source = {
       requestId: request.requestId,

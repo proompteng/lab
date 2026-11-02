@@ -126,11 +126,11 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 167 introduced v35 requests and dispatch; migration 171 replaces that execution path with v36 while retaining original financial readers and history.
+Migration 172 admits only v37 requests and dispatch. Original v35/v36 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
 
-The current source uses `jev` protocol v36, verified numerical input v23, batch v8 and entry inference input v8. It retains the
+The current source uses `jev` protocol v37, verified numerical input v23, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
-candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
+candlestick image from verified completed bars, asks pinned Jev 1.13 for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 Jev receives proposal evidence v1 with the completed candidate bars and each funded proposal stored once. Code
 computes structure bounds, completed closes relative to those bounds, consecutive closes above the structure and
@@ -139,14 +139,14 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v36 and its exact question-policy hash.
+current execution and database guards accept v37 and its exact question-policy hash.
 
-OpenAI failures emit `bayn.decisions.failure.v1` with the provider error code and type, request ID, HTTP status,
-response hash and a parsed `Retry-After` time when supplied. Join its `requestHash` to the staged dispatch claim's
-`providerRequestHash`. Diagnostics omit provider messages, credentials and source inputs. Existing financial receipts
-and hashes remain unchanged; failed calls retain observed metering or unknown cost. The client does not retry an
-admitted stage or renew its original deadline. `credit_balance_exhausted` identifies missing API credits in the OpenAI
-organization behind the configured key; a spending limit and TypeSafe credits are separate from that balance.
+All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
+BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
+verified numerical source. TypeSafe labels image support experimental. The original ten-second deadline covers
+all stages and durable handoffs; calls are not retried. Failed calls retain observed usage or unknown costs.
+The OpenAI HTTP client, API-key configuration, external secret and egress host have been removed. Pure retired
+Decisions codecs and historical tariffs remain solely to reproduce financial evidence, never to dispatch new calls.
 
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
@@ -190,10 +190,10 @@ synthetic execution tests do not establish a prospective economic qualification.
 
 Entry input v5 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
 Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
-can produce a second OpenAI request containing its single conditional base-start question. This extra billable
+can produce a second Jev image request containing its single conditional base-start question. This extra billable
 `BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
 Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
-and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
+and one newer completed bar. An explicit no-match answer can abstain without inventing a source anchor.
 Migration 158 admits only protocol v28 for new execution, retaining outer request v3, input v5, handoff v4 and the
 market-specific question policy. It preserves the staged transport installed by migration 153. Retired protocols, including v27,
 v1–v4 inputs and earlier question policies remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
@@ -377,7 +377,7 @@ must match that acquisition calculation exactly. This accounts for per-fill roun
 changes to immutable ledger amounts. The calculation retains the original fill precision and reproduces rounded
 nine-decimal broker averages before rounding the reported remaining cost to micros.
 
-Entry inference renders the verified completed bars into a deterministic candlestick PNG. OpenAI Decisions returns
+Entry inference renders the verified completed bars into a deterministic candlestick PNG. Jev returns
 typed chart-presence judgments and source-bar anchors, with each base start explicitly conditioned on its end.
 Code constructs at most one support-recovery and
 one base-breakout proposal from those anchors, then retains the exact handoff before Jev receives the proposals and
@@ -1928,17 +1928,15 @@ source manifest, native Jev build and strategy identities, opening cash, asset m
 controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
 Historical artifacts remain available for comparison and audit.
 
-Set `BAYN_OPENAI_API_KEY`, `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
-`inference` object with `mode: "measured-providers"`, `models: {"jev": "jev-1.13.0", "chart": "gpt-6-luna"}`,
-`inputDefinition: "bayn.jev-entry-state.v22"`, and positive `maximumCalls` shared by both providers. The input
-binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
-Its `costs` object contains `jev` and `chart` tariffs, each with
-`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. Registered latency replays bind
-only the providers used by their policy. The candidate requires both tariffs, chart ablation sets `jev` to `null`,
-and momentum sets both to `null`. A call without its tariff remains an unresolved expense and cannot establish
-complete economics. The chart tariff also requires
-`cachedInputMicrosPerMillionTokens` and `cacheWriteInputMicrosPerMillionTokens`; cached and written tokens are
-subsets of total input, so each token is priced once. The input also declares
+Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. Current
+requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
+`models: {"jev": "jev-1.13.0"}`, `inputDefinition: "bayn.jev-entry-state.v23"` and a positive `maximumCalls`
+shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
+`bayn-backtest --instructions` reports it. `costs` uses `bayn.inference-rate-card.v1` with effective-dated provider/model
+rates. Candidate and chart ablation require only Jev tariffs; deterministic momentum requires none. Current preparation
+selects the registered policy's tariffs. Original OpenAI receipts retain their original cache tariffs for financial
+reading only. A call without its rate remains an unresolved expense and cannot establish complete economics.
+The input also declares
 `allocatedDataCostPerSessionMicros`, either a priced integer-string allocation or explicit `null` when unknown.
 An unknown allocation preserves execution evidence while making sessions and net results incomplete; it never
 becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these

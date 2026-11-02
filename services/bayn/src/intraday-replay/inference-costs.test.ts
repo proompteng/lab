@@ -1,3 +1,8 @@
+import {
+  chartInferenceFixture as retainedInference,
+  entryEvaluationRequestFixture as retainedRequest,
+} from '../jev/conditional-entry.test-support'
+import { makeRetainedConditionalChartDecisionsRequest } from '../jev/retained-conditional-chart-questions'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -16,10 +21,10 @@ import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
 import { stageResponseIdentity } from '../jev/staged-checkpoint'
 
-test('registered replay tariffs cover both providers for the whole window without overlapping or substituted rates', () => {
-  const card = costs
+test('registered replay tariffs require Jev for current inference and retain historical rates for the whole window without overlapping or substituted rates', () => {
+  const card = { ...costs, rates: costs.rates.filter((rate) => rate.provider === 'typesafe') }
   const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
-  expect(Result.getOrThrow(registeredReplayInferenceTariff(card, interval, JevResearchPolicy.Candidate))).toEqual(costs)
+  expect(Result.getOrThrow(registeredReplayInferenceTariff(card, interval, JevResearchPolicy.Candidate))).toEqual(card)
   expect(
     Result.getOrThrow(
       registeredReplayInferenceTariff(
@@ -28,7 +33,7 @@ test('registered replay tariffs cover both providers for the whole window withou
         JevResearchPolicy.Candidate,
       ),
     ),
-  ).toEqual(costs)
+  ).toEqual(card)
   for (const changed of [
     { ...card, rates: [] },
     { ...card, rates: card.rates.slice(1) },
@@ -82,14 +87,14 @@ test('controls bind only their own providers and an unexpected call remains an u
   for (const policy of [JevResearchPolicy.Ablation, JevResearchPolicy.Momentum, JevResearchPolicy.Deployed]) {
     const expected = {
       ...costs,
-      rates: policy === JevResearchPolicy.Ablation ? costs.rates.filter((rate) => rate.provider === 'openai') : [],
+      rates: policy === JevResearchPolicy.Ablation ? costs.rates.filter((rate) => rate.provider === 'typesafe') : [],
     }
     const tariff = Result.getOrThrow(registeredReplayInferenceTariff(expected, interval, policy))
     expect(tariff).toEqual(expected)
     expect(calculateReplayInferenceCosts([], tariff)).toMatchObject({ knownCostMicros: '0', unresolvedCallCount: 0 })
     expect(calculateReplayInferenceCosts([call(100)], tariff)).toMatchObject({
-      knownCostMicros: '0',
-      unresolvedCallCount: 1,
+      knownCostMicros: policy === JevResearchPolicy.Ablation ? '5' : '0',
+      unresolvedCallCount: policy === JevResearchPolicy.Ablation ? 0 : 1,
       inputTokens: '100',
       callCount: 1,
     })
@@ -146,7 +151,9 @@ test('replay prices each metered call at its simulated start and treats gaps or 
   ).toMatchObject({ knownCostMicros: '0', unresolvedCallCount: 3 })
 })
 type JevCall = Extract<ReplayInferenceCall, { readonly stage: 'JEV' }>
-type ChartCall = Extract<ReplayInferenceCall, { readonly stage: 'CHART' }>
+type ChartCall = Extract<ReplayInferenceCall, { readonly schemaVersion: 'bayn.replay-inference-call.v4' }> & {
+  readonly stage: 'CHART'
+}
 const call = (inputTokens: number, outputTokens = 0): JevCall => {
   const prepared = Result.getOrThrow(
     prepareJevRequest({
@@ -286,7 +293,7 @@ const chartCall = (): ChartCall => {
   )
   const inference = chartInferenceFixture(request.request, request.observedAt)
   return {
-    schemaVersion: 'bayn.replay-inference-call.v2',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     stage: 'CHART',
     budgetMs: 10_000,
     request: prepared.request,
@@ -305,7 +312,7 @@ test('the same evaluation retains separate chart and Jev charges', () => {
     jevCallCount: 1,
     unresolvedCallCount: 0,
     inputTokens: '300',
-    knownCostMicros: '19',
+    knownCostMicros: '14',
   })
 })
 
@@ -324,9 +331,11 @@ test('selected base calls retain a distinct identity and the visual tariff witho
     ),
   )
   if (prepared.status !== 'PREPARED') throw Error('Expected fixture selected base request')
-  const base: Extract<ReplayInferenceCall, { stage: 'BASE_START' }> = {
+  const base: Extract<ReplayInferenceCall, { readonly schemaVersion: 'bayn.replay-inference-call.v4' }> & {
+    readonly stage: 'BASE_START'
+  } = {
     ...chart,
-    schemaVersion: 'bayn.replay-inference-call.v3',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     stage: 'BASE_START',
     request: prepared.request,
     requestHash: prepared.requestHash,
@@ -338,7 +347,7 @@ test('selected base calls retain a distinct identity and the visual tariff witho
     chartCallCount: 1,
     baseStartCallCount: 1,
     jevCallCount: 1,
-    knownCostMicros: '29',
+    knownCostMicros: '19',
     unresolvedCallCount: 0,
   })
   expect(calculateReplayInferenceCosts([chart, call(200)], costs)).not.toHaveProperty('baseStartCallCount')
@@ -350,7 +359,20 @@ test('selected base calls retain a distinct identity and the visual tariff witho
 })
 
 test('chart cache reads and writes are priced once within total input tokens', () => {
-  const chart = chartCall()
+  const request = retainedRequest()
+  const prepared = Result.getOrThrow(
+    makeRetainedConditionalChartDecisionsRequest(
+      Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+    ),
+  )
+  const chart: Extract<ReplayInferenceCall, { readonly stage: 'CHART' }> = {
+    ...chartCall(),
+    schemaVersion: 'bayn.replay-inference-call.v2',
+    stage: 'CHART',
+    request: prepared.request,
+    requestHash: prepared.requestHash,
+    outcome: { status: 'RECEIVED', inference: retainedInference(request.request, request.observedAt) },
+  }
   if (chart.outcome.status !== 'RECEIVED') throw Error('Fixture must receive a chart response')
   const response = {
     ...chart.outcome.inference.response,
@@ -361,7 +383,7 @@ test('chart cache reads and writes are priced once within total input tokens', (
       total_tokens: 100,
     },
   }
-  const cached: ChartCall = {
+  const cached: Extract<ReplayInferenceCall, { readonly stage: 'CHART' }> = {
     ...chart,
     outcome: {
       status: 'RECEIVED',
@@ -388,17 +410,17 @@ test('a metered rejected chart and interrupted Jev retain known chart costs and 
     ...chart,
     outcome: {
       status: 'FAILED',
-      category: 'RESPONSE',
+      failure: JevFailure.Response,
+      rejectedResponse: chart.outcome.inference.response,
       httpStatus: 200,
       responseHash: chart.outcome.inference.responseHash,
-      usage: chart.outcome.inference.response.usage,
     },
   }
   expect(
     calculateReplayInferenceCosts([failed, { ...call(200), outcome: { status: 'INTERRUPTED' } }], costs),
   ).toMatchObject({
     callCount: 2,
-    knownCostMicros: '10',
+    knownCostMicros: '5',
     unresolvedCallCount: 1,
   })
   if (failed.outcome.status !== 'FAILED') throw Error('Fixture must retain a failure')

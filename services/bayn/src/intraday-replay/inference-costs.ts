@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevFailure, jevModel, JevResponseSchema } from '../jev/contract'
-import { decisionsModel, validDecisionsUsage } from '../jev/decisions'
+import { validDecisionsUsage } from '../jev/decisions'
 import {
   InferenceCostError,
   type InferenceRateCardSchema,
@@ -23,14 +23,9 @@ export const registeredReplayInferenceTariff = (
   Result.gen(function* () {
     const { rates } = yield* prepareInferenceRateCard(rateCard)
     const requiredModels =
-      policy === JevResearchPolicy.Candidate
-        ? [
-            { provider: 'typesafe', model: jevModel },
-            { provider: 'openai', model: decisionsModel },
-          ]
-        : policy === JevResearchPolicy.Ablation
-          ? [{ provider: 'openai', model: decisionsModel }]
-          : []
+      policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation
+        ? [{ provider: 'typesafe', model: jevModel }]
+        : []
     if (
       interval.startAt >= interval.endAt ||
       requiredModels.some(
@@ -74,7 +69,7 @@ const UsageReceiptSchema = Schema.Struct({
 })
 
 const verifiedUsage = (call: ReplayInferenceCall) => {
-  if (call.stage !== 'JEV') {
+  if (call.schemaVersion !== 'bayn.replay-inference-call.v4' && call.stage !== 'JEV') {
     const outcome = call.outcome
     const usage =
       outcome.status === 'RECEIVED'
@@ -135,7 +130,7 @@ export const calculateReplayInferenceCosts = (
     const tariff = Result.isSuccess(prepared)
       ? prepared.success.rates.find(
           ({ rate }) =>
-            rate.provider === (call.stage === 'JEV' ? 'typesafe' : 'openai') &&
+            rate.provider === (call.request.model === jevModel ? 'typesafe' : 'openai') &&
             rate.model === call.request.model &&
             rate.effectiveFrom <= call.simulatedStartedAt &&
             call.simulatedStartedAt < rate.effectiveUntil,
