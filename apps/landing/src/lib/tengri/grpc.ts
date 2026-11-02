@@ -676,14 +676,22 @@ export async function sendCodexTurn(
   )
 }
 
-export async function getActiveCodexRuns(identity: PlatformIdentity, agentId: string) {
-  const result = await unary<RawRecord>('getActiveCodexRuns', { id: agentId }, identity)
+export async function getActiveCodexRuns(identity: PlatformIdentity, agentId: string, signal?: AbortSignal) {
+  const result = await unary<RawRecord>(
+    'getActiveCodexRuns',
+    { id: agentId },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
   if (!Array.isArray(result.runs)) throw new TengriUnavailableError('Invalid active run list')
   return result.runs.map(normalizeRun)
 }
 
-export async function getCodexRun(identity: PlatformIdentity, agentId: string, runId: string) {
-  return normalizeRun(await unary<RawRecord>('getCodexRun', { agentId, runId }, identity))
+export async function getCodexRun(identity: PlatformIdentity, agentId: string, runId: string, signal?: AbortSignal) {
+  return normalizeRun(
+    await unary<RawRecord>('getCodexRun', { agentId, runId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal),
+  )
 }
 
 function normalizeRun(value: RawRecord): TengriCodexRun {
