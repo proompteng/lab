@@ -54,6 +54,11 @@ Native Nix image jobs retry transient cache downloads up to three times and fail
 Cache failures do not trigger compiler or toolchain builds from source. Each image has one 45-minute build deadline;
 compile failures and timeouts are not retried as a second full build. Build timings and logs retain the failing phase.
 
+After a successful main-branch image publication, CI uploads the image derivation's existing build outputs and dependency
+paths to Attic with `cache-push --build`. This includes build-time dependencies that are absent from the compressed image's
+runtime references. Derivation files are excluded. Final image revisions retain their provenance while unchanged compiled
+outputs remain reusable across commits. Upload failures are recorded and alerted through CI observability.
+
 `product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
 Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
 They do not create unused product image archives or PR registry caches.
