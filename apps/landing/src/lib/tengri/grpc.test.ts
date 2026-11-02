@@ -828,7 +828,7 @@ describe('Tengri gRPC BFF transport', () => {
         state: { phase: 'running', turnId: 'turn-selected' },
       },
     ])
-    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: '' })
     expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
   })
   test('carries the selected conversation in the signed active-run request', async () => {
