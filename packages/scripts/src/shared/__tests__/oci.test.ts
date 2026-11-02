@@ -38,7 +38,6 @@ const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
-const hermesToolchainBuildWorkflow = readRepoFile('.github/workflows/hermes-toolchain-build-push.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const jangarPostDeployVerifyWorkflow = readRepoFile('.github/workflows/jangar-post-deploy-verify.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
@@ -49,7 +48,6 @@ const jangarReleaseMetadataScript = readRepoFile('packages/scripts/src/jangar/re
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
 const torghutBuildWorkflow = readRepoFile('.github/workflows/torghut-build-push.yaml')
-const torghutNotebookBuildWorkflow = readRepoFile('.github/workflows/torghut-notebook-build-push.yaml')
 const torghutTaBuildWorkflow = readRepoFile('.github/workflows/torghut-ta-build-push.yaml')
 const torghutWsBuildWorkflow = readRepoFile('.github/workflows/torghut-ws-build-push.yaml')
 const torghutHyperliquidFeedBuildWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
@@ -852,38 +850,6 @@ describe('native OCI build workflows', () => {
     expect(symphonyReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
   })
 
-  it('rebuilds Kargo-enrolled image builds when the shared OCI implementation changes', () => {
-    const migratedImageWorkflows = [
-      atticWorkflow,
-      arcRunnerBuildWorkflow,
-      oiratWorkflow,
-      bumbaWorkflow,
-      froussardWorkflow,
-      productNixWorkflow,
-      agentsBuildWorkflow,
-      headlampWorkflow,
-      hermesToolchainBuildWorkflow,
-      jangarBuildWorkflow,
-      signalPublisherBuildWorkflow,
-      symphonyBuildWorkflow,
-      torghutBuildWorkflow,
-      torghutNotebookBuildWorkflow,
-      torghutTaBuildWorkflow,
-      torghutWsBuildWorkflow,
-      torghutHyperliquidFeedBuildWorkflow,
-    ]
-
-    for (const workflow of migratedImageWorkflows) {
-      expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
-      expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
-      expect(workflow).toContain("- 'nix/oci-push.sh'")
-      if (workflow !== hermesToolchainBuildWorkflow && workflow !== productNixWorkflow) {
-        expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
-      }
-    }
-    expect(hermesToolchainBuildWorkflow).toContain("- '.github/actions/setup-nix-toolchain/**'")
-  })
-
   it('does not fan out service CI on image workflow-only changes', () => {
     for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
       expect(workflow).not.toContain("- '.github/workflows/")
@@ -950,7 +916,9 @@ describe('native OCI build workflows', () => {
         'nix/check-bun-dependency-closure.sh',
         '.github/workflows/nix-bun-dependency-closure.yml',
       ]) {
-        expect(triggers.split(`- '${input}'`)).toHaveLength(3)
+        expect(triggers.split(`- '${input}'`)).toHaveLength(
+          input.startsWith('.github/') || input === 'nix/check-bun-dependency-closure.sh' ? 2 : 3,
+        )
       }
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
       expect(workflow).toContain('needs: dependency-closure')
@@ -1162,7 +1130,7 @@ describe('native OCI build workflows', () => {
     expect(symphonyBuildWorkflow).toContain('publish_kargo_tag: true')
     expect(symphonyBuildWorkflow).not.toContain('release_artifact_name:')
     expect(symphonyBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(symphonyBuildWorkflow).toContain("- '.github/workflows/symphony-post-deploy-verify.yml'")
+    expect(symphonyBuildWorkflow).not.toContain("- '.github/workflows/symphony-post-deploy-verify.yml'")
     expect(symphonyBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(symphonyBuildWorkflow).not.toContain('docker/setup-buildx-action')
   })
@@ -1255,7 +1223,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
+    expect(jangarBuildWorkflow).not.toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
   })
@@ -1357,7 +1325,6 @@ describe('native OCI build workflows', () => {
     expect(agentsBuildWorkflow).toContain('CONTROL_PLANE_DIGEST: ${{ steps.control-plane-receipt.outputs.digest }}')
     expect(agentsBuildWorkflow).toContain('AGENTS_SHELL_DIGEST: ${{ steps.agents-shell-receipt.outputs.digest }}')
     expect(agentsBuildWorkflow).toContain('RUNNER_DIGEST: ${{ steps.runner-receipt.outputs.digest }}')
-    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/shared/oci.ts'")
 
     expect(flake).toContain('import ./nix/images/agents.nix')
     expect(agentsImageModule).toContain('import ./openai-codex-cli.nix')
@@ -1447,7 +1414,7 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
     expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
-    expect(productNixWorkflow.match(/- '\.github\/workflows\/nix-oci-build-common\.yml'/g)).toHaveLength(6)
+    expect(productNixWorkflow.match(/- '\.github\/workflows\/nix-oci-build-common\.yml'/g)).toBeNull()
     expect(flake).toContain('"olden-image"')
     expect(repoFileExists('nix/images/olden.nix')).toBe(true)
     expect(productNixWorkflow).not.toContain('image_name: olden')

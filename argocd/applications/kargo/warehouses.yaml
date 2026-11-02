@@ -23,22 +23,19 @@ spec:
           - apps/app
           - packages/design
           - nix/images/app.nix
-          - nix/check-bun-dependency-closure.sh
-          - .github/workflows/nix-bun-dependency-closure.yml
-          - .github/workflows/product-nix-images.yml
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
-          - nix/cache-push.sh
-          - nix/ci-nix-oci-summary.sh
-          - nix/ci-run-timed.sh
-          - nix/oci-inspect-archive.sh
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - flake.nix
           - flake.lock
           - bun.lock
           - argocd/applications/app
+          - package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
+          - nix/images/relativize-bun-cache.sh
+          - nix/images/prune-bun-dependency-metadata.sh
+          - tsconfig.base.json
     - image:
         repoURL: registry.ide-newton.ts.net/lab/app
         imageSelectionStrategy: NewestBuild
@@ -76,17 +73,17 @@ spec:
           - nix/images/synthesis.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
-          - nix/cache-push.sh
-          - nix/ci-nix-oci-summary.sh
-          - nix/ci-run-timed.sh
-          - nix/oci-inspect-archive.sh
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - flake.nix
           - flake.lock
           - bun.lock
           - argocd/applications/synthesis
+          - package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
+          - tsconfig.base.json
+          - nix/images/relativize-bun-cache.sh
+          - nix/images/prune-bun-dependency-metadata.sh
     - image:
         repoURL: registry.ide-newton.ts.net/lab/synthesis
         imageSelectionStrategy: NewestBuild
@@ -124,17 +121,17 @@ spec:
           - nix/images/docs.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
-          - nix/cache-push.sh
-          - nix/ci-nix-oci-summary.sh
-          - nix/ci-run-timed.sh
-          - nix/oci-inspect-archive.sh
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - flake.nix
           - flake.lock
           - bun.lock
           - argocd/applications/docs
+          - package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
+          - tsconfig.base.json
+          - nix/images/relativize-bun-cache.sh
+          - nix/images/prune-bun-dependency-metadata.sh
     - image:
         repoURL: registry.ide-newton.ts.net/lab/docs
         imageSelectionStrategy: NewestBuild
@@ -170,9 +167,6 @@ spec:
           - services/bumba
           - packages/temporal-bun-sdk
           - nix/images/bumba.nix
-          - .github/workflows/bumba-ci.yml
-          - .github/workflows/nix-bun-dependency-closure.yml
-          - nix/check-bun-dependency-closure.sh
           - nix/images/bun-workspace-service.nix
           - nix/images/bun-workspace-deps-source.nix
           - nix/images/bun-workspace-deps-source.test.sh
@@ -182,9 +176,6 @@ spec:
           - bunfig.toml
           - .npmrc
           - patches
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - argocd/applications/bumba
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bumba
@@ -221,9 +212,6 @@ spec:
           - services/oirat
           - packages/discord
           - nix/images/oirat.nix
-          - .github/workflows/oirat-ci.yml
-          - .github/workflows/nix-bun-dependency-closure.yml
-          - nix/check-bun-dependency-closure.sh
           - nix/images/bun-workspace-service.nix
           - nix/images/bun-workspace-deps-source.nix
           - nix/images/bun-workspace-deps-source.test.sh
@@ -233,9 +221,6 @@ spec:
           - bunfig.toml
           - .npmrc
           - patches
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - argocd/applications/oirat
     - image:
         repoURL: registry.ide-newton.ts.net/lab/oirat
@@ -275,9 +260,6 @@ spec:
           - packages/discord
           - packages/otel
           - nix/images/froussard.nix
-          - .github/workflows/froussard-ci.yml
-          - .github/workflows/nix-bun-dependency-closure.yml
-          - nix/check-bun-dependency-closure.sh
           - nix/images/bun-workspace-service.nix
           - nix/images/bun-workspace-deps-source.nix
           - nix/images/bun-workspace-deps-source.test.sh
@@ -287,9 +269,6 @@ spec:
           - bunfig.toml
           - .npmrc
           - patches
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - argocd/applications/froussard
     - image:
         repoURL: registry.ide-newton.ts.net/lab/froussard
@@ -326,11 +305,15 @@ spec:
           - nix/images/arc-runner.nix
           - nix/cache-doctor.sh
           - nix/oci-doctor.sh
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - nix/toolchain-doctor.sh
           - argocd/applications/arc
+          - flake.nix
+          - flake.lock
+          - nix/packages.nix
+          - nix/cache-push.sh
+          - nix/oci-inspect-archive.sh
+          - nix/oci-release-contract.sh
     - image:
         repoURL: registry.ide-newton.ts.net/lab/arc-runner
         imageSelectionStrategy: NewestBuild
@@ -366,9 +349,6 @@ spec:
           - nix/images/attic.nix
           - docs/nix-cache.md
           - docs/nix-oci-real-image-build-adoption-plan.md
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - argocd/applications/attic
     - image:
         repoURL: registry.ide-newton.ts.net/lab/attic
@@ -402,10 +382,6 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         includePaths:
-          - .github/workflows/headlamp-ci.yml
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
           - nix/verify-headlamp-image-assets.sh
           - services/headlamp
           - nix/images/headlamp.nix
@@ -442,18 +418,9 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         includePaths:
-          - .github/actions/setup-nix-toolchain
-          - .github/workflows/hermes-toolchain-build-push.yml
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
           - flake.lock
           - flake.nix
-          - nix/ci-nix-oci-summary.sh
-          - nix/ci-run-timed.sh
           - nix/images/hermes-toolchain.nix
-          - nix/oci-inspect-archive.sh
-          - nix/oci-push.sh
-          - nix/oci-release-contract.sh
           - nix/packages.nix
           - argocd/applications/hermes
     - image:
@@ -496,10 +463,6 @@ spec:
           - services/bumba
           - nix/images/jangar.nix
           - nix/images/openai-codex-cli.nix
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - .github/workflows/jangar-post-deploy-verify.yml
-          - nix/oci-push.sh
           - argocd/applications/jangar
           - argocd/bootstrap/jangar
     - image:
@@ -537,10 +500,6 @@ spec:
           - services/symphony
           - nix/images/symphony.nix
           - nix/images/openai-codex-cli.nix
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - .github/workflows/symphony-post-deploy-verify.yml
-          - nix/oci-push.sh
           - argocd/applications/symphony
           - argocd/applications/symphony-jangar
           - argocd/applications/symphony-base
@@ -729,14 +688,11 @@ spec:
           - packages/cx-tools
           - packages/otel
           - packages/scripts/src/agents/update-values.ts
-          - packages/scripts/src/shared/oci.ts
           - packages/temporal-bun-sdk
           - services/agents
           - charts/agents/crds
           - nix/images/agents.nix
           - nix/images/openai-codex-cli.nix
-          - .github/workflows/nix-oci-build-common.yml
-          - nix/oci-push.sh
           - argocd/applications/agents
           - charts/agents
         excludePaths:
@@ -911,12 +867,8 @@ spec:
         includePaths:
           - services/restate
           - packages/scripts/src/restate
-          - packages/scripts/src/shared/cli.ts
           - packages/scripts/src/shared/docker.ts
-          - packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts
-          - .github/workflows/restate-images.yml
           - argocd/applications/restate
-          - argocd/applications/kargo
           - argocd/applicationsets/platform.yaml
           - bun.lock
     - image:
@@ -1000,11 +952,8 @@ spec:
         strictSemvers: true
         includePaths:
           - services/temporal-worker
-          - .github/workflows/temporal-worker-images.yml
           - argocd/applications/temporal
-          - argocd/applications/kargo
           - argocd/applicationsets/platform.yaml
-          - packages/scripts/src/shared/__tests__/kargo.test.ts
     - image:
         repoURL: registry.ide-newton.ts.net/lab/temporal-worker
         imageSelectionStrategy: NewestBuild

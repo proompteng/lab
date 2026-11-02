@@ -24,14 +24,6 @@ on:
       - 'bun.lock'
       - '.github/workflows/ofz.yaml'
       - '.github/scripts/install-tengri-chromium.mjs'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'nix/oci-*.sh'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/ci-nix-oci-summary.sh'
       - 'nix/images/ofz.nix'
       - 'nix/tengri-schema-hash.py'
       - 'nix/packages.nix'
@@ -40,18 +32,12 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/ofz.yaml'
-      - '.github/workflows/product-nix-images.yml'
-      - '.github/workflows/tengri-images.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'
       - 'apps/landing/src/app/api/tengri/**'
       - 'apps/landing/src/components/tengri/**'
       - 'apps/landing/src/lib/tengri/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applications/keycloak/tengri/**'
       - 'argocd/applications/ofz/**'
       - 'argocd/applications/proompteng/**'
@@ -62,22 +48,16 @@ on:
       - 'devices/galactic/omni/tengri-runner-*.json'
       - 'flake.lock'
       - 'flake.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/ofz.nix'
       - 'nix/images/proompteng.nix'
-      - 'nix/oci-*.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
       - 'nix/packages.nix'
       - 'nix/tengri-schema-hash.py'
       - 'packages/backend/**'
       - 'packages/design/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'packages/scripts/src/tengri/**'
+      - '!packages/scripts/src/tengri/__tests__/**'
+      - '!packages/scripts/src/tengri/**/*.test.ts'
       - 'proto/proompteng/authz/**'
       - 'services/relay/**'
       - 'packages/platform-client/**'
@@ -94,6 +74,13 @@ on:
       - 'services/ofz/src/**'
       - 'services/ofz/test-control.sh'
       - 'services/tengri/**'
+      - package.json
+      - bunfig.toml
+      - .npmrc
+      - patches/**
+      - tsconfig.base.json
+      - nix/images/relativize-bun-cache.sh
+      - nix/images/prune-bun-dependency-metadata.sh
   workflow_dispatch:
 
 concurrency:

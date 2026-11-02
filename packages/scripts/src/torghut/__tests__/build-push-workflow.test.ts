@@ -69,7 +69,6 @@ const torghutCoBuildPaths = [
   'services/dorvud/technical-analysis-flink/**',
   'services/dorvud/websockets/**',
   'services/signal-publisher/**',
-  'packages/scripts/src/shared/oci.ts',
   'nix/images/torghut.nix',
   'nix/images/torghut-notebook.nix',
   'nix/images/torghut-ta.nix',
@@ -80,8 +79,6 @@ const torghutCoBuildPaths = [
   'nix/images/bun-workspace-deps-source.nix',
   'nix/images/bun-workspace-deps-source.test.sh',
   'nix/images/prune-bun-dependency-metadata.sh',
-  'nix/check-bun-dependency-closure.sh',
-  '.github/workflows/nix-bun-dependency-closure.yml',
   'services/torghut/uv.lock',
   'flake.nix',
   'flake.lock',
@@ -91,10 +88,6 @@ const torghutCoBuildPaths = [
   '.npmrc',
   'patches/**',
   'package.json',
-  '.github/workflows/nix-oci-build-common.yml',
-  '.github/workflows/torghut-ta-build-push.yaml',
-  '.github/workflows/torghut-post-deploy-verify.yml',
-  'nix/oci-push.sh',
   'argocd/applications/torghut/**',
   'argocd/applications/torghut-options/**',
   'argocd/applications/torghut-hyperliquid-runtime/**',
@@ -124,12 +117,12 @@ describe('torghut build-push workflow', () => {
     expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
     for (const workflowOnlyPath of [
       '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/nix-oci-build-common.yml',
       '.github/actions/setup-nix-toolchain/**',
+      'nix/oci-push.sh',
     ]) {
       expect(pathPatternIndex(workflowOnlyPath)).toBe(-1)
     }
-    expect(pathPatternIndex('.github/workflows/nix-oci-build-common.yml')).toBeGreaterThan(-1)
-    expect(pathPatternIndex('nix/oci-push.sh')).toBeGreaterThan(-1)
   })
 
   it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {

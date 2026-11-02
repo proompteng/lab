@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { changedRange, matchesPaths, parseTargets, selectAffectedInputs } from '../affected-inputs'
 import { matchesGlob } from '../impact-router'
 
@@ -36,6 +37,180 @@ const targets = {
   bayn: { workspaces: ['', 'services/bayn'], paths: ['services/bayn/**', 'bun.lock', '**/package.json'] },
   landing: { workspaces: ['', 'apps/landing'], paths: ['apps/landing/**', 'bun.lock', '**/package.json'] },
 }
+
+const publicationWorkflows = readdirSync('.github/workflows').filter((filename) => {
+  if (!/\.ya?ml$/.test(filename)) return false
+  return (
+    ['tengri-images.yml', 'restate-images.yml', 'temporal-worker-images.yml'].includes(filename) ||
+    readFileSync(`.github/workflows/${filename}`, 'utf8').includes('uses: ./.github/workflows/nix-oci-build-common.yml')
+  )
+})
+
+test.each(publicationWorkflows)(
+  '%s does not publish images for CI orchestration or Kargo control changes',
+  (filename) => {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const push = property(property(workflow, 'on'), 'push')
+    if (push === undefined) return
+    const paths = property(push, 'paths')
+    if (!Array.isArray(paths)) throw new Error(`Missing publication input boundaries: ${filename}`)
+    const patterns = paths.map(text)
+    for (const file of [
+      `.github/workflows/${filename}`,
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/action.yml',
+      'packages/scripts/src/shared/oci.ts',
+      'packages/scripts/src/shared/cli.ts',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'argocd/applications/kargo/warehouses.yaml',
+      'packages/scripts/src/tengri/release-workflows.test.ts',
+      'packages/scripts/src/tengri/__tests__/schema.test.ts',
+      'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
+    ])
+      expect(matchesPaths(file, patterns)).toBe(false)
+    for (const file of [
+      'nix/cache-push.sh',
+      'nix/oci-push.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-release-contract.sh',
+    ]) {
+      expect(matchesPaths(file, patterns)).toBe(
+        ['arc-runner-build-push.yml', 'opencode-build-push.yml'].includes(filename),
+      )
+    }
+  },
+)
+
+test('App source changes do not force dependency downloads; dependency input changes still do', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
+  const jobs = property(workflow, 'jobs')
+  const steps = property(property(jobs, 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing product planner')
+  const inputs = property(
+    steps.find((step) => property(step, 'id') === 'filter'),
+    'with',
+  )
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  expect(configured.app_dependencies).toBeDefined()
+  const workspaces = Object.fromEntries(
+    Object.values(configured)
+      .flatMap((target) => target.workspaces)
+      .map((path) => [path, { name: path || 'root' }]),
+  )
+  const lock = { ...before, workspaces: { ...workspaces, ...before.workspaces } }
+  for (const file of ['apps/app/src/routes/index.tsx', 'packages/design/src/button.tsx']) {
+    const plan = selectAffectedInputs([file], configured, lock, lock)
+    expect(plan.app).toBe(true)
+    expect(plan.app_dependencies).toBe(false)
+  }
+  for (const file of [
+    'apps/app/package.json',
+    'packages/design/package.json',
+    'patches/example.patch',
+    'bunfig.toml',
+    '.npmrc',
+    'nix/images/app.nix',
+    'nix/images/relativize-bun-cache.sh',
+    'nix/check-bun-dependency-closure.sh',
+  ]) {
+    expect(selectAffectedInputs([file], configured, lock, lock).app_dependencies).toBe(true)
+    const outer = property(property(property(workflow, 'on'), 'pull_request'), 'paths')
+    if (!Array.isArray(outer)) throw new Error('Missing product PR inputs')
+    expect(matchesPaths(file, outer.map(text))).toBe(true)
+  }
+  const expression = text(property(property(jobs, 'build-app'), 'if')).replaceAll(
+    'needs.verify-app-dependency-closure',
+    'needs["verify-app-dependency-closure"]',
+  )
+  for (const result of ['success', 'skipped', 'failure', 'cancelled']) {
+    for (const dependenciesRequired of [true, false])
+      for (const planner of ['success', 'failure'])
+        for (const cancelled of [true, false]) {
+          expect(
+            runInNewContext(expression, {
+              github: { event_name: 'push', ref: 'refs/heads/main' },
+              needs: {
+                changes: { result: planner, outputs: { app: 'true', app_dependencies: String(dependenciesRequired) } },
+                'verify-app-dependency-closure': { result },
+              },
+              cancelled: () => cancelled,
+            }),
+          ).toBe(
+            !cancelled &&
+              planner === 'success' &&
+              (result === 'success' || (!dependenciesRequired && result === 'skipped')),
+          )
+        }
+  }
+  const output = text(property(property(property(jobs, 'changes'), 'outputs'), 'app_dependencies')).replace(
+    /^\$\{\{\s*|\s*\}\}$/g,
+    '',
+  )
+  for (const selected of [true, false]) {
+    expect(
+      String(
+        runInNewContext(output, {
+          github: { event_name: 'workflow_dispatch' },
+          steps: { manual: { outputs: { app: String(selected) } } },
+          fromJSON: () => {
+            throw new Error('manual builds must not read a skipped planner')
+          },
+        }),
+      ),
+    ).toBe(String(selected))
+  }
+})
+
+test('runtime, dependency and image-definition changes still publish the complete release cohort', () => {
+  for (const filename of ['ofz.yaml', 'tengri-images.yml', 'product-nix-images.yml']) {
+    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+    const paths = property(property(property(workflow, 'on'), 'push'), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing cohort publication inputs')
+    for (const file of [
+      'services/tengri/src/activity.rs',
+      'services/nanoagent/browser.go',
+      'services/ofz/src/lib.rs',
+      'apps/landing/src/components/tengri/chrome-app.tsx',
+      'proto/proompteng/authz/v1/authz.proto',
+      'nix/images/ofz.nix',
+      'nix/images/proompteng.nix',
+      'nix/packages.nix',
+      'bun.lock',
+      'package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches/example.patch',
+      'tsconfig.base.json',
+      'nix/images/relativize-bun-cache.sh',
+    ]) {
+      expect(matchesPaths(file, paths.map(text))).toBe(true)
+    }
+  }
+})
+
+test('CI publishing and cache helpers retain script validation', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
+  for (const event of ['push', 'pull_request']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing script validation inputs')
+    for (const file of [
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/action.yml',
+      'packages/scripts/src/shared/oci.ts',
+      'nix/cache-push.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-release-contract.sh',
+      'nix/check-bun-dependency-closure.sh',
+    ])
+      expect(matchesPaths(file, paths.map(text))).toBe(true)
+  }
+})
 
 test('a Landing dependency addition and hoist move do not rebuild Bayn', () => {
   expect(selectAffectedInputs(['bun.lock', 'apps/landing/package.json'], targets, before, after)).toEqual({
@@ -83,7 +258,7 @@ test('Ofz implementation keeps runtime qualification and production packages one
   }
 })
 
-test('Ofz image qualification follows its shared publication helpers', () => {
+test('Ofz publication helpers use script CI without waking service qualification', () => {
   const workflow = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
   for (const event of ['pull_request', 'push']) {
     const paths = property(property(property(workflow, 'on'), event), 'paths')
@@ -97,7 +272,7 @@ test('Ofz image qualification follows its shared publication helpers', () => {
       'nix/ci-run-timed.sh',
       '.github/actions/setup-nix-toolchain/action.yml',
     ]) {
-      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
     }
   }
 })
@@ -264,6 +439,7 @@ test('runtime-only PRs skip desktop builds while main publishes coordinated imag
       app: false,
       synthesis: false,
       docs: false,
+      app_dependencies: false,
     })
   }
 })
@@ -280,7 +456,9 @@ test('Tengri frontend PRs skip native images while main publishes coordinated re
       'services/nanoagent/internal/service/service.go',
       '.github/workflows/tengri-images.yml',
     ]) {
-      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(true)
+      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(
+        runtimeSource.startsWith('.github/') ? event === 'pull_request' : true,
+      )
     }
   }
 })
