@@ -62,6 +62,12 @@ on:
       - '.github/actionlint.yaml'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
+      - .github/workflows/**
+      - .github/actions/setup-nix-toolchain/**
+      - nix/ci-*.sh
+      - nix/oci-*.sh
+      - nix/cache-push.sh
+      - nix/check-bun-dependency-closure.sh
   pull_request:
     paths:
       - 'packages/scripts/**'
@@ -122,6 +128,12 @@ on:
       - 'kubernetes/rook-ceph-rwx-benchmarks/README.md'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
+      - .github/workflows/**
+      - .github/actions/setup-nix-toolchain/**
+      - nix/ci-*.sh
+      - nix/oci-*.sh
+      - nix/cache-push.sh
+      - nix/check-bun-dependency-closure.sh
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
