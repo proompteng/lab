@@ -6,6 +6,9 @@ import kotlinx.coroutines.runBlocking
 import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.charset.StandardCharsets.UTF_8
+import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -13,6 +16,43 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WebullApiTest {
+  @Test
+  fun `exhausted rate limit retries still delay the next batch until the final cooldown expires`() =
+    runBlocking {
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      var requests = 0
+      val finalLimitAt = AtomicLong()
+      val subsequentAt = AtomicLong()
+      server.createContext(WEBULL_QUOTES_PATH) { exchange ->
+        requests++
+        val limited = requests <= 4
+        if (requests == 4) finalLimitAt.set(System.nanoTime())
+        if (requests == 5) subsequentAt.set(System.nanoTime())
+        val body = (if (limited) """{"error_code":"RATE_LIMITED"}""" else "{}").toByteArray()
+        if (limited) exchange.responseHeaders.add("Retry-After", "0")
+        exchange.sendResponseHeaders(if (limited) 429 else 200, body.size.toLong())
+        exchange.responseBody.use { it.write(body) }
+      }
+      server.start()
+      try {
+        val api = WebullApi(WebullCredentials("key", "secret"), origin = URI("http://127.0.0.1:${server.address.port}"))
+        assertEquals(429, assertFailsWith<WebullApiFailure> { api.request(WEBULL_QUOTES_PATH) }.status)
+        api.request(WEBULL_QUOTES_PATH)
+        assertTrue(subsequentAt.get() - finalLimitAt.get() >= 1_000_000_000)
+      } finally {
+        server.stop(0)
+      }
+    }
+
+  @Test
+  fun `Retry-After honors long numeric and HTTP date backoffs`() {
+    val receivedAt = Instant.parse("2026-11-01T00:00:00Z")
+    assertEquals(Duration.ofSeconds(600), webullRetryAfter("600", receivedAt))
+    assertEquals(Duration.ofSeconds(600), webullRetryAfter("Sun, 01 Nov 2026 00:10:00 GMT", receivedAt))
+    assertEquals(Duration.ofSeconds(1), webullRetryAfter("0", receivedAt))
+    assertEquals(null, webullRetryAfter("invalid", receivedAt))
+  }
+
   @Test
   fun `signature matches official SDK 3_0_4 HMAC SHA256 vector`() {
     val headers =

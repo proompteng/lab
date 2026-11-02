@@ -21,6 +21,7 @@ import io.ktor.server.routing.routing
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
@@ -35,6 +36,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -116,7 +118,7 @@ fun main(args: Array<String>): Unit =
       Thread {
         runBlocking {
           owner.cancel()
-          withTimeout(20_000) { owner.join() }
+          withTimeout(28_000) { owner.join() }
         }
       }
     Runtime.getRuntime().addShutdownHook(shutdown)
@@ -140,6 +142,9 @@ private suspend fun runWebullFeed(
 ): Unit =
   coroutineScope {
     val progress = WebullProgress()
+    val ingress = coroutineContext.job
+    // Input cancellation must not cancel Kafka delivery of captures already accepted into the queue.
+    val publisherOwner = Job()
     val queue = Channel<WebullCapture>(16)
     val producer = buildProducer(kafka)
 
@@ -196,7 +201,7 @@ private suspend fun runWebullFeed(
         }
       }.start(wait = false)
     val publisher =
-      launch {
+      launch(publisherOwner) {
         for (capture in queue) {
           val parsed = runCatching { inspectWebullCapture(capture) }.getOrNull()
           val encoded = encodeWebullCapture(capture)
@@ -217,6 +222,9 @@ private suspend fun runWebullFeed(
           }
         }
       }
+    publisher.invokeOnCompletion { failure ->
+      if (failure != null && ingress.isActive) ingress.cancel("Webull publisher failed", failure)
+    }
     try {
       control(
         "gap",
@@ -350,8 +358,12 @@ private suspend fun runWebullFeed(
                   )
                 } finally {
                   progress.connected.remove(slot)
-                  withContext(NonCancellable) { runCatching { mqtt.close() } }
-                  mqtt.undelivered?.let { enqueue(it) }
+                  withContext(NonCancellable) {
+                    withTimeoutOrNull(5_000) {
+                      runCatching { mqtt.close() }
+                      mqtt.undelivered?.let { enqueue(it) }
+                    } ?: logEvent("webull.mqtt.shutdown.gap", mapOf("sessionId" to mqtt.sessionId))
+                  }
                 }
                 delay(60_000)
               }
@@ -375,8 +387,14 @@ private suspend fun runWebullFeed(
       awaitCancellation()
     } finally {
       withContext(NonCancellable) {
-        publisher.cancelAndJoin()
+        withTimeoutOrNull(20_000) { drainWebullPublisher(ingress, queue, publisher) }
+          ?: logEvent(
+            "webull.shutdown.gap",
+            mapOf("unacknowledgedCaptures" to (progress.received.get() - progress.acknowledged.get()).toString()),
+          )
         queue.close()
+        publisherOwner.cancel()
+        publisher.cancelAndJoin()
         server.stop(500, 2_000)
         producer.close(java.time.Duration.ofSeconds(5))
       }

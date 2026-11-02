@@ -33,7 +33,8 @@ for every candidate in batches of 100, with real-time entitlement required and P
 Each sweep uses one completed UTC-minute cutoff and a five-minute recovery window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
 [documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects
-Retry-After or waits 60 seconds. Bounded 5xx retries apply to read-only calls; uncertain subscription
+numeric or HTTP-date Retry-After without truncating long cooldowns, or waits 60 seconds. The final
+429 cooldown also applies to subsequent batches. Bounded 5xx retries apply to read-only calls; uncertain subscription
 failures reconnect instead of blindly repeating side effects.
 
 One invalid symbol rejects a whole provider batch. Bisection isolates invalid symbols without
@@ -59,7 +60,9 @@ working backend protocol.
 
 Captures are bounded to 4 MiB, the shared queue to 16 captures, and Kafka records/fetches to 8 MiB.
 Backpressure blocks producers. An MQTT enqueue timeout retains the in-flight capture, disconnects,
-and drains it before reconnecting. Kafka retries preserve the capture UUID. Ambiguous acknowledgments
+and drains it before reconnecting. Graceful shutdown stops inputs first and allows the independently
+owned publisher up to 20 seconds to drain accepted captures; an exhausted deadline logs a gap.
+Kafka retries preserve the capture UUID. Ambiguous acknowledgments
 can still create multiple offsets for one UUID; these are identifiable capture retries.
 
 Flink keeps a separate source/group and stable operator UIDs. Existing Alpaca operators are unchanged.

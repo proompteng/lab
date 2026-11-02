@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Base64
 import java.util.Locale
@@ -52,6 +53,19 @@ data class WebullApiFailure(
   val code: String,
   val retryAfter: Duration?,
 ) : Exception("Webull HTTP $status ($code)")
+
+internal fun webullRetryAfter(
+  value: String?,
+  receivedAt: Instant,
+): Duration? {
+  if (value == null) return null
+  val seconds = value.toLongOrNull()?.takeIf { it >= 0 }
+  val duration =
+    seconds?.let(Duration::ofSeconds) ?: runCatching {
+      Duration.between(receivedAt, ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant())
+    }.getOrNull() ?: return null
+  return maxOf(duration, Duration.ofSeconds(1))
+}
 
 internal fun webullPercentEncode(value: String): String =
   URLEncoder
@@ -130,8 +144,8 @@ class WebullApi(
       val interval = if (path == WEBULL_INSTRUMENTS_PATH) Duration.ofMillis(1_100) else Duration.ofMillis(250)
       repeat(4) { attempt ->
         nextRequests[path]?.let { due ->
-          val wait = Duration.between(clock.instant(), due).toMillis()
-          if (wait > 0) delay(wait)
+          val wait = Duration.between(clock.instant(), due)
+          if (!wait.isNegative && !wait.isZero) delay(wait.toMillis() + 1)
         }
         nextRequests[path] = clock.instant().plus(interval)
         val encodedBody = body?.toString()
@@ -183,22 +197,15 @@ class WebullApi(
             ((Json.parseToJsonElement(bytes.toString(UTF_8)) as? JsonObject)?.get("error_code") as? JsonPrimitive)?.content
           }.getOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_.-]{1,100}")) }
             ?: "HTTP_${response.statusCode()}"
-        val retry =
-          response
-            .headers()
-            .firstValue("Retry-After")
-            .orElse(null)
-            ?.toLongOrNull()
-            ?.coerceIn(1, 300)
-            ?.let(Duration::ofSeconds)
+        val retry = webullRetryAfter(response.headers().firstValue("Retry-After").orElse(null), receivedAt)
         val failure = WebullApiFailure(response.statusCode(), code, retry)
         val readOnly = path in setOf(WEBULL_INSTRUMENTS_PATH, WEBULL_BARS_PATH, WEBULL_QUOTES_PATH)
-        if ((failure.status == 429 || (readOnly && failure.status in 500..599)) && attempt < 3) {
+        val retryable = failure.status == 429 || (readOnly && failure.status in 500..599)
+        if (retryable) {
           val wait = retry ?: if (failure.status == 429) Duration.ofSeconds(60) else Duration.ofSeconds(1L shl attempt)
           nextRequests[path] = receivedAt.plus(wait)
-        } else {
-          throw failure
         }
+        if (!retryable || attempt == 3) throw failure
       }
       error("Webull request exhausted its retry budget")
     }
