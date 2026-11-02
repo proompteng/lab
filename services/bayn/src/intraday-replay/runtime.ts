@@ -5,7 +5,6 @@ import { makeEntryInferenceJournal } from '../db/entry-inference-postgres'
 import { makeJevPositionStore } from '../db/jev-position-postgres'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
@@ -172,7 +171,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
     const candidateObservationStore = yield* makeCandidateObservationStore
     const jevClient = yield* JevClient
-    const decisionsClient = yield* DecisionsClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
     const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
@@ -247,7 +245,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
-      Context.add(DecisionsClient, decisionsClient),
       Context.add(EntryInferenceJournal, entryInferenceJournal),
       Context.add(JevEvaluationStore, jevEvaluations),
       Context.add(JevBatchStore, jevBatches),

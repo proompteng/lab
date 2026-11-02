@@ -1,4 +1,5 @@
 import { createAgentRunTools } from './agent-runs'
+import { createBmcTools } from './bmc'
 import { createFileTools } from './file'
 import { createGitTools } from './git'
 import { createGuideTools } from './guide'
@@ -17,5 +18,6 @@ export const createAgentsShellTools = () => [
   ...createGitTools(),
   ...createKubectlTools(),
   ...createInfrastructureTools(),
+  ...createBmcTools(),
   ...createAgentRunTools(),
 ]

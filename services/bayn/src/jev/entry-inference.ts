@@ -1,3 +1,4 @@
+import type { ChartStageInferenceSchema, ChartStageUsageSchema } from './chart-stage-contract'
 import { Context, Data, type Effect, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
@@ -13,7 +14,8 @@ import { type ChartAssessments, type ChartAssessmentsMaterial } from './chart-qu
 import { makeInitialChartStageRequest, stagedChartAssessments } from './staged-chart-questions'
 import type { JevInference } from './client'
 import { JevFailure, JevResponseSchema, type JevRequest } from './contract'
-import type { DecisionsError, DecisionsInference, DecisionsUsageSchema } from './decisions'
+import type { DecisionsError } from './decisions'
+type ChartStageInference = typeof ChartStageInferenceSchema.Type
 import { jevEntryEconomics } from './entry-economics'
 import {
   prepareEntryInferenceInput,
@@ -33,7 +35,7 @@ export type VisualFailureEvidence = {
   readonly category: DecisionsError['category']
   readonly httpStatus: number | null
   readonly responseHash: string | null
-  readonly usage: typeof DecisionsUsageSchema.Type | null
+  readonly usage: typeof ChartStageUsageSchema.Type | null
 }
 type ProposalEvaluation = {
   readonly proposals: readonly EntryProposal[]
@@ -44,18 +46,18 @@ type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
   | { readonly status: 'VISUAL_FAILED'; readonly failure: VisualFailureEvidence }
   | {
       readonly status: 'PREPARATION_FAILED'
-      readonly visual: DecisionsInference
+      readonly visual: ChartStageInference
       readonly reason: 'VISUAL_RECEIPT_MISMATCH' | 'DERIVATION_CONTRACT' | 'BASE_START_FAILED'
     }
   | {
       readonly status: 'NO_FUNDED_PROPOSALS'
-      readonly visual: DecisionsInference
+      readonly visual: ChartStageInference
       readonly assessments: A
       readonly evaluation: ProposalEvaluation
     }
   | {
       readonly status: 'READY'
-      readonly visual: DecisionsInference
+      readonly visual: ChartStageInference
       readonly assessments: A
       readonly evaluation: ProposalEvaluation
       readonly jevRequest: JevRequest
@@ -241,8 +243,8 @@ export const hasFeasibleEntrySource = (
 
 export const deriveEntryHandoffDisposition = (
   input: EntryInferenceInput,
-  visual: DecisionsInference,
-  baseStart: DecisionsInference | null = null,
+  visual: ChartStageInference,
+  baseStart: ChartStageInference | null = null,
 ) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
@@ -261,7 +263,7 @@ export const deriveEntryHandoffDisposition = (
 
 export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMaterial>(
   input: Pick<EntryInferenceMaterial, 'numericalState' | 'protocol' | 'funding'>,
-  visual: DecisionsInference,
+  visual: ChartStageInference,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
   assessments: A,
   prepareJudgments: typeof makeEntryJudgmentRequest,
