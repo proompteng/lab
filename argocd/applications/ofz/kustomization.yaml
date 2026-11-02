@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ofz
+commonAnnotations:
+  delivery.proompteng.ai/source-revision: unpromoted
+  delivery.proompteng.ai/image-digest: unpromoted
+  delivery.proompteng.ai/github-run-id: unpromoted
+resources:
+  - control-plane
+  - postgres-backups.yaml
+  - database-backup-sealedsecret.yaml
+  - postgres-cluster.yaml
+  - spicedb-preshared-key-sealedsecret.yaml
+  - spicedb-cluster.yaml
+  - playground.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: ofz-playground-nginx
+    files:
+      - nginx.conf=playground-nginx.conf

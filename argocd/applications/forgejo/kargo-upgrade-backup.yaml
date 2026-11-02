@@ -1,0 +1,67 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: forgejo-kargo-16-0-3-db
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: forgejo-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: forgejo-kargo-16-0-3-data
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: gitea-shared-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-kargo-16-0-3-restore-db-v2
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 10Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: forgejo-kargo-16-0-3-db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-kargo-16-0-3-restore-data-v2
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 50Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: forgejo-kargo-16-0-3-data

@@ -1,0 +1,20 @@
+{{- if and .Values.metrics.enabled .Values.metrics.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agents.fullname" . }}-dashboard
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+    {{- with .Values.metrics.dashboards.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.dashboards.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  agents-observability.json: |
+    {{- .Files.Get "dashboards/agents-observability.json" | nindent 4 }}
+{{- end }}

@@ -1,0 +1,41 @@
+name: Feature flags CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/feature-flags/**'
+      - '.github/workflows/feature-flags-ci.yml'
+  pull_request:
+    paths:
+      - 'argocd/applications/feature-flags/**'
+      - '.github/workflows/feature-flags-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature-flags-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery:
+    name: Validate Git cache recovery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Render and test Git cache recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop -c kustomize build --enable-helm argocd/applications/feature-flags > "${RUNNER_TEMP}/feature-flags.yaml"
+          nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/feature-flags.yaml" > "${RUNNER_TEMP}/feature-flags.json"
+          FEATURE_FLAGS_RENDERED_MANIFEST="${RUNNER_TEMP}/feature-flags.json" python3 argocd/applications/feature-flags/repair_git_cache_test.py -v
+          nix develop -c shellcheck argocd/applications/feature-flags/repair-git-cache.sh
+          nix develop -c kubeconform -strict -summary -ignore-missing-schemas "${RUNNER_TEMP}/feature-flags.yaml"

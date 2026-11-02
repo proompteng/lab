@@ -1,0 +1,63 @@
+logging {
+  level  = "info"
+  format = "json"
+}
+
+// Only traces enter this bounded relay. Trading and metric exports stay independent.
+otelcol.receiver.otlp "bayn" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.processor.memory_limiter.bayn.input]
+  }
+}
+
+otelcol.processor.memory_limiter "bayn" {
+  check_interval = "1s"
+  limit          = "384MiB"
+  spike_limit    = "64MiB"
+  output {
+    traces = [otelcol.exporter.otlphttp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlphttp "tempo" {
+  client {
+    endpoint    = "http://observability-tempo-distributor.observability.svc.cluster.local:4318"
+    timeout     = "15s"
+    compression = "gzip"
+  }
+  // Byte-bounded, nonblocking admission isolates the application from a brief sink outage.
+  // This is a volatile queue: overflow, exhausted retries and restarts remain measurable loss.
+  sending_queue {
+    enabled          = true
+    sizer            = "bytes"
+    queue_size       = 16777216
+    num_consumers    = 2
+    block_on_overflow = false
+  }
+  retry_on_failure {
+    enabled          = true
+    initial_interval = "1s"
+    max_interval     = "10s"
+    max_elapsed_time = "120s"
+  }
+}
+
+prometheus.scrape "self" {
+  targets = [{
+    "__address__" = "127.0.0.1:12345",
+    "job"         = "bayn-telemetry",
+    "namespace"   = "bayn",
+    "pod"         = sys.env("HOSTNAME"),
+  }]
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "http://observability-mimir-gateway.observability.svc.cluster.local/api/v1/push"
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "name": "captured-workflow-task-failure",
+  "info": {
+    "namespace": "default",
+    "taskQueue": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+    "workflowId": "replay-captured-workflow-task-failure-03a64419-9da4-41da-8d77-3648e420c76c",
+    "runId": "019dfeaa-dd71-7b2b-9d41-b423379b7a12",
+    "workflowType": "integrationWorkflowTaskFailureWorkflow",
+    "temporalVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)"
+  },
+  "history": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-05-06T19:01:43.921732Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "48235629",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "integrationWorkflowTaskFailureWorkflow"
+        },
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJ2YWx1ZSI6Im1pc3Npbmctc2VhcmNoLWF0dHJpYnV0ZSJ9"
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "019dfeaa-dd71-7b2b-9d41-b423379b7a12",
+        "identity": "temporal-cli:gregkonush@Mac.pihole.lan",
+        "firstExecutionRunId": "019dfeaa-dd71-7b2b-9d41-b423379b7a12",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "replay-captured-workflow-task-failure-03a64419-9da4-41da-8d77-3648e420c76c"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-05-06T19:01:43.921768Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48235630",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-05-06T19:01:43.923630Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48235635",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "89746168-07b0-4288-bd5f-393e20d93fb7",
+        "historySizeBytes": "515"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-05-06T19:01:43.929058Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_FAILED",
+      "taskId": "48235639",
+      "workflowTaskFailedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "cause": "WORKFLOW_TASK_FAILED_CAUSE_BAD_SEARCH_ATTRIBUTES",
+        "failure": {
+          "message": "BadSearchAttributes: Namespace default has no mapping defined for search attribute TemporalBunSdkMissingKeyword",
+          "serverFailureInfo": {}
+        },
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-05-06T19:01:43.952498Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED",
+      "taskId": "48235660",
+      "workflowExecutionTerminatedEventAttributes": {
+        "reason": "replay-corpus-workflow-task-failure-cleanup",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [],
+    "randomValues": [],
+    "timeValues": [],
+    "failureMetadata": {
+      "eventId": "4",
+      "eventType": 9,
+      "failureType": "ServerFailure",
+      "failureMessage": "BadSearchAttributes: Namespace default has no mapping defined for search attribute TemporalBunSdkMissingKeyword"
+    },
+    "signals": [],
+    "queries": []
+  }
+}

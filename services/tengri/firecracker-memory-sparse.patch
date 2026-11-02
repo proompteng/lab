@@ -1,0 +1,137 @@
+--- a/src/vmm/src/vstate/memory.rs
++++ b/src/vmm/src/vstate/memory.rs
+@@ -616 +616,5 @@
+-    fn dump<T: WriteVolatile + std::io::Seek>(&self, writer: &mut T) -> Result<(), MemoryError>;
++    fn dump<T: WriteVolatile + std::io::Seek>(
++        &self,
++        writer: &mut T,
++        zeroed_destination: bool,
++    ) -> Result<(), MemoryError>;
+@@ -676,0 +681,38 @@
++fn write_sparse_memory<B: BitmapSlice, T: WriteVolatile + std::io::Seek>(
++    memory: &VolatileSlice<B>,
++    writer: &mut T,
++) -> Result<(), GuestMemoryError> {
++    let page_size = host_page_size();
++    let mut page = vec![0u8; page_size];
++    let mut start = 0;
++    let mut previous_zero = None;
++    let mut write_run = |start: usize, end: usize, zero: bool| {
++        if zero {
++            writer
++                .seek(SeekFrom::Current((end - start) as i64))
++                .map_err(GuestMemoryError::IOError)?;
++        } else {
++            writer.write_all_volatile(&memory.subslice(start, end - start)?)?;
++        }
++        Ok::<_, GuestMemoryError>(())
++    };
++    for offset in (0..memory.len()).step_by(page_size) {
++        let length = page_size.min(memory.len() - offset);
++        memory
++            .subslice(offset, length)?
++            .copy_to(&mut page[..length]);
++        let zero = page[..length].iter().all(|byte| *byte == 0);
++        if let Some(previous) = previous_zero {
++            if previous != zero {
++                write_run(start, offset, previous)?;
++                start = offset;
++            }
++        }
++        previous_zero = Some(zero);
++    }
++    if let Some(zero) = previous_zero {
++        write_run(start, memory.len(), zero)?;
++    }
++    Ok(())
++}
++
+@@ -701 +743,5 @@
+-    fn dump<T: WriteVolatile + std::io::Seek>(&self, writer: &mut T) -> Result<(), MemoryError> {
++    fn dump<T: WriteVolatile + std::io::Seek>(
++        &self,
++        writer: &mut T,
++        zeroed_destination: bool,
++    ) -> Result<(), MemoryError> {
+@@ -707,0 +754,2 @@
++                } else if zeroed_destination {
++                    write_sparse_memory(&mem_slot.slice, writer)?;
+@@ -1145 +1193 @@
+-        guest_memory.dump(&mut memory_file).unwrap();
++        guest_memory.dump(&mut memory_file, false).unwrap();
+@@ -1160,0 +1209,58 @@
++    }
++
++    #[test]
++    fn test_sparse_full_snapshot_bytes_and_existing_zero_overwrite() {
++        use std::fs::OpenOptions;
++        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
++
++        let page_size = host_page_size();
++        let size = 16 * page_size;
++        for direct in [false, true] {
++            for pattern in 0..3 {
++                let memory = into_region_ext(
++                    anonymous(
++                        [(GuestAddress(0), size)].into_iter(),
++                        true,
++                        HugePageConfig::None,
++                    )
++                    .unwrap(),
++                );
++                let mut expected = vec![0u8; size];
++                for index in 0..16 {
++                    if pattern == 1 || pattern == 2 && [0, 1, 4, 8, 9, 14].contains(&index) {
++                        expected[index * page_size..(index + 1) * page_size]
++                            .fill((index + 1) as u8);
++                    }
++                }
++                memory.write(&expected, GuestAddress(0)).unwrap();
++                let temporary = TempFile::new().unwrap();
++                let mut file = OpenOptions::new()
++                    .write(true)
++                    .custom_flags(if direct { libc::O_DIRECT } else { 0 })
++                    .open(temporary.as_path())
++                    .unwrap();
++                file.set_len(size as u64).unwrap();
++                memory.dump(&mut file, true).unwrap();
++                file.sync_all().unwrap();
++                if pattern != 1 {
++                    assert!(file.metadata().unwrap().blocks() * 512 < size as u64);
++                }
++                let mut actual = Vec::new();
++                std::fs::File::open(temporary.as_path())
++                    .unwrap()
++                    .read_to_end(&mut actual)
++                    .unwrap();
++                assert_eq!(actual, expected);
++
++                memory.write(&vec![0u8; size], GuestAddress(0)).unwrap();
++                file.rewind().unwrap();
++                memory.dump(&mut file, false).unwrap();
++                file.sync_all().unwrap();
++                actual.clear();
++                std::fs::File::open(temporary.as_path())
++                    .unwrap()
++                    .read_to_end(&mut actual)
++                    .unwrap();
++                assert_eq!(actual, vec![0u8; size]);
++            }
++        }
+--- a/src/vmm/src/vstate/vm.rs
++++ b/src/vmm/src/vstate/vm.rs
+@@ -591,0 +592,5 @@
++        let file_size = file
++            .metadata()
++            .map_err(|e| MemoryBackingFile("get_metadata", e))?
++            .len();
++        let zeroed_destination = file_size == 0;
+@@ -593,5 +597,0 @@
+-            let file_size = file
+-                .metadata()
+-                .map_err(|e| MemoryBackingFile("get_metadata", e))?
+-                .len();
+-
+@@ -621 +621 @@
+-                self.guest_memory().dump(&mut file)?;
++                self.guest_memory().dump(&mut file, zeroed_destination)?;

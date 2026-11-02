@@ -1,0 +1,6 @@
+---
+# Wrapper playbook that delegates to the official k3s.orchestration site playbook.
+# Usage:
+#   ansible-galaxy collection install -r collections/requirements.yml
+#   ansible-playbook playbooks/k3s-ha.yml
+- import_playbook: k3s.orchestration.site

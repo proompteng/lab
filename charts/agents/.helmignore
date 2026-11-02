@@ -1,0 +1,20 @@
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.hg/
+.svn/
+
+# Helm itself
+*.tgz
+Chart.lock
+
+# IDEs
+*.swp
+*.bak
+*.tmp
+.idea/
+.vscode/
+
+node_modules/
+.DS_Store

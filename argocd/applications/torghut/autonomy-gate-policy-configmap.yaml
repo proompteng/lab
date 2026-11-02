@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-autonomy-gate-policy
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: autonomy-runtime
+    app.kubernetes.io/part-of: lab
+data:
+  autonomy-gates-v3.json: |
+    {
+      "policy_version": "v3-gates-1",
+      "required_feature_schema_version": "3.0.0",
+      "gate0_max_null_rate": "0.01",
+      "gate0_max_staleness_ms": 120000,
+      "gate0_min_symbol_coverage": 1,
+      "gate1_min_decision_count": 1,
+      "gate1_min_trade_count": 1,
+      "gate1_min_net_pnl": "0",
+      "gate1_max_negative_fold_ratio": "0.50",
+      "gate1_max_net_pnl_cv": "2.0",
+      "gate2_max_drawdown": "250",
+      "gate2_max_turnover_ratio": "8.0",
+      "gate2_max_cost_bps": "35",
+      "gate2_max_fragility_score": "0.85",
+      "gate2_max_fragility_state_rank": 2,
+      "gate2_require_stability_mode_under_stress": true,
+      "gate3_max_llm_error_ratio": "0.10",
+      "gate3_max_forecast_fallback_rate": "0.05",
+      "gate3_max_forecast_latency_ms_p95": 200,
+      "gate3_min_forecast_calibration_score": "0.85",
+      "gate6_require_janus_evidence": true,
+      "gate6_min_janus_event_count": 1,
+      "gate6_min_janus_reward_count": 1,
+      "gate6_max_calibration_error": "0.45",
+      "gate7_target_coverage": "0.90",
+      "gate7_max_coverage_error_pass": "0.03",
+      "gate7_max_coverage_error_degrade": "0.05",
+      "gate7_max_coverage_error_abstain": "0.08",
+      "gate7_shift_score_degrade": "0.60",
+      "gate7_shift_score_abstain": "0.80",
+      "gate7_shift_score_fail": "0.95",
+      "gate7_max_interval_width_pass": "1.25",
+      "gate7_max_interval_width_degrade": "1.75",
+      "promotion_uncertainty_max_coverage_error": "0.03",
+      "gate5_live_enabled": false,
+      "gate5_require_approval_token": true,
+      "promotion_required_artifacts": [
+        "research/candidate-spec.json",
+        "backtest/evaluation-report.json",
+        "gates/gate-evaluation.json"
+      ],
+      "promotion_require_patch_targets": ["paper", "live"],
+      "promotion_profitability_required_artifacts": [
+        "gates/profitability-evidence-v4.json",
+        "gates/profitability-benchmark-v4.json",
+        "gates/profitability-evidence-validation.json",
+        "gates/recalibration-report.json"
+      ],
+      "promotion_janus_required_targets": ["paper", "live"],
+      "promotion_janus_required_artifacts": [
+        "gates/janus-event-car-v1.json",
+        "gates/janus-hgrm-reward-v1.json"
+      ],
+      "promotion_require_benchmark_parity": true,
+      "promotion_benchmark_parity_required_targets": ["paper", "live"],
+      "promotion_benchmark_required_artifacts": [
+        "benchmarks/benchmark-parity-report-v1.json"
+      ],
+      "promotion_benchmark_parity_min_advisory_output_rate": "0.995",
+      "promotion_benchmark_parity_max_policy_violation_rate_degradation": "0.05",
+      "promotion_benchmark_parity_max_fallback_rate": "0.01",
+      "promotion_benchmark_parity_max_timeout_rate": "0.005",
+      "promotion_benchmark_parity_min_family_coverage_ratio": "1.0",
+      "promotion_benchmark_parity_max_adverse_regime_decision_quality_degradation": "0.01",
+      "promotion_benchmark_parity_max_risk_veto_alignment_degradation": "0.01",
+      "promotion_benchmark_parity_max_confidence_calibration_error_degradation": "0.01",
+      "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift": "0.01",
+      "promotion_require_foundation_router_parity": true,
+      "promotion_foundation_router_parity_required_targets": ["paper", "live"],
+      "promotion_foundation_router_required_artifacts": [
+        "router/foundation-router-parity-report-v1.json"
+      ],
+      "promotion_router_parity_max_fallback_rate": "0.05",
+      "promotion_router_parity_min_calibration_score": "0.85",
+      "promotion_router_parity_max_drift": "0.45",
+      "promotion_router_parity_max_latency_ms_p95": 200,
+      "promotion_require_deeplob_bdlob_contract": true,
+      "promotion_deeplob_bdlob_required_targets": ["paper", "live"],
+      "promotion_deeplob_bdlob_required_artifacts": [
+        "microstructure/deeplob-bdlob-report-v1.json"
+      ],
+      "promotion_deeplob_bdlob_min_feature_quality_pass_rate": "0.99",
+      "promotion_deeplob_bdlob_min_prediction_quality_score": "0.85",
+      "promotion_deeplob_bdlob_min_cost_adjusted_edge_bps": "0.0",
+      "promotion_deeplob_bdlob_max_slippage_divergence_bps": "1.0",
+      "promotion_deeplob_bdlob_min_fallback_reliability": "0.99",
+      "promotion_require_advisor_fallback_slo": true,
+      "promotion_advisor_fallback_required_targets": ["paper", "live"],
+      "promotion_advisor_fallback_required_artifacts": [
+        "execution/advisor-fallback-slo-report-v1.json"
+      ],
+      "promotion_advisor_fallback_max_timeout_rate": "0.005",
+      "promotion_advisor_fallback_max_state_stale_rate": "0.01",
+      "promotion_advisor_fallback_max_advice_stale_rate": "0.01",
+      "promotion_advisor_fallback_min_safe_fallback_rate": "0.99",
+      "promotion_require_contamination_registry": true,
+      "promotion_contamination_required_targets": ["paper", "live"],
+      "promotion_contamination_required_artifacts": [
+        "gates/contamination-leakage-report-v1.json"
+      ],
+      "promotion_contamination_required_checks": [
+        "temporal_ordering",
+        "lineage_complete",
+        "leakage_absent",
+        "embargo_windows_enforced"
+      ],
+      "promotion_contamination_max_leakage_rate": "0.0",
+      "promotion_require_stress_evidence": true,
+      "promotion_stress_required_targets": ["paper", "live"],
+      "promotion_stress_required_artifacts": [
+        "gates/stress-metrics-v1.json"
+      ],
+      "promotion_require_fold_evidence": true,
+      "promotion_fold_required_artifacts": [
+        "gates/fold-metrics-v1.json"
+      ],
+      "promotion_stress_max_age_hours": 24,
+      "promotion_require_hmm_state_posterior": true,
+      "promotion_hmm_required_targets": ["paper", "live"],
+      "promotion_hmm_required_artifacts": [
+        "gates/hmm-state-posterior-v1.json"
+      ],
+      "promotion_hmm_min_authoritative_sample_ratio": "0.0",
+      "promotion_hmm_max_transition_shock_ratio": "0.20",
+      "promotion_hmm_max_stale_or_defensive_ratio": "0.20",
+      "promotion_require_expert_router_registry": true,
+      "promotion_expert_router_required_targets": ["paper", "live"],
+      "promotion_expert_router_required_artifacts": [
+        "gates/expert-router-registry-v1.json"
+      ],
+      "promotion_expert_router_min_route_count": 1,
+      "promotion_expert_router_max_fallback_rate": "0.05",
+      "promotion_expert_router_max_expert_concentration": "0.85",
+      "promotion_require_janus_evidence": true,
+      "promotion_janus_event_car_artifact": "gates/janus-event-car-v1.json",
+      "promotion_janus_hgrm_reward_artifact": "gates/janus-hgrm-reward-v1.json",
+      "promotion_min_janus_event_count": 1,
+      "promotion_min_janus_reward_count": 1,
+      "promotion_require_profitability_stage_manifest": true,
+      "promotion_require_profitability_stage_replay_contract": true,
+      "promotion_profitability_stage_manifest_artifact": "profitability/profitability-stage-manifest-v1.json",
+      "rollback_required_checks": [
+        "killSwitchDryRunPassed",
+        "gitopsRevertDryRunPassed",
+        "strategyDisableDryRunPassed"
+      ],
+      "rollback_dry_run_max_age_hours": 72,
+      "rollback_require_human_approval": true
+    }

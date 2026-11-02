@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oirat-alloy
+  namespace: oirat
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oirat-alloy
+  namespace: oirat
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oirat-alloy
+  namespace: oirat
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oirat-alloy
+subjects:
+  - kind: ServiceAccount
+    name: oirat-alloy
+    namespace: oirat

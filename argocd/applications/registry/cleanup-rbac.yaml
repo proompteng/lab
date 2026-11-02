@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: registry-cleanup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: registry-cleanup-references
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [list]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [list]
+  - apiGroups: [actions.github.com]
+    resources: [autoscalingrunnersets, ephemeralrunnersets, ephemeralrunners]
+    verbs: [list]
+  - apiGroups: [agents.proompteng.ai]
+    resources: [agentproviders, agentruns]
+    verbs: [list]
+  - apiGroups: [argoproj.io]
+    resources:
+      - applications
+      - workflows
+      - workflowtemplates
+      - clusterworkflowtemplates
+      - cronworkflows
+      - analysistemplates
+      - clusteranalysistemplates
+      - analysisruns
+    verbs: [list]
+  - apiGroups: [caching.internal.knative.dev]
+    resources: [images]
+    verbs: [list]
+  - apiGroups: [flink.apache.org]
+    resources: [flinkdeployments]
+    verbs: [list]
+  - apiGroups: [kargo.akuity.io]
+    resources: [freights, stages, promotions]
+    verbs: [list]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, imagecatalogs, clusterimagecatalogs]
+    verbs: [list]
+  - apiGroups: [restate.dev]
+    resources: [restatedeployments]
+    verbs: [list]
+  - apiGroups: [serving.knative.dev]
+    resources: [services, configurations, revisions]
+    verbs: [list]
+  - apiGroups: [tools.proompteng.ai]
+    resources: [tools]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registry-cleanup
+  namespace: argocd
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    resourceNames: [registry]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-cleanup
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: registry-cleanup
+    namespace: registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-cleanup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: registry-cleanup-references
+subjects:
+  - kind: ServiceAccount
+    name: registry-cleanup
+    namespace: registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: registry-cleanup-references
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registry-cleanup
+  namespace: registry
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    resourceNames: [registry-data]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [registry]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-cleanup
+  namespace: registry
+subjects:
+  - kind: ServiceAccount
+    name: registry-cleanup
+    namespace: registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-cleanup

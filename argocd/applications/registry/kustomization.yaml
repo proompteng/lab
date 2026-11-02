@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+transformers:
+  - namespace-transformer.yaml
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+  - registry-configmap.yaml
+  - tailscale-ingress.yaml
+  - ingressroute-registry-k8s-private.yaml
+  - cleanup-cronjob.yaml
+  - cleanup-rbac.yaml
+  - ../../../packages/scripts/src/registry
+configMapGenerator:
+  - name: registry-proxy
+    files:
+      - haproxy.cfg=haproxy.cfg

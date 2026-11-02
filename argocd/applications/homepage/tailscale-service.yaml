@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: homepage-tailscale
+  namespace: homepage
+  annotations:
+    tailscale.com/hostname: homepage
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: homepage
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

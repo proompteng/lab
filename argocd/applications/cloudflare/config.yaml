@@ -1,0 +1,16 @@
+ingress:
+  - hostname: olden.proompteng.ai
+    service: http://olden.olden.svc.cluster.local:80
+  - hostname: proompteng.ai
+    service: https://traefik.traefik.svc.cluster.local:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: auth.proompteng.ai
+    service: https://traefik.traefik.svc.cluster.local:443
+    originRequest:
+      originServerName: auth.proompteng.ai
+  - hostname: "*.proompteng.ai"
+    service: https://traefik.traefik.svc.cluster.local:443
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404

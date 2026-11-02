@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sag
+  namespace: sag
+  labels:
+    app.kubernetes.io/name: sag
+    app.kubernetes.io/part-of: lab
+spec:
+  # Disable the SAG runtime while keeping the Argo application and CNPG state intact.
+  replicas: 0
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sag
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sag
+        app.kubernetes.io/part-of: lab
+    spec:
+      serviceAccountName: sag
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sag
+          image: registry.ide-newton.ts.net/lab/sag:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: SAG_PUBLIC_URL
+              value: https://sag.proompteng.ai
+            - name: SAG_PRODUCT_CONTEXT
+              value: secure-action-gateway
+            - name: CODEX_HOME
+              value: /home/bun/.codex
+            - name: CODEX_AUTH
+              value: /home/bun/.codex/auth.json
+            - name: SAG_CODEX_BINARY
+              value: /usr/local/bin/codex
+            - name: SAG_CODEX_CWD
+              value: /tmp
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sag-db-app
+                  key: uri
+          volumeMounts:
+            - name: codex-auth
+              mountPath: /home/bun/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: codex-auth
+          secret:
+            secretName: codex-auth
+            optional: true

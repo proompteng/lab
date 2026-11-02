@@ -1,0 +1,357 @@
+import { expect, test } from 'bun:test'
+import { Effect } from 'effect'
+
+import { createWorkflowContext } from '../../src/workflow/context'
+import { DeterminismGuard, intentsEqual, type WorkflowDeterminismState } from '../../src/workflow/determinism'
+
+const baseInfo = {
+  namespace: 'default',
+  taskQueue: 'replay-fixtures',
+  workflowId: 'wf-primitive',
+  runId: 'run-primitive',
+  workflowType: 'primitiveWorkflow',
+}
+
+test('determinism.sideEffect reuses recorded marker payloads', () => {
+  let executed = 0
+  const previous: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'record-marker-0',
+          kind: 'record-marker',
+          sequence: 0,
+          markerName: 'temporal-bun-sdk/side-effect',
+          details: { result: 42 },
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const guard = new DeterminismGuard({ previousState: previous })
+  const { context, commandContext } = createWorkflowContext({
+    input: undefined,
+    info: baseInfo,
+    determinismGuard: guard,
+  })
+
+  const result = context.determinism.sideEffect<number>({
+    compute: () => {
+      executed += 1
+      return 7
+    },
+  })
+
+  expect(result).toBe(42)
+  expect(executed).toBe(0)
+  expect(guard.snapshot.commandHistory).toHaveLength(1)
+  const intent = guard.snapshot.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('record-marker')
+  if (intent?.kind === 'record-marker') {
+    expect(intent.details?.result).toBe(42)
+  }
+})
+
+test('determinism.getVersion records chosen version when absent', () => {
+  const guard = new DeterminismGuard()
+  const { context, commandContext } = createWorkflowContext({
+    input: undefined,
+    info: { ...baseInfo, workflowId: 'wf-version' },
+    determinismGuard: guard,
+  })
+
+  const version = context.determinism.getVersion({ changeId: 'feature-v1', minSupported: 1, maxSupported: 3 })
+
+  expect(version).toBe(3)
+  expect(commandContext.intents).toHaveLength(1)
+  const intent = commandContext.intents[0]
+  expect(intent.kind).toBe('record-marker')
+  if (intent.kind === 'record-marker') {
+    expect(intent.markerName).toBe('temporal-bun-sdk/get-version')
+    expect(intent.details?.changeId).toBe('feature-v1')
+    expect(intent.details?.version).toBe(3)
+  }
+})
+
+test('child workflow defaults include runId for uniqueness', async () => {
+  const guardA = new DeterminismGuard()
+  const { context: contextA, commandContext: commandContextA } = createWorkflowContext({
+    input: [],
+    info: { ...baseInfo, workflowId: 'wf-child', runId: 'run-a' },
+    determinismGuard: guardA,
+  })
+
+  await Effect.runPromise(contextA.childWorkflows.start('childWorkflow'))
+  const intentA = commandContextA.intents[0]
+  expect(intentA.kind).toBe('start-child-workflow')
+  if (intentA.kind === 'start-child-workflow') {
+    expect(intentA.workflowId).toBe('wf-child-child-run-a-0')
+  }
+
+  const guardB = new DeterminismGuard()
+  const { context: contextB, commandContext: commandContextB } = createWorkflowContext({
+    input: [],
+    info: { ...baseInfo, workflowId: 'wf-child', runId: 'run-b' },
+    determinismGuard: guardB,
+  })
+
+  await Effect.runPromise(contextB.childWorkflows.start('childWorkflow'))
+  const intentB = commandContextB.intents[0]
+  expect(intentB.kind).toBe('start-child-workflow')
+  if (intentB.kind === 'start-child-workflow') {
+    expect(intentB.workflowId).toBe('wf-child-child-run-b-0')
+    if (intentA.kind === 'start-child-workflow') {
+      expect(intentB.workflowId).not.toBe(intentA.workflowId)
+    }
+  }
+})
+
+test('child workflow defaults reuse recorded ids on replay', async () => {
+  const previous: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'start-child-workflow-0',
+          kind: 'start-child-workflow',
+          sequence: 0,
+          workflowType: 'childWorkflow',
+          workflowId: 'wf-primitive-child-0',
+          namespace: baseInfo.namespace,
+          taskQueue: baseInfo.taskQueue,
+          input: [],
+          timeouts: { workflowRunTimeoutMs: 0, workflowTaskTimeoutMs: 10_000 },
+          workflowIdReusePolicy: 1,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const guard = new DeterminismGuard({ previousState: previous })
+  const { context } = createWorkflowContext({
+    input: [],
+    info: baseInfo,
+    determinismGuard: guard,
+  })
+
+  await Effect.runPromise(context.childWorkflows.start('childWorkflow'))
+  const intent = guard.snapshot.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('start-child-workflow')
+  if (intent?.kind === 'start-child-workflow') {
+    expect(intent.workflowId).toBe('wf-primitive-child-0')
+    expect(intent.timeouts.workflowRunTimeoutMs).toBe(0)
+    expect(intent.timeouts.workflowTaskTimeoutMs).toBe(10_000)
+    expect(intent.workflowIdReusePolicy).toBe(1)
+  }
+})
+
+test('Nexus schedule defaults reuse headerless replay operation ids', async () => {
+  const previous: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'nexus-42',
+          input: { amount: 100 },
+          nexusHeader: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const guard = new DeterminismGuard({ previousState: previous })
+  const { context } = createWorkflowContext({
+    input: [],
+    info: baseInfo,
+    determinismGuard: guard,
+    nexusResults: new Map([['nexus-42', { status: 'completed', value: 'ok' }]]),
+  })
+
+  const result = await Effect.runPromise(context.nexus.schedule('payments', 'billing', 'charge', { amount: 100 }))
+
+  expect(result).toBe('ok')
+  const intent = guard.snapshot.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('schedule-nexus-operation')
+  if (intent?.kind === 'schedule-nexus-operation') {
+    expect(intent.operationId).toBe('nexus-42')
+    expect(intent.nexusHeader).toEqual({})
+  }
+})
+
+test('intentsEqual compares Nexus cancels by scheduled event when available', () => {
+  const expected = {
+    id: 'request-cancel-nexus-operation-1',
+    kind: 'request-cancel-nexus-operation',
+    sequence: 1,
+    operationId: 'nexus-0',
+    scheduledEventId: '42',
+  } as const
+  const actual = {
+    ...expected,
+    id: 'cancel-nexus-operation-1',
+    operationId: 'nexus-42',
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+  expect(intentsEqual(expected, { ...actual, scheduledEventId: '43' })).toBe(false)
+})
+
+test('intentsEqual normalizes activity timeout defaults', () => {
+  const expected = {
+    id: 'schedule-activity-0',
+    kind: 'schedule-activity',
+    sequence: 0,
+    activityType: 'listRepoFiles',
+    activityId: 'activity-0',
+    taskQueue: baseInfo.taskQueue,
+    input: [{ repoRoot: '/workspace/lab/.worktrees/bumba', ref: 'main' }],
+    timeouts: {
+      scheduleToCloseTimeoutMs: 600_000,
+      startToCloseTimeoutMs: 90_000,
+    },
+    retry: {
+      initialIntervalMs: 2_000,
+      backoffCoefficient: 2,
+      maximumIntervalMs: 30_000,
+      maximumAttempts: 4,
+    },
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      ...expected.timeouts,
+      scheduleToStartTimeoutMs: 600_000,
+      heartbeatTimeoutMs: 0,
+    },
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes server activity retry defaults', () => {
+  const expected = {
+    id: 'schedule-activity-0',
+    kind: 'schedule-activity',
+    sequence: 0,
+    activityType: 'integrationEchoActivity',
+    activityId: 'activity-0',
+    taskQueue: baseInfo.taskQueue,
+    input: ['alpha'],
+    timeouts: {
+      scheduleToCloseTimeoutMs: 10_000,
+      startToCloseTimeoutMs: 10_000,
+    },
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      ...expected.timeouts,
+      scheduleToStartTimeoutMs: 10_000,
+      heartbeatTimeoutMs: 0,
+    },
+    retry: {
+      initialIntervalMs: 1_000,
+      backoffCoefficient: 2,
+      maximumIntervalMs: 100_000,
+    },
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes heartbeat timeout server cap', () => {
+  const expected = {
+    id: 'schedule-activity-0',
+    kind: 'schedule-activity',
+    sequence: 0,
+    activityType: 'integrationHeartbeatActivity',
+    activityId: 'activity-0',
+    taskQueue: baseInfo.taskQueue,
+    input: [300],
+    timeouts: {
+      scheduleToCloseTimeoutMs: 900,
+      startToCloseTimeoutMs: 900,
+      heartbeatTimeoutMs: 1_000,
+    },
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      ...expected.timeouts,
+      scheduleToStartTimeoutMs: 900,
+      heartbeatTimeoutMs: 900,
+    },
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes child workflow defaults', () => {
+  const expected = {
+    id: 'start-child-workflow-0',
+    kind: 'start-child-workflow',
+    sequence: 0,
+    workflowType: 'childWorkflow',
+    workflowId: 'wf-primitive-child-0',
+    namespace: baseInfo.namespace,
+    taskQueue: baseInfo.taskQueue,
+    input: [],
+    timeouts: {},
+    parentClosePolicy: 2,
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      workflowExecutionTimeoutMs: 0,
+      workflowRunTimeoutMs: 0,
+      workflowTaskTimeoutMs: 10_000,
+    },
+    workflowIdReusePolicy: 1,
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes server child workflow close-policy defaults', () => {
+  const expected = {
+    id: 'start-child-workflow-0',
+    kind: 'start-child-workflow',
+    sequence: 0,
+    workflowType: 'integrationChildWorkflow',
+    workflowId: 'wf-primitive-child-0',
+    namespace: baseInfo.namespace,
+    taskQueue: baseInfo.taskQueue,
+    input: ['alpha-child'],
+    timeouts: {},
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      workflowRunTimeoutMs: 0,
+      workflowTaskTimeoutMs: 10_000,
+    },
+    parentClosePolicy: 1,
+    workflowIdReusePolicy: 1,
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})

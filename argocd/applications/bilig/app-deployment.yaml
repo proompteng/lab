@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bilig-app
+  namespace: bilig
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: bilig-app
+  template:
+    metadata:
+      labels:
+        app: bilig-app
+    spec:
+      containers:
+        - name: bilig-app
+          image: registry.ide-newton.ts.net/lab/bilig-app
+          ports:
+            - name: http
+              containerPort: 4321
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 24
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 6
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+            timeoutSeconds: 3
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: BILIG_AUTH_MODE
+              value: demo
+            - name: BILIG_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-app-auth
+                  key: session-secret
+            - name: BILIG_REMOTE_MCP_ALLOW_LOCAL_ORIGINS
+              value: "false"
+            - name: PORT
+              value: "4321"
+            - name: BILIG_PUBLIC_SERVER_URL
+              value: https://bilig.proompteng.ai
+            - name: BILIG_WEB_APP_BASE_URL
+              value: https://bilig.proompteng.ai
+            - name: BILIG_ZERO_CACHE_URL
+              value: /zero
+            - name: BILIG_ZERO_PROXY_UPSTREAM
+              value: http://bilig-zero:4848
+            - name: BILIG_DEFAULT_DOCUMENT_ID
+              value: bilig-demo
+            - name: BILIG_PERSIST_STATE
+              value: "true"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+                  optional: true
+            - name: SNAPSHOT_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: bilig-object-storage
+                  key: SNAPSHOT_BUCKET
+                  optional: true
+            - name: SNAPSHOT_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: bilig-object-storage
+                  key: SNAPSHOT_ENDPOINT
+                  optional: true
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

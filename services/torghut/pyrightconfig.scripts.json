@@ -1,0 +1,15 @@
+{
+  "include": ["scripts"],
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownLambdaType": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportReturnType": "none",
+  "venvPath": ".",
+  "venv": ".venv"
+}

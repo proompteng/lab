@@ -1,0 +1,36 @@
+name: NUC Serve ownership
+
+on:
+  pull_request:
+    paths:
+      - 'devices/nuc/omni/serve-owned.jq'
+      - 'devices/nuc/omni/tailscale-serve.json'
+      - 'devices/nuc/omni/scripts/apply-tailscale-serve.sh'
+      - 'devices/nuc/omni/scripts/verify.sh'
+      - 'devices/nuc/omni/scripts/test-serve-ownership.sh'
+      - '.github/workflows/nuc-omni-serve.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'devices/nuc/omni/serve-owned.jq'
+      - 'devices/nuc/omni/tailscale-serve.json'
+      - 'devices/nuc/omni/scripts/apply-tailscale-serve.sh'
+      - 'devices/nuc/omni/scripts/verify.sh'
+      - 'devices/nuc/omni/scripts/test-serve-ownership.sh'
+      - '.github/workflows/nuc-omni-serve.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuc-omni-serve-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify ownership of Omni routes
+        run: bash devices/nuc/omni/scripts/test-serve-ownership.sh

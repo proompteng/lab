@@ -1,0 +1,5 @@
+installCRDs: true
+
+oauthSecretVolume:
+  secret:
+    secretName: operator-oauth-token

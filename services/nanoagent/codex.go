@@ -1,0 +1,1629 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+)
+
+const (
+	codexEventBufferSize      = 2_048
+	codexEventBufferBytes     = 16 << 20
+	codexEventMaxBytes        = 2 << 20
+	codexProtocolLineMaxBytes = 8 << 20
+	codexSubscriberLimit      = 8
+	codexApprovalWriteTimeout = 15 * time.Second
+	codexResponseWriteTimeout = 15 * time.Second
+)
+
+type codexEvent struct {
+	Sequence   uint64          `json:"sequence"`
+	Method     string          `json:"method"`
+	ApprovalID string          `json:"approvalId,omitempty"`
+	Raw        json.RawMessage `json:"raw"`
+}
+
+type codexRPCMessage struct {
+	ID     json.RawMessage `json:"id,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
+}
+
+type codexUnsentRequestError struct{ error }
+
+func (err *codexUnsentRequestError) Unwrap() error { return err.error }
+
+type codexPendingResult struct {
+	result        json.RawMessage
+	err           json.RawMessage
+	localErr      error
+	eventSequence uint64
+}
+
+type codexRPCError struct {
+	code    int
+	message string
+	raw     json.RawMessage
+}
+
+func (rpcError *codexRPCError) Error() string {
+	return fmt.Sprintf("Codex app-server request failed: %s", compactJSON(rpcError.raw))
+}
+
+type codexCallResult struct {
+	result        json.RawMessage
+	eventSequence uint64
+	generation    *codexProcessGeneration
+}
+
+type codexLoginSnapshot struct {
+	Active    bool            `json:"active"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	StartedAt string          `json:"startedAt,omitempty"`
+}
+
+type codexSubscription struct {
+	channel chan codexEvent
+}
+
+type codexApproval struct {
+	raw         json.RawMessage
+	inputParams json.RawMessage
+	generation  *codexProcessGeneration
+	method      string
+	permissions json.RawMessage
+	decisions   map[string]json.RawMessage
+	rawID       json.RawMessage
+	resolving   bool
+}
+
+type codexProcessGeneration struct {
+	id       string
+	ready    chan struct{}
+	failure  error
+	commands map[codexTurnIdentity]map[string]struct{}
+}
+
+type codexSupervisor struct {
+	binary          string
+	browserMCP      bool
+	cwd             string
+	closed          atomic.Bool
+	requestID       atomic.Uint64
+	writePermit     chan struct{}
+	loginMu         sync.Mutex
+	relayMu         sync.Mutex
+	relayRoot       string
+	operationMu     sync.Mutex
+	responseTimeout time.Duration
+
+	mu              sync.Mutex
+	command         *exec.Cmd
+	stdin           io.WriteCloser
+	generation      *codexProcessGeneration
+	workRequests    map[string]struct{}
+	activeTurns     map[string]string
+	workChangedAt   time.Time
+	workUnknown     bool
+	pending         map[string]chan codexPendingResult
+	approvals       map[string]codexApproval
+	activeLoginID   string
+	activeLogin     json.RawMessage
+	loginStartedAt  time.Time
+	loginGeneration *codexProcessGeneration
+	loginOperation  *codexProcessGeneration
+	loginCompleted  map[string]struct{}
+	sequence        uint64
+	buffer          []codexEvent
+	bufferBytes     int
+	subscriptions   map[uint64]codexSubscription
+	nextSubscriber  uint64
+	shutdown        chan struct{}
+}
+
+func newCodexSupervisor(binary, cwd string) *codexSupervisor {
+	supervisor := &codexSupervisor{
+		binary:          binary,
+		cwd:             cwd,
+		writePermit:     make(chan struct{}, 1),
+		responseTimeout: codexResponseWriteTimeout,
+		generation:      newCodexProcessGeneration(),
+		workRequests:    make(map[string]struct{}),
+		activeTurns:     make(map[string]string),
+		workChangedAt:   time.Now(),
+		pending:         make(map[string]chan codexPendingResult),
+		approvals:       make(map[string]codexApproval),
+		subscriptions:   make(map[uint64]codexSubscription),
+		shutdown:        make(chan struct{}),
+	}
+	supervisor.writePermit <- struct{}{}
+	return supervisor
+}
+
+func newCodexProcessGeneration() *codexProcessGeneration {
+	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{}), commands: make(map[codexTurnIdentity]map[string]struct{})}
+}
+
+func randBytes() []byte {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		panic("create Codex process identity: " + err.Error())
+	}
+	return value
+}
+
+func approvalKey(generation *codexProcessGeneration, id json.RawMessage) string {
+	return generation.id + ":" + normalizeRequestID(id)
+}
+
+func (supervisor *codexSupervisor) start() {
+	go supervisor.run()
+}
+
+func (supervisor *codexSupervisor) isReady() bool {
+	if supervisor.closed.Load() {
+		return false
+	}
+	supervisor.mu.Lock()
+	generation := supervisor.generation
+	supervisor.mu.Unlock()
+	select {
+	case <-generation.ready:
+		supervisor.mu.Lock()
+		ready := supervisor.generation == generation && generation.failure == nil && supervisor.stdin != nil
+		supervisor.mu.Unlock()
+		return ready && !supervisor.closed.Load()
+	default:
+		return false
+	}
+}
+
+func (supervisor *codexSupervisor) run() {
+	backoff := time.Second
+	for !supervisor.closed.Load() {
+		if err := supervisor.runProcess(); err != nil && !supervisor.closed.Load() {
+			supervisor.failProcess(err)
+			supervisor.publish("error", "", map[string]any{
+				"method": "error",
+				"params": map[string]string{"message": "Codex app-server is restarting"},
+			})
+		}
+		if supervisor.closed.Load() {
+			return
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-timer.C:
+		case <-supervisor.shutdown:
+			timer.Stop()
+			return
+		}
+		if backoff < 15*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+func (supervisor *codexSupervisor) runProcess() error {
+	arguments := []string{
+		"--model", "gpt-6.1-sol",
+		"--sandbox", "danger-full-access",
+		"--ask-for-approval", "on-request",
+		"-c", "features.apps=false",
+	}
+	if supervisor.browserMCP {
+		binary, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate browser MCP executable: %w", err)
+		}
+		arguments = append(arguments,
+			"-c", "mcp_servers.tengri_browser.command="+strconv.Quote(binary),
+			"-c", `mcp_servers.tengri_browser.args=["browser-mcp"]`,
+			"-c", "mcp_servers.tengri_browser.tool_timeout_sec=300",
+			"-c", "mcp_servers.tengri_browser.required=true",
+		)
+	}
+	arguments = append(arguments, "app-server")
+	command := exec.Command(supervisor.binary, arguments...)
+	command.Dir = supervisor.cwd
+	command.Env = childEnvironment()
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+
+	supervisor.mu.Lock()
+	supervisor.command = command
+	supervisor.stdin = stdin
+	generation := supervisor.generation
+	supervisor.mu.Unlock()
+	go supervisor.readMessages(command, generation, stdout)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	initialize, err := json.Marshal(map[string]any{
+		"clientInfo": map[string]string{
+			"name":    "tengri",
+			"title":   "Tengri MicroVM Desktop",
+			"version": "0.1.0",
+		},
+		"capabilities": map[string]any{
+			"experimentalApi":    true,
+			"requestAttestation": false,
+		},
+	})
+	if err == nil {
+		_, err = supervisor.request(ctx, "initialize", initialize, false, nil)
+	}
+	cancel()
+	if err != nil {
+		killProcessGroup(command)
+		_ = command.Wait()
+		return fmt.Errorf("initialize Codex app-server: %w", err)
+	}
+	if err := supervisor.writeMessage(map[string]any{"method": "initialized"}); err != nil {
+		killProcessGroup(command)
+		_ = command.Wait()
+		return fmt.Errorf("acknowledge Codex app-server initialization: %w", err)
+	}
+	supervisor.mu.Lock()
+	closeSignal(generation.ready)
+	supervisor.mu.Unlock()
+	supervisor.publish("tengri/runtimeReady", "", map[string]any{
+		"method": "tengri/runtimeReady",
+		"params": map[string]string{"generationId": generation.id},
+	})
+	waitErr := command.Wait()
+	processErr := errors.New("Codex app-server exited")
+	if waitErr != nil {
+		processErr = fmt.Errorf("Codex app-server exited: %w", waitErr)
+	}
+	return processErr
+}
+
+func (supervisor *codexSupervisor) close() {
+	if supervisor.closed.Swap(true) {
+		return
+	}
+	close(supervisor.shutdown)
+	supervisor.mu.Lock()
+	command := supervisor.command
+	supervisor.generation.failure = errors.New("Codex app-server is shutting down")
+	closeSignal(supervisor.generation.ready)
+	pending := supervisor.pending
+	supervisor.pending = make(map[string]chan codexPendingResult)
+	for id, subscription := range supervisor.subscriptions {
+		delete(supervisor.subscriptions, id)
+		close(subscription.channel)
+	}
+	supervisor.approvals = make(map[string]codexApproval)
+	supervisor.mu.Unlock()
+	shutdownError := errors.New("Codex app-server is shutting down")
+	for _, response := range pending {
+		response <- codexPendingResult{localErr: shutdownError}
+	}
+	if command != nil && command.Process != nil {
+		killProcessGroup(command)
+	}
+}
+
+func killProcessGroup(command *exec.Cmd) {
+	if command == nil || command.Process == nil || command.Process.Pid <= 0 {
+		return
+	}
+	if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil {
+		_ = command.Process.Kill()
+	}
+}
+
+func (supervisor *codexSupervisor) call(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
+	if !allowedCodexMethod(method) {
+		return codexCallResult{}, errors.New("Codex method is not exposed by Nanoagent")
+	}
+	if method == "account/login/start" {
+		return supervisor.startLogin(ctx, params)
+	}
+	if method == "thread/archive" {
+		return supervisor.archiveThread(ctx, params)
+	}
+	if strings.HasPrefix(method, "relay/") {
+		return supervisor.relayCall(ctx, method, params)
+	}
+	if method == "tengri/pending" {
+		return supervisor.pendingApprovals(params)
+	}
+	if method == "tengri/operation" {
+		var input struct {
+			ID     string `json:"operationId"`
+			Thread string `json:"threadId"`
+			Turn   string `json:"turnId"`
+		}
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+			return codexCallResult{}, errors.New("invalid operation identity")
+		}
+		op, err := readCodexOperation(filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json"))
+		if err != nil || op.Thread != input.Thread {
+			return codexCallResult{}, errors.New("operation receipt is unavailable")
+		}
+		supervisor.mu.Lock()
+		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
+		supervisor.mu.Unlock()
+		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
+		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
+		return codexCallResult{result: raw}, err
+	}
+	if method == "tengri/reconcileOperation" {
+		var input struct {
+			ID     string `json:"operationId"`
+			Thread string `json:"threadId"`
+		}
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+			return codexCallResult{}, errors.New("invalid operation identity")
+		}
+		supervisor.operationMu.Lock()
+		defer supervisor.operationMu.Unlock()
+		path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json")
+		op, err := readCodexOperation(path)
+		if err != nil || op.Thread != input.Thread {
+			return codexCallResult{}, errCodexOperationUnknown
+		}
+		if op.State != "completed" {
+			op, err = supervisor.reconcileOperation(ctx, op)
+			if err != nil {
+				return codexCallResult{}, err
+			}
+			if err := writeCodexOperation(path, op); err != nil {
+				return codexCallResult{}, errCodexOperationUnknown
+			}
+		}
+		if len(op.Error) != 0 {
+			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
+		}
+		return codexCallResult{result: op.Result}, nil
+	}
+	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
+		return supervisor.operation(ctx, method, params)
+	}
+	return supervisor.request(ctx, method, params, true, nil)
+}
+
+func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
+	supervisor.loginMu.Lock()
+	defer supervisor.loginMu.Unlock()
+
+	supervisor.mu.Lock()
+	if supervisor.loginGeneration != supervisor.generation {
+		supervisor.clearLoginLocked()
+	}
+	operationGeneration := supervisor.generation
+	supervisor.loginOperation = operationGeneration
+	supervisor.loginCompleted = make(map[string]struct{})
+	previousLoginID := supervisor.activeLoginID
+	supervisor.mu.Unlock()
+	defer func() {
+		supervisor.mu.Lock()
+		if supervisor.loginOperation == operationGeneration {
+			supervisor.loginOperation = nil
+			supervisor.loginCompleted = nil
+		}
+		supervisor.mu.Unlock()
+	}()
+	if previousLoginID != "" {
+		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
+		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true, nil)
+		cancel()
+		if cancelErr != nil {
+			return codexCallResult{}, fmt.Errorf("cancel previous Codex device login: %w", cancelErr)
+		}
+		supervisor.mu.Lock()
+		if supervisor.activeLoginID == previousLoginID {
+			supervisor.clearLoginLocked()
+		}
+		supervisor.mu.Unlock()
+	}
+	result, err := supervisor.request(ctx, "account/login/start", params, true, nil)
+	if err != nil {
+		return codexCallResult{}, err
+	}
+	var login struct {
+		LoginID string `json:"loginId"`
+	}
+	if json.Unmarshal(result.result, &login) != nil || login.LoginID == "" || len(login.LoginID) > 160 {
+		return codexCallResult{}, errors.New("Codex app-server returned an invalid device login")
+	}
+	supervisor.mu.Lock()
+	_, completed := supervisor.loginCompleted[login.LoginID]
+	if supervisor.loginOperation == result.generation && !completed {
+		supervisor.activeLoginID = login.LoginID
+		supervisor.activeLogin = append(json.RawMessage(nil), result.result...)
+		supervisor.loginStartedAt = time.Now().UTC()
+		supervisor.loginGeneration = result.generation
+	}
+	supervisor.mu.Unlock()
+	return result, nil
+}
+
+func (supervisor *codexSupervisor) loginSnapshot() codexLoginSnapshot {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	if supervisor.activeLoginID == "" ||
+		len(supervisor.activeLogin) == 0 ||
+		supervisor.loginStartedAt.IsZero() ||
+		supervisor.loginGeneration != supervisor.generation ||
+		supervisor.generation.failure != nil {
+		return codexLoginSnapshot{}
+	}
+	return codexLoginSnapshot{
+		Active:    true,
+		Result:    append(json.RawMessage(nil), supervisor.activeLogin...),
+		StartedAt: supervisor.loginStartedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func (supervisor *codexSupervisor) clearLoginLocked() {
+	supervisor.activeLoginID = ""
+	supervisor.activeLogin = nil
+	supervisor.loginStartedAt = time.Time{}
+	supervisor.loginGeneration = nil
+}
+
+func (supervisor *codexSupervisor) request(
+	ctx context.Context,
+	method string,
+	params json.RawMessage,
+	waitReady bool,
+	generation *codexProcessGeneration,
+) (codexCallResult, error) {
+	params, err := codexGuestThreadParams(method, params)
+	if err != nil {
+		return codexCallResult{}, err
+	}
+	if waitReady {
+		if generation == nil {
+			supervisor.mu.Lock()
+			generation = supervisor.generation
+			supervisor.mu.Unlock()
+		}
+		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
+			return codexCallResult{}, err
+		}
+	}
+	id := supervisor.requestID.Add(1)
+	key := fmt.Sprintf("%d", id)
+	response := make(chan codexPendingResult, 1)
+	supervisor.mu.Lock()
+	if generation == nil {
+		generation = supervisor.generation
+	}
+	if waitReady && (supervisor.generation != generation || generation.failure != nil) {
+		supervisor.mu.Unlock()
+		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
+	}
+	if method == "turn/start" || method == "turn/steer" {
+		supervisor.workRequests[key] = struct{}{}
+		supervisor.workChangedAt = time.Now()
+	}
+	supervisor.pending[key] = response
+	stdin := supervisor.stdin
+	supervisor.mu.Unlock()
+	if stdin == nil {
+		supervisor.removeUnsentRequest(key)
+		return codexCallResult{}, errors.New("Codex app-server is unavailable")
+	}
+	message, err := json.Marshal(map[string]any{"id": id, "method": method, "params": json.RawMessage(params)})
+	if err != nil {
+		supervisor.removeUnsentRequest(key)
+		return codexCallResult{}, err
+	}
+	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
+	if err != nil {
+		var unsent *codexUnsentRequestError
+		if errors.As(err, &unsent) {
+			supervisor.removeUnsentRequest(key)
+		} else {
+			supervisor.removePending(key)
+		}
+		return codexCallResult{}, err
+	}
+	select {
+	case <-ctx.Done():
+		supervisor.removePending(key)
+		return codexCallResult{}, ctx.Err()
+	case result := <-response:
+		if result.localErr != nil {
+			return codexCallResult{}, result.localErr
+		}
+		if len(result.err) > 0 && string(result.err) != "null" {
+			return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
+		}
+		return codexCallResult{
+			result:        result.result,
+			eventSequence: result.eventSequence,
+			generation:    generation,
+		}, nil
+	}
+}
+
+func (supervisor *codexSupervisor) waitForGeneration(
+	ctx context.Context,
+	generation *codexProcessGeneration,
+) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-supervisor.shutdown:
+		return errors.New("Codex app-server is shutting down")
+	case <-generation.ready:
+		supervisor.mu.Lock()
+		failure := generation.failure
+		supervisor.mu.Unlock()
+		if failure != nil {
+			return fmt.Errorf("Codex app-server generation failed: %w", failure)
+		}
+		return nil
+	}
+}
+
+func (supervisor *codexSupervisor) readMessages(
+	command *exec.Cmd,
+	generation *codexProcessGeneration,
+	reader io.Reader,
+) {
+	supervisor.readMessagesWithLimit(command, generation, reader, codexProtocolLineMaxBytes)
+}
+
+func (supervisor *codexSupervisor) readMessagesWithLimit(
+	command *exec.Cmd,
+	generation *codexProcessGeneration,
+	reader io.Reader,
+	lineLimit int,
+) {
+	buffered := bufio.NewReaderSize(reader, 64<<10)
+	for {
+		line, size, oversized, readErr := readBoundedCodexLine(buffered, lineLimit)
+		if oversized {
+			supervisor.markWorkUnknown(generation)
+			supervisor.publish("tengri/eventOmitted", "", codexOversizedProtocolMessage(size))
+		} else if len(bytes.TrimSpace(line)) > 0 {
+			var message codexRPCMessage
+			if json.Unmarshal(line, &message) == nil {
+				if len(message.ID) > 0 && message.Method == "" {
+					supervisor.resolveResponse(message)
+				} else if message.Method != "" {
+					supervisor.handleServerMessage(generation, message, line)
+				}
+			} else {
+				supervisor.markWorkUnknown(generation)
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	killProcessGroup(command)
+}
+
+func readBoundedCodexLine(reader *bufio.Reader, limit int) ([]byte, int, bool, error) {
+	if limit <= 0 {
+		return nil, 0, false, errors.New("Codex protocol line limit must be positive")
+	}
+	line := make([]byte, 0, min(limit, reader.Size()))
+	size := 0
+	oversized := false
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		size += len(fragment)
+		if !oversized {
+			if len(line)+len(fragment) > limit {
+				line = nil
+				oversized = true
+			} else {
+				line = append(line, fragment...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		line = bytes.TrimSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		return line, size, oversized, err
+	}
+}
+
+func codexOversizedProtocolMessage(size int) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"method": "tengri/eventOmitted",
+		"params": map[string]any{
+			"message": "Codex protocol message exceeded the bounded input limit and was omitted",
+			"bytes":   size,
+		},
+	})
+	return raw
+}
+
+func (supervisor *codexSupervisor) resolveResponse(message codexRPCMessage) {
+	key := normalizeRequestID(message.ID)
+	supervisor.mu.Lock()
+	if _, working := supervisor.workRequests[key]; working {
+		delete(supervisor.workRequests, key)
+		supervisor.workChangedAt = time.Now()
+	}
+	pending := supervisor.pending[key]
+	delete(supervisor.pending, key)
+	eventSequence := supervisor.sequence
+	supervisor.mu.Unlock()
+	if pending != nil {
+		pending <- codexPendingResult{result: message.Result, err: message.Error, eventSequence: eventSequence}
+	}
+}
+
+func (supervisor *codexSupervisor) handleServerMessage(
+	generation *codexProcessGeneration,
+	message codexRPCMessage,
+	raw []byte,
+) {
+	if !supervisor.isCurrentGeneration(generation) {
+		return
+	}
+	supervisor.observeCommands(generation, message)
+	if message.Method == "turn/completed" {
+		if err := supervisor.recordTerminal(generation, message.Params); err != nil {
+			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})
+		}
+	}
+	supervisor.observeWork(generation, message)
+	if message.Method == "serverRequest/resolved" {
+		var params struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		if json.Unmarshal(message.Params, &params) == nil && len(params.RequestID) > 0 {
+			supervisor.mu.Lock()
+			id := approvalKey(generation, params.RequestID)
+			if approval, found := supervisor.approvals[id]; found && approval.generation == generation {
+				delete(supervisor.approvals, id)
+			}
+			supervisor.mu.Unlock()
+			var event map[string]any
+			if json.Unmarshal(raw, &event) == nil {
+				if params, ok := event["params"].(map[string]any); ok {
+					params["requestId"] = id
+					raw, _ = json.Marshal(event)
+				}
+			}
+		}
+	}
+	if message.Method == "account/login/completed" {
+		var params struct {
+			LoginID string `json:"loginId"`
+		}
+		if json.Unmarshal(message.Params, &params) == nil {
+			supervisor.mu.Lock()
+			if supervisor.generation == generation {
+				if params.LoginID != "" && supervisor.loginOperation == generation {
+					supervisor.loginCompleted[params.LoginID] = struct{}{}
+				}
+				if supervisor.loginGeneration == generation &&
+					(params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
+					supervisor.clearLoginLocked()
+				}
+			}
+			supervisor.mu.Unlock()
+		}
+	}
+	approvalID := ""
+	if len(message.ID) > 0 {
+		approvalID = approvalKey(generation, message.ID)
+		switch message.Method {
+		case "currentTime/read":
+			_ = supervisor.respondRawForGenerationWithin(
+				generation,
+				message.ID,
+				map[string]any{"currentTimeAt": time.Now().Unix()},
+			)
+			return
+		case "item/tool/requestUserInput":
+			if err := validateCodexInputRequest(message.Method, message.Params); err != nil {
+				supervisor.respondErrorForGeneration(generation, message.ID, err.Error())
+				return
+			}
+			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
+			supervisor.approvals[approvalID] = codexApproval{generation: generation, method: message.Method, inputParams: append(json.RawMessage(nil), message.Params...), rawID: append(json.RawMessage(nil), message.ID...)}
+			supervisor.mu.Unlock()
+		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "execCommandApproval", "applyPatchApproval":
+			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
+			supervisor.approvals[approvalID] = codexApproval{
+				generation: generation,
+				method:     message.Method,
+				decisions:  codexApprovalDecisions(message.Method, message.Params),
+				rawID:      append(json.RawMessage(nil), message.ID...),
+			}
+			supervisor.mu.Unlock()
+		case "item/permissions/requestApproval":
+			var params struct {
+				Permissions json.RawMessage `json:"permissions"`
+			}
+			if json.Unmarshal(message.Params, &params) != nil || len(params.Permissions) == 0 {
+				supervisor.respondErrorForGeneration(
+					generation,
+					message.ID,
+					"permission request did not include a valid permission profile",
+				)
+				return
+			}
+			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
+			supervisor.approvals[approvalID] = codexApproval{
+				generation:  generation,
+				method:      message.Method,
+				permissions: append(json.RawMessage(nil), params.Permissions...),
+				decisions:   defaultCodexApprovalDecisions(),
+				rawID:       append(json.RawMessage(nil), message.ID...),
+			}
+			supervisor.mu.Unlock()
+		case "mcpServer/elicitation/request":
+			if codexMCPApprovalDecisions(message.Params) == nil && validateCodexInputRequest(message.Method, message.Params) == nil {
+				supervisor.mu.Lock()
+				if supervisor.generation != generation || generation.failure != nil {
+					supervisor.mu.Unlock()
+					return
+				}
+				supervisor.approvals[approvalID] = codexApproval{generation: generation, method: message.Method, inputParams: append(json.RawMessage(nil), message.Params...), rawID: append(json.RawMessage(nil), message.ID...)}
+				supervisor.mu.Unlock()
+				break
+			}
+			decisions := codexApprovalDecisions(message.Method, message.Params)
+			if decisions != nil && len(raw) > codexEventMaxBytes {
+				raw = boundedCodexMCPApproval(message, decisions)
+				if raw == nil {
+					decisions = nil
+				}
+			}
+			if decisions != nil {
+				supervisor.mu.Lock()
+				if supervisor.generation != generation || generation.failure != nil {
+					supervisor.mu.Unlock()
+					return
+				}
+				supervisor.approvals[approvalID] = codexApproval{
+					generation: generation,
+					method:     message.Method,
+					decisions:  decisions,
+					rawID:      append(json.RawMessage(nil), message.ID...),
+				}
+				supervisor.mu.Unlock()
+				break
+			}
+			var params struct {
+				ThreadID string `json:"threadId"`
+				TurnID   string `json:"turnId"`
+			}
+			// Unsupported input/access requests must not be accepted as tool-use
+			// confirmations. Cancel rather than fabricate a user decline.
+			if json.Unmarshal(message.Params, &params) == nil && params.ThreadID != "" {
+				supervisor.publish("error", "", map[string]any{
+					"method": "error",
+					"params": map[string]string{
+						"threadId": params.ThreadID,
+						"turnId":   params.TurnID,
+						"message":  "Tengri cannot display this MCP confirmation or input request. No user decision was submitted.",
+					},
+				})
+			}
+			_ = supervisor.respondRawForGenerationWithin(
+				generation,
+				message.ID,
+				map[string]any{"action": "cancel"},
+			)
+			return
+		default:
+			supervisor.respondErrorForGeneration(
+				generation,
+				message.ID,
+				"Tengri does not expose this app-server client request",
+			)
+			return
+		}
+	}
+	if !supervisor.isCurrentGeneration(generation) {
+		return
+	}
+	supervisor.mu.Lock()
+	if approval, found := supervisor.approvals[approvalID]; found && approval.generation == generation {
+		approval.raw = append(json.RawMessage(nil), raw...)
+		supervisor.approvals[approvalID] = approval
+	}
+	supervisor.mu.Unlock()
+	supervisor.publish(message.Method, approvalID, json.RawMessage(raw))
+}
+
+func (supervisor *codexSupervisor) pendingApprovals(params json.RawMessage) (codexCallResult, error) {
+	var input struct {
+		Thread string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.Thread == "" {
+		return codexCallResult{}, errors.New("threadId is required")
+	}
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	result := make([]map[string]any, 0)
+	for id, approval := range supervisor.approvals {
+		var message struct {
+			Params struct {
+				Thread string `json:"threadId"`
+			} `json:"params"`
+		}
+		if approval.generation == supervisor.generation && json.Unmarshal(approval.raw, &message) == nil && message.Params.Thread == input.Thread {
+			result = append(result, map[string]any{"approvalId": id, "raw": approval.raw})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i]["approvalId"].(string) < result[j]["approvalId"].(string) })
+	raw, err := json.Marshal(result)
+	if len(result) > 32 || len(raw) > 512<<10 {
+		return codexCallResult{}, errors.New("pending approvals exceed the durable snapshot limit")
+	}
+	return codexCallResult{result: raw}, err
+}
+
+func (supervisor *codexSupervisor) isCurrentGeneration(generation *codexProcessGeneration) bool {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	return generation != nil && supervisor.generation == generation && generation.failure == nil
+}
+
+func (supervisor *codexSupervisor) resolveApproval(ctx context.Context, id, decision string) error {
+	supervisor.mu.Lock()
+	approval, found := supervisor.approvals[id]
+	if found && approval.resolving {
+		supervisor.mu.Unlock()
+		return errors.New("Codex approval is already being resolved")
+	}
+	if found {
+		approval.resolving = true
+		supervisor.approvals[id] = approval
+	}
+	supervisor.mu.Unlock()
+	if !found {
+		return errors.New("Codex approval was not found or was already resolved")
+	}
+	result, err := codexApprovalResult(approval, decision)
+	if err != nil {
+		supervisor.resetApproval(id, approval)
+		return err
+	}
+	writeContext, cancel := context.WithTimeout(ctx, codexApprovalWriteTimeout)
+	defer cancel()
+	if err := supervisor.respondRawForGeneration(writeContext, approval.generation, approval.rawID, result); err != nil {
+		supervisor.resetApproval(id, approval)
+		return err
+	}
+	supervisor.finishApproval(id, approval)
+	return nil
+}
+
+func codexApprovalResult(approval codexApproval, decision string) (map[string]any, error) {
+	if len(approval.inputParams) > 0 {
+		return nil, errors.New("this request requires a user answer, not an approval decision")
+	}
+	encodedDecision := approval.decisions[decision]
+	if approval.decisions == nil {
+		encodedDecision = defaultCodexApprovalDecisions()[decision]
+	}
+	if len(encodedDecision) == 0 {
+		return nil, errors.New("approval decision is not available")
+	}
+	var protocolDecision any
+	if err := json.Unmarshal(encodedDecision, &protocolDecision); err != nil {
+		return nil, fmt.Errorf("decode approval decision: %w", err)
+	}
+	protocolName, _ := protocolDecision.(string)
+	if approval.method == "mcpServer/elicitation/request" {
+		var action string
+		switch protocolName {
+		case "accept", "acceptForSession":
+			action = "accept"
+		case "decline":
+			action = "decline"
+		default:
+			return nil, errors.New("unsupported MCP approval decision")
+		}
+		result := map[string]any{"action": action}
+		if action == "accept" {
+			result["content"] = map[string]any{}
+		}
+		if protocolName == "acceptForSession" {
+			result["_meta"] = map[string]string{"persist": "session"}
+		}
+		return result, nil
+	}
+	if approval.method == "item/permissions/requestApproval" {
+		permissions := json.RawMessage(`{}`)
+		if protocolName != "decline" {
+			permissions = approval.permissions
+		}
+		scope := "turn"
+		if protocolName == "acceptForSession" {
+			scope = "session"
+		}
+		return map[string]any{"permissions": permissions, "scope": scope}, nil
+	}
+	result := map[string]any{"decision": protocolDecision}
+	if approval.method == "item/commandExecution/requestApproval" {
+		result["acceptSettings"] = nil
+	}
+	if approval.method == "execCommandApproval" || approval.method == "applyPatchApproval" {
+		if protocolName == "accept" {
+			result["decision"] = "approved"
+		} else if protocolName == "acceptForSession" {
+			result["decision"] = "approved_for_session"
+		} else {
+			result["decision"] = "denied"
+		}
+	}
+	return result, nil
+}
+
+func defaultCodexApprovalDecisions() map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"approveOnce":    encodedCodexDecision("accept"),
+		"approveSession": encodedCodexDecision("acceptForSession"),
+		"deny":           encodedCodexDecision("decline"),
+	}
+}
+
+func encodedCodexDecision(decision string) json.RawMessage {
+	encoded, _ := json.Marshal(decision)
+	return encoded
+}
+
+func codexApprovalDecisions(method string, params json.RawMessage) map[string]json.RawMessage {
+	if method == "mcpServer/elicitation/request" {
+		return codexMCPApprovalDecisions(params)
+	}
+	if method == "execCommandApproval" || method == "applyPatchApproval" {
+		return defaultCodexApprovalDecisions()
+	}
+	if method != "item/commandExecution/requestApproval" {
+		return defaultCodexApprovalDecisions()
+	}
+	var input struct {
+		AvailableDecisions json.RawMessage `json:"availableDecisions"`
+	}
+	if json.Unmarshal(params, &input) != nil || len(input.AvailableDecisions) == 0 || string(input.AvailableDecisions) == "null" {
+		return defaultCodexApprovalDecisions()
+	}
+	var available []json.RawMessage
+	if json.Unmarshal(input.AvailableDecisions, &available) != nil {
+		return map[string]json.RawMessage{}
+	}
+	decisions := make(map[string]json.RawMessage)
+	for _, encoded := range available {
+		var decision string
+		if json.Unmarshal(encoded, &decision) == nil {
+			switch decision {
+			case "accept":
+				decisions["approveOnce"] = append(json.RawMessage(nil), encoded...)
+			case "acceptForSession":
+				decisions["approveSession"] = append(json.RawMessage(nil), encoded...)
+			case "decline":
+				decisions["deny"] = append(json.RawMessage(nil), encoded...)
+			case "cancel":
+				if len(decisions["deny"]) == 0 {
+					decisions["deny"] = append(json.RawMessage(nil), encoded...)
+				}
+			}
+			continue
+		}
+
+		var structured map[string]json.RawMessage
+		if json.Unmarshal(encoded, &structured) != nil {
+			continue
+		}
+		if structuredCodexDecisionHasField(structured, "acceptWithExecpolicyAmendment", "execpolicy_amendment") {
+			decisions["approveExecPolicyAmendment"] = append(json.RawMessage(nil), encoded...)
+		}
+		if structuredCodexDecisionHasField(structured, "applyNetworkPolicyAmendment", "network_policy_amendment") {
+			decisions["approveNetworkPolicyAmendment"] = append(json.RawMessage(nil), encoded...)
+		}
+	}
+	return decisions
+}
+
+func codexMCPApprovalDecisions(params json.RawMessage) map[string]json.RawMessage {
+	var input struct {
+		Mode       string                     `json:"mode"`
+		ThreadID   string                     `json:"threadId"`
+		ServerName string                     `json:"serverName"`
+		Message    string                     `json:"message"`
+		Schema     map[string]json.RawMessage `json:"requestedSchema"`
+		Meta       struct {
+			Kind    string          `json:"codex_approval_kind"`
+			Persist json.RawMessage `json:"persist"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.Mode != "form" || input.ThreadID == "" ||
+		input.ServerName == "" || input.Message == "" || input.Meta.Kind != "mcp_tool_call" {
+		return nil
+	}
+	var schemaType string
+	var properties map[string]json.RawMessage
+	if json.Unmarshal(input.Schema["type"], &schemaType) != nil || schemaType != "object" ||
+		json.Unmarshal(input.Schema["properties"], &properties) != nil || properties == nil || len(properties) != 0 {
+		return nil
+	}
+	for key, value := range input.Schema {
+		switch key {
+		case "type", "properties":
+		case "required":
+			var required []string
+			if json.Unmarshal(value, &required) != nil || len(required) != 0 {
+				return nil
+			}
+		case "$schema":
+			var schema *string
+			if json.Unmarshal(value, &schema) != nil {
+				return nil
+			}
+		default:
+			return nil
+		}
+	}
+	decisions := map[string]json.RawMessage{
+		"approveOnce": encodedCodexDecision("accept"),
+		"deny":        encodedCodexDecision("decline"),
+	}
+	var persist string
+	var scopes []string
+	if json.Unmarshal(input.Meta.Persist, &persist) == nil {
+		scopes = []string{persist}
+	} else {
+		_ = json.Unmarshal(input.Meta.Persist, &scopes)
+	}
+	for _, scope := range scopes {
+		if scope == "session" {
+			decisions["approveSession"] = encodedCodexDecision("acceptForSession")
+		}
+	}
+	return decisions
+}
+
+// Retain the confirmation identity and advertised scope before publish's event
+// cap can replace it with a generic omission. Arguments remain explicitly omitted.
+func boundedCodexMCPApproval(message codexRPCMessage, decisions map[string]json.RawMessage) json.RawMessage {
+	var input struct {
+		ThreadID   string `json:"threadId"`
+		TurnID     string `json:"turnId"`
+		ServerName string `json:"serverName"`
+		Message    string `json:"message"`
+		Meta       struct {
+			Description string `json:"tool_description"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(message.Params, &input) != nil || len(message.ID) > 256 ||
+		len(input.ThreadID) > 256 || len(input.TurnID) > 256 || len(input.ServerName) > 256 {
+		return nil
+	}
+	boundedText := func(value string) string {
+		if len(value) <= 4<<10 {
+			return value
+		}
+		return strings.ToValidUTF8(value[:4<<10], "") + "… (truncated)"
+	}
+	meta := map[string]any{
+		"codex_approval_kind": "mcp_tool_call",
+		"tool_description":    boundedText(input.Meta.Description),
+	}
+	if _, session := decisions["approveSession"]; session {
+		meta["persist"] = "session"
+	}
+	raw, err := json.Marshal(map[string]any{
+		"id":         message.ID,
+		"method":     message.Method,
+		"rawOmitted": true,
+		"params": map[string]any{
+			"threadId":        input.ThreadID,
+			"turnId":          input.TurnID,
+			"serverName":      input.ServerName,
+			"mode":            "form",
+			"message":         boundedText(input.Message),
+			"requestedSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			"_meta":           meta,
+		},
+	})
+	if err != nil || len(raw) > codexEventMaxBytes {
+		return nil
+	}
+	return raw
+}
+
+func structuredCodexDecisionHasField(decision map[string]json.RawMessage, variant, field string) bool {
+	encoded, found := decision[variant]
+	if !found {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(encoded, &payload) != nil {
+		return false
+	}
+	value, found := payload[field]
+	return found && string(value) != "null"
+}
+
+func (supervisor *codexSupervisor) resetApproval(id string, approval codexApproval) {
+	supervisor.mu.Lock()
+	if current, found := supervisor.approvals[id]; found && current.resolving && current.generation == approval.generation {
+		approval.resolving = false
+		supervisor.approvals[id] = approval
+	}
+	supervisor.mu.Unlock()
+}
+
+func (supervisor *codexSupervisor) finishApproval(id string, approval codexApproval) {
+	supervisor.mu.Lock()
+	if current, found := supervisor.approvals[id]; found && current.generation == approval.generation {
+		delete(supervisor.approvals, id)
+	}
+	supervisor.mu.Unlock()
+}
+
+func (supervisor *codexSupervisor) respondRawForGeneration(
+	ctx context.Context,
+	generation *codexProcessGeneration,
+	id json.RawMessage,
+	result any,
+) error {
+	return supervisor.writeMessageForGeneration(
+		ctx,
+		generation,
+		map[string]any{"id": json.RawMessage(id), "result": result},
+	)
+}
+
+func (supervisor *codexSupervisor) respondErrorForGeneration(
+	generation *codexProcessGeneration,
+	id json.RawMessage,
+	message string,
+) {
+	_ = supervisor.writeMessageForGenerationWithin(
+		generation,
+		map[string]any{
+			"id":    json.RawMessage(id),
+			"error": map[string]any{"code": -32_000, "message": message},
+		},
+	)
+}
+
+func (supervisor *codexSupervisor) respondRawForGenerationWithin(
+	generation *codexProcessGeneration,
+	id json.RawMessage,
+	result any,
+) error {
+	return supervisor.writeMessageForGenerationWithin(
+		generation,
+		map[string]any{"id": json.RawMessage(id), "result": result},
+	)
+}
+
+func (supervisor *codexSupervisor) writeMessageForGenerationWithin(
+	generation *codexProcessGeneration,
+	value any,
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), supervisor.responseTimeout)
+	defer cancel()
+
+	return supervisor.writeMessageForGeneration(ctx, generation, value)
+}
+
+func (supervisor *codexSupervisor) writeMessageForGeneration(
+	ctx context.Context,
+	generation *codexProcessGeneration,
+	value any,
+) error {
+	message, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	supervisor.mu.Lock()
+	if generation == nil || supervisor.generation != generation || generation.failure != nil {
+		supervisor.mu.Unlock()
+		return errors.New("Codex app-server generation ended before the approval response was sent")
+	}
+	stdin := supervisor.stdin
+	supervisor.mu.Unlock()
+	if stdin == nil {
+		return errors.New("Codex app-server is unavailable")
+	}
+	return supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
+}
+
+func (supervisor *codexSupervisor) writeMessage(value any) error {
+	message, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	supervisor.mu.Lock()
+	stdin := supervisor.stdin
+	generation := supervisor.generation
+	supervisor.mu.Unlock()
+	if stdin == nil {
+		return errors.New("Codex app-server is unavailable")
+	}
+	return supervisor.writeToProcess(context.Background(), generation, stdin, append(message, '\n'))
+}
+
+func (supervisor *codexSupervisor) writeToProcess(
+	ctx context.Context,
+	generation *codexProcessGeneration,
+	stdin io.Writer,
+	message []byte,
+) error {
+	select {
+	case <-ctx.Done():
+		return &codexUnsentRequestError{ctx.Err()}
+	case <-supervisor.shutdown:
+		return &codexUnsentRequestError{errors.New("Codex app-server is shutting down")}
+	case <-supervisor.writePermit:
+	}
+
+	written := make(chan error, 1)
+	go func() {
+		_, err := stdin.Write(message)
+		supervisor.writePermit <- struct{}{}
+		written <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		select {
+		case err := <-written:
+			return err
+		default:
+		}
+		supervisor.abortProcessWrite(generation, stdin)
+		return ctx.Err()
+	case <-supervisor.shutdown:
+		select {
+		case err := <-written:
+			return err
+		default:
+		}
+		supervisor.abortProcessWrite(generation, stdin)
+		return errors.New("Codex app-server is shutting down")
+	case err := <-written:
+		return err
+	}
+}
+
+func (supervisor *codexSupervisor) abortProcessWrite(
+	generation *codexProcessGeneration,
+	stdin io.Writer,
+) {
+	if closer, ok := stdin.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	supervisor.mu.Lock()
+	var command *exec.Cmd
+	if supervisor.generation == generation {
+		command = supervisor.command
+	}
+	supervisor.mu.Unlock()
+	killProcessGroup(command)
+}
+
+func (supervisor *codexSupervisor) publish(method, approvalID string, value any) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	if direct, ok := value.(json.RawMessage); ok {
+		raw = append([]byte(nil), direct...)
+	}
+	if method == "item/started" || method == "item/completed" {
+		raw = codexReplayMessage(raw)
+	}
+	if len(raw) > codexEventMaxBytes {
+		raw = codexOversizedEvent(method, len(raw))
+		method = "tengri/eventOmitted"
+	}
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	supervisor.sequence++
+	event := codexEvent{Sequence: supervisor.sequence, Method: method, ApprovalID: approvalID, Raw: raw}
+	supervisor.buffer = append(supervisor.buffer, event)
+	supervisor.bufferBytes += len(raw)
+	for len(supervisor.buffer) > codexEventBufferSize || supervisor.bufferBytes > codexEventBufferBytes {
+		supervisor.bufferBytes -= len(supervisor.buffer[0].Raw)
+		supervisor.buffer = supervisor.buffer[1:]
+	}
+	for id, subscription := range supervisor.subscriptions {
+		select {
+		case subscription.channel <- event:
+		default:
+			delete(supervisor.subscriptions, id)
+			close(subscription.channel)
+		}
+	}
+}
+
+func codexReplayMessage(raw json.RawMessage) json.RawMessage {
+	var message map[string]json.RawMessage
+	var params, item map[string]json.RawMessage
+	if json.Unmarshal(raw, &message) != nil || json.Unmarshal(message["params"], &params) != nil ||
+		json.Unmarshal(params["item"], &item) != nil {
+		return raw
+	}
+	if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
+		return raw
+	}
+	changed := false
+	projectImages := func(container map[string]json.RawMessage, field string) {
+		var content []json.RawMessage
+		if json.Unmarshal(container[field], &content) != nil {
+			return
+		}
+		replacement := json.RawMessage(`{"type":"text","text":"[Image output]"}`)
+		if field == "contentItems" {
+			replacement = json.RawMessage(`{"type":"inputText","text":"[Image output]"}`)
+		}
+		projected := false
+		for index, block := range content {
+			var image struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(block, &image) == nil && (image.Type == "image" || image.Type == "inputImage") {
+				content[index] = replacement
+				projected = true
+			}
+		}
+		if projected {
+			container[field], _ = json.Marshal(content)
+			changed = true
+		}
+	}
+	projectImages(item, "contentItems")
+	var result map[string]json.RawMessage
+	if json.Unmarshal(item["result"], &result) == nil && result != nil {
+		projectImages(result, "content")
+		item["result"], _ = json.Marshal(result)
+	}
+	if !changed {
+		return raw
+	}
+	params["item"], _ = json.Marshal(item)
+	message["params"], _ = json.Marshal(params)
+	message["rawOmitted"] = json.RawMessage("true")
+	projected, _ := json.Marshal(message)
+	return projected
+}
+
+func (supervisor *codexSupervisor) subscribe(after uint64) (uint64, <-chan codexEvent, error) {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	if supervisor.closed.Load() {
+		return 0, nil, errors.New("Codex event service is shutting down")
+	}
+	if len(supervisor.subscriptions) >= codexSubscriberLimit {
+		return 0, nil, errors.New("too many Codex event subscribers")
+	}
+	supervisor.nextSubscriber++
+	id := supervisor.nextSubscriber
+	replay := make([]codexEvent, 0, len(supervisor.buffer)+1)
+	bufferStart := uint64(0)
+	bufferEnd := supervisor.sequence
+	if len(supervisor.buffer) > 0 {
+		bufferStart = supervisor.buffer[0].Sequence
+		bufferEnd = supervisor.buffer[len(supervisor.buffer)-1].Sequence
+	}
+	replayStart := sequenceBefore(bufferStart)
+	if after > supervisor.sequence || (len(supervisor.buffer) > 0 && after > 0 && after < replayStart) {
+		replay = append(replay, codexReplayWarning(bufferStart, bufferEnd))
+		after = 0
+	}
+	for _, event := range supervisor.buffer {
+		if event.Sequence > after {
+			replay = append(replay, event)
+		}
+	}
+	channel := make(chan codexEvent, len(replay)+256)
+	for _, event := range replay {
+		channel <- event
+	}
+	supervisor.subscriptions[id] = codexSubscription{channel: channel}
+	return id, channel, nil
+}
+
+func codexOversizedEvent(method string, size int) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"method": "tengri/eventOmitted",
+		"params": map[string]any{
+			"message":        "Codex event exceeded the bounded desktop replay limit and was omitted",
+			"originalMethod": method,
+			"bytes":          size,
+		},
+	})
+	return raw
+}
+
+func codexReplayWarning(bufferStart, bufferEnd uint64) codexEvent {
+	raw, _ := json.Marshal(map[string]any{
+		"method": "tengri/replayWarning",
+		"params": map[string]any{
+			"message":     "Codex event replay window expired; thread state must be refreshed",
+			"bufferStart": bufferStart,
+			"bufferEnd":   bufferEnd,
+		},
+	})
+	return codexEvent{
+		Sequence: sequenceBefore(bufferStart),
+		Method:   "tengri/replayWarning",
+		Raw:      raw,
+	}
+}
+
+func (supervisor *codexSupervisor) unsubscribe(id uint64) {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	if subscription, found := supervisor.subscriptions[id]; found {
+		delete(supervisor.subscriptions, id)
+		close(subscription.channel)
+	}
+}
+
+func (supervisor *codexSupervisor) removePending(id string) {
+	supervisor.mu.Lock()
+	delete(supervisor.pending, id)
+	supervisor.mu.Unlock()
+}
+
+func (supervisor *codexSupervisor) failProcess(err error) {
+	supervisor.mu.Lock()
+	supervisor.command = nil
+	supervisor.stdin = nil
+	supervisor.generation.failure = err
+	closeSignal(supervisor.generation.ready)
+	supervisor.generation = newCodexProcessGeneration()
+	pending := supervisor.pending
+	supervisor.pending = make(map[string]chan codexPendingResult)
+	supervisor.approvals = make(map[string]codexApproval)
+	supervisor.workRequests = make(map[string]struct{})
+	supervisor.activeTurns = make(map[string]string)
+	supervisor.workChangedAt = time.Now()
+	supervisor.workUnknown = false
+	supervisor.clearLoginLocked()
+	supervisor.loginOperation = nil
+	supervisor.loginCompleted = nil
+	supervisor.mu.Unlock()
+	for _, channel := range pending {
+		channel <- codexPendingResult{localErr: err}
+	}
+}
+
+func closeSignal(signal chan struct{}) {
+	select {
+	case <-signal:
+	default:
+		close(signal)
+	}
+}
+
+func normalizeRequestID(id json.RawMessage) string {
+	return strings.Trim(string(id), "\"")
+}
+
+func compactJSON(value json.RawMessage) string {
+	var buffer bytes.Buffer
+	if json.Compact(&buffer, value) == nil {
+		return buffer.String()
+	}
+	return "request failed"
+}
+
+func codexRPCErrorFromRaw(raw json.RawMessage) error {
+	var encoded struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return fmt.Errorf("Codex app-server request failed: %s", compactJSON(raw))
+	}
+	return &codexRPCError{
+		code:    encoded.Code,
+		message: encoded.Message,
+		raw:     append(json.RawMessage(nil), raw...),
+	}
+}
+
+const (
+	codexConversationNotFoundMessage = "Codex conversation could not be found"
+	codexMissingRolloutMessagePrefix = "no rollout found for thread id "
+)
+
+func isMissingCodexConversation(method string, params json.RawMessage, err error) bool {
+	if method != "thread/resume" {
+		return false
+	}
+	var rpcError *codexRPCError
+	if !errors.As(err, &rpcError) || rpcError.code != -32600 {
+		return false
+	}
+	threadID, ok := codexResumeThreadID(params)
+	return ok && rpcError.message == codexMissingRolloutMessagePrefix+threadID
+}
+
+func codexResumeThreadID(params json.RawMessage) (string, bool) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(params))
+	if err := decoder.Decode(&input); err != nil {
+		return "", false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return "", false
+	}
+	return input.ThreadID, input.ThreadID != ""
+}
+
+var errCodexThreadActive = errors.New("Wait for the response to finish before archiving this chat")
+
+func (supervisor *codexSupervisor) archiveThread(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.ThreadID == "" {
+		return codexCallResult{}, errors.New("threadId is required")
+	}
+	supervisor.operationMu.Lock()
+	defer supervisor.operationMu.Unlock()
+	supervisor.mu.Lock()
+	_, active := supervisor.activeTurns[input.ThreadID]
+	supervisor.mu.Unlock()
+	if active {
+		return codexCallResult{}, errCodexThreadActive
+	}
+	return supervisor.request(ctx, "thread/archive", params, true, nil)
+}
+
+func allowedCodexMethod(method string) bool {
+	switch method {
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/list", "thread/archive", "thread/unarchive", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval", "relay/identity", "relay/configure", "relay/remove":
+		return true
+	default:
+		return false
+	}
+}

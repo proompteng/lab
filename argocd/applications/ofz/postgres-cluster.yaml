@@ -1,0 +1,155 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ofz-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-8"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  description: Shared SpiceDB permissions datastore
+  inheritedMetadata:
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  imagePullPolicy: IfNotPresent
+  enablePDB: true
+  enableSuperuserAccess: false
+  managed:
+    roles:
+    - name: ofz_migrator
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 2
+      passwordSecret:
+        name: ofz-migrator-db-auth
+    - name: ofz_api
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 42
+      passwordSecret:
+        name: ofz-api-db-auth
+    - name: ofz_archiver
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 4
+      passwordSecret:
+        name: ofz-archiver-db-auth
+    - name: tengri_migrator
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 2
+      passwordSecret:
+        name: tengri-migrator-db-auth
+    - name: tengri_controller
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 42
+      passwordSecret:
+        name: tengri-controller-db-auth
+    - name: tengri_bff
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 24
+      passwordSecret:
+        name: tengri-bff-db-auth
+    - name: tengri_supervisor
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 24
+      passwordSecret:
+        name: tengri-supervisor-db-auth
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  affinity:
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+    tolerations:
+      - key: workload.proompteng.ai/compute-local
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  storage:
+    storageClass: rook-ceph-block
+    size: 30Gi
+    resizeInUseVolumes: true
+  bootstrap:
+    initdb:
+      database: spicedb
+      owner: spicedb
+      encoding: UTF8
+      dataChecksums: true
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+    parameters:
+      archive_timeout: 60s
+      wal_buffers: 16MB
+      wal_sync_method: fdatasync
+      track_wal_io_timing: "on"
+      track_commit_timestamp: "on"
+      max_connections: "220"
+      password_encryption: scram-sha-256
+      ssl_min_protocol_version: TLSv1.3
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      enabled: true
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: ofz-db
+        serverName: ofz-db
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup

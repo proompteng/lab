@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from app.models import Strategy
+from app.strategies.catalog import (
+    StrategyCatalogConfig,
+    StrategyConfig,
+    _compose_strategy_description,
+)
+from app.trading.features import (
+    FeatureNormalizationError,
+    FeatureVectorV3,
+    normalize_feature_vector_v3,
+)
+from app.trading.evaluation_trace import GateTrace, StrategyTrace
+from app.trading.models import SignalEnvelope
+from app.trading.research_sleeves import (
+    _rank_thresholds,
+    evaluate_mean_reversion_exhaustion_short,
+)
+from app.trading.strategy_runtime import (
+    LegacyMacdRsiPlugin,
+    MicrobarCrossSectionalLongPlugin,
+    MicrobarCrossSectionalPairsPlugin,
+    MicrobarCrossSectionalShortPlugin,
+    PluginEvaluationResult,
+    StrategyContext,
+    StrategyDefinition,
+    StrategyIntent,
+    StrategyRegistry,
+    StrategyRuntime,
+)
+from app.trading.strategy_runtime.coerce_plugin_result import trace_suppression_reason
+from app.trading.strategy_runtime.empty_meta import (
+    microbar_entry_window_minutes,
+    microbar_exit_minute_after_open,
+    microbar_minutes_elapsed,
+    microbar_rank_thresholds,
+    microbar_universe_size,
+)
+from app.trading.strategy_runtime.evaluate_microbar_cross_sectional import (
+    evaluate_microbar_cross_sectional,
+)
+
+
+class _FailingPlugin:
+    plugin_id = "failing"
+    version = "1.0.0"
+    required_features = ("macd",)
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        _ = context
+        _ = features
+        raise RuntimeError("boom")
+
+
+class _BuyPlugin:
+    plugin_id = "buy_plugin"
+    version = "1.0.0"
+    required_features = ("price",)
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction="buy",
+                confidence=Decimal("0.90"),
+                target_notional=Decimal("100"),
+                horizon=context.timeframe,
+                explain=("buy_signal",),
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=self.required_features,
+            )
+        )
+
+
+class _SellPlugin:
+    plugin_id = "sell_plugin"
+    version = "1.0.0"
+    required_features = ("price",)
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction="sell",
+                confidence=Decimal("0.40"),
+                target_notional=Decimal("200"),
+                horizon=context.timeframe,
+                explain=("sell_signal",),
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=self.required_features,
+            )
+        )
+
+
+def _test_feature_vector(
+    values: dict[str, object],
+    *,
+    event_ts: datetime | None = None,
+    symbol: str = "META",
+) -> FeatureVectorV3:
+    return FeatureVectorV3(
+        event_ts=event_ts or datetime(2026, 3, 24, 14, 30, 0, tzinfo=timezone.utc),
+        symbol=symbol,
+        timeframe="1Sec",
+        seq=1,
+        source="unit-test",
+        feature_schema_version="v3",
+        values=values,
+        normalization_hash="unit-hash",
+    )
+
+
+__all__: tuple[str, ...] = (
+    "Decimal",
+    "FeatureNormalizationError",
+    "FeatureVectorV3",
+    "GateTrace",
+    "LegacyMacdRsiPlugin",
+    "MicrobarCrossSectionalLongPlugin",
+    "MicrobarCrossSectionalPairsPlugin",
+    "MicrobarCrossSectionalShortPlugin",
+    "PluginEvaluationResult",
+    "SignalEnvelope",
+    "Strategy",
+    "StrategyCatalogConfig",
+    "StrategyConfig",
+    "StrategyContext",
+    "StrategyDefinition",
+    "StrategyIntent",
+    "StrategyRegistry",
+    "StrategyRuntime",
+    "StrategyTrace",
+    "TestCase",
+    "_BuyPlugin",
+    "_FailingPlugin",
+    "_SellPlugin",
+    "_compose_strategy_description",
+    "_rank_thresholds",
+    "_test_feature_vector",
+    "datetime",
+    "evaluate_microbar_cross_sectional",
+    "evaluate_mean_reversion_exhaustion_short",
+    "microbar_entry_window_minutes",
+    "microbar_exit_minute_after_open",
+    "microbar_minutes_elapsed",
+    "microbar_rank_thresholds",
+    "microbar_universe_size",
+    "normalize_feature_vector_v3",
+    "timezone",
+    "trace_suppression_reason",
+    "uuid",
+)

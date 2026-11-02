@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pgadmin-private
+  namespace: pgadmin
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`pgadmin.k8s.proompteng.ai`)
+      services:
+        - name: pgadmin
+          port: 80
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

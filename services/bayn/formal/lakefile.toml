@@ -1,0 +1,15 @@
+name = "bayn"
+version = "0.1.0"
+defaultTargets = ["Bayn", "bayn-model"]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "56a005855ea17e0b0958f73ec801ae140b0a1679"
+
+[[lean_lib]]
+name = "Bayn"
+
+[[lean_exe]]
+name = "bayn-model"
+root = "Main"

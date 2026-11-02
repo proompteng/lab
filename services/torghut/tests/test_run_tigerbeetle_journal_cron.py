@@ -1,0 +1,680 @@
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import subprocess
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import TestCase
+from unittest.mock import patch
+
+from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+)
+from scripts import run_tigerbeetle_journal_cron as runner
+
+
+class RunTigerBeetleJournalCronTest(TestCase):
+    def test_parse_args_and_preset_commands_clamp_live_batch_size(self) -> None:
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            [
+                "run_tigerbeetle_journal_cron.py",
+                "--preset",
+                "live",
+                "--execution-batch-size",
+                "0",
+                "--tca-metric-batch-size",
+                "0",
+                "--order-event-batch-size",
+                "50000",
+                "--runtime-ledger-batch-size",
+                "0",
+                "--journal-batch-chunk-size",
+                "0",
+                "--sim-batch-size",
+                "0",
+                "--supervise-timeout-seconds",
+                "3.5",
+                "--json",
+            ],
+        ):
+            args = runner._parse_args()
+
+        self.assertEqual(args.preset, "live")
+        self.assertTrue(args.json)
+        self.assertEqual(args.supervise_timeout_seconds, 3.5)
+        self.assertEqual(
+            runner._commands_for_preset(args)[0].batch_size,
+            1,
+        )
+        self.assertEqual(
+            runner._commands_for_preset(args)[0].journal_batch_chunk_size,
+            1,
+        )
+        self.assertEqual(runner._commands_for_preset(args)[1].batch_size, 1)
+        self.assertEqual(runner._commands_for_preset(args)[2].batch_size, 5000)
+        self.assertEqual(runner._commands_for_preset(args)[3].batch_size, 1)
+        self.assertEqual(
+            runner._commands_for_preset(
+                argparse.Namespace(
+                    preset="sim",
+                    sim_batch_size=0,
+                    runtime_ledger_batch_size=50_000,
+                )
+            )[0].dsn_env,
+            "SIM_DB_DSN",
+        )
+        self.assertEqual(
+            runner._commands_for_preset(
+                argparse.Namespace(
+                    preset="sim",
+                    sim_batch_size=0,
+                    runtime_ledger_batch_size=50_000,
+                )
+            )[0].batch_size,
+            1,
+        )
+        self.assertEqual(
+            runner._commands_for_preset(
+                argparse.Namespace(
+                    preset="sim",
+                    sim_batch_size=0,
+                    runtime_ledger_batch_size=50_000,
+                )
+            )[-1].batch_size,
+            5000,
+        )
+
+    def test_live_and_sim_presets_build_journal_script_commands(self) -> None:
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            ["run_tigerbeetle_journal_cron.py", "--preset", "live", "--json"],
+        ):
+            live_args = runner._parse_args()
+
+        live_command = runner._commands_for_preset(live_args)[0]
+        live_argv = runner._argv_for_command(
+            live_command,
+            json_output=True,
+            supervise_timeout_seconds=float(live_args.supervise_timeout_seconds),
+        )
+
+        self.assertEqual(live_argv[0], runner.sys.executable)
+        self.assertTrue(live_argv[1].endswith("journal_tigerbeetle_order_events.py"))
+        self.assertEqual(live_argv[live_argv.index("--dsn-env") + 1], "DB_DSN")
+        self.assertEqual(
+            live_argv[live_argv.index("--sources") + 1],
+            SOURCE_TYPE_EXECUTION,
+        )
+        self.assertIn("--supervise-timeout-seconds", live_argv)
+        self.assertIn("--json", live_argv)
+
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            ["run_tigerbeetle_journal_cron.py", "--preset", "sim", "--json"],
+        ):
+            sim_args = runner._parse_args()
+
+        sim_command = runner._commands_for_preset(sim_args)[0]
+        sim_argv = runner._argv_for_command(
+            sim_command,
+            json_output=True,
+            supervise_timeout_seconds=float(sim_args.supervise_timeout_seconds),
+        )
+
+        self.assertEqual(sim_argv[0], runner.sys.executable)
+        self.assertTrue(sim_argv[1].endswith("journal_tigerbeetle_order_events.py"))
+        self.assertEqual(sim_argv[sim_argv.index("--dsn-env") + 1], "SIM_DB_DSN")
+        self.assertEqual(
+            sim_argv[sim_argv.index("--account-label") + 1],
+            "TORGHUT_SIM",
+        )
+        self.assertEqual(
+            sim_argv[sim_argv.index("--sources") + 1],
+            SOURCE_TYPE_EXECUTION,
+        )
+        self.assertIn("--supervise-timeout-seconds", sim_argv)
+        self.assertIn("--json", sim_argv)
+
+    def test_default_live_execution_slices_drain_source_ref_backlog(self) -> None:
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            [
+                "run_tigerbeetle_journal_cron.py",
+                "--preset",
+                "live",
+            ],
+        ):
+            args = runner._parse_args()
+
+        [command] = [
+            item
+            for item in runner._commands_for_preset(args)
+            if item.source == SOURCE_TYPE_EXECUTION
+        ]
+
+        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 250)
+        self.assertEqual(runner.LIVE_EXECUTION_SLICE_COUNT, 1)
+        self.assertEqual(command.batch_size, runner.LIVE_EXECUTION_BATCH_SIZE)
+        self.assertEqual(command.max_batches, 1)
+        self.assertEqual(command.repeat_count, runner.LIVE_EXECUTION_SLICE_COUNT)
+        self.assertTrue(command.commit_each_row)
+        self.assertEqual(
+            command.progress_interval, runner.LIVE_EXECUTION_PROGRESS_INTERVAL
+        )
+        self.assertTrue(command.skip_reconcile)
+        self.assertTrue(command.allow_data_quality_degraded)
+        self.assertEqual(
+            args.supervise_timeout_seconds,
+            runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            command.supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=runner.LIVE_EXECUTION_BATCH_SIZE,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
+
+    def test_live_preset_can_tune_source_batch_sizes_independently(self) -> None:
+        commands = runner._live_commands(
+            execution_batch_size=10,
+            tca_metric_batch_size=20,
+            order_event_batch_size=30,
+            runtime_ledger_batch_size=40,
+            journal_batch_chunk_size=6,
+        )
+
+        self.assertEqual(commands[0].source, SOURCE_TYPE_EXECUTION)
+        self.assertEqual(commands[0].batch_size, 10)
+        self.assertEqual(commands[0].max_batches, 1)
+        self.assertEqual(commands[0].repeat_count, runner.LIVE_EXECUTION_SLICE_COUNT)
+        self.assertTrue(commands[0].commit_each_row)
+        self.assertEqual(
+            commands[0].progress_interval, runner.LIVE_EXECUTION_PROGRESS_INTERVAL
+        )
+        self.assertTrue(commands[0].skip_reconcile)
+        self.assertTrue(commands[0].allow_data_quality_degraded)
+        self.assertEqual(commands[1].source, SOURCE_TYPE_EXECUTION_TCA_METRIC)
+        self.assertEqual(commands[1].batch_size, 20)
+        self.assertEqual(commands[1].max_batches, runner.LIVE_TCA_METRIC_MAX_BATCHES)
+        self.assertEqual(commands[1].max_batches, 1)
+        self.assertTrue(commands[1].skip_reconcile)
+        self.assertTrue(commands[1].commit_each_row)
+        self.assertEqual(commands[1].journal_batch_chunk_size, 6)
+        self.assertEqual(
+            commands[1].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=20,
+                journal_batch_chunk_size=6,
+            ),
+        )
+        self.assertEqual(commands[2].source, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
+        self.assertEqual(commands[2].batch_size, 30)
+        self.assertEqual(commands[2].max_batches, runner.LIVE_ORDER_EVENT_MAX_BATCHES)
+        self.assertEqual(commands[2].max_batches, 1)
+        self.assertLessEqual(commands[2].max_batches, 2)
+        self.assertEqual(
+            commands[2].event_scan_limit,
+            runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
+        )
+        self.assertTrue(commands[2].commit_each_row)
+        self.assertEqual(
+            commands[2].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=30,
+                journal_batch_chunk_size=6,
+            ),
+        )
+        self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
+        self.assertEqual(commands[3].batch_size, 40)
+        self.assertFalse(commands[3].skip_reconcile)
+        self.assertTrue(commands[3].reconcile_empty_selection)
+        self.assertEqual(
+            commands[3].reconcile_empty_selection_freshness_headroom_seconds,
+            runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS,
+        )
+        self.assertEqual(commands[3].reconcile_limit, runner.LIVE_RECONCILE_LIMIT)
+
+    def test_live_runtime_ledger_command_refreshes_empty_selection_reconciliation(
+        self,
+    ) -> None:
+        command = runner._live_commands(execution_batch_size=5)[-1]
+
+        argv = runner._argv_for_command(
+            command,
+            json_output=True,
+            supervise_timeout_seconds=45.0,
+        )
+
+        self.assertIn("--reconcile-empty-selection", argv)
+        self.assertIn(
+            "--reconcile-empty-selection-freshness-headroom-seconds",
+            argv,
+        )
+        self.assertEqual(
+            argv[
+                argv.index("--reconcile-empty-selection-freshness-headroom-seconds") + 1
+            ],
+            str(runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS),
+        )
+        self.assertNotIn("--skip-reconcile", argv)
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(
+                max(
+                    runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                    runner._journal_source_timeout_seconds(
+                        batch_size=command.batch_size,
+                        journal_batch_chunk_size=command.journal_batch_chunk_size,
+                    ),
+                )
+            ),
+        )
+        self.assertEqual(
+            argv[argv.index("--reconcile-limit") + 1],
+            str(runner.LIVE_RECONCILE_LIMIT),
+        )
+
+    def test_sim_runtime_ledger_command_refreshes_empty_selection_reconciliation(
+        self,
+    ) -> None:
+        command = runner._sim_commands()[-1]
+
+        argv = runner._argv_for_command(
+            command,
+            json_output=True,
+            supervise_timeout_seconds=45.0,
+        )
+
+        self.assertIn("--reconcile-empty-selection", argv)
+        self.assertIn(
+            "--reconcile-empty-selection-freshness-headroom-seconds",
+            argv,
+        )
+        self.assertEqual(
+            argv[
+                argv.index("--reconcile-empty-selection-freshness-headroom-seconds") + 1
+            ],
+            str(runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS),
+        )
+        self.assertNotIn("--skip-reconcile", argv)
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(
+                max(
+                    runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                    runner._journal_source_timeout_seconds(
+                        batch_size=command.batch_size,
+                        journal_batch_chunk_size=command.journal_batch_chunk_size,
+                    ),
+                )
+            ),
+        )
+
+    def test_live_source_timeouts_are_scaled_by_chunk_count(
+        self,
+    ) -> None:
+        commands = runner._live_commands(execution_batch_size=5)
+
+        self.assertEqual(
+            commands[0].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=5,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
+        self.assertEqual(
+            commands[1].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=runner.LIVE_TCA_METRIC_BATCH_SIZE,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
+        self.assertEqual(
+            commands[2].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=runner.LIVE_ORDER_EVENT_BATCH_SIZE,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
+        self.assertEqual(
+            commands[3].supervise_timeout_seconds,
+            max(
+                runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                runner._journal_source_timeout_seconds(
+                    batch_size=runner.LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+                    journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                ),
+            ),
+        )
+
+    def test_live_order_event_argv_keeps_slice_bounded_under_watchdog(self) -> None:
+        [command] = [
+            item
+            for item in runner._live_commands(execution_batch_size=5)
+            if item.source == SOURCE_TYPE_EXECUTION_ORDER_EVENT
+        ]
+
+        argv = runner._argv_for_command(
+            command,
+            json_output=True,
+            supervise_timeout_seconds=runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
+        )
+
+        self.assertEqual(argv[argv.index("--sources") + 1], "execution_order_event")
+        self.assertEqual(
+            argv[argv.index("--batch-size") + 1],
+            str(runner.LIVE_ORDER_EVENT_BATCH_SIZE),
+        )
+        self.assertEqual(
+            argv[argv.index("--max-batches") + 1],
+            str(runner.LIVE_ORDER_EVENT_MAX_BATCHES),
+        )
+        self.assertLessEqual(int(argv[argv.index("--max-batches") + 1]), 2)
+        self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
+        self.assertEqual(
+            int(argv[argv.index("--batch-size") + 1]),
+            runner.LIVE_ORDER_EVENT_BATCH_SIZE,
+        )
+        self.assertEqual(
+            argv[argv.index("--event-scan-limit") + 1],
+            str(runner.LIVE_ORDER_EVENT_SCAN_LIMIT),
+        )
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(command.supervise_timeout_seconds),
+        )
+        self.assertIn("--commit-each-row", argv)
+        self.assertGreaterEqual(
+            runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
+            2 * 45.0,
+        )
+        self.assertIn("--fail-on-degraded", argv)
+        self.assertIn("--allow-data-quality-degraded", argv)
+        self.assertIn("--json", argv)
+
+    def test_live_tca_metric_argv_keeps_slice_bounded_under_watchdog(self) -> None:
+        [command] = [
+            item
+            for item in runner._live_commands(execution_batch_size=5)
+            if item.source == SOURCE_TYPE_EXECUTION_TCA_METRIC
+        ]
+
+        argv = runner._argv_for_command(
+            command,
+            json_output=True,
+            supervise_timeout_seconds=runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
+        )
+
+        self.assertEqual(argv[argv.index("--sources") + 1], "execution_tca_metric")
+        self.assertEqual(
+            argv[argv.index("--batch-size") + 1],
+            str(runner.LIVE_TCA_METRIC_BATCH_SIZE),
+        )
+        self.assertEqual(
+            argv[argv.index("--max-batches") + 1],
+            str(runner.LIVE_TCA_METRIC_MAX_BATCHES),
+        )
+        self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(command.supervise_timeout_seconds),
+        )
+        self.assertEqual(
+            argv[argv.index("--journal-batch-chunk-size") + 1],
+            str(runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE),
+        )
+        self.assertIn("--skip-reconcile", argv)
+        self.assertIn("--commit-each-row", argv)
+        self.assertIn("--fail-on-degraded", argv)
+        self.assertIn("--json", argv)
+
+    def test_safe_non_authority_payload_normalizes_nonzero_command_exit(self) -> None:
+        safe_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "ok": False,
+            "status": "degraded",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "exit_nonzero": False,
+            "failed": 0,
+            "hard_failure_reasons": [],
+            "stop_reasons": [],
+            "accounting_blockers": ["tigerbeetle_unlinked_execution"],
+            "reconciliation_blockers": ["tigerbeetle_unlinked_execution"],
+        }
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = runner._normalize_command_returncode(
+                returncode=1,
+                payload=safe_payload,
+                source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                json_output=True,
+            )
+
+        self.assertEqual(exit_code, 0)
+        progress = json.loads(stderr.getvalue())
+        self.assertEqual(
+            progress["event"],
+            "journal_command_exit_mismatch_normalized",
+        )
+        self.assertEqual(progress["source"], SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
+        self.assertEqual(progress["returncode"], 1)
+
+    def test_unsafe_payload_keeps_nonzero_exit(self) -> None:
+        unsafe_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "ok": False,
+            "status": "degraded",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "exit_nonzero": True,
+            "failed": 1,
+            "hard_failure_reasons": ["journal_batch_failures"],
+            "stop_reasons": [],
+        }
+
+        self.assertEqual(
+            runner._normalize_command_returncode(
+                returncode=1,
+                payload=unsafe_payload,
+                source=SOURCE_TYPE_EXECUTION,
+                json_output=True,
+            ),
+            1,
+        )
+
+    def test_success_with_exit_nonzero_payload_fails_closed(self) -> None:
+        payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "exit_nonzero": True,
+        }
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = runner._normalize_command_returncode(
+                returncode=0,
+                payload=payload,
+                source=SOURCE_TYPE_EXECUTION,
+                json_output=True,
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            json.loads(stderr.getvalue())["event"],
+            "journal_command_payload_exit_mismatch",
+        )
+
+    def test_success_with_clean_payload_returns_zero(self) -> None:
+        self.assertEqual(
+            runner._normalize_command_returncode(
+                returncode=0,
+                payload={"exit_nonzero": False},
+                source=SOURCE_TYPE_EXECUTION,
+                json_output=True,
+            ),
+            0,
+        )
+
+    def test_payload_exit_nonzero_fails_closed_without_payload(self) -> None:
+        self.assertTrue(runner._payload_exit_nonzero(None))
+
+    def test_json_mode_requires_payload(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = runner._normalize_command_returncode(
+                returncode=0,
+                payload=None,
+                source=SOURCE_TYPE_EXECUTION,
+                json_output=True,
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            json.loads(stderr.getvalue())["event"],
+            "journal_command_missing_payload",
+        )
+
+    def test_run_command_replays_output_and_normalizes_safe_payload(self) -> None:
+        safe_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "ok": False,
+            "status": "degraded",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "exit_nonzero": False,
+            "failed": 0,
+            "hard_failure_reasons": [],
+            "stop_reasons": [],
+            "accounting_blockers": ["tigerbeetle_unlinked_execution_cost"],
+            "reconciliation_blockers": ["tigerbeetle_unlinked_execution_cost"],
+        }
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch(
+                "scripts.run_tigerbeetle_journal_cron.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["python", "journal"],
+                    returncode=1,
+                    stdout=json.dumps(safe_payload, separators=(",", ":")) + "\n",
+                    stderr="",
+                ),
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            exit_code = runner._run_command(
+                ["python", "journal"],
+                source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                json_output=True,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), safe_payload)
+        self.assertEqual(
+            json.loads(stderr.getvalue())["event"],
+            "journal_command_exit_mismatch_normalized",
+        )
+
+    def test_main_runs_all_commands_and_clamps_timeout_and_batch_size(self) -> None:
+        observed: list[tuple[list[str], str, bool]] = []
+
+        def fake_run(argv: list[str], *, source: str, json_output: bool) -> int:
+            observed.append((argv, source, json_output))
+            return 1 if source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET else 0
+
+        with (
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._parse_args",
+                return_value=argparse.Namespace(
+                    preset="live",
+                    execution_batch_size=50_000,
+                    supervise_timeout_seconds=0,
+                    json=True,
+                ),
+            ),
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._run_command",
+                side_effect=fake_run,
+            ),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(len(observed), 4)
+        first_argv = observed[0][0]
+        self.assertEqual(first_argv[first_argv.index("--batch-size") + 1], "5000")
+        self.assertIn("--commit-each-row", first_argv)
+        self.assertEqual(
+            first_argv[first_argv.index("--progress-interval") + 1],
+            str(runner.LIVE_EXECUTION_PROGRESS_INTERVAL),
+        )
+        self.assertEqual(
+            first_argv[first_argv.index("--supervise-timeout-seconds") + 1],
+            str(
+                runner._journal_source_timeout_seconds(
+                    batch_size=runner.MAX_TIGERBEETLE_BATCH_SIZE,
+                    journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                )
+            ),
+        )
+        self.assertEqual(
+            [source for _, source, _ in observed[: runner.LIVE_EXECUTION_SLICE_COUNT]],
+            [SOURCE_TYPE_EXECUTION] * runner.LIVE_EXECUTION_SLICE_COUNT,
+        )
+        runtime_argv = observed[-1][0]
+        self.assertEqual(
+            runtime_argv[runtime_argv.index("--supervise-timeout-seconds") + 1],
+            str(
+                max(
+                    runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                    runner._journal_source_timeout_seconds(
+                        batch_size=runner.LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+                        journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                    ),
+                )
+            ),
+        )
+        self.assertTrue(all(json_output for _, _, json_output in observed))
+
+    def test_main_stops_repeated_execution_slices_after_failure(self) -> None:
+        observed: list[str] = []
+
+        def fake_run(argv: list[str], *, source: str, json_output: bool) -> int:
+            del argv, json_output
+            observed.append(source)
+            return 1 if source == SOURCE_TYPE_EXECUTION else 0
+
+        with (
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._parse_args",
+                return_value=argparse.Namespace(
+                    preset="live",
+                    execution_batch_size=runner.LIVE_EXECUTION_BATCH_SIZE,
+                    supervise_timeout_seconds=45,
+                    json=True,
+                ),
+            ),
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._run_command",
+                side_effect=fake_run,
+            ),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            observed,
+            [
+                SOURCE_TYPE_EXECUTION,
+                SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            ],
+        )

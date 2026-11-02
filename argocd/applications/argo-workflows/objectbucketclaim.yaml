@@ -1,0 +1,8 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: argo-workflows
+  namespace: argo-workflows
+spec:
+  bucketName: argo-workflows
+  storageClassName: rook-ceph-bucket

@@ -1,0 +1,45 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: golink
+  namespace: golink
+  labels:
+    app.kubernetes.io/name: golink
+    app.kubernetes.io/part-of: lab
+    networking.knative.dev/visibility: cluster-local
+  annotations:
+    serving.knative.dev/rollout-duration: 10s
+    argocd.argoproj.io/tracking-id: golink:serving.knative.dev/Service:golink/golink
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        client.knative.dev/updateTimestamp: 2025-12-30T08:26:51.750Z
+    spec:
+      containerConcurrency: 0
+      timeoutSeconds: 60
+      containers:
+        - name: user-container
+          image: registry.ide-newton.ts.net/lab/golink@sha256:832e1e55033909ea542b33ae4732ef1b87d492bc570e0102abe3cc8f166d4991
+          imagePullPolicy: Always
+          ports:
+            - name: http1
+              containerPort: 3000
+          env:
+            - name: GOLINK_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: golink-db-app
+                  key: uri
+            - name: GOLINK_VERSION
+              value: v0.377.3-2-g5d567569
+            - name: GOLINK_COMMIT
+              value: 5d567569578995e7bae1b435eb403a45936248f1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi

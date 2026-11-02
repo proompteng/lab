@@ -1,0 +1,9 @@
+services:
+  haproxy:
+    image: haproxy:2.9
+    container_name: k8s-api-lb-haproxy
+    restart: unless-stopped
+    ports:
+      - '6443:6443'
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro

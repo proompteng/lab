@@ -1,0 +1,11 @@
+{
+  "include": [
+    "app/trading/alpha/data_sources.py",
+    "app/trading/alpha/metrics.py",
+    "app/trading/alpha/search.py",
+    "app/trading/alpha/tsmom.py"
+  ],
+  "typeCheckingMode": "strict",
+  "venvPath": ".",
+  "venv": ".venv"
+}

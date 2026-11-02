@@ -1,0 +1,45 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codex-workflow
+  namespace: argo-workflows
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflows
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflows/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflowtaskresults
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codex-workflow
+  namespace: argo-workflows
+subjects:
+  - kind: ServiceAccount
+    name: codex-workflow
+    namespace: argo-workflows
+roleRef:
+  kind: Role
+  name: codex-workflow
+  apiGroup: rbac.authorization.k8s.io

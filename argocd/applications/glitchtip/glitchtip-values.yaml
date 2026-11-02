@@ -1,0 +1,96 @@
+# MIT-licensed GlitchTip 6.2.6 on the official Helm chart 9.0.1.
+# Keep logs and distributed tracing in Loki/Tempo; only ingest Sentry SDK errors here.
+image:
+  repository: glitchtip/glitchtip
+  tag: 6.2.6
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+budget:
+  minAvailable: 1
+
+glitchtip:
+  existingSecret: glitchtip-app-key
+  existingSecretKey: SECRET_KEY
+  domain: https://glitchtip.ide-newton.ts.net
+
+# A dedicated CNPG cluster rather than attaching to a trading workload's DB.
+# The chart automatically reads glitchtip-pg-app/uri, created by CNPG.
+postgresql:
+  enabled: true
+  cluster:
+    instances: 2
+    storage:
+      size: 20Gi
+      storageClass: rook-ceph-block
+
+# GlitchTip 6.2 supports PostgreSQL-backed async tasks and session storage.
+# Avoid adding a second cache cluster to this low-volume internal service.
+valkey:
+  enabled: false
+
+serviceAccount:
+  create: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  runAsNonRoot: true
+  runAsUser: 1000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+migrationJob:
+  enabled: true
+  activeDeadlineSeconds: 900
+  # Upstream chart 9.0.1 does not inherit extraEnvVars in the migration pod.
+  # Without this, Django skips the PostgreSQL-backed task and session apps,
+  # reporting a successful migration while omitting db_* / django_session.
+  extraEnvVars:
+    - name: VALKEY_URL
+      value: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+extraEnvVars:
+  - name: VALKEY_URL
+    value: ""
+  - name: ALLOWED_HOSTS
+    value: glitchtip.ide-newton.ts.net,glitchtip-web,glitchtip-web.glitchtip.svc.cluster.local
+  - name: CSRF_TRUSTED_ORIGINS
+    value: https://glitchtip.ide-newton.ts.net
+  - name: EMAIL_URL
+    valueFrom:
+      secretKeyRef:
+        name: glitchtip-brevo-email
+        key: EMAIL_URL
+  - name: DEFAULT_FROM_EMAIL
+    valueFrom:
+      secretKeyRef:
+        name: glitchtip-brevo-email
+        key: DEFAULT_FROM_EMAIL
+  - name: ENABLE_OBSERVABILITY_API
+    value: "true"
+
+# The Helm test Pods are on-demand checks, not long-running GitOps workloads.
+tests:
+  configuration:
+    enabled: false

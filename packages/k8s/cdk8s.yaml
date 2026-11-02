@@ -1,0 +1,5 @@
+language: typescript
+app: bun run src/cli.ts synth -- --app docs
+imports:
+  - k8s@1.35.0
+  - crds/traefik-41.0.1.yaml

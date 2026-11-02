@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-hyperliquid-runtime-clickhouse-schema
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  schema.sql: |-
+    SET distributed_ddl_output_mode = 'null_status_on_timeout';
+    SET distributed_ddl_task_timeout = 10;
+
+    CREATE DATABASE IF NOT EXISTS torghut ON CLUSTER default;
+
+    CREATE TABLE IF NOT EXISTS torghut.hyperliquid_ta_features ON CLUSTER default
+    (
+      ingest_ts DateTime64(3, 'UTC'),
+      event_ts DateTime64(3, 'UTC'),
+      network LowCardinality(String),
+      market_id String,
+      coin String,
+      dex LowCardinality(String),
+      interval LowCardinality(String),
+      price Float64,
+      momentum_1m_bps Float64,
+      momentum_3m_bps Float64,
+      momentum_5m_bps Float64,
+      momentum_15m_bps Float64,
+      momentum_1h_bps Float64,
+      volatility_bps Float64,
+      vwap_distance_bps Float64,
+      spread_bps Float64,
+      book_imbalance Float64,
+      liquidity_usd Float64,
+      funding_rate Float64,
+      open_interest_usd Float64,
+      regime LowCardinality(String),
+      source_lag_seconds UInt32
+    )
+    ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/hyperliquid_ta_features', '{replica}', ingest_ts)
+    PARTITION BY toDate(event_ts)
+    ORDER BY (network, market_id, interval, event_ts)
+    TTL toDateTime(event_ts) + INTERVAL 90 DAY
+    SETTINGS index_granularity = 8192;
+
+    DROP VIEW IF EXISTS torghut.hyperliquid_ta_features_candle_mv ON CLUSTER default;
+
+    CREATE MATERIALIZED VIEW torghut.hyperliquid_ta_features_candle_mv ON CLUSTER default
+    TO torghut.hyperliquid_ta_features
+    AS
+    SELECT
+      now64(3) AS ingest_ts,
+      _event_ts AS event_ts,
+      network,
+      coalesce(market_id, symbol) AS market_id,
+      coalesce(coin, symbol) AS coin,
+      coalesce(dex, 'default') AS dex,
+      JSONExtractString(payload, 'i') AS interval,
+      toFloat64OrZero(JSONExtractString(payload, 'c')) AS price,
+      if(interval = '1m', _return_bps, 0) AS momentum_1m_bps,
+      if(interval = '3m', _return_bps, 0) AS momentum_3m_bps,
+      if(interval = '5m', _return_bps, 0) AS momentum_5m_bps,
+      if(interval = '15m', _return_bps, 0) AS momentum_15m_bps,
+      if(interval = '1h', _return_bps, 0) AS momentum_1h_bps,
+      _range_bps AS volatility_bps,
+      _vwap_distance_bps AS vwap_distance_bps,
+      0 AS spread_bps,
+      0 AS book_imbalance,
+      toFloat64OrZero(JSONExtractString(payload, 'v')) * price AS liquidity_usd,
+      0 AS funding_rate,
+      0 AS open_interest_usd,
+      multiIf(_return_bps > 8, 'trend_up', _return_bps < -8, 'trend_down', 'range') AS regime,
+      greatest(0, dateDiff('second', toDateTime(_event_ts), now())) AS source_lag_seconds
+    FROM
+    (
+      SELECT
+        *,
+        toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC') AS _event_ts,
+        toFloat64OrZero(JSONExtractString(payload, 'o')) AS _open,
+        toFloat64OrZero(JSONExtractString(payload, 'h')) AS _high,
+        toFloat64OrZero(JSONExtractString(payload, 'l')) AS _low,
+        toFloat64OrZero(JSONExtractString(payload, 'c')) AS _close,
+        if(_open = 0, 0, 10000 * (_close - _open) / _open) AS _return_bps,
+        if(_close = 0, 0, 10000 * (_high - _low) / _close) AS _range_bps,
+        ((_high + _low + _close) / 3) AS _typical_price,
+        if(_typical_price = 0, 0, 10000 * (_close - _typical_price) / _typical_price) AS _vwap_distance_bps
+      FROM torghut.hyperliquid_candles
+      WHERE channel = 'candle'
+        AND market_type = 'perp'
+        AND JSONExtractString(payload, 'i') IN ('1m', '3m', '5m', '15m', '1h')
+    );
+
+    DROP VIEW IF EXISTS torghut.hyperliquid_runtime_latest_features ON CLUSTER default;
+
+    CREATE VIEW torghut.hyperliquid_runtime_latest_features ON CLUSTER default
+    AS
+    SELECT
+      f.network,
+      f.market_id,
+      f.coin,
+      f.dex,
+      f.latest_event_ts AS event_ts,
+      f.price,
+      f.momentum_1m_bps,
+      f.momentum_3m_bps,
+      f.momentum_5m_bps,
+      f.momentum_15m_bps,
+      f.momentum_1h_bps,
+      f.volatility_bps,
+      f.vwap_distance_bps,
+      f.spread_bps,
+      f.book_imbalance,
+      f.liquidity_usd,
+      f.funding_rate,
+      f.open_interest_usd,
+      f.regime,
+      f.source_lag_seconds,
+      b.bid_price,
+      b.ask_price,
+      b.quote_event_ts,
+      greatest(0, dateDiff('second', b.quote_ingest_ts, now64(3))) AS quote_lag_seconds
+    FROM
+    (
+      SELECT
+        network,
+        market_id,
+        argMax(coin, event_ts) AS coin,
+        argMax(dex, event_ts) AS dex,
+        max(event_ts) AS latest_event_ts,
+        argMax(price, event_ts) AS price,
+        argMaxIf(momentum_1m_bps, event_ts, interval = '1m') AS momentum_1m_bps,
+        argMaxIf(momentum_3m_bps, event_ts, interval = '3m') AS momentum_3m_bps,
+        argMaxIf(momentum_5m_bps, event_ts, interval = '5m') AS momentum_5m_bps,
+        argMaxIf(momentum_15m_bps, event_ts, interval = '15m') AS momentum_15m_bps,
+        argMaxIf(momentum_1h_bps, event_ts, interval = '1h') AS momentum_1h_bps,
+        argMax(volatility_bps, event_ts) AS volatility_bps,
+        argMax(vwap_distance_bps, event_ts) AS vwap_distance_bps,
+        argMax(spread_bps, event_ts) AS spread_bps,
+        argMax(book_imbalance, event_ts) AS book_imbalance,
+        argMax(liquidity_usd, event_ts) AS liquidity_usd,
+        argMax(funding_rate, event_ts) AS funding_rate,
+        argMax(open_interest_usd, event_ts) AS open_interest_usd,
+        argMax(regime, event_ts) AS regime,
+        argMax(source_lag_seconds, event_ts) AS source_lag_seconds
+      FROM
+      (
+        SELECT *
+        FROM torghut.hyperliquid_ta_features
+        WHERE event_ts >= now() - INTERVAL 2 HOUR
+      )
+      GROUP BY network, market_id
+    ) AS f
+    LEFT JOIN
+    (
+      SELECT
+        network,
+        market_id,
+        argMax(
+          toFloat64OrZero(JSONExtractString(payload, 'bbo', 1, 'px')),
+          parseDateTimeBestEffort(ingest_ts)
+        ) AS bid_price,
+        argMax(
+          toFloat64OrZero(JSONExtractString(payload, 'bbo', 2, 'px')),
+          parseDateTimeBestEffort(ingest_ts)
+        ) AS ask_price,
+        argMax(
+          toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC'),
+          parseDateTimeBestEffort(ingest_ts)
+        ) AS quote_event_ts,
+        max(toDateTime64(parseDateTimeBestEffort(ingest_ts), 3, 'UTC')) AS quote_ingest_ts
+      FROM torghut.hyperliquid_bbo
+      WHERE channel = 'bbo'
+        AND market_type = 'perp'
+        AND market_id IS NOT NULL
+        AND parseDateTimeBestEffort(ingest_ts) >= now() - INTERVAL 2 HOUR
+      GROUP BY network, market_id
+    ) AS b
+      ON f.network = b.network
+      AND f.market_id = b.market_id;

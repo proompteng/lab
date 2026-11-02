@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ofz-platform-bootstrap
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: '-3'
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ofz-bootstrap
+    spec:
+      serviceAccountName: ofz-migrator
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: registry.ide-newton.ts.net/lab/ofz:unpromoted
+          args:
+            - bootstrap
+            - /var/run/ofz/bootstrap/manifest.json
+          env:
+            - name: OFZ_DATABASE_DSN
+              value: host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=ofz_control user=ofz_migrator sslmode=require
+            - name: OFZ_DATABASE_PASSWORD_FILE
+              value: /var/run/ofz/database/password
+            - name: OFZ_DATABASE_CA_FILE
+              value: /var/run/ofz/database-ca/ca.crt
+            - name: OFZ_SPICEDB_ENDPOINT
+              value: http://ofz.ofz.svc.cluster.local:8443
+            - name: OFZ_SPICEDB_KEY_FILE
+              value: /var/run/ofz/native/preshared_key
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: '1'
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: database
+              mountPath: /var/run/ofz/database
+              readOnly: true
+            - name: database-ca
+              mountPath: /var/run/ofz/database-ca
+              readOnly: true
+            - name: native
+              mountPath: /var/run/ofz/native
+              readOnly: true
+            - name: bootstrap
+              mountPath: /var/run/ofz/bootstrap
+              readOnly: true
+      volumes:
+        - name: database
+          secret:
+            secretName: ofz-migrator-db-auth
+            defaultMode: 288
+        - name: database-ca
+          secret:
+            secretName: ofz-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+            defaultMode: 288
+        - name: native
+          secret:
+            secretName: ofz-spicedb-key
+            defaultMode: 288
+        - name: bootstrap
+          secret:
+            secretName: ofz-bootstrap-manifest
+            defaultMode: 288

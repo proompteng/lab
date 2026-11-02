@@ -1,0 +1,13 @@
+- name: Install Rancher
+  hosts: rancher_bootstrap
+  tasks:
+    - name: Start a docker container
+      docker_container:
+        name: rancher2
+        image: rancher/rancher
+        state: started
+        ports:
+          - '80:80'
+          - '443:443'
+        restart_policy: always
+        privileged: true

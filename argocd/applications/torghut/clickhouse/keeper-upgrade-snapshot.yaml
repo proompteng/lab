@@ -1,0 +1,18 @@
+{
+  "apiVersion": "snapshot.storage.k8s.io/v1",
+  "kind": "VolumeSnapshot",
+  "metadata": {
+    "name": "keeper-production-26-8-20260910",
+    "namespace": "torghut",
+    "annotations": {
+      "argocd.argoproj.io/sync-wave": "-10",
+      "argocd.argoproj.io/sync-options": "Prune=false,Delete=false"
+    }
+  },
+  "spec": {
+    "volumeSnapshotClassName": "rook-ceph-block",
+    "source": {
+      "persistentVolumeClaimName": "chk-data-chk-torghut-keeper-default-0-0-0"
+    }
+  }
+}

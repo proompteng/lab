@@ -1,0 +1,41 @@
+{
+  "run_id": "wp-4af5d2348ec05c35ff761601",
+  "verdict": "conditional_implement",
+  "score": 0.46,
+  "confidence": 0.87,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "current_repo_fit": "research_only",
+    "data_authority": "missing",
+    "methodology_clarity": "medium_high",
+    "empirical_signal_value": "medium",
+    "production_strategy_readiness": "low",
+    "recommended_mode": "offline_research_then_shadow_or_paper_only"
+  },
+  "rationale": "The paper contributes a clear and implementable research concept: Gamma-Theta Breakeven Range as a state variable for intermediary-driven intraday momentum. The repository already has trading research, empirical-manifest, evaluation, and safety-gated autonomy surfaces that could host a deterministic GTBR research pipeline. However, the paper relies on licensed options data that the repo does not currently expose, uses a strong proxy for market-maker inventory, and contains a material internal inconsistency in its out-of-sample forecasting discussion. The correct decision is to implement only a research-grade, fail-closed evidence pipeline and reject any direct production or autonomous deployment.",
+  "rejection_reasons": [
+    "Reject immediate production deployment because the current repository lacks authoritative TAQ, ISE account-category, and OptionMetrics-style options data required to reproduce the signal faithfully.",
+    "Reject direct autonomous trading implementation because the paper provides explanatory regressions and threshold logic, not a complete execution, risk, and capital-allocation design.",
+    "Reject promotion of the paper's forecasting claim as-is until the Section 4.9 narrative is reconciled with Table 10's negative minimum OOS R-squared values.",
+    "Reject any live rollout until GTBR and MM-gamma series are backed by immutable licensed-data manifests and validated against existing Torghut safety gates."
+  ],
+  "recommendations": [
+    "Implement GTBR, GTBR-hit, cumulative-hit, and MM-gamma diagnostics as a deterministic offline research module inside `services/torghut/app/trading/`.",
+    "Add provenance manifests for every licensed data input and fail closed when provenance is incomplete or mixed.",
+    "Reproduce the paper's core Table 2, Table 3, Table 4, and Figure 3 results before exposing any GTBR-derived metric to shadow or paper workflows.",
+    "Add explicit prose-versus-table consistency checks so contradictions like the Table 10 OOS R-squared mismatch block promotion automatically.",
+    "Keep any runtime exposure limited to shadow or paper modes under the existing autonomy gate framework."
+  ],
+  "requires_followup": true,
+  "follow_up_actions": [
+    "Decide which licensed feeds will supply intraday quotes, account-category options open interest, and standardized option Greeks inside Torghut.",
+    "Resolve the Section 4.9 versus Table 10 OOS R-squared inconsistency using author materials or a replication package.",
+    "Validate whether a full option-book GTBR computation materially changes the signal relative to the paper's standardized ATM 30-day proxy.",
+    "Define transaction-cost, capacity, and risk-budget constraints before any GTBR-derived signal is allowed beyond offline research."
+  ],
+  "approved_by": null,
+  "approved_at": null
+}

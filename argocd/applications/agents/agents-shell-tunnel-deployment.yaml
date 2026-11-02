@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agents-shell-tunnel
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agents-shell-tunnel
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agents-shell-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agents-shell-tunnel
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tunnel-client
+          image: ghcr.io/openai/tunnel-client:v0.0.15@sha256:119799b778ba8411a124f53588f9dc837fd62ba03e5fadf77d675123c92ab58e
+          env:
+            - name: CONTROL_PLANE_TUNNEL_ID
+              value: "tunnel_6ac1804615c081918532d0d91b1b097d"
+            - name: CONTROL_PLANE_ORGANIZATION_ID
+              value: org-WZKvBOMUIEWQ1GpsJ7paS1Kz
+            - name: CONTROL_PLANE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agents-shell-tunnel-runtime
+                  key: api-key
+            - name: MCP_SERVER_URL
+              value: http://agents-shell.agents.svc.cluster.local/mcp
+            - name: MCP_OAUTH_TRUSTED_ORIGINS
+              value: https://auth.proompteng.ai
+            - name: HARPOON_ALLOW_PLAINTEXT_HTTP
+              value: "true"
+            - name: HEALTH_LISTEN_ADDR
+              value: "127.0.0.1:8080"
+            - name: LOG_FORMAT
+              value: json
+          readinessProbe:
+            exec:
+              command: [/usr/bin/wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8080/readyz"]
+            timeoutSeconds: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: [/usr/bin/wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+            timeoutSeconds: 3
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

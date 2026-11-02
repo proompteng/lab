@@ -1,0 +1,55 @@
+apiVersion: rds.valkey.buf.red/v1alpha1
+kind: Valkey
+metadata:
+  name: bayn-valkey
+  labels:
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  version: "9.1"
+  arch: replica
+  replicas:
+    shards: 1
+    replicasOfShard: 2
+  affinityPolicy: AntiAffinity
+  nodeSelector:
+    network.proompteng.ai/100g: "true"
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 100m
+      memory: 1Gi
+    limits:
+      memory: 1Gi
+  storage:
+    storageClassName: rook-ceph-block
+    capacity: 10Gi
+    # v2.1.0 adds a Cluster ownerReference when this is true. Leave it
+    # false so Kubernetes retains the PVCs independently of the Cluster.
+    retainAfterDeleted: false
+  access:
+    serviceType: ClusterIP
+    enableTLS: true
+    certIssuer: bayn-valkey-ca
+    certIssuerType: Issuer
+  customConfigs:
+    maxmemory: 512mb
+    maxmemory-policy: noeviction
+    appendonly: "no"
+    save: '""'
+    repl-diskless-sync: "yes"
+    tcp-keepalive: "300"
+  exporter:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi

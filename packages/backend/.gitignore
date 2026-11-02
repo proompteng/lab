@@ -1,0 +1,4 @@
+.env.local
+/.convex
+/convex/out/
+/convex/*.js

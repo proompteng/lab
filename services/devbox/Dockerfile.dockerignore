@@ -1,0 +1,16 @@
+.git
+**/node_modules
+**/target
+**/.venv
+**/.next
+**/.output
+**/dist
+**/build
+**/__pycache__
+.artifacts
+_out
+.audit
+**/.env
+**/.env.local
+**/.env.production
+**/.env.development.local

@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: attic-tailscale
+  namespace: attic
+  annotations:
+    tailscale.com/tags: tag:k8s
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - attic.ide-newton.ts.net
+  rules:
+    - host: attic.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: attic
+                port:
+                  number: 80

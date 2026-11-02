@@ -1,0 +1,104 @@
+{
+  "records": [
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "0",
+      "value": "{\"ingestTs\":\"2026-10-11T00:01:00.123456789Z\",\"eventTs\":\"2026-10-11T00:00:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":1,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-11T00:00:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    }
+  ],
+  "feature": {
+    "material": {
+      "schemaVersion": "dorvud.crypto-market-feature.v2",
+      "definitionId": "dorvud.crypto-continuous-1m.v2",
+      "definitionHash": "eb2568eb1debf5a0897afe76a6c8e9566d9d6730227dbf0632a37afba852ba7c",
+      "provider": "alpaca",
+      "location": "us",
+      "marketSession": "continuous",
+      "delayClass": "real_time_crypto",
+      "symbol": "SOL/USD",
+      "windowStartMs": 1791676800000,
+      "windowEndMs": 1791676860000,
+      "historyPrefixHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "historyHash": "0ec65024915eba1a7369d68f494991cb6f29cf2e5d770fa4a50c2b3f9746bf28",
+      "inputs": [
+        {
+          "eventTimeNanos": "1791676800000000000",
+          "ingestionTimeNanos": "1791676860123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "0",
+          "contentHash": "44c5fbd51b35a9bd79b15afb009ab2670c9e9cc19a8b0d3e4349ab075dd895bd"
+        }
+      ],
+      "priceWindow": {
+        "referencePrice": "100.123456789",
+        "rangeHighPrice": "100.123456789",
+        "rangeLowPrice": "100.123456789",
+        "lastClosePrice": "100.123456789",
+        "totalVolume": "0.000000001"
+      },
+      "technical": {
+        "ema12PriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "ema26PriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "macdPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "macdSignalPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "macdHistogramPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "rsi14Micros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "bollingerMiddlePriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "bollingerUpperPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "bollingerLowerPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "weightedClose5mPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "weightedClose30mPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "vwap5mPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "vwap30mPriceMicros": {
+          "status": "WARMING",
+          "value": null
+        },
+        "realizedVolatility60ReturnsPpm": {
+          "status": "WARMING",
+          "value": null
+        }
+      }
+    },
+    "featureId": "6fd4123286a011a94cebc9c7e08e5f9785fc53a9ffc2804156c118ff6968c53b",
+    "computedAtMs": 1791676862123,
+    "producerRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

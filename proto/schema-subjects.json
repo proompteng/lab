@@ -1,0 +1,14 @@
+{
+  "schemas": [
+    {
+      "module": "buf.build/protocolbuffers/wellknowntypes",
+      "path": "google/protobuf/timestamp.proto",
+      "order": -10,
+      "subjects": [{ "name": "google.protobuf.Timestamp" }]
+    },
+    {
+      "file": "proompteng/facteur/v1/contract.proto",
+      "subjects": [{ "name": "discord.commands.incoming-value" }, { "name": "discord.commands.incoming.dlq-value" }]
+    }
+  ]
+}

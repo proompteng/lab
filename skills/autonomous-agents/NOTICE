@@ -1,0 +1,21 @@
+Autonomous Agents skill
+
+Installed from sickn33/antigravity-awesome-skills, revision c564f9f4aee8a143c48218805b65f0f6956c6264.
+Source: https://github.com/sickn33/antigravity-awesome-skills/tree/c564f9f4aee8a143c48218805b65f0f6956c6264/skills/autonomous-agents
+
+Upstream credits: vibeship-spawner-skills (Apache 2.0), retained in SKILL.md.
+The collection's MIT notice and content-license notice are retained alongside
+Apache License 2.0. Original collection documentation is CC BY 4.0 unless an
+upstream notice states otherwise: https://creativecommons.org/licenses/by/4.0/
+
+Local packaging change: SKILL.md nests the upstream risk/source/date_added keys
+under metadata for Codex frontmatter compatibility. Workflow instructions are
+unchanged. references/detailed-guide.md is installed without content changes.
+The upstream Git blob identities are, respectively:
+6d154321b477ef19e320ca1018c9564c80519aaf
+bba8df987b388a410b5364141941a0b8d5c38bbe
+
+Use the plan/execute, validation, bounded-retry and durable-checkpoint procedures
+with this repository's tools and existing authorization. The illustrative SDK
+snippets are reference material, not installed executables or verified APIs.
+This installation registers no hooks, background processes or dependencies.

@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ui-tailscale
+  namespace: kafka
+  annotations:
+    tailscale.com/tags: tag:k8s
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - kafka-ui.ide-newton.ts.net
+  rules:
+    - host: kafka-ui.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ui
+                port:
+                  number: 80

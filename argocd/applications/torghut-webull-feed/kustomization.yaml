@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: torghut
+resources:
+- externalsecret.yaml
+- configmap.yaml
+- deployment.yaml
+- service.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/torghut-webull-feed
+  digest: sha256:58f99bc26913979d8093bee42385b7ab96bf5deaf8b2723c7a1c92165e107245

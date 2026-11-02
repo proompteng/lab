@@ -1,0 +1,9 @@
+apiVersion: builtin
+kind: NamespaceTransformer
+metadata:
+  name: registry-namespace
+  namespace: registry
+unsetOnly: true
+fieldSpecs:
+  - path: metadata/namespace
+    create: true

@@ -1,0 +1,17 @@
+version: v2
+modules:
+  - path: proto
+    name: buf.build/proompteng/lab
+deps:
+  - buf.build/protocolbuffers/wellknowntypes
+  - buf.build/googleapis/googleapis
+  - buf.build/grpc-ecosystem/grpc-gateway
+  - buf.build/temporalio/nexus-annotations:599b78404fbe4e78b833d527a1d0da40
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE
+  except:
+    - FILE_NO_DELETE

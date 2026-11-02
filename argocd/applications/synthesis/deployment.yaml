@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synthesis
+  namespace: synthesis
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: synthesis
+  template:
+    metadata:
+      labels:
+        app: synthesis
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: synthesis
+          image: registry.ide-newton.ts.net/lab/synthesis
+          imagePullPolicy: Always
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: NITRO_PORT
+              value: "3000"
+            - name: SYNTHESIS_STORAGE
+              value: "postgres"
+            - name: SYNTHESIS_EMBEDDING_BASE_URL
+              value: "http://saigak.saigak.svc.cluster.local:11434/v1"
+            - name: SYNTHESIS_EMBEDDING_MODEL
+              value: "qwen3-embedding-saigak:8b"
+            - name: SYNTHESIS_EMBEDDING_DIMENSION
+              value: "4096"
+            - name: SYNTHESIS_EMBEDDING_BACKFILL_LIMIT
+              value: "1000"
+            - name: SYNTHESIS_ASSET_STORAGE_REQUIRED
+              value: "true"
+            - name: SYNTHESIS_ASSET_ENDPOINT
+              value: "http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
+            - name: SYNTHESIS_ASSET_BUCKET
+              value: "synthesis-assets"
+            - name: SYNTHESIS_ASSET_REGION
+              value: "us-east-1"
+            - name: SYNTHESIS_ASSET_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: synthesis-assets
+                  key: AWS_ACCESS_KEY_ID
+            - name: SYNTHESIS_ASSET_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: synthesis-assets
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: SYNTHESIS_ASSET_MAX_BYTES
+              value: "8388608"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: synthesis-db-app
+                  key: uri
+          envFrom:
+            - secretRef:
+                name: synthesis-env
+          readinessProbe:
+            httpGet:
+              path: /api/feed
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/feed
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20

@@ -1,0 +1,136 @@
+name: hermes-agent-mirror
+
+permissions:
+  contents: read
+  packages: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/hermes-agent-mirror.yml
+  workflow_dispatch: {}
+
+env:
+  SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+  SOURCE_INDEX_DIGEST: sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+  SOURCE_AMD64_DIGEST: sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
+  SOURCE_ATTESTATION_DIGEST: sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c
+  SOURCE_PROVENANCE_LAYER_DIGEST: sha256:80bc715251a9a4cb80b1c7127baa208ef2585859c09302d5c218cddcb9dc4317
+  EXPECTED_SOURCE_REVISION: f97608f178d1ffeca59860195ab7da295f7c8e5f
+  TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64
+
+jobs:
+  mirror:
+    if: github.ref == 'refs/heads/main'
+    runs-on: arc-arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Verify preinstalled OCI copy tool
+        run: skopeo --version
+
+      - name: Set up Docker Buildx
+        uses: ./.github/actions/setup-buildkit
+
+      - name: Verify pinned upstream release
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "$SOURCE_REF" > source-index.json
+          test "sha256:$(sha256sum source-index.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
+          jq -e --arg amd64 "$SOURCE_AMD64_DIGEST" --arg attestation "$SOURCE_ATTESTATION_DIGEST" '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64) and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64") and
+            any(.manifests[]?; .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+              .annotations["vnd.docker.reference.digest"] == $amd64 and .digest == $attestation)
+          ' source-index.json
+          docker buildx imagetools inspect --raw "docker.io/nousresearch/hermes-agent@$SOURCE_ATTESTATION_DIGEST" > attestation.json
+          provenance_subject="$(jq -er '.subject.digest' attestation.json)"
+          case "$provenance_subject" in
+            sha256:*) ;;
+            *) provenance_subject="sha256:$provenance_subject" ;;
+          esac
+          test "$provenance_subject" = "$SOURCE_AMD64_DIGEST"
+          test "$(jq -er '[.layers[] | select(.mediaType == "application/vnd.in-toto+json") | .digest] | if length == 1 then .[0] else error("expected exactly one SLSA provenance layer") end' attestation.json)" = "$SOURCE_PROVENANCE_LAYER_DIGEST"
+          crane blob "docker.io/nousresearch/hermes-agent@$SOURCE_PROVENANCE_LAYER_DIGEST" > provenance.json
+          test "$(sha256sum provenance.json | cut -d ' ' -f1)" = "${SOURCE_PROVENANCE_LAYER_DIGEST#sha256:}"
+          test "$(jq -er '.predicateType' provenance.json)" = 'https://slsa.dev/provenance/v1'
+          test "$(jq -er '.subject | map(select(("sha256:" + .digest.sha256) == $digest)) | length' --arg digest "$SOURCE_AMD64_DIGEST" provenance.json)" = 1
+          provenance_revision="$(jq -er '.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]' provenance.json)"
+          test "$provenance_revision" = "$EXPECTED_SOURCE_REVISION"
+          {
+            echo "source_revision=$provenance_revision"
+            echo "source_amd64_digest=$SOURCE_AMD64_DIGEST"
+            echo "source_attestation_digest=$SOURCE_ATTESTATION_DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Refuse a conflicting existing mirror tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          docker buildx imagetools inspect --raw "$TARGET_REF" > existing-target.json 2>existing-target.error
+          inspect_status=$?
+          set -e
+          if ((inspect_status == 0)); then
+            test "sha256:$(sha256sum existing-target.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
+          elif grep -Eiq 'manifest unknown|name unknown|status code: 404|404 Not Found|(^|:)[[:space:]]*not found[[:space:]]*$' existing-target.error; then
+            rm -f existing-target.json existing-target.error
+          else
+            cat existing-target.error >&2
+            exit "$inspect_status"
+          fi
+
+      - name: Copy complete immutable OCI index
+        shell: bash
+        run: |
+          set -euo pipefail
+          hermes_copy_policy="$(mktemp)"
+          trap 'rm -f "$hermes_copy_policy"' EXIT
+          # The exact upstream digest and SLSA attachment were checked above.
+          # Require that source repository and reject every other repository.
+          cat > "$hermes_copy_policy" <<'JSON'
+          {"default":[{"type":"reject"}],"transports":{"docker":{"docker.io/nousresearch/hermes-agent":[{"type":"insecureAcceptAnything"}]}}}
+          JSON
+          # The registry admits one blob writer. Concurrent Buildx copies wait
+          # behind that writer until their request bodies time out.
+          skopeo --policy "$hermes_copy_policy" copy \
+            --all --preserve-digests --image-parallel-copies 1 \
+            --src-tls-verify=true --dest-tls-verify=true \
+            "docker://$SOURCE_REF" "docker://$TARGET_REF"
+
+      - name: Verify mirrored release and provenance attachment
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "$TARGET_REF" > mirrored-index.json
+          test "sha256:$(sha256sum mirrored-index.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
+          jq -e --arg amd64 "$SOURCE_AMD64_DIGEST" --arg attestation "$SOURCE_ATTESTATION_DIGEST" '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64) and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64") and
+            any(.manifests[]?; .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+              .annotations["vnd.docker.reference.digest"] == $amd64 and .digest == $attestation)
+          ' mirrored-index.json
+
+      - name: Summarize mirror
+        shell: bash
+        run: |
+          {
+            echo '### Hermes Agent OCI mirror complete'
+            echo
+            echo "- Source: $SOURCE_REF"
+            echo "- Source revision: ${{ steps.upstream.outputs.source_revision }}"
+            echo "- Source amd64 manifest: $SOURCE_AMD64_DIGEST"
+            echo "- Source attestation manifest: $SOURCE_ATTESTATION_DIGEST"
+            echo "- Source SLSA provenance layer: $SOURCE_PROVENANCE_LAYER_DIGEST"
+            echo "- Target: $TARGET_REF"
+            echo '- Platforms: linux/amd64, linux/arm64'
+            echo '- The complete source index digest and attestation attachment were preserved.'
+          } >> "$GITHUB_STEP_SUMMARY"

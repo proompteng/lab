@@ -1,0 +1,40 @@
+{
+  "run_id": "wp-9203a2b9fd988bd31a69893c",
+  "verdict": "conditional_implement",
+  "score": 0.58,
+  "confidence": 0.82,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "methodology_clarity": "high",
+    "theory_assumption_risk": "medium",
+    "empirical_rigor": "medium_low",
+    "external_validity": "medium",
+    "reproducibility": "medium_low",
+    "recommended_mode": "research_and_decision_support_only"
+  },
+  "rationale": "The paper provides an implementation-actionable architecture for trajectory-level evolutionary factor mining with clear operator definitions and positive ablations. However, production confidence is constrained by missing uncertainty quantification, incomplete deterministic replication detail in the manuscript, and limited execution-friction realism.",
+  "rejection_reasons": [
+    "Reject immediate autonomous production deployment because headline gains are presented without confidence intervals or significance testing.",
+    "Reject direct production promotion until deterministic reproduction artifacts (prompt/seed/code/data manifests) are available and validated.",
+    "Reject high-stakes rollout without deeper execution-friction stress tests beyond current backtest assumptions.",
+    "Reject broad generalization claims until additional out-of-period and multi-market robustness checks are completed."
+  ],
+  "recommendations": [
+    "Implement trajectory archival, mutation/crossover operators, and symbolic constraint gating as a deterministic research framework.",
+    "Add repeated-seed evaluations with confidence intervals and statistical significance tests for headline comparisons.",
+    "Expand robustness testing to rolling windows and additional markets/assets beyond the paper's primary setup.",
+    "Integrate slippage/impact and liquidity stress modeling before any live-trading consideration."
+  ],
+  "requires_followup": true,
+  "follow_up_actions": [
+    "Reproduce Table 1 and Table 2 with fixed seeds and immutable run manifests.",
+    "Quantify sensitivity to TopkDropout parameters and transaction-cost assumptions.",
+    "Run ablations isolating evolution gains from constrained one-shot factor generation.",
+    "Validate transfer performance on forward windows beyond 2025-12-26."
+  ],
+  "approved_by": null,
+  "approved_at": null
+}

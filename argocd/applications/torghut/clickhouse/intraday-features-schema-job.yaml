@@ -1,0 +1,112 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: signal-intraday-features-schema-v1
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: signal-intraday-features-schema
+    app.kubernetes.io/part-of: signal
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: signal-intraday-features-schema
+        app.kubernetes.io/part-of: signal
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Never
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: migrate
+          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+              client=(
+                clickhouse-client
+                --host torghut-clickhouse.torghut.svc.cluster.local
+                --port 9000
+                --user "${CLICKHOUSE_USERNAME}"
+                --password "${CLICKHOUSE_PASSWORD}"
+                --connect_timeout 5
+                --send_timeout 120
+                --receive_timeout 120
+              )
+
+              until "${client[@]}" --query "SELECT 1" >/dev/null; do sleep 3; done
+              "${client[@]}" --multiquery --query "
+                CREATE DATABASE IF NOT EXISTS signal ON CLUSTER default;
+                CREATE TABLE IF NOT EXISTS signal.intraday_features_v1 ON CLUSTER default
+                (
+                  feature_id FixedString(64),
+                  universe_id LowCardinality(String),
+                  universe_symbol_hash FixedString(64),
+                  feed LowCardinality(String),
+                  symbol LowCardinality(String),
+                  window_end DateTime64(3, 'UTC'),
+                  computed_at DateTime64(3, 'UTC'),
+                  archived_at DateTime64(3, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  payload String
+                )
+                ENGINE = ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/signal_intraday_features_v1', '{replica}')
+                PARTITION BY toYYYYMMDD(window_end)
+                ORDER BY (universe_id, feed, symbol, window_end, source_topic, source_partition, source_offset)
+                TTL archived_at + INTERVAL 35 DAY DELETE;
+                SELECT throwIf(
+                  engine != 'ReplicatedMergeTree',
+                  'Feature archive must retain every semantic revision'
+                ) FROM system.tables WHERE database = 'signal' AND name = 'intraday_features_v1';
+                SELECT throwIf(
+                  arraySort(groupArray((name, type))) != arraySort([
+                    ('feature_id', 'FixedString(64)'),
+                    ('universe_id', 'LowCardinality(String)'),
+                    ('universe_symbol_hash', 'FixedString(64)'),
+                    ('feed', 'LowCardinality(String)'),
+                    ('symbol', 'LowCardinality(String)'),
+                    ('window_end', 'DateTime64(3, \'UTC\')'),
+                    ('computed_at', 'DateTime64(3, \'UTC\')'),
+                    ('archived_at', 'DateTime64(3, \'UTC\')'),
+                    ('source_topic', 'LowCardinality(String)'),
+                    ('source_partition', 'UInt32'),
+                    ('source_offset', 'UInt64'),
+                    ('payload', 'String')
+                  ]),
+                  'Feature archive does not match the expected columns'
+                ) FROM system.columns WHERE database = 'signal' AND table = 'intraday_features_v1';
+              "
+          env:
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

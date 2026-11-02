@@ -1,0 +1,160 @@
+name: ARC placement acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: arc-placement-acceptance
+  cancel-in-progress: false
+
+jobs:
+  publication-tools:
+    name: Verify publication runner
+    runs-on: arc-amd64-publish
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify publication while all build slots are occupied
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          prefix="arc-ready-$RUN_ATTEMPT-"
+          for _ in $(seq 1 90); do
+            count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
+            test "$count" = 9 && break
+            sleep 5
+          done
+          test "$count" = 9
+          sleep 10
+          start="$(date +%s)"
+          test "$ARC_RUNNER_NODE_NAME" = turin
+          test ! -S /var/run/docker.sock
+          test -z "${DOCKER_HOST:-}"
+          test -z "${BUILDKIT_HOST:-}"
+          nix eval --offline --expr '40 + 2' | grep -qx 42
+          crane digest registry.ide-newton.ts.net/lab/arc-runner:latest
+          docker buildx imagetools inspect registry.ide-newton.ts.net/lab/arc-runner:latest
+          cosign version
+          jq -n --arg pod "$ACTIONS_RUNNER_POD_NAME" --argjson start "$start" --argjson end "$(date +%s)" \
+            '{pod:$pod,start:$start,end:$end}' > "$RUNNER_TEMP/arc-publication.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arc-publication-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arc-publication.json
+          retention-days: 1
+  local-build:
+    name: Slot ${{ matrix.slot }} local scratch build
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        slot: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    runs-on: arc-amd64
+    env:
+      SLOT: ${{ matrix.slot }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - name: Verify local scratch, Nix, and BuildKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$ARC_RUNNER_NODE_NAME" in
+            turin|talos-192-168-1-194) ;;
+            *) exit 1 ;;
+          esac
+          for path in /nix /home/runner/.cache /tmp /home/runner/_work; do
+            test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = xfs
+          done
+          test "$(nix eval --offline --expr '40 + 2')" = 42
+          nix --version
+          buildctl debug workers
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-local-proof.XXXXXX")"
+          trap 'rm -rf "$proof_dir"' EXIT
+          dd if=/dev/zero of="$proof_dir/payload" bs=1M count=16 conv=fsync
+          sha256sum "$proof_dir/payload"
+          cat > "$proof_dir/Dockerfile" <<'DOCKERFILE'
+          FROM busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          COPY payload /payload
+          RUN test "$(wc -c < /payload)" = 16777216
+          FROM scratch
+          COPY --from=0 /payload /payload
+          DOCKERFILE
+          buildctl build --frontend dockerfile.v0 --local "context=$proof_dir" --local "dockerfile=$proof_dir" \
+            --output "type=local,dest=$proof_dir/output"
+          test "$(wc -c < "$proof_dir/output/payload")" = 16777216
+          jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --arg slot "$SLOT" \
+            '{node:$node,pod:$pod,slot:$slot}' > "$RUNNER_TEMP/arc-ready.json"
+      - name: Publish ready slot
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-ready-${{ github.run_attempt }}-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-ready.json
+          retention-days: 1
+      - name: Require all nine slots concurrently
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          prefix="arc-ready-$RUN_ATTEMPT-"
+          for _ in $(seq 1 90); do
+            count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
+            if test "$count" = 9; then
+              jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
+              sleep 60
+              jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'All nine shared-label runner slots did not become ready concurrently' >&2
+          exit 1
+      - name: Publish concurrency proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-proof-${{ github.run_attempt }}-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-complete.json
+          retention-days: 1
+  verify-placement:
+    needs: [local-build, publication-tools]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: arc-proof-${{ github.run_attempt }}-*
+          path: proof
+      - uses: actions/download-artifact@v4
+        with:
+          name: arc-publication-${{ github.run_attempt }}
+          path: publication
+      - name: Verify all nine slots overlapped on eligible hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -s -e '
+            length == 9 and
+            ([.[].slot] | unique | length) == 9 and
+            ([.[].pod] | unique | length) == 9 and
+            all(.[]; .node == "talos-192-168-1-194" or .node == "turin") and
+            ([.[] | select(.node == "talos-192-168-1-194")] | length) <= 3 and
+            ([.[].end] | min) - ([.[].start] | max) >= 45
+          ' proof/*/arc-complete.json
+          jq -s -e --slurpfile publication publication/arc-publication.json '
+            $publication[0].start >= ([.[].start] | max) and
+            $publication[0].end <= ([.[].end] | min)
+          ' proof/*/arc-complete.json

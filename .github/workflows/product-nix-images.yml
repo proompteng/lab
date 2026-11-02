@@ -1,0 +1,373 @@
+name: product-nix-images
+
+permissions:
+  contents: read
+  pull-requests: read
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+    branches:
+      - main
+    paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
+      - 'apps/app/**'
+      - 'apps/docs/**'
+      - 'apps/landing/**'
+      - 'apps/synthesis/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'services/tengri/proto/**'
+      - 'services/tengri/migrations/**'
+      - 'services/tengri/fixtures/**'
+      - 'nix/images/app.nix'
+      - 'nix/check-bun-dependency-closure.sh'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/images/docs.nix'
+      - 'nix/images/proompteng.nix'
+      - 'nix/tengri-schema-hash.py'
+      - 'nix/images/synthesis.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      - 'argocd/applications/proompteng/**'
+      - 'argocd/applications/app/**'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/docs/**'
+      - package.json
+      - bunfig.toml
+      - .npmrc
+      - patches/**
+      - tsconfig.base.json
+      - nix/images/relativize-bun-cache.sh
+      - nix/images/prune-bun-dependency-metadata.sh
+      - '**/package.json'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/app/**'
+      - 'apps/docs/**'
+      - 'apps/landing/**'
+      - 'apps/landing/package.json'
+      - 'apps/landing/src/app/api/auth/**'
+      - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/components/tengri/**'
+      - 'apps/landing/src/lib/tengri/**'
+      - 'apps/synthesis/**'
+      - 'argocd/applications/app/**'
+      - 'argocd/applications/docs/**'
+      - 'argocd/applications/keycloak/tengri/**'
+      - 'argocd/applications/ofz/**'
+      - 'argocd/applications/proompteng/**'
+      - 'argocd/applications/proompteng/ingressroute.yaml'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/tengri/**'
+      - 'argocd/applications/tengri/crd.yaml'
+      - 'bun.lock'
+      - 'devices/galactic/omni/tengri-runner-*.json'
+      - 'flake.lock'
+      - 'flake.nix'
+      - 'nix/images/app.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/docs.nix'
+      - 'nix/images/ofz.nix'
+      - 'nix/images/proompteng.nix'
+      - 'nix/images/synthesis.nix'
+      - 'nix/packages.nix'
+      - 'nix/tengri-schema-hash.py'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/tengri/**'
+      - '!packages/scripts/src/tengri/__tests__/**'
+      - '!packages/scripts/src/tengri/**/*.test.ts'
+      - 'proto/proompteng/authz/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/app/api/platform/**'
+      - 'services/nanoagent/**'
+      - 'services/ofz/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/src/**'
+      - 'services/ofz/test-control.sh'
+      - 'services/tengri/**'
+      - package.json
+      - bunfig.toml
+      - .npmrc
+      - patches/**
+      - tsconfig.base.json
+      - nix/images/relativize-bun-cache.sh
+      - nix/images/prune-bun-dependency-metadata.sh
+  workflow_dispatch:
+    inputs:
+      build_proompteng:
+        description: Build and publish apps/landing image
+        required: false
+        type: boolean
+        default: true
+      build_app:
+        description: Build and publish apps/app image
+        required: false
+        type: boolean
+        default: true
+      build_synthesis:
+        description: Build and publish apps/synthesis image
+        required: false
+        type: boolean
+        default: true
+      build_docs:
+        description: Build and publish apps/docs image
+        required: false
+        type: boolean
+        default: true
+concurrency:
+  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    if: >-
+      (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.base.ref == github.event.repository.default_branch && !github.event.pull_request.draft))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      cutover_ready: ${{ steps.cutover.outputs.cutover_ready }}
+      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || fromJSON(steps.filter.outputs.affected).proompteng }}
+      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app }}
+      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || fromJSON(steps.filter.outputs.affected).synthesis }}
+      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || fromJSON(steps.filter.outputs.affected).docs }}
+      app_dependencies: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app_dependencies }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check enrolled guest API protocol
+        id: cutover
+        env:
+          TENGRI_PREPARED_SLOT_GUEST_API_VERSION: ${{ vars.TENGRI_PREPARED_SLOT_GUEST_API_VERSION || '' }}
+        run: |
+          set -euo pipefail
+          required_guest_api_version="$(sed -nE 's/^pub const GUEST_API_PROTOCOL_VERSION: u32 = ([1-9][0-9]*);$/\1/p' services/tengri/src/lib.rs)"
+          cutover_ready=false
+          if [[ "${required_guest_api_version}" =~ ^[1-9][0-9]*$ && "${TENGRI_PREPARED_SLOT_GUEST_API_VERSION}" == "${required_guest_api_version}" ]]; then
+            cutover_ready=true
+          fi
+          echo "cutover_ready=${cutover_ready}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check for product image input changes
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        uses: ./.github/actions/affected-inputs
+        with:
+          workspaces: |
+            proompteng: ['', 'apps/landing', 'packages/backend', 'packages/design']
+            app: ['', 'apps/app', 'packages/design']
+            synthesis: ['', 'apps/synthesis', 'packages/design']
+            docs: ['', 'apps/docs', 'packages/design']
+            app_dependencies: ['', 'apps/app', 'packages/design']
+          filters: |
+            proompteng:
+              - 'apps/landing/**'
+              - 'apps/landing/package.json'
+              - 'apps/landing/src/app/api/auth/**'
+              - 'apps/landing/src/app/api/tengri/**'
+              - 'apps/landing/src/components/tengri/**'
+              - 'apps/landing/src/lib/tengri/**'
+              - 'argocd/applications/keycloak/tengri/**'
+              - 'argocd/applications/ofz/**'
+              - 'argocd/applications/proompteng/**'
+              - 'argocd/applications/proompteng/ingressroute.yaml'
+              - 'argocd/applications/tengri/**'
+              - 'argocd/applications/tengri/crd.yaml'
+              - 'bun.lock'
+              - 'devices/galactic/omni/tengri-runner-*.json'
+              - 'flake.lock'
+              - 'flake.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/ofz.nix'
+              - 'nix/images/proompteng.nix'
+              - 'nix/packages.nix'
+              - 'nix/tengri-schema-hash.py'
+              - 'packages/backend/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/tengri/**'
+              - '!packages/scripts/src/tengri/__tests__/**'
+              - '!packages/scripts/src/tengri/**/*.test.ts'
+              - 'proto/proompteng/authz/**'
+              - 'services/relay/**'
+              - 'packages/platform-client/**'
+              - 'proto/proompteng/relay/**'
+              - 'apps/landing/src/lib/platform/**'
+              - 'apps/landing/src/app/api/platform/**'
+              - 'services/nanoagent/**'
+              - 'services/ofz/**'
+              - 'services/ofz/Cargo.*'
+              - 'services/ofz/build.rs'
+              - 'services/ofz/migrations/**'
+              - 'services/ofz/operations.json'
+              - 'services/ofz/schema.zed'
+              - 'services/ofz/src/**'
+              - 'services/ofz/test-control.sh'
+              - 'services/tengri/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - tsconfig.base.json
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+            app:
+              - 'apps/app/**'
+              - 'packages/design/**'
+              - 'nix/images/app.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/packages.nix'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'argocd/applications/app/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+              - tsconfig.base.json
+            synthesis:
+              - 'apps/synthesis/**'
+              - 'packages/design/**'
+              - 'nix/images/synthesis.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/packages.nix'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'argocd/applications/synthesis/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - tsconfig.base.json
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+            docs:
+              - 'apps/docs/**'
+              - 'packages/design/**'
+              - 'nix/images/docs.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/packages.nix'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'argocd/applications/docs/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - tsconfig.base.json
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+            app_dependencies:
+              - "**/package.json"
+              - bun.lock
+              - bunfig.toml
+              - .npmrc
+              - tsconfig.base.json
+              - patches/**
+              - nix/images/app.nix
+              - nix/images/bun-workspace-service.nix
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+              - nix/packages.nix
+              - flake.nix
+              - flake.lock
+              - nix/check-bun-dependency-closure.sh
+              - .github/workflows/nix-bun-dependency-closure.yml
+      - name: Manual build selection
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          {
+            echo "proompteng=${{ github.event.inputs.build_proompteng }}"
+            echo "app=${{ github.event.inputs.build_app }}"
+            echo "synthesis=${{ github.event.inputs.build_synthesis }}"
+            echo "docs=${{ github.event.inputs.build_docs }}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-proompteng:
+    needs: changes
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.proompteng == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: proompteng
+      package_attr: proompteng-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: ${{ needs.changes.outputs.cutover_ready == 'true' }}
+      latest: true
+    secrets: inherit
+
+  verify-app-dependency-closure:
+    name: Verify App dependency closure
+    needs: changes
+    if: needs.changes.outputs.app_dependencies == 'true' && (github.event_name == 'pull_request' || needs.changes.outputs.app == 'true')
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: app
+    secrets: inherit
+
+  build-app:
+    needs:
+      - changes
+      - verify-app-dependency-closure
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.changes.result == 'success' && needs.changes.outputs.app == 'true' &&
+      (needs.verify-app-dependency-closure.result == 'success' ||
+      (needs.changes.outputs.app_dependencies != 'true' && needs.verify-app-dependency-closure.result == 'skipped'))
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: app
+      package_attr: app-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      latest: true
+    secrets: inherit
+
+  build-synthesis:
+    needs: changes
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.synthesis == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: synthesis
+      package_attr: synthesis-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      latest: true
+    secrets: inherit
+
+  build-docs:
+    needs: changes
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.docs == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: docs
+      package_attr: docs-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      latest: true
+    secrets: inherit

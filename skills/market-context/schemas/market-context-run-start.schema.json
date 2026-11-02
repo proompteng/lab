@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["requestId", "symbol", "domain"],
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "symbol": { "type": "string", "minLength": 1 },
+    "domain": { "type": "string", "enum": ["fundamentals", "news"] },
+    "runName": { "type": ["string", "null"] },
+    "reason": { "type": ["string", "null"] },
+    "provider": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}

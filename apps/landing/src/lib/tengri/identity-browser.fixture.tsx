@@ -1,0 +1,50 @@
+import { createRoot } from 'react-dom/client'
+import { useEffect, useState } from 'react'
+import { AccessPanel } from '@/components/tengri/access-panel'
+import { PasskeyRegistration } from '@/components/tengri/passkey-registration'
+import { startSignIn, signOut } from '../platform/auth-client'
+
+function Fixture() {
+  const workspaceUid = new URLSearchParams(window.location.search).get('workspace') || undefined
+  const [authenticated, setAuthenticated] = useState(false)
+  const [githubId, setGithubId] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    void fetch('/fixture/session').then(async (response) => {
+      setAuthenticated(response.ok)
+      if (response.ok) setGithubId((await response.json()).githubId)
+    })
+  }, [])
+  return (
+    <main className="tengri-theme font-geist min-h-screen bg-zinc-950 p-6 text-zinc-100">
+      <h1>Isolated Tengri identity fixture</h1>
+      {authenticated ? (
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              void signOut()
+                .then(() => setAuthenticated(false))
+                .catch((cause) => setError(String(cause)))
+            }
+          >
+            Sign out
+          </button>
+          {!workspaceUid ? (
+            <a href={`https://github.com/account/redirect?user_id=${githubId}`}>GitHub account</a>
+          ) : null}
+          {workspaceUid ? <AccessPanel workspaceUid={workspaceUid} /> : null}
+        </>
+      ) : (
+        <button type="button" onClick={() => void startSignIn().catch((cause) => setError(String(cause)))}>
+          Sign in with GitHub
+        </button>
+      )}
+      {error ? <p role="alert">{error}</p> : null}
+      <PasskeyRegistration />
+    </main>
+  )
+}
+const element = document.getElementById('root')
+if (!element) throw new Error('Fixture root is missing')
+createRoot(element).render(<Fixture />)

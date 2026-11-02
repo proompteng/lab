@@ -1,0 +1,69 @@
+---
+- name: Install Tailscale on Ubuntu
+  hosts: all
+  become: true
+  vars:
+    tailscale_authkey: "{{ lookup('env', 'TAILSCALE_AUTHKEY') | default('', true) }}"
+    tailscale_advertised_routes: "{{ lookup('env', 'TAILSCALE_ROUTES') | default('10.244.0.0/16,10.96.0.0/12', true) }}"
+    tailscale_advertise_tags: "{{ lookup('env', 'TAILSCALE_TAGS') | default('tag:kube-node', true) }}"
+  tasks:
+    - name: Add Tailscale package signing key (Ubuntu Noble 24.04)
+      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+      args:
+        creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
+
+    - name: Add Tailscale repository for Ubuntu Noble
+      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
+      args:
+        creates: /etc/apt/sources.list.d/tailscale.list
+
+    - name: Install Tailscale package on Ubuntu
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Tailscale service
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        enabled: yes
+
+    - name: Ensure kernel forwarding for Tailscale subnet routing
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-tailscale-k8s.conf
+        content: |
+          net.ipv4.ip_forward = 1
+          net.ipv6.conf.all.forwarding = 1
+          net.bridge.bridge-nf-call-iptables = 1
+        owner: root
+        group: root
+        mode: '0644'
+      register: tailscale_sysctl
+
+    - name: Reload sysctl when forwarding settings change
+      ansible.builtin.command: sysctl --system
+      when: tailscale_sysctl.changed
+      changed_when: false
+
+    - name: Bring Tailscale up with subnet routing (first run only)
+      ansible.builtin.command: >-
+        tailscale up
+        --authkey={{ tailscale_authkey }}
+        --accept-routes=false
+        --advertise-routes={{ tailscale_advertised_routes }}
+        --advertise-tags={{ tailscale_advertise_tags }}
+        --hostname={{ inventory_hostname }}
+      register: tailscale_up
+      no_log: true
+      changed_when: false
+      failed_when: false
+      when: tailscale_authkey != ''
+
+    - name: Ensure Tailscale keeps advertising cluster routes
+      ansible.builtin.command: >-
+        tailscale set
+        --accept-routes=false
+        --advertise-routes={{ tailscale_advertised_routes }}
+      register: tailscale_set
+      changed_when: false

@@ -1,0 +1,50 @@
+{
+  "run_id": "wp-c5f9fd17f351f1f3100ed79a",
+  "verdict": "reject",
+  "score": 0.22,
+  "confidence": 0.87,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "repo_option_data_support": "absent",
+    "methodology_clarity": "low_medium",
+    "empirical_rigor": "low",
+    "reproducibility": "low",
+    "recommended_mode": "replication_only"
+  },
+  "rationale": "Reject implementation for this repository. The thesis does not provide internally consistent empirical evidence strong enough for deterministic adoption, and the current codebase lacks the option-native data substrate required to reproduce or operationalize the method.",
+  "rejection_reasons": [
+    "Reject implementation because the displayed baseline regressions do not actually show statistically significant NBP effects, while the narrative claims significance.",
+    "Reject implementation because the thesis contains unresolved inconsistencies in volatility-regime definition, sample size accounting, and NBP variable scaling.",
+    "Reject implementation because the repository has no WRDS/CRSP/OptionMetrics integration, no option-contract schema, and no option-order-flow/open-interest feature pipeline.",
+    "Reject productionization because the paper itself describes the effect as small and short-lived, which weakens the case for a deployable alpha signal even before replication."
+  ],
+  "recommendations": [
+    "Treat this paper as a research question, not an implementation candidate.",
+    "If the topic remains interesting, start with a deterministic replication project using licensed options and equity data.",
+    "Build an option-native data model before attempting any Torghut feature or strategy work.",
+    "Require reproduced tables, stable regime definitions, and explicit sample-accounting logs before reassessing viability.",
+    "Keep any follow-on work confined to offline research and walk-forward validation until replication succeeds."
+  ],
+  "requires_followup": true,
+  "follow_up_actions": [
+    "Acquire or identify a rights-cleared options dataset with buyer/seller initiation and open-interest fields.",
+    "Define a contract-level options schema plus daily stock-level aggregation rules for NBP and Net OI.",
+    "Publish a deterministic replication notebook or script bundle that resolves the thesis's observation-count and scaling inconsistencies.",
+    "Re-evaluate the signal only after replicated results survive realistic cost modeling and regime segmentation."
+  ],
+  "blocked": {
+    "stage": "implementation_viability_assessment",
+    "reason": "Paper evidence and current repository substrate are insufficient for deterministic implementation.",
+    "evidence": [
+      "Table 2 on pages 38-40 shows positive but statistically insignificant NBP coefficients, while Sec. 7.1 on pages 50-51 claims NBP is a significant positive predictor.",
+      "Sec. 3.5 on pages 23-24 defines HighVol as VIX > 20 and implies roughly 70% high-volatility days, while Sec. 5.2 on page 32 describes a top-quartile threshold.",
+      "Repo inspection found Torghut research and simulation primitives but no WRDS/OptionMetrics/CRSP integration or option-chain/open-interest schema."
+    ],
+    "smallest_unblocker": "Acquire option data rights, add an option-native data model and ingestion path, and reproduce the thesis tables with deterministic code before reconsidering implementation."
+  },
+  "approved_by": null,
+  "approved_at": null
+}

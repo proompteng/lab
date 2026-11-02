@@ -1,0 +1,84 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: product
+build:
+  tagPolicy:
+    gitCommit:
+      variant: AbbrevCommitSha
+  artifacts:
+    - image: registry.ide-newton.ts.net/lab/proompteng
+      context: apps/proompteng
+      docker:
+        dockerfile: Dockerfile
+    - image: registry.ide-newton.ts.net/lab/docs
+      context: apps/docs
+      docker:
+        dockerfile: Dockerfile
+    - image: registry.ide-newton.ts.net/lab/facteur
+      context: services/facteur
+      docker:
+        dockerfile: Dockerfile
+  local:
+    push: false
+manifests:
+  kustomize:
+    paths:
+      - argocd/applications/proompteng
+      - argocd/applications/docs
+      - argocd/applications/facteur/base
+      - argocd/applications/froussard
+deploy:
+  kubectl: {}
+profiles:
+  - name: remote
+    patches:
+      - op: replace
+        path: /build/local/push
+        value: true
+      - op: add
+        path: /build/platforms
+        value:
+          - linux/arm64
+      - op: replace
+        path: /manifests/kustomize/paths/2
+        value: argocd/applications/facteur/overlays/cluster
+  - name: dernier
+    patches:
+      - op: replace
+        path: /metadata/name
+        value: dernier
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: dernier
+            context: services/dernier
+            docker:
+              dockerfile: Dockerfile
+      - op: replace
+        path: /manifests/kustomize/paths
+        value:
+          - argocd/applications/dernier/base
+  - name: dernier-remote
+    patches:
+      - op: replace
+        path: /metadata/name
+        value: dernier
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: registry.ide-newton.ts.net/lab/dernier
+            context: services/dernier
+            docker:
+              dockerfile: Dockerfile
+      - op: replace
+        path: /build/local/push
+        value: true
+      - op: add
+        path: /build/platforms
+        value:
+          - linux/arm64
+      - op: replace
+        path: /manifests/kustomize/paths
+        value:
+          - argocd/applications/dernier/overlays/cluster

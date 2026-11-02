@@ -1,0 +1,29 @@
+--- a/lua/blink/cmp/fuzzy/download/init.lua
++++ b/lua/blink/cmp/fuzzy/download/init.lua
+@@ -14,17 +14,17 @@
+ 
+   if fuzzy_config.implementation == 'lua' then return callback(nil, 'lua') end
+ 
+-  async.task
+-    .all({ git.get_version(download_config.force_version), files.get_version() })
+-    :map(function(results)
+-      return {
+-        git = results[1],
+-        current = results[2],
+-      }
++  files
++    .get_version()
++    :map(function(current)
++      -- A manually installed native library does not require Git version discovery.
++      if current.missing and pcall(require, 'blink.cmp.fuzzy.rust') then return { manual = true } end
++      return git.get_version(download_config.force_version):map(function(version)
++        return { git = version, current = current }
++      end)
+     end)
+     :map(function(version)
+-      -- no version file found, and found the shared rust library, user manually placed the .so file
+-      if version.current.missing and pcall(require, 'blink.cmp.fuzzy.rust') then return end
++      if version.manual then return end
+ 
+       local target_git_tag = version.git.tag
+ 

@@ -1,0 +1,6 @@
+apiVersion: networking.internal.knative.dev/v1alpha1
+kind: ClusterDomainClaim
+metadata:
+  name: prt.proompteng.ai
+spec:
+  namespace: prt

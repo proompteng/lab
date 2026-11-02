@@ -1,0 +1,48 @@
+# Copy to containers/app.yml and update values before running the launcher.
+
+templates:
+  - "templates/web.template.yml"
+  - "templates/web.ratelimited.template.yml"
+
+expose:
+  - "80:80"
+  - "443:443"
+
+env:
+  LC_ALL: en_US.UTF-8
+  LANG: en_US.UTF-8
+  LANGUAGE: en_US.UTF-8
+
+  DISCOURSE_HOSTNAME: 'forum.proompteng.ai'
+  DISCOURSE_DEVELOPER_EMAILS: 'admin@proompteng.ai'
+
+  DISCOURSE_SMTP_ADDRESS: smtp.example.com
+  DISCOURSE_SMTP_PORT: 587
+  DISCOURSE_SMTP_USER_NAME: user@example.com
+  DISCOURSE_SMTP_PASSWORD: "pa$$word"
+  DISCOURSE_SMTP_ENABLE_START_TLS: true
+
+  DISCOURSE_DB_NAME: discourse
+  DISCOURSE_DB_USERNAME: discourse
+  DISCOURSE_DB_PASSWORD: 'REPLACE_ME'
+  DISCOURSE_DB_HOST: discourse-db-rw
+  DISCOURSE_DB_PORT: 5432
+  DISCOURSE_DB_SOCKET: ''
+
+  DISCOURSE_REDIS_HOST: discourse-redis-leader
+  DISCOURSE_REDIS_PORT: 6379
+
+volumes:
+  - volume:
+      host: /var/discourse/shared/app
+      guest: /shared
+  - volume:
+      host: /var/discourse/shared/app/log/var-log
+      guest: /var/log
+
+hooks:
+  after_code:
+    - exec:
+        cd: $home/plugins
+        cmd:
+          - git clone https://github.com/discourse/docker_manager.git

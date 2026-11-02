@@ -1,0 +1,66 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: autonomous-trader-template-green
+  namespace: synthesis
+  annotations:
+    agents.proompteng.ai/template: "true"
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
+  labels:
+    app.kubernetes.io/part-of: autotrader
+    app.kubernetes.io/component: autonomous-trader
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
+spec:
+  agentRef:
+    name: autonomous-trader-agent-green
+  implementationSpecRef:
+    name: autonomous-trader-v1-green
+  goal:
+    objective: Advance the dedicated Synthesis Alpaca paper account toward 500000 USD equity during this market-open session; after market close, finalize the session, record decisions/risk/broker reconciliation/scorecard feedback in Synthesis, write the report, and complete this AgentRun.
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-only
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      backoffLimit: 0
+      logRetentionSeconds: 604800
+  ttlSecondsAfterFinished: 86400
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: main
+    mode: market-open
+    synthesisSessionMode: market_open
+    brokerMutationEnabled: "false"
+    sessionReconcileEnabled: "false"
+    accountType: paper
+    targetEquityUsd: "500000"
+    marketOpenTimezone: America/New_York
+    premarketBootstrapMinutes: "15"
+  secrets:
+    - autonomous-trader-alpaca-mcp
+    - agents-artifacts
+    - codex-auth
+    - github-token
+    - synthesis-env
+  workload:
+    volumes:
+      - type: secret
+        name: synthesis-env
+        secretName: synthesis-env
+        mountPath: /var/run/synthesis
+        readOnly: true
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+        ephemeral-storage: 2Gi
+      limits:
+        memory: 16Gi
+        ephemeral-storage: 16Gi

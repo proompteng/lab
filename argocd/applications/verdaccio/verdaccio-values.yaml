@@ -1,0 +1,7 @@
+ingress:
+  enabled: true
+  className: traefik
+  paths:
+    - /
+  hosts:
+    - npm.lan

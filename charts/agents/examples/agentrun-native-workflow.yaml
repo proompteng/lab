@@ -1,0 +1,44 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-native-workflow-e2e
+spec:
+  agentRef:
+    name: codex-native-workflow
+  implementationSpecRef:
+    name: codex-native-workflow-impl
+  runtime:
+    type: workflow
+    config:
+      ttlSecondsAfterFinished: 900
+  workflow:
+    steps:
+      - name: implement
+        parameters:
+          stage: implement
+  workload:
+    # Intentionally omit workload.image so the controller-managed runner image is used.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  secrets:
+    - codex-github-token
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    issueNumber: '2614'
+    issueTitle: 'agents: native workflow e2e proof + runbook'
+    issueUrl: 'https://github.com/proompteng/lab/issues/2614'
+    base: main
+    head: codex/agents/2614
+    prompt: |
+      Identify and implement a meaningful improvement to the Agents Helm chart. Prefer
+      changes that touch templates plus values.yaml and values.schema.json (for example,
+      missing validations, optional settings, or security hardening). Keep scope to
+      charts/agents/** and docs/agents/**. Avoid doc-only updates. Deliver a real
+      feature or hardening change with supporting tests/examples if needed.

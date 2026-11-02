@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kafka-ui-private
+  namespace: kafka
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`kafka-ui.k8s.proompteng.ai`)
+      services:
+        - name: kafka-ui
+          port: 80
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

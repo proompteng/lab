@@ -1,0 +1,24 @@
+{
+  "name": "nata",
+  "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proompteng/lab"
+  },
+  "type": "module",
+  "module": "src/server.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.1",
+    "hono": "^4.12.17",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

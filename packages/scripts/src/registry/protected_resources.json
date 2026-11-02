@@ -1,0 +1,24 @@
+{
+  "": ["pods"],
+  "apps": ["deployments", "statefulsets", "daemonsets"],
+  "batch": ["cronjobs", "jobs"],
+  "actions.github.com": ["autoscalingrunnersets", "ephemeralrunnersets", "ephemeralrunners"],
+  "agents.proompteng.ai": ["agentproviders", "agentruns"],
+  "argoproj.io": [
+    "applications",
+    "workflows",
+    "workflowtemplates",
+    "clusterworkflowtemplates",
+    "cronworkflows",
+    "analysistemplates",
+    "clusteranalysistemplates",
+    "analysisruns"
+  ],
+  "caching.internal.knative.dev": ["images"],
+  "flink.apache.org": ["flinkdeployments"],
+  "kargo.akuity.io": ["freights", "stages", "promotions"],
+  "postgresql.cnpg.io": ["clusters", "imagecatalogs", "clusterimagecatalogs"],
+  "restate.dev": ["restatedeployments"],
+  "serving.knative.dev": ["services", "configurations", "revisions"],
+  "tools.proompteng.ai": ["tools"]
+}

@@ -1,0 +1,28 @@
+{{- if and .Values.agentsShell.enabled .Values.agentsShell.workspace.enabled (not .Values.agentsShell.workspace.existingClaim) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agents.agentsShellWorkspaceClaimName" . }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+    {{- with .Values.agentsShell.workspace.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.agentsShell.workspace.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.agentsShell.workspace.accessModes }}
+    - {{ . }}
+    {{- end }}
+  {{- if .Values.agentsShell.workspace.storageClassName }}
+  storageClassName: {{ .Values.agentsShell.workspace.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.agentsShell.workspace.size | quote }}
+{{- end }}

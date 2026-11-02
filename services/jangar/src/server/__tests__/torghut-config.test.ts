@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  resolveTorghutEndpointsConfig,
+  resolveTorghutQuantRuntimeConfig,
+  validateTorghutConfig,
+} from '~/server/torghut-config'
+
+describe('torghut-config', () => {
+  it('parses quant runtime settings and policy thresholds', () => {
+    const config = resolveTorghutQuantRuntimeConfig({
+      JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED: 'true',
+      JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS: '2500',
+      JANGAR_TORGHUT_QUANT_HEALTH_SAMPLING_MS: '7500',
+      JANGAR_TORGHUT_QUANT_LATEST_SAMPLING_MS: '10000',
+      JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT: '1m,15m',
+      JANGAR_TORGHUT_QUANT_POLICY_MAX_DRAWDOWN_1D: '0.08',
+    })
+
+    expect(config.enabled).toBe(true)
+    expect(config.computeIntervalMs).toBe(2500)
+    expect(config.healthSamplingMs).toBe(7500)
+    expect(config.latestSamplingMs).toBe(10000)
+    expect(config.windowsLight).toEqual(['1m', '15m'])
+    expect(config.policy.maxDrawdown1d).toBe(0.08)
+  })
+
+  it('uses bounded write-pressure defaults for quant history and health', () => {
+    const config = resolveTorghutQuantRuntimeConfig({})
+
+    expect(config.healthSamplingMs).toBe(5000)
+    expect(config.latestSamplingMs).toBe(10_000)
+  })
+
+  it('rejects unsupported quant windows instead of casting them', () => {
+    expect(() =>
+      resolveTorghutQuantRuntimeConfig({
+        JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT: '1m,30m',
+      }),
+    ).toThrow('Unsupported Torghut quant window(s): 30m')
+  })
+
+  it('normalizes torghut endpoints and health defaults', () => {
+    expect(
+      resolveTorghutEndpointsConfig({
+        TORGHUT_API_BASE_URL: 'https://torghut.example.com///',
+        JANGAR_TORGHUT_STATUS_URL: 'https://torghut.example.com/status///',
+        JANGAR_MARKET_CONTEXT_HEALTH_DEFAULT_SYMBOL: ' msft ',
+        JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS: '25',
+      }),
+    ).toEqual({
+      apiBaseUrl: 'https://torghut.example.com',
+      statusUrl: 'https://torghut.example.com/status',
+      marketContextHealthDefaultSymbol: 'MSFT',
+      quantHealthMissingUpdateSeconds: 25,
+    })
+  })
+
+  it('rejects invalid torghut URLs during validation', () => {
+    expect(() =>
+      validateTorghutConfig({
+        TORGHUT_API_BASE_URL: 'http://torghut.example.com',
+        JANGAR_TORGHUT_STATUS_URL: '://bad-url',
+      }),
+    ).toThrow()
+  })
+})

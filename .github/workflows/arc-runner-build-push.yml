@@ -1,0 +1,40 @@
+name: arc-runner-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'nix/images/arc-runner.nix'
+      - 'nix/cache-doctor.sh'
+      - 'nix/oci-doctor.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/toolchain-doctor.sh'
+      - 'argocd/applications/arc/**'
+      - flake.nix
+      - flake.lock
+      - nix/packages.nix
+      - nix/cache-push.sh
+      - nix/oci-inspect-archive.sh
+      - nix/oci-release-contract.sh
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: arc-runner
+      package_attr: arc-runner-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      publish_on_dispatch: true
+    secrets: inherit

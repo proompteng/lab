@@ -1,0 +1,67 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: keycloak-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-9"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  retentionPolicy: 35d
+  instanceSidecarConfiguration:
+    logLevel: info
+    retentionPolicyIntervalSeconds: 1800
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  configuration:
+    destinationPath: s3://keycloak-database-backups/
+    endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+    s3Credentials:
+      accessKeyId:
+        name: keycloak-database-backup
+        key: AWS_ACCESS_KEY_ID
+      secretAccessKey:
+        name: keycloak-database-backup
+        key: AWS_SECRET_ACCESS_KEY
+    data:
+      compression: snappy
+      jobs: 1
+    wal:
+      compression: snappy
+      maxParallel: 2
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: keycloak-db-daily
+  annotations:
+    argocd.argoproj.io/sync-wave: "-7"
+spec:
+  schedule: "0 0 11 * * *"
+  immediate: false
+  backupOwnerReference: cluster
+  target: prefer-standby
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: keycloak-db
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: keycloak-db-ceph-cutover-primary
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: keycloak-db
+  target: primary
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

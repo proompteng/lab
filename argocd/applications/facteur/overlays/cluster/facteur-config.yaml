@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: facteur-config
+  namespace: facteur
+data:
+  config.yaml: |
+    codex_implementation_orchestrator:
+      enabled: true
+      agents_base_url: http://agents.agents.svc.cluster.local
+      namespace: agents
+      agent_name: codex-agent
+      runtime_type: job
+      runtime_config:
+        serviceAccountName: agents-sa
+      secrets:
+        - github-token
+        - codex-auth
+      secret_binding_ref: codex-github-token
+      vcs_provider: github
+      vcs_policy_mode: read-write
+      vcs_required: true
+      goal_token_budget: 250000
+      ttl_seconds_after_finished: 86400
+      parameters:
+        head: ''
+        base: ''
+    discord:
+      guild_id: ''
+      public_key: ''
+    redis:
+      url: redis://facteur-redis:6379/0
+    role_map:
+      plan:
+        - '987654321098765432'
+        - '876543210987654321'
+      status:
+        - '987654321098765432'
+    server:
+      listen_address: :8080

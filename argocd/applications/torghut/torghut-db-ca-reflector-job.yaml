@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-db-ca-reflector
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-db-ca-reflector
+        app.kubernetes.io/part-of: torghut
+    spec:
+      restartPolicy: Never
+      serviceAccountName: torghut-db-ca-reflector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: annotate
+          image: bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              for attempt in $(seq 1 36); do
+                if kubectl -n torghut get secret torghut-db-ca \
+                  -o jsonpath='{.data.ca\.crt}{" "}{.data.ca\.key}' | grep -Eq '^[^[:space:]]+ [^[:space:]]+$'; then
+                  kubectl -n torghut annotate secret torghut-db-ca \
+                    argocd.argoproj.io/sync-options=Prune=false \
+                    reflector.v1.k8s.emberstack.com/reflection-allowed=true \
+                    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces=pgadmin,jangar,argo-workflows \
+                    reflector.v1.k8s.emberstack.com/reflection-auto-enabled=true \
+                    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces=pgadmin,jangar,argo-workflows \
+                    --overwrite
+                  kubectl -n torghut annotate secret torghut-db-ca \
+                    argocd.argoproj.io/tracking-id- || true
+                  echo "annotated existing CNPG-managed torghut-db-ca secret for reflection"
+                  exit 0
+                fi
+                echo "waiting for CNPG-managed torghut-db-ca data attempt=${attempt}"
+                sleep 5
+              done
+              echo "timed out waiting for CNPG-managed torghut-db-ca data" >&2
+              exit 1

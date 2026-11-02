@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Resolved relative to this script at runtime.
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib.sh"
+
+for command in jq sudo tailscale; do
+  require_command "${command}"
+done
+
+load_omni_env
+require_env_value OMNI_HOST
+[[ "${OMNI_HOST}" == 'nuc.ide-newton.ts.net' ]] || die 'OMNI_HOST does not match tailscale-serve.json'
+
+current=$(mktemp)
+normalized_current=$(mktemp)
+normalized_expected=$(mktemp)
+normalized_legacy=$(mktemp)
+cleanup() {
+  rm -f -- "${current}" "${normalized_current}" "${normalized_expected}" "${normalized_legacy}"
+}
+trap cleanup EXIT
+
+sudo tailscale serve status --json | jq . >"${current}"
+normalize_owned() {
+  jq --sort-keys --arg host "${OMNI_HOST}" --from-file "${OMNI_DIR}/serve-owned.jq" "$@"
+}
+normalize_owned "${current}" >"${normalized_current}"
+normalize_owned "${OMNI_DIR}/tailscale-serve.json" >"${normalized_expected}"
+jq --arg host "${OMNI_HOST}" '
+  del(.version)
+  | .TCP["8090"] = {"HTTPS": true}
+  | .Web[$host + ":8090"] = {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8090"}}}
+' "${OMNI_DIR}/tailscale-serve.json" | normalize_owned >"${normalized_legacy}"
+
+if cmp --silent "${normalized_current}" "${normalized_expected}"; then
+  printf 'Tailscale Serve configuration is already current\n'
+  exit 0
+fi
+
+legacy_configuration=0
+if cmp --silent "${normalized_current}" "${normalized_legacy}"; then
+  legacy_configuration=1
+elif ! jq --exit-status '.TCP == {} and .Web == {} and (.AllowFunnel // {}) == {}' "${normalized_current}" >/dev/null; then
+  [[ "${OMNI_SERVE_REPLACE:-}" == '1' ]] ||
+    die 'Tailscale Serve has unmanaged configuration; review it and rerun with OMNI_SERVE_REPLACE=1'
+fi
+
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+install -m 0600 "${current}" "${OMNI_DATA_ROOT}/backups/tailscale-serve-before-${timestamp}.json"
+if ((legacy_configuration == 1)) || [[ "${OMNI_SERVE_REPLACE:-}" == '1' ]]; then
+  for port in 443 8090 8100; do
+    if jq --exit-status --arg port "$port" '.TCP[$port].HTTPS == true' "${current}" >/dev/null; then
+      sudo tailscale serve --https="$port" off
+    elif jq --exit-status --arg port "$port" '.TCP[$port].TCPForward != null' "${current}" >/dev/null; then
+      sudo tailscale serve --tcp="$port" off
+    fi
+  done
+fi
+
+sudo tailscale serve --bg --https=443 --yes http://127.0.0.1:8180 >/dev/null
+sudo tailscale serve --bg --tcp=8090 --yes tcp://127.0.0.1:8090 >/dev/null
+sudo tailscale serve --bg --https=8100 --yes http://127.0.0.1:8100 >/dev/null
+
+sudo tailscale serve status --json | jq . >"${current}"
+normalize_owned "${current}" >"${normalized_current}"
+cmp --silent "${normalized_current}" "${normalized_expected}" || die 'Tailscale Serve did not retain the expected configuration'
+printf 'Tailscale Serve now exposes Omni privately at https://%s/\n' "${OMNI_HOST}"

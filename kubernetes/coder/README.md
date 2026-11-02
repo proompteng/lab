@@ -1,0 +1,79 @@
+# Coder Template: Kubernetes Workspace (arm64)
+
+This template provisions a Coder workspace on Kubernetes with:
+
+- arm64 agent binary tuned for arm64 nodes
+- `code-server` exposed at <http://localhost:13337>
+- Persistent home volume sized via the `home_disk_size` parameter
+- Git checkout via `coder/git-clone`, followed by dependency install on first boot
+- Cursor launcher, Bun, kubectl, Argo CD CLI, Convex CLI, OpenAI Codex CLI, and GitHub CLI
+
+## Install
+
+Prereqs:
+
+- Coder CLI logged in to your instance (`coder login https://coder.proompteng.ai`)
+- Admin access to push templates
+
+Steps:
+
+1. Navigate to this directory:
+
+```bash
+cd kubernetes/coder
+```
+
+2. Push the template into Coder:
+
+```bash
+coder templates push --directory . --name k8s-arm64 --yes
+```
+
+3. Create a workspace from the `k8s-arm64` template in the UI, or via CLI:
+
+```bash
+coder workspaces create sutro --template "k8s-arm64"
+```
+
+## Parameters
+
+- CPU cores: 4/6/8 (default 4)
+- Memory (GiB): 4/6/8 (default 8)
+- Home disk size (GiB): default 30
+- Repository URL: defaults to `https://github.com/proompteng/lab`; accepts HTTPS or SSH remotes
+- Checkout directory: defaults to `~/github.com` and expands to `${directory}/${repo}` inside the workspace
+
+## Modules & automation
+
+- `coder/git-clone@1.1.1` for repository checkout
+- `coder/cursor@1.3.2` to expose Cursor Desktop
+- `coder_script.bootstrap_tools` runs on start to:
+  - Install Bun (via the official installer)
+  - Install recommended CLI tools (`ripgrep`, `fd-find`, `fzf`, `bat`, `jq`, `tmux`)
+  - Install Node.js LTS via nvm
+  - Install Convex CLI, OpenAI Codex CLI, kubectl, Argo CD CLI, and GitHub CLI when missing (Codex via Bun global)
+  - Expand the repository path, then run `bun install --frozen-lockfile` or `bun install` based on repo files
+  - Persist Bun environment variables in `.profile` and `.zshrc`
+  - Run with a workspace service account bound to `cluster-admin` via a ClusterRoleBinding (cluster-wide) so `kubectl` works inside the pod
+
+This bootstrap remains imperative for now. Once Nix is installed in the workspace image or startup script, prefer the
+repo shell with `nix develop` and verify it with `toolchain-doctor`; the flake pins the versions used by the CI pilot.
+
+If a workspace becomes unhealthy, check logs inside the pod:
+
+- `/tmp/coder-startup-script.log`
+- `/tmp/coder-agent.log`
+
+## Troubleshooting
+
+- Force restart a workspace pod to re-run the init:
+
+```bash
+kubectl -n coder delete pod -l app.kubernetes.io/name=coder-workspace
+```
+
+- SSH without waiting for the startup script:
+
+```bash
+coder ssh <workspace-name> --wait=no
+```

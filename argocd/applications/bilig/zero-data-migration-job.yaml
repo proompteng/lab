@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bilig-zero-data-migrate
+  namespace: bilig
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: registry.ide-newton.ts.net/lab/bilig-app
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - --input-type=module
+            - -e
+            - |
+              import { createZeroPool, resolveZeroDatabaseUrl } from "./dist/zero/db.js";
+              import { runPendingZeroDataMigrations } from "./dist/zero/data-migration-runner.js";
+
+              const connectionString = resolveZeroDatabaseUrl();
+              if (!connectionString) {
+                throw new Error("DATABASE_URL missing");
+              }
+
+              const pool = createZeroPool(connectionString);
+              try {
+                const result = await runPendingZeroDataMigrations(pool);
+                console.log(JSON.stringify(result));
+              } finally {
+                await pool.end();
+              }
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

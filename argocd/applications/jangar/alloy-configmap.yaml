@@ -1,0 +1,249 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jangar-alloy
+  namespace: jangar
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    otelcol.receiver.otlp "codex" {
+      grpc {
+        endpoint = "0.0.0.0:4317"
+      }
+
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+
+      output {
+        logs    = [otelcol.processor.batch.default.input]
+        metrics = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    otelcol.processor.batch "default" {
+      output {
+        logs    = [otelcol.exporter.loki.codex.input]
+        metrics = [otelcol.exporter.otlphttp.mimir.input]
+      }
+    }
+
+    otelcol.exporter.loki "codex" {
+      forward_to = [loki.write.default.receiver]
+    }
+
+    otelcol.exporter.otlphttp "mimir" {
+      client {
+        endpoint = "http://observability-mimir-gateway.observability.svc.cluster.local/otlp"
+      }
+
+      sending_queue {
+        queue_size = 2048
+      }
+
+      retry_on_failure {
+        initial_interval = "5s"
+        max_interval = "30s"
+        max_elapsed_time = "5m"
+      }
+    }
+
+    // Jangar web app
+    discovery.kubernetes "jangar" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app=jangar"
+      }
+    }
+
+    loki.source.kubernetes "jangar" {
+      targets    = discovery.kubernetes.jangar.targets
+      forward_to = [loki.process.jangar.receiver]
+    }
+
+    loki.process "jangar" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "jangar",
+          job = "jangar",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Jangar Open WebUI Helm release
+    discovery.kubernetes "jangar_openwebui" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/instance=jangar-openwebui"
+      }
+    }
+
+    loki.source.kubernetes "jangar_openwebui" {
+      targets    = discovery.kubernetes.jangar_openwebui.targets
+      forward_to = [loki.process.jangar_openwebui.receiver]
+    }
+
+    loki.process "jangar_openwebui" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "jangar-openwebui",
+          job = "jangar-openwebui",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Bumba worker
+    discovery.kubernetes "bumba" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=bumba"
+      }
+    }
+
+    loki.source.kubernetes "bumba" {
+      targets    = discovery.kubernetes.bumba.targets
+      forward_to = [loki.process.bumba.receiver]
+    }
+
+    loki.process "bumba" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "bumba",
+          job = "bumba",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Symphony self-hosting lane
+    discovery.kubernetes "symphony" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=symphony"
+      }
+    }
+
+    loki.source.kubernetes "symphony" {
+      targets    = discovery.kubernetes.symphony.targets
+      forward_to = [loki.process.symphony.receiver]
+    }
+
+    loki.process "symphony" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "symphony",
+          job = "symphony",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Symphony Jangar lane
+    discovery.kubernetes "symphony_jangar" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=symphony-jangar"
+      }
+    }
+
+    loki.source.kubernetes "symphony_jangar" {
+      targets    = discovery.kubernetes.symphony_jangar.targets
+      forward_to = [loki.process.symphony_jangar.receiver]
+    }
+
+    loki.process "symphony_jangar" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "symphony-jangar",
+          job = "symphony-jangar",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }

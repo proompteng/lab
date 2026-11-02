@@ -1,0 +1,16 @@
+---
+- name: Disable firewall
+  hosts: rancher_bootstrap
+  become: true
+  tasks:
+    - name: Stop UFW service
+      ansible.builtin.systemd:
+        name: ufw
+        state: stopped
+      ignore_errors: true
+
+    - name: Disable UFW service at boot
+      ansible.builtin.systemd:
+        name: ufw
+        enabled: false
+      ignore_errors: true

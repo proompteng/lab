@@ -1,0 +1,18 @@
+# Local quickstart (kind/minikube) using an external Postgres reachable via port-forward.
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 80
+
+database:
+  url: postgresql://agents:agents@127.0.0.1:5432/agents?sslmode=disable
+
+namespaceOverride: agents
+
+controller:
+  namespaces:
+    - agents
+
+agentComms:
+  enabled: false

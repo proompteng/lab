@@ -1,0 +1,16 @@
+{
+  "event": "issues",
+  "action": "opened",
+  "repository": {
+    "full_name": "proompteng/lab"
+  },
+  "issue": {
+    "number": 900000004,
+    "title": "Analyze whitepaper: Navigating the Alpha Jungle: An LLM-Powered MCTS Framework for Formulaic Factor Mining",
+    "body": "<!-- TORGHUT_WHITEPAPER:START -->\nworkflow: whitepaper-analysis-v1\nbase_branch: main\nattachment_url: https://arxiv.org/pdf/2505.11122\n<!-- TORGHUT_WHITEPAPER:END -->\n\nPaper: Navigating the Alpha Jungle: An LLM-Powered MCTS Framework for Formulaic Factor Mining\nPDF: https://arxiv.org/pdf/2505.11122\nContext: Deduplicated direct-intake replay payload generated from closed whitepaper issues.\n\nSource issues:\n- #3592: https://github.com/proompteng/lab/issues/3592\n",
+    "html_url": "https://github.com/proompteng/lab/issues/3592"
+  },
+  "sender": {
+    "login": "codex-whitepaper-replay"
+  }
+}

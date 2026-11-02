@@ -1,0 +1,218 @@
+--- a/crates/buzz-relay/src/api/git/store.rs
++++ b/crates/buzz-relay/src/api/git/store.rs
+@@ -4,15 +4,17 @@
+ //! and the CAS pointer swap (axiom A3) described in
+ //! `docs/git-on-object-storage.md`.
+ //!
+-//! ## The 412 sharp edge
++//! ## Conditional-conflict sharp edges
+ //!
+ //! `rust-s3 = "0.37"` is shared across the workspace with `buzz-media`. The
+ //! `fail-on-err` Cargo feature is unified ON across the build graph, which
+ //! means non-2xx responses arrive here as `S3Error::HttpFailWithBody(code,
+ //! body)` *before* the caller sees `ResponseData`. The pointer-CAS path treats
+-//! the precondition-failure status (412) as a *semantic* result (`LostRace`),
+-//! not an error — see `classify_cas`. Empirically verified against MinIO in
+-//! `probe::probe_412_surfacing`.
++//! precondition failures (`412`) and recognized concurrent conditional-write
++//! conflicts (`409`) as a *semantic* result (`LostRace`), not an error — see
++//! `classify_cas`. Empirically verified against MinIO in
++//! `probe::probe_412_surfacing` and Ceph RGW Squid in the deployment
++//! conformance probe.
+ //!
+ //! ## Content addressing (A1)
+ //!
+@@ -24,6 +26,7 @@
+ 
+ #![allow(dead_code)] // wired in by the push path in a follow-up commit
+ 
++use std::borrow::Cow;
+ use std::sync::Arc;
+ 
+ use bytes::Bytes;
+@@ -36,6 +39,38 @@
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct ETag(pub String);
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++enum S3Compatibility {
++    Standard,
++    CephRgw,
++}
++
++impl S3Compatibility {
++    fn from_env() -> Result<Self, StoreError> {
++        let raw = std::env::var("BUZZ_GIT_S3_COMPATIBILITY").unwrap_or_default();
++        match raw.trim() {
++            "" | "standard" => Ok(Self::Standard),
++            "ceph-rgw" => Ok(Self::CephRgw),
++            other => Err(StoreError::Config(format!(
++                "BUZZ_GIT_S3_COMPATIBILITY must be 'standard' or 'ceph-rgw', got {other:?}"
++            ))),
++        }
++    }
++
++    fn if_match_value<'a>(self, etag: &'a str) -> Cow<'a, str> {
++        match self {
++            Self::Standard => Cow::Borrowed(etag),
++            Self::CephRgw => {
++                if etag.len() >= 2 && etag.starts_with('"') && etag.ends_with('"') {
++                    Cow::Owned(etag[1..etag.len() - 1].to_string())
++                } else {
++                    Cow::Borrowed(etag)
++                }
++            }
++        }
++    }
++}
++
+ /// Precondition for `put_pointer`.
+ #[derive(Debug, Clone)]
+ pub enum Precond {
+@@ -58,7 +93,7 @@
+ pub enum CasOutcome {
+     /// CAS succeeded; the new pointer ETag (suitable for the next `IfMatch`).
+     Won(ETag),
+-    /// CAS lost the race (server returned 412).
++    /// CAS lost the race (server returned 412 or a recognized conditional-write 409).
+     LostRace,
+ }
+ 
+@@ -169,6 +204,7 @@
+ #[derive(Clone)]
+ pub struct GitStore {
+     bucket: Arc<Bucket>,
++    compatibility: S3Compatibility,
+ }
+ 
+ impl GitStore {
+@@ -191,6 +227,7 @@
+         bucket_name: &str,
+         region: &str,
+     ) -> Result<Self, StoreError> {
++        let compatibility = S3Compatibility::from_env()?;
+         let region = Region::Custom {
+             region: region.into(),
+             endpoint: endpoint.into(),
+@@ -212,8 +249,14 @@
+         let bucket = Bucket::new(bucket_name, region, creds)
+             .map_err(StoreError::Backend)?
+             .with_path_style();
++        if compatibility == S3Compatibility::CephRgw {
++            tracing::info!(
++                "BUZZ_GIT_S3_COMPATIBILITY=ceph-rgw — using Ceph RGW If-Match token compatibility"
++            );
++        }
+         Ok(Self {
+             bucket: Arc::from(bucket),
++            compatibility,
+         })
+     }
+ 
+@@ -490,12 +533,13 @@
+                 headers.insert(axum::http::header::IF_NONE_MATCH, "*".parse().unwrap());
+             }
+             Precond::IfMatch(ETag(tag)) => {
++                let value = self.compatibility.if_match_value(tag);
+                 headers.insert(
+                     axum::http::header::IF_MATCH,
+-                    tag.parse().map_err(|_| {
++                    value.parse().map_err(|_| {
+                         StoreError::Backend(S3Error::HttpFailWithBody(
+                             400,
+-                            format!("invalid etag {tag}"),
++                            format!("invalid etag {value}"),
+                         ))
+                     })?,
+                 );
+@@ -510,9 +554,10 @@
+ 
+     /// Map a rust-s3 PUT outcome to a `CasOutcome`.
+     ///
+-    /// 412 → `LostRace`. 2xx → `Won(etag)` (etag read from response headers,
+-    /// empty if missing — callers must tolerate empty etag and re-HEAD if they
+-    /// need it strictly). Everything else bubbles as `StoreError::Backend`.
++    /// 412 and recognized conditional-write 409 responses → `LostRace`.
++    /// 2xx → `Won(etag)` (etag read from response headers, empty if missing —
++    /// callers must tolerate empty etag and re-HEAD if they need it strictly).
++    /// Everything else bubbles as `StoreError::Backend`.
+     fn classify_cas(
+         result: Result<s3::request::ResponseData, S3Error>,
+     ) -> Result<CasOutcome, StoreError> {
+@@ -538,7 +583,11 @@
+                     })?;
+                 Ok(CasOutcome::Won(ETag(etag)))
+             }
+-            Err(S3Error::HttpFailWithBody(412, _)) => Ok(CasOutcome::LostRace),
++            Err(S3Error::HttpFailWithBody(code, body))
++                if Self::is_conditional_conflict(code, &body) =>
++            {
++                Ok(CasOutcome::LostRace)
++            }
+             Ok(resp) => Err(StoreError::Backend(S3Error::HttpFailWithBody(
+                 resp.status_code(),
+                 "unexpected status".into(),
+@@ -547,6 +596,13 @@
+         }
+     }
+ 
++    fn is_conditional_conflict(code: u16, body: &str) -> bool {
++        code == 412
++            || (code == 409
++                && (body.contains("<Code>ConditionalRequestConflict</Code>")
++                    || body.contains("<Code>ConcurrentModification</Code>")))
++    }
++
+     /// Conformance probe — deployment gate per `docs/git-on-object-storage.md`
+     /// §Conformance. Fail-closed: any phase failure returns
+     /// `StoreError::Probe(ProbeFailure)` and the caller (relay startup) MUST
+@@ -931,9 +987,49 @@
+     fn classify_cas_412_is_lost_race() {
+         let r = Err(S3Error::HttpFailWithBody(412, "PreconditionFailed".into()));
+         assert_eq!(GitStore::classify_cas(r).unwrap(), CasOutcome::LostRace);
++    }
++
++    #[test]
++    fn classify_cas_known_409_conflicts_are_lost_races() {
++        for code in ["ConditionalRequestConflict", "ConcurrentModification"] {
++            let body = format!("<Error><Code>{code}</Code></Error>");
++            let result = Err(S3Error::HttpFailWithBody(409, body));
++            assert_eq!(
++                GitStore::classify_cas(result).unwrap(),
++                CasOutcome::LostRace
++            );
++        }
+     }
+ 
+     #[test]
++    fn classify_cas_unrelated_409_bubbles() {
++        let result = Err(S3Error::HttpFailWithBody(
++            409,
++            "<Error><Code>BucketAlreadyExists</Code></Error>".into(),
++        ));
++        assert!(matches!(
++            GitStore::classify_cas(result),
++            Err(StoreError::Backend(S3Error::HttpFailWithBody(409, _)))
++        ));
++    }
++
++    #[test]
++    fn ceph_rgw_compatibility_unquotes_if_match_etags() {
++        assert_eq!(
++            S3Compatibility::CephRgw.if_match_value("\"593616de\""),
++            "593616de"
++        );
++        assert_eq!(
++            S3Compatibility::CephRgw.if_match_value("already-unquoted"),
++            "already-unquoted"
++        );
++        assert_eq!(
++            S3Compatibility::Standard.if_match_value("\"593616de\""),
++            "\"593616de\""
++        );
++    }
++
++    #[test]
+     fn classify_cas_other_4xx_bubbles() {
+         let r = Err(S3Error::HttpFailWithBody(403, "AccessDenied".into()));
+         assert!(matches!(

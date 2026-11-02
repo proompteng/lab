@@ -1,0 +1,2 @@
+gepa @ https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz#sha256=f4e888d0d18c1a13d8a14c3828f85961977ea001bda8bcabd1391d918de80c33
+boto3==1.43.115

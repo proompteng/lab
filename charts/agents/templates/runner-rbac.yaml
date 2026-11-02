@@ -1,0 +1,40 @@
+{{- if and .Values.runnerServiceAccount.rbac.create (include "agents.runnerServiceAccountName" .) -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agents.runnerServiceAccountName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - configmaps
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+{{- with .Values.runnerServiceAccount.rbac.extraRules }}
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agents.runnerServiceAccountName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agents.runnerServiceAccountName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents.runnerServiceAccountName" . }}
+    namespace: {{ $namespace }}
+{{- end }}

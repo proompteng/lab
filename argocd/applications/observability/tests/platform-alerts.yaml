@@ -1,0 +1,219 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: healthy platform applications databases and idle promotions stay quiet
+    interval: 1m
+    input_series:
+      - series: argocd_app_info{name="ofz",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x45
+      - series: argocd_app_info{name="relay",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x45
+      - series: argocd_app_info{name="tengri",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x45
+      - series: argocd_app_info{name="proompteng",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x45
+      - series: argocd_app_info{name="opencode",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x45
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Succeeded"}
+        values: 1+0x45
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="relay",phase="Succeeded"}
+        values: 1+0x45
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri",phase="Succeeded"}
+        values: 1+0x45
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng",phase="Succeeded"}
+        values: 1+0x45
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode",phase="Succeeded"}
+        values: 1+0x45
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-1"}
+        values: 1+0x45
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-2"}
+        values: 1+0x45
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-3"}
+        values: 1+0x45
+      - series: cnpg_collector_last_collection_error{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}
+        values: 0+0x45
+      - series: kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed"}
+        values: 0+0x45
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"PlatformApplication.*|PlatformPromotion.*|OfzDatabase.*",alertstate="firing"}) or vector(0)
+        eval_time: 45m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: an unhealthy application fires after five minutes and clears on recovery
+    interval: 1m
+    input_series:
+      - series: argocd_app_info{name="ofz",health_status="Degraded",sync_status="Synced"}
+        values: 1+0x7 stale
+      - series: argocd_app_info{name="ofz",health_status="Healthy",sync_status="Synced"}
+        values: _x8 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PlatformApplicationUnhealthy",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PlatformApplicationUnhealthy",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="PlatformApplicationUnhealthy",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: a missing relay application cannot disappear from alerting
+    interval: 1m
+    input_series:
+      - series: argocd_app_info{name="ofz",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x20
+      - series: argocd_app_info{name="tengri",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x20
+      - series: argocd_app_info{name="proompteng",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x20
+      - series: argocd_app_info{name="opencode",health_status="Healthy",sync_status="Synced"}
+        values: 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PlatformApplicationMissing",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PlatformApplicationMissing",name="relay",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="PlatformApplicationMissing",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: persistent deployment drift fires after normal reconciliation time
+    interval: 1m
+    input_series:
+      - series: argocd_app_info{name="relay",health_status="Healthy",sync_status="OutOfSync"}
+        values: 1+0x30
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PlatformApplicationOutOfSync",alertstate="firing"}) or vector(0)
+        eval_time: 14m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PlatformApplicationOutOfSync",alertstate="firing"}) or vector(0)
+        eval_time: 16m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: a failed promotion fires and a subsequent success clears it
+    interval: 1m
+    input_series:
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Failed"}
+        values: 1+0x7 stale
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Succeeded"}
+        values: _x8 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PlatformPromotionFailed",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PlatformPromotionFailed",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="PlatformPromotionFailed",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: a stalled active promotion fires and completion clears it
+    interval: 1m
+    input_series:
+      - series: kube_kargo_stage_current_promotion_started_at{namespace="lab-delivery",stage="relay"}
+        values: 0+0x39 stale
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PlatformPromotionStalled",alertstate="firing"}) or vector(0)
+        eval_time: 29m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PlatformPromotionStalled",alertstate="firing"}) or vector(0)
+        eval_time: 36m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="PlatformPromotionStalled",alertstate="firing"}) or vector(0)
+        eval_time: 42m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: missing stage observations have their own alert
+    interval: 1m
+    input_series:
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz",phase="Succeeded"}
+        values: 1+0x20
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri",phase="Succeeded"}
+        values: 1+0x20
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng",phase="Succeeded"}
+        values: 1+0x20
+      - series: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode",phase="Succeeded"}
+        values: 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="PlatformPromotionTelemetryMissing",alertstate="firing"}) or vector(0)
+        eval_time: 9m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="PlatformPromotionTelemetryMissing",stage="relay",alertstate="firing"}) or vector(0)
+        eval_time: 11m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: all three database targets down must fire even though their up series exist
+    interval: 1m
+    input_series:
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-1"}
+        values: 0+0x7 1+0x20
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-2"}
+        values: 0+0x7 1+0x20
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-3"}
+        values: 0+0x7 1+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 1m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: loss of one database target warns without claiming total loss
+    interval: 1m
+    input_series:
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-1"}
+        values: 1+0x20
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-2"}
+        values: 1+0x20
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db",pod="ofz-db-3"}
+        values: 0+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="OfzDatabaseReplicaDegraded",alertstate="firing"}) or vector(0)
+        eval_time: 9m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="OfzDatabaseReplicaDegraded",alertstate="firing"}) or vector(0)
+        eval_time: 11m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 11m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: database collection failures are detected while HTTP scraping succeeds
+    interval: 1m
+    input_series:
+      - series: up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}
+        values: 1+0x20
+      - series: cnpg_collector_last_collection_error{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}
+        values: 1+0x7 0+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: an overdue backup fires and a completed new backup clears it
+    interval: 1m
+    input_series:
+      - series: kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed",backup="old"}
+        values: -130000+0x30
+      - series: kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed",backup="new"}
+        values: _x8 480+0x20
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="OfzDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 4m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: count(ALERTS{alertname="OfzDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="OfzDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 12m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: missing database and backup series remain failures
+    interval: 1m
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="OfzDatabaseUnavailable",alertstate="firing"}) or vector(0)
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="OfzDatabaseBackupStale",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]

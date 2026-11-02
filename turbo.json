@@ -1,0 +1,23 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*", "packages/backend/**"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "dev": {
+      "persistent": true,
+      "cache": true
+    },
+    "start:build": {
+      "outputs": ["dist/ui/**"],
+      "inputs": ["services/jangar/src/ui/**", "services/jangar/package.json", "services/jangar/tsconfig.json"]
+    },
+    "start:dev": {
+      "persistent": true,
+      "cache": false
+    }
+  }
+}

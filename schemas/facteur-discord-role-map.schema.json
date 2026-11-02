@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/proompteng/lab/schemas/facteur-discord-role-map.schema.json",
+  "title": "facteur Discord command role map",
+  "type": "object",
+  "description": "Maps Discord slash command names to the role IDs allowed to invoke them.",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^[a-z0-9:_-]+$": {
+      "type": "array",
+      "description": "List of Discord role IDs allowed to access the command.",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]{17,20}$",
+        "description": "Discord role ID (snowflake)."
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  }
+}

@@ -1,0 +1,126 @@
+---
+- name: Start and authorize Tailscale (no install)
+  hosts: k3s_cluster
+  remote_user: kalmyk
+  become: true
+  vars:
+    tailscale_authkey: "{{ lookup('env', 'TAILSCALE_AUTHKEY') | default('', true) }}"
+    tailscale_advertised_routes: "{{ lookup('env', 'TAILSCALE_ROUTES') | default('10.244.0.0/16,10.96.0.0/12', true) }}"
+    tailscale_advertise_tags: "{{ lookup('env', 'TAILSCALE_TAGS') | default('tag:kube-node', true) }}"
+  tasks:
+    - name: Fail if TAILSCALE_AUTHKEY is not set
+      ansible.builtin.fail:
+        msg: 'TAILSCALE_AUTHKEY is required to authorize Tailscale on nodes.'
+      when: tailscale_authkey == ''
+
+    - name: Ensure tailscaled service is enabled and started
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        enabled: yes
+
+    - name: Ensure kernel forwarding for Tailscale subnet routing
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-tailscale-k8s.conf
+        content: |
+          net.ipv4.ip_forward = 1
+          net.ipv6.conf.all.forwarding = 1
+          net.bridge.bridge-nf-call-iptables = 1
+        owner: root
+        group: root
+        mode: '0644'
+      register: tailscale_sysctl
+
+    - name: Reload sysctl when forwarding settings change
+      ansible.builtin.command: sysctl --system
+      when: tailscale_sysctl.changed
+      changed_when: false
+
+    - name: Read current Tailscale status
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_status
+      changed_when: false
+      failed_when: false
+
+    - name: Parse Tailscale status JSON
+      ansible.builtin.set_fact:
+        tailscale_status_json: '{{ tailscale_status.stdout | from_json }}'
+      when: tailscale_status.rc == 0
+
+    - name: Parse Tailscale backend state
+      ansible.builtin.set_fact:
+        tailscale_backend_state: "{{ tailscale_status_json.BackendState | default('Unknown', true) }}"
+      when: tailscale_status.rc == 0
+
+    - name: Capture current Tailscale hostname and tags
+      ansible.builtin.set_fact:
+        tailscale_current_hostname: "{{ tailscale_status_json.Self.HostName | default('', true) }}"
+        tailscale_current_tags: '{{ tailscale_status_json.Self.Tags | default([], true) }}'
+      when: tailscale_status.rc == 0
+
+    - name: Normalize desired tags
+      ansible.builtin.set_fact:
+        tailscale_desired_tags: "{{ tailscale_advertise_tags.split(',') | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Determine whether Tailscale preferences need update
+      ansible.builtin.set_fact:
+        tailscale_needs_up: >-
+          {{ (tailscale_backend_state | default('Unknown')) != 'Running'
+             or (tailscale_current_hostname | default('')) != inventory_hostname
+             or (tailscale_desired_tags | difference(tailscale_current_tags | default([])) | length > 0)
+             or ((tailscale_current_tags | default([])) | difference(tailscale_desired_tags) | length > 0) }}
+
+    - name: Logout when Tailscale is not running
+      ansible.builtin.command: tailscale logout
+      changed_when: false
+      failed_when: false
+      when: (tailscale_backend_state | default('Unknown')) != 'Running'
+
+    - name: Bring Tailscale up with subnet routing (auth key)
+      ansible.builtin.command: >-
+        tailscale up
+        --reset
+        --authkey={{ tailscale_authkey }}
+        --accept-routes=false
+        --advertise-routes={{ tailscale_advertised_routes }}
+        --advertise-tags={{ tailscale_advertise_tags }}
+        --hostname={{ inventory_hostname }}
+      register: tailscale_up
+      no_log: true
+      changed_when: false
+      failed_when: false
+      when: (tailscale_backend_state | default('Unknown')) != 'Running'
+
+    - name: Ensure Tailscale tags/hostname/route settings are applied
+      ansible.builtin.command: >-
+        tailscale up
+        --accept-routes=false
+        --advertise-routes={{ tailscale_advertised_routes }}
+        --advertise-tags={{ tailscale_advertise_tags }}
+        --hostname={{ inventory_hostname }}
+      register: tailscale_up_adjust
+      no_log: true
+      changed_when: false
+      failed_when: false
+      when:
+        - (tailscale_backend_state | default('Unknown')) == 'Running'
+        - tailscale_needs_up | default(true)
+
+    - name: Read Tailscale status after login
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_status_after
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if Tailscale is not running after login
+      ansible.builtin.fail:
+        msg: 'Tailscale failed to reach Running state on {{ inventory_hostname }}.'
+      when: (tailscale_status_after.stdout | from_json).BackendState | default('Unknown', true) != 'Running'
+
+    - name: Ensure Tailscale keeps advertising cluster routes
+      ansible.builtin.command: >-
+        tailscale set
+        --accept-routes=false
+        --advertise-routes={{ tailscale_advertised_routes }}
+      register: tailscale_set
+      changed_when: false

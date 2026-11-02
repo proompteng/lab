@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: reviseur
+commonLabels:
+  app: reviseur
+  app.kubernetes.io/name: reviseur
+  app.kubernetes.io/part-of: reviseur
+resources:
+  - deployment.yaml
+  - service.yaml

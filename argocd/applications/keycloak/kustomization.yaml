@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keycloak
+resources:
+  - postgres-upgrade-backup.yaml
+  - server-upgrade-backup.yaml
+  - agents-shell-client-bootstrap-job.yaml
+  - agents-shell-client-sealedsecret.yaml
+  - agents-shell-user-sealedsecret.yaml
+  - headlamp-client-bootstrap-job.yaml
+  - headlamp-client-sealedsecret.yaml
+  - ingressroute.yaml
+  - keycloak-admin-sealedsecret.yaml
+  - keycloak.yaml
+  - postgres-cluster.yaml
+  - postgres-backups.yaml
+  - database-backup-sealedsecret.yaml
+  - certificate.yaml
+  - network-policy.yaml
+  - pod-disruption-budget.yaml
+  - tengri
+configMapGenerator:
+  - name: keycloak-tengri-login-theme
+    files:
+      - theme.properties=tengri/theme/login/theme.properties
+      - webauthnRegister.js=tengri/theme/login/resources/js/webauthnRegister.js
+      - webauthnAuthenticate.js=tengri/theme/login/resources/js/webauthnAuthenticate.js
+      - webauthn-authenticate.ftl=tengri/theme/login/webauthn-authenticate.ftl
+      - template.ftl=tengri/theme/login/template.ftl
+      - tengri.css=tengri/theme/login/resources/css/tengri.css
+      - messages_en.properties=tengri/theme/login/messages/messages_en.properties
+      - fruit-pear.svg=tengri/theme/login/resources/img/fruit-pear.svg
+      - wallpaper.webp=tengri/theme/login/resources/img/wallpaper.webp
+      - GeistSans.woff2=tengri/theme/login/resources/fonts/GeistSans.woff2
+      - OFL.txt=tengri/theme/login/resources/fonts/OFL.txt
+      - pictogrammers-LICENSE.txt=tengri/theme/login/resources/img/pictogrammers-LICENSE.txt

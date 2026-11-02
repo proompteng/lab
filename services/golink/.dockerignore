@@ -1,0 +1,7 @@
+node_modules
+bun.lockb
+.git
+src/db/migrations/meta
+.vscode
+.cta.json
+.DS_Store
