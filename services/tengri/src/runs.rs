@@ -356,6 +356,7 @@ pub(crate) async fn read(
 pub(crate) async fn active(
     service: &ControlPlane,
     principal: &Principal,
+    thread_id: &str,
 ) -> Result<Vec<Snapshot>, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
@@ -364,6 +365,9 @@ pub(crate) async fn active(
             claims
                 .iter()
                 .filter(|claim| claim.owner_hash == principal.owner_hash)
+                // Scope before reading snapshots: an unavailable conversation must not
+                // prevent observing another. A failed selected read still fails closed.
+                .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
                 .map(|claim| read(service, principal, &claim.run_id, None)),
         )
         .await

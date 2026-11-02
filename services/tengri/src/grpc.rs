@@ -48,8 +48,8 @@ use proto::{
     CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
     CodexModels, CodexRun, CodexRuns, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
     CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest,
-    Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest, GetCodexAccountRequest,
-    GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
+    Empty, FileEntry, FileEvent, FileEventKind, GetActiveCodexRunsRequest, GetAgentRequest,
+    GetCodexAccountRequest, GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
     IssueDesktopSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
     ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListCodexThreadsRequest,
     ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
@@ -1102,13 +1102,13 @@ impl MicroVmControlPlane for ControlPlane {
 
     async fn get_active_codex_runs(
         &self,
-        request: Request<GetAgentRequest>,
+        request: Request<GetActiveCodexRunsRequest>,
     ) -> Result<Response<CodexRuns>, Status> {
         let principal = self.authorize(&request, "GetActiveCodexRuns").await?;
         let request = request.into_inner();
         self.agent_access(&principal, &request.id, "").await?;
         let mut runs = Vec::new();
-        for snapshot in crate::runs::active(self, &principal).await? {
+        for snapshot in crate::runs::active(self, &principal, &request.thread_id).await? {
             if snapshot.agent_id != request.id {
                 return Err(Status::permission_denied("run unavailable"));
             }

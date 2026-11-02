@@ -169,11 +169,156 @@ async fn status_reads_accept_delayed_authorized_responses() {
 #[ignore = "child process for the isolated status response deadline test"]
 async fn delayed_status_read_child() {
     let service = fixture();
-    assert!(active(&service, &principal()).await.unwrap().is_empty());
+    assert!(active(&service, &principal(), "").await.unwrap().is_empty());
     let id = Uuid::new_v4().to_string();
     let snapshot = read(&service, &principal(), &id, None).await.unwrap();
     assert_eq!(snapshot.run_id, id);
     assert!(matches!(snapshot.state, State::Succeeded { .. }));
+}
+
+#[test]
+fn active_run_request_preserves_existing_wire_shape_without_a_filter() {
+    use prost::Message;
+    let previous = crate::grpc::proto::GetAgentRequest {
+        id: "agent-current".into(),
+    }
+    .encode_to_vec();
+    let request =
+        crate::grpc::proto::GetActiveCodexRunsRequest::decode(previous.as_slice()).unwrap();
+    assert_eq!(request.id, "agent-current");
+    assert!(request.thread_id.is_empty());
+    assert_eq!(request.encode_to_vec(), previous);
+}
+
+#[tokio::test]
+async fn active_recovery_isolates_conversations_without_hiding_selected_failures() {
+    let service = Arc::new(fixture());
+    let router = axum::Router::new().route(
+        "/restate/call/{service}/{key}/{handler}",
+        axum::routing::post({
+            move |axum::extract::Path((_, key, handler)): axum::extract::Path<(
+                String,
+                String,
+                String,
+            )>,
+                  axum::Json(envelope): axum::Json<Envelope>| {
+                let service = service.clone();
+                async move {
+                    let domain = if handler == "active" {
+                        "active-query"
+                    } else {
+                        "query"
+                    };
+                    let query: Query = open(&service, domain, &envelope).await.unwrap();
+                    let (status, value) = if handler == "active" {
+                        (
+                            200,
+                            serde_json::json!([
+                                Claim {
+                                    workspace_uid: query.workspace_uid.clone(),
+                                    owner_hash: query.owner_hash.clone(),
+                                    thread_id: "thread-working".into(),
+                                    run_id: "run-working".into(),
+                                },
+                                Claim {
+                                    workspace_uid: query.workspace_uid.clone(),
+                                    owner_hash: query.owner_hash.clone(),
+                                    thread_id: "thread-unavailable".into(),
+                                    run_id: "run-unavailable".into(),
+                                },
+                                Claim {
+                                    workspace_uid: query.workspace_uid.clone(),
+                                    owner_hash: "b".repeat(64),
+                                    thread_id: "thread-working".into(),
+                                    run_id: "foreign-run".into(),
+                                },
+                            ]),
+                        )
+                    } else if key == "run-working" {
+                        (
+                            200,
+                            serde_json::to_value(Snapshot {
+                                run_id: key,
+                                agent_id: "agent-current".into(),
+                                thread_id: "thread-working".into(),
+                                owner_hash: query.owner_hash,
+                                workspace_uid: query.workspace_uid,
+                                digest: "fixture".into(),
+                                state: State::Running {
+                                    turn_id: "turn-working".into(),
+                                },
+                            })
+                            .unwrap(),
+                        )
+                    } else {
+                        assert_eq!(key, "run-unavailable", "foreign runs must not be read");
+                        (
+                            404,
+                            serde_json::json!({"code":404,"message":"snapshot unavailable"}),
+                        )
+                    };
+                    (
+                        http::StatusCode::from_u16(status).unwrap(),
+                        [("x-restate-id", "inv_scoped-read")],
+                        axum::Json(value),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::process::Command::new(std::env::current_exe().unwrap())
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "runs::tests::scoped_status_read_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("TENGRI_RESTATE_INGRESS", format!("http://{address}"))
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "child process for isolated conversation status reads"]
+async fn scoped_status_read_child() {
+    let service = fixture();
+    let principal = principal();
+    let snapshots = active(&service, &principal, "thread-working").await.unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].run_id, "run-working");
+    assert!(matches!(snapshots[0].state, State::Running { .. }));
+    assert!(
+        active(&service, &principal, "thread-with-no-claim")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for thread_id in ["thread-unavailable", ""] {
+        assert_eq!(
+            active(&service, &principal, thread_id)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound,
+            "an unreadable claimed run must not become an empty active list"
+        );
+    }
 }
 
 #[tokio::test]
@@ -305,7 +450,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
 #[ignore = "child process for isolated read recovery tests"]
 async fn recovering_status_read_child() {
     let service = fixture();
-    let mut snapshots = active(&service, &principal()).await.unwrap();
+    let mut snapshots = active(&service, &principal(), "").await.unwrap();
     assert_eq!(snapshots.len(), 1, "foreign runs must not poison recovery");
     let snapshot = snapshots.remove(0);
     assert!(
