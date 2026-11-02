@@ -129,7 +129,7 @@ spec:
               readOnly: true
             - mountPath: /tmp
               name: tmp
-            - mountPath: /app/apps/landing/.next/cache
+            - mountPath: /var/cache/proompteng
               name: next-cache
             - mountPath: /var/run/secrets/tengri-bff
               name: tengri-bff

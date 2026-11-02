@@ -89,6 +89,8 @@ sum_existing_image_archive_bytes() {
 
 attic_substitutions="$(count_matches "copying path .*from 'http://attic\\.attic\\.svc\\.cluster\\.local/lab'")"
 nixos_substitutions="$(count_matches "copying path .*from 'https://cache\\.nixos\\.org'")"
+attic_download_failures="$(count_matches "error: unable to download '(http://attic\\.attic\\.svc\\.cluster\\.local|https://attic\\.ide-newton\\.ts\\.net)/")"
+nixos_download_failures="$(count_matches "error: unable to download 'https://cache\\.nixos\\.org/")"
 local_builds="$(count_matches "building '/nix/store/.*\\.drv'")"
 planned_build_blocks="$(count_matches 'this derivation will be built:|these [0-9]+ derivations will be built:')"
 timed_phases="$(count_timed_phases)"
@@ -118,8 +120,10 @@ image_cache_warm_failures="$(count_image_cache_status failed)"
   echo "| Cache substitutions | ${cache_substitutions} |"
   echo "| Existing image archives | ${image_archives} |"
   echo "| Existing image archive bytes | ${image_archive_bytes} |"
-  echo "| Image archive Attic warm successes | ${image_cache_warm_successes} |"
-  echo "| Image archive Attic warm failures | ${image_cache_warm_failures} |"
+  echo "| Attic upload successes | ${image_cache_warm_successes} |"
+  echo "| Attic upload failures | ${image_cache_warm_failures} |"
+  echo "| Attic download failures | ${attic_download_failures} |"
+  echo "| cache.nixos.org download failures | ${nixos_download_failures} |"
   echo
 
   if [[ -f "${timings_file}" ]]; then

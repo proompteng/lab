@@ -7,6 +7,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { accessActionName } from '@/lib/platform/access-requests'
 import { policyReasonSchema } from '@/lib/platform/policies'
+import { connectionResourceDisplay } from '@/lib/platform/resource-display'
 import {
   PlatformAccessRequestState,
   type ListPlatformConnectionsResponse,
@@ -32,6 +33,7 @@ function RequestCard({
   disabled: boolean
 }) {
   const id = useId()
+  const resourceDisplay = connectionResourceDisplay(scope.resourceName, scope.resource?.kind)
   const [editing, setEditing] = useState(false)
   const available = snapshot.availableScopes.find((entry) => key(entry) === key(scope))
   const missing = scope.actions.filter((action) => !available?.actions.includes(action))
@@ -60,7 +62,7 @@ function RequestCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-medium">
-            {scope.resourceName}
+            {resourceDisplay.name}
             {pending ? (
               <Badge variant="secondary" className="ml-2">
                 Pending approval
@@ -68,6 +70,7 @@ function RequestCard({
             ) : null}
           </p>
           <p className="text-xs text-zinc-400">{scope.workspaceName}</p>
+          {resourceDisplay.detail ? <p className="text-xs text-zinc-400">{resourceDisplay.detail}</p> : null}
           <p className="text-sm text-zinc-400">
             {(pending?.scope?.actions || missing).map(accessActionName).join(' · ')}
           </p>

@@ -848,6 +848,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         const existing = [...runs.values()].filter(
           (run) =>
             run.agentId === action.agentId &&
+            (!action.threadId || run.threadId === action.threadId) &&
             !['succeeded', 'failed', 'cancelled', 'rejected'].includes(String(run.state.phase)),
         )
         if (existing.length) {
@@ -4596,9 +4597,10 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
     })
   }
 
-  await expect(page.getByText(promptText, { exact: true })).toHaveCount(1)
-  await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
-  await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
+  const transcript = page.getByRole('log', { name: 'Conversation', exact: true })
+  await expect(transcript.getByText(promptText, { exact: true })).toHaveCount(1)
+  await expect(transcript.getByText(progressText, { exact: true })).toHaveCount(1)
+  await expect(transcript.getByText(finalText, { exact: true })).toHaveCount(1)
   await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Weekly 90% left · Credits: 62,307', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(0)
@@ -4862,6 +4864,18 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
     )
     expect(narrowResponseBounds.x).toBeCloseTo(narrowConversationBounds.x, 0)
   }).toPass({ timeout: 10_000 })
+  const conversationScroll = tengri.getByTestId('agent-conversation-scroll')
+  // Approval controls and resizing can preserve a different reading position.
+  // Compare the same transcript viewport without changing its layout or tolerance.
+  await conversationScroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect
+    .poll(() =>
+      conversationScroll.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
+    )
+    .toBeLessThan(2)
+  await expect(tengri.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0)
   await page.mouse.move(0, 0)
   await expect.soft(tengri).toHaveScreenshot('tengri-compact-chat-narrow.png')
 })
@@ -7885,6 +7899,7 @@ test('uses consistent fonts and body typography in chat, portal menus, diagrams,
 })
 
 test('keeps opened tool output stable during streaming and renders copyable structured responses', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
   await mockTengri(page, {
     threadStore: {
       threads: [{ id: 'thread-1', title: 'Inspect the project and run its checks.', updatedAt: 1, archived: false }],
@@ -9098,7 +9113,7 @@ test('ignores invalid persisted resources without reading their paths', async ({
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
   await expect(chat.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeEnabled()
-  await expect(chat.getByRole('tab')).toHaveText(['Chat'])
+  await expect(chat.getByRole('tab')).toHaveText(['Chat', 'Results'])
   await expect(chat.getByRole('navigation', { name: 'Pinned resources', exact: true })).toHaveCount(0)
   expect(mock.actions.filter((action) => action.action === 'read-file')).toHaveLength(0)
 })
@@ -9172,7 +9187,7 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   )
   expect(reads.get('/workspace/README.md')).toBe(1)
   await expect.poll(() => reads.get('/workspace/notes.md')).toBe(1)
-  await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
+  await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'Results · 3', 'README.md', 'notes.md'])
   const tabs = tengri.getByRole('tablist', { name: 'Agent views' })
   const tabWidths = await tabs
     .getByRole('tab')
@@ -10148,7 +10163,7 @@ for (const phase of ['succeeded', 'failed', 'cancelled', 'rejected'] as const) {
     }
     await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
     await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
-    if ('reason' in terminal.state) await expect(chat.getByText(terminal.state.reason, { exact: true })).toBeVisible()
+    if ('reason' in terminal.state) await expect(chat.getByRole('alert')).toContainText(terminal.state.reason)
     await chat.getByRole('textbox', { name: 'Message your agent' }).fill('A next task')
     await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
     expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
@@ -10189,7 +10204,8 @@ test('clears an individual recovery error after both status endpoints recover', 
   expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
 })
 
-test('lets a slow final status complete while another conversation keeps polling', async ({ page }) => {
+test('lets a slow final status complete without polling unrelated conversations', async ({ page }) => {
+  await page.clock.install()
   const run: TengriCodexRun = {
     runId: '77777777-7777-4777-8777-777777777777',
     agentId: 'microvm-ada',
@@ -10230,7 +10246,8 @@ test('lets a slow final status complete while another conversation keeps polling
   completed = true
   await expect.poll(() => finalRequests, { timeout: 10_000 }).toBe(1)
   const readsAtRequest = workspaceReads
-  await expect.poll(() => workspaceReads, { timeout: 12_000 }).toBeGreaterThan(readsAtRequest + 2)
+  await page.clock.runFor(6_100)
+  expect(workspaceReads).toBe(readsAtRequest)
   expect(finalRequests).toBe(1)
   releaseFinal()
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
@@ -10352,7 +10369,7 @@ for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
   })
 }
 
-test('shows concise response activity instead of internal run reasons', async ({ page }) => {
+test('shows concise response activity and keeps detailed waiting reasons collapsed', async ({ page }) => {
   const run: TengriCodexRun = {
     runId: '44444444-4444-4444-8444-444444444444',
     agentId: 'microvm-ada',
@@ -10370,10 +10387,14 @@ test('shows concise response activity instead of internal run reasons', async ({
   await expect(chat.getByText('Run accepted. Waiting for the agent.', { exact: true })).toHaveCount(0)
   run.state = { phase: 'waiting_for_guest', reason: 'waiting to protect the active run from automatic sleep' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Connecting')
-  await expect(chat.getByText(run.state.reason, { exact: true })).toHaveCount(0)
+  await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
+  const status = chat.getByRole('region', { name: 'Task status', exact: true })
+  await expect(status).toContainText('Preparing workspace')
   run.state = { phase: 'recovering', turnId: 'turn-current', reason: 'waiting for the authorized guest' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Reconnecting')
-  await expect(chat.getByText(run.state.reason, { exact: true })).toHaveCount(0)
+  await expect(chat.getByText(run.state.reason, { exact: true })).not.toBeVisible()
+  await status.getByText('Details', { exact: true }).click()
+  await expect(status.getByText(run.state.reason, { exact: true })).toBeVisible()
   run.state = { phase: 'cancelling', turnId: 'turn-current', reason: 'waiting for command cleanup receipt' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Stopping')
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
@@ -10420,7 +10441,7 @@ for (const phase of ['accepted', 'waiting_for_guest'] as const) {
     await expect.poll(() => workspaceReadsAfterSend).toBeGreaterThan(1)
     expect(run).toBeDefined()
     run!.state = { phase: 'rejected', reason: 'Guest unavailable' }
-    await expect(chat.getByText('Guest unavailable', { exact: true })).toBeVisible()
+    await expect(chat.getByRole('alert')).toContainText('Guest unavailable')
     await prompt.fill('A next message')
     await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
     expect(sends).toBe(1)
@@ -11877,3 +11898,483 @@ for (const { outcome, repair } of [
     await settings.screenshot({ path: test.info().outputPath('provider-return-phone-' + outcome + '.png') })
   })
 }
+
+test('switches Chat + work panes without reloading unsaved editor or browser state', async ({ page }) => {
+  await mockTengri(page)
+  const sessions = [
+    { action: 'browser-session', id: '8'.repeat(24), channel: 'tengri-browser-v1', label: 'Browser draft' },
+    { action: 'editor-session', id: '9'.repeat(24), channel: 'tengri-vscode-v1', label: 'Unsaved code' },
+  ]
+  const creations = new Map<string, number>()
+  const launchOrigins = Object.fromEntries(
+    sessions.map((session, index) => [previewTicket(index + 100), `https://tengri-${session.id}.proompteng.ai`]),
+  )
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    const index = sessions.findIndex((session) => session.action === action.action)
+    if (index < 0) return route.fallback()
+    const session = sessions[index]!
+    creations.set(session.action, (creations.get(session.action) ?? 0) + 1)
+    await route.fulfill({
+      json: {
+        result: {
+          id: session.id,
+          launchUrl: `https://tengri.proompteng.ai/v1/preview/open#${previewTicket(index + 100)}`,
+          previewOrigin: `https://tengri-${session.id}.proompteng.ai`,
+          expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+        },
+      },
+    })
+  })
+  await page.route('https://tengri.proompteng.ai/v1/preview/open**', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: `<script>location.replace(${JSON.stringify(launchOrigins)}[location.hash.slice(1)])</script>`,
+    }),
+  )
+  for (const session of sessions) {
+    await page.route(`https://tengri-${session.id}.proompteng.ai/**`, (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: `<!doctype html><label>${session.label}<input></label><script>
+          const input = document.querySelector('input');
+          const send = () => parent.postMessage({channel:'${session.channel}', sessionId:'${session.id}', type:'${session.action === 'editor-session' ? 'state' : 'ready'}', dirty:input.value.length > 0}, ${JSON.stringify(desktopOrigin)});
+          input.oninput = send;
+          addEventListener('message', send);
+          parent.postMessage({channel:'tengri-preview-lease-v1', sessionId:'${session.id}', type:'renewed', nonce:'', leaseId:'88888888-8888-4888-8888-888888888888', expiresInMs:1800000}, ${JSON.stringify(desktopOrigin)});
+          send();
+        </script>`,
+      }),
+    )
+  }
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  const chrome = page.getByRole('region', { name: 'Chrome window', exact: true })
+  const browserDraft = chrome.frameLocator('iframe[title="Chrome browser"]').getByLabel('Browser draft')
+  await browserDraft.fill('Keep the current page')
+  const originalBounds = await chrome.boundingBox()
+  await page.getByRole('button', { name: 'Chat + work', exact: true }).click()
+  const toolbar = page.getByRole('toolbar', { name: 'Chat and work layout' })
+  await expect(toolbar).toBeVisible()
+  const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
+  await expect(chat).toBeVisible()
+  const left = await chat.boundingBox()
+  const right = await chrome.boundingBox()
+  expect(left!.x + left!.width).toBeLessThan(right!.x)
+  await toolbar.getByRole('button', { name: 'Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window', exact: true })
+  const codeDraft = code.frameLocator('iframe[title="VS Code workbench"]').getByLabel('Unsaved code')
+  await codeDraft.fill('Unsaved work survives layout changes')
+  await expect(code.getByRole('button', { name: 'Open Tengri chat' })).toBeVisible()
+  await toolbar.getByRole('button', { name: 'Files', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Finder window', exact: true })).toBeVisible()
+  await toolbar.getByRole('button', { name: 'Code', exact: true }).click()
+  await expect(codeDraft).toHaveValue('Unsaved work survives layout changes')
+  await toolbar.getByRole('button', { name: 'Browser', exact: true }).click()
+  await expect(browserDraft).toHaveValue('Keep the current page')
+  await toolbar.getByRole('button', { name: 'Back to desktop', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(toolbar).not.toBeVisible()
+  await expect
+    .poll(() =>
+      chrome.evaluate((element) => element === document.activeElement || element.contains(document.activeElement)),
+    )
+    .toBe(true)
+  expect(await chrome.boundingBox()).toEqual(originalBounds)
+  await chrome.getByRole('button', { name: 'Maximize Chrome', exact: true }).click()
+  const maximizedBounds = await chrome.boundingBox()
+  for (const control of ['button', 'title', 'menu', 'shortcut']) {
+    await page.getByRole('button', { name: 'Chat + work', exact: true }).click()
+    await expect(toolbar).toBeVisible()
+    await expect(chrome.getByRole('button', { name: 'Maximize Chrome', exact: true })).toBeVisible()
+    if (control === 'button') await chrome.getByRole('button', { name: 'Maximize Chrome', exact: true }).click()
+    else if (control === 'title') await chrome.locator('header[data-window-drag-region]').dblclick()
+    else if (control === 'menu') {
+      await page.getByRole('menuitem', { name: 'View', exact: true }).click()
+      await page.getByRole('menuitem', { name: /^Fill Window/ }).click()
+    } else {
+      await chrome.focus()
+      await page.keyboard.press('Control+Meta+f')
+    }
+    await expect(toolbar).not.toBeVisible()
+    await expect(chrome.locator('..')).toHaveAttribute('data-window-mode', 'maximized')
+    expect(await chrome.boundingBox()).toEqual(maximizedBounds)
+  }
+  await chrome.getByRole('button', { name: 'Restore Chrome', exact: true }).click()
+  expect(await chrome.boundingBox()).toEqual(originalBounds)
+  expect(creations.get('browser-session')).toBe(1)
+  expect(creations.get('editor-session')).toBe(1)
+})
+
+test('scopes recovery to the selected conversation and permits independent new work during another outage', async ({
+  page,
+}) => {
+  const mock = await mockTengri(page, {
+    threadStore: {
+      threads: [
+        { id: 'thread-unavailable', title: 'Unavailable task', updatedAt: 2, archived: false },
+        { id: 'thread-ready', title: 'Ready conversation', updatedAt: 1, archived: false },
+      ],
+    },
+  })
+  const recoveryThreads: string[] = []
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'active-codex-runs') return route.fallback()
+    recoveryThreads.push(action.threadId || '')
+    if (action.threadId === 'thread-unavailable')
+      return route.fulfill({ status: 503, json: { error: 'Selected task status is unavailable' } })
+    return route.fallback()
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-unavailable'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const sidebar = chat.getByTestId('agent-conversation-sidebar')
+  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(chat.getByRole('region', { name: 'Task status', exact: true })).toContainText('Status unavailable')
+  await composer.fill('Keep this unavailable conversation draft')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
+  await sidebar.locator('[data-conversation-id="thread-ready"]').click()
+  await composer.fill('Safe selected conversation draft')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect.poll(() => recoveryThreads.includes('thread-ready')).toBe(true)
+  expect(recoveryThreads).not.toContain('')
+  await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+  await composer.fill('Read the workspace in a fresh conversation')
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      threadId: 'thread-1',
+      text: 'Read the workspace in a fresh conversation',
+    })
+  await expect(chat.getByRole('region', { name: 'Task status', exact: true })).toContainText('Since submitted:')
+  expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
+})
+
+test('keeps known Stop usable during observation loss and allows renewed Stop while cancelling', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '99999999-9999-4999-8999-999999999999',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  let unavailable = false
+  let failedLists = 0
+  let failedStatuses = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (unavailable && ['active-codex-runs', 'codex-run'].includes(action.action)) {
+      if (action.action === 'active-codex-runs') failedLists += 1
+      else failedStatuses += 1
+      return route.fulfill({ status: 503, json: { error: 'Observation is temporarily unavailable' } })
+    }
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const status = chat.getByRole('region', { name: 'Task status', exact: true })
+  await expect(status.getByRole('button', { name: 'Stop task', exact: true })).toBeEnabled()
+  await expect(status).toContainText('Last checked')
+  await expect(status).not.toContainText('Since submitted')
+  await expect(status).not.toContainText('Last update received')
+  unavailable = true
+  await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(0)
+  await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(0)
+  await expect(status).toContainText('Status unavailable')
+  await expect(status).toContainText('Existing work may still be running')
+  await expect(status.getByRole('button', { name: 'Retry status', exact: true })).toBeEnabled()
+  const lastChecked = await status.locator('time').getAttribute('datetime')
+  const failedListBaseline = failedLists
+  const failedStatusBaseline = failedStatuses
+  await status.getByRole('button', { name: 'Retry status', exact: true }).click()
+  await expect.poll(() => failedLists, { timeout: 10_000 }).toBeGreaterThan(failedListBaseline)
+  await expect.poll(() => failedStatuses, { timeout: 10_000 }).toBeGreaterThan(failedStatusBaseline)
+  await expect(status.locator('time')).toHaveAttribute('datetime', lastChecked!)
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await status.getByRole('button', { name: 'Stop task', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(1)
+  expect(mock.actions.find((action) => action.action === 'interrupt-turn')?.runId).toBe(run.runId)
+  unavailable = false
+  run.state = { phase: 'cancelling', turnId: 'turn-recovered', reason: 'waiting for command cleanup receipt' }
+  await expect(status).toContainText('Stop requested', { timeout: 10_000 })
+  await expect(status).toContainText('commands')
+  await status.getByRole('button', { name: 'Retry stop', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'interrupt-turn').length).toBe(2)
+  const stops = mock.actions.filter((action) => action.action === 'interrupt-turn')
+  expect(stops[1]?.operationId).not.toBe(stops[0]?.operationId)
+  await emitCodexEvent(page, {
+    sequence: 51,
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    threadId: run.threadId,
+    turnId: 'turn-recovered',
+    itemId: 'last-confirmed-update',
+    approvalId: '',
+    rawJson: '{}',
+    text: 'Acknowledged the stop request.',
+  } satisfies TengriCodexEvent)
+  await expect(status).toContainText('Last update received')
+  await expect(status).not.toContainText('Since submitted')
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
+test('opens recorded Results in existing file previews and preserves the conversation draft', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'finished-turn',
+            status: 'completed',
+            items: [
+              {
+                id: 'request',
+                type: 'userMessage',
+                content: [{ type: 'text', text: 'Create /workspace/not-produced.md' }],
+              },
+              {
+                id: 'answer',
+                type: 'agentMessage',
+                text: '[Workspace report](/workspace/README.md) and [Review change](https://github.com/proompteng/lab/pull/123)',
+              },
+              {
+                id: 'change',
+                type: 'fileChange',
+                changes: [
+                  { path: 'src/main.ts', diff: '--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-results'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(composer).toBeEnabled()
+  await composer.fill('Keep the next question unsent')
+  await chat.getByRole('tab', { name: 'Results · 3', exact: true }).click()
+  const results = chat.getByRole('region', { name: 'Conversation results', exact: true })
+  await expect(results).toBeVisible()
+  await expect(results).not.toContainText('not-produced.md')
+  await expect(results.getByRole('link', { name: 'Review change', exact: true })).toHaveAttribute(
+    'href',
+    'https://github.com/proompteng/lab/pull/123',
+  )
+  await results.getByRole('article', { name: 'Codex changes', exact: true }).locator('summary').click()
+  await expect(results.getByRole('article', { name: 'Codex changes', exact: true })).toContainText('+new')
+  await results.getByRole('button', { name: 'Pin /workspace/README.md', exact: true }).click()
+  await expect(chat.getByRole('navigation', { name: 'Pinned resources', exact: true })).toContainText('README.md')
+  await results.getByRole('button', { name: 'Workspace report', exact: true }).click()
+  await expect(chat.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(chat.getByRole('region', { name: 'File preview' })).toContainText('persistent')
+  await chat.getByRole('button', { name: 'Close /workspace/README.md', exact: true }).click()
+  await expect(chat.getByRole('tab', { name: 'Results · 3', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await chat.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await expect(composer).toHaveValue('Keep the next question unsent')
+  expect(mock.actions.filter((action) => action.action === 'read-file').map((action) => action.path)).toEqual([
+    '/workspace/README.md',
+  ])
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
+test('does not let late initial run discovery steal a directly submitted new conversation', async ({ page }) => {
+  const existing: TengriCodexRun = {
+    runId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    agentId: 'microvm-ada',
+    threadId: 'thread-existing',
+    state: { phase: 'running', turnId: 'turn-existing' },
+  }
+  const mock = await mockTengri(page, {
+    threadStore: { threads: [{ id: existing.threadId, title: 'Existing task', updatedAt: 1, archived: false }] },
+  })
+  let releaseDiscovery = () => {}
+  let releaseCreation = () => {}
+  const discovery = new Promise<void>((resolve) => {
+    releaseDiscovery = resolve
+  })
+  const creation = new Promise<void>((resolve) => {
+    releaseCreation = resolve
+  })
+  let discovering = false
+  let creating = false
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action === 'active-codex-runs' && !action.threadId) {
+      discovering = true
+      await discovery
+      return route.fulfill({ json: { result: [existing] } })
+    }
+    if (action.action === 'create-thread') {
+      creating = true
+      await creation
+    }
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  try {
+    await expect.poll(() => discovering).toBe(true)
+    await chat.getByRole('textbox', { name: 'Message your agent', exact: true }).fill('A separate new task')
+    await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+    await expect.poll(() => creating).toBe(true)
+    const recovered = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/tengri') &&
+        response.request().method() === 'POST' &&
+        response.request().postDataJSON().action === 'active-codex-runs' &&
+        !response.request().postDataJSON().threadId,
+    )
+    releaseDiscovery()
+    await (await recovered).finished()
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    )
+  } finally {
+    releaseDiscovery()
+    releaseCreation()
+  }
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      threadId: 'thread-1',
+      text: 'A separate new task',
+    })
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-1')
+  await expect(chat.locator('[data-conversation-id="thread-1"]')).toHaveAttribute('aria-current', 'true')
+  await expect(chat.locator('[data-conversation-id="thread-existing"]')).not.toHaveAttribute('aria-current', 'true')
+})
+
+test('reconciles a finished background run without coupling its failures to the selected conversation', async ({
+  page,
+}) => {
+  const background: TengriCodexRun = {
+    runId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    agentId: 'microvm-ada',
+    threadId: 'thread-alpha',
+    state: { phase: 'running', turnId: 'turn-alpha' },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: background,
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+  })
+  let observingBackground = false
+  let outcome: 'unavailable' | 'mismatched' | 'terminal' = 'unavailable'
+  let failedReads = 0
+  let mismatchedReads = 0
+  let terminalReads = 0
+  let selectedReads = 0
+  let releaseTerminal = () => {}
+  const terminalResponse = new Promise<void>((resolve) => {
+    releaseTerminal = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action === 'active-codex-runs' && action.threadId === 'thread-beta') selectedReads += 1
+    if (!observingBackground || action.action !== 'codex-run' || action.runId !== background.runId)
+      return route.fallback()
+    if (outcome === 'unavailable') {
+      failedReads += 1
+      return route.fulfill({ status: 503, json: { error: 'Background status is unavailable' } })
+    }
+    if (outcome === 'mismatched') {
+      mismatchedReads += 1
+      return route.fulfill({
+        json: {
+          result: {
+            ...background,
+            threadId: 'thread-beta',
+            state: { phase: 'succeeded', turnId: 'turn-alpha' },
+          },
+        },
+      })
+    }
+    terminalReads += 1
+    await terminalResponse
+    return route.fulfill({ json: { result: background } })
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const sidebar = chat.getByTestId('agent-conversation-sidebar')
+  const archiveAlpha = sidebar.getByRole('button', { name: 'Archive Alpha', exact: true })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  observingBackground = true
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('Read the Beta workspace')
+  await expect.poll(() => failedReads).toBeGreaterThan(0)
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
+  await sidebar.getByRole('button', { name: 'Alpha', exact: true }).hover()
+  await expect(archiveAlpha).toBeDisabled()
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      threadId: 'thread-beta',
+      text: 'Read the Beta workspace',
+    })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await composer.fill('Keep the selected conversation draft')
+  const mismatchedResponse = page.waitForResponse(
+    async (response) =>
+      response.status() === 200 &&
+      response.url().endsWith('/api/tengri') &&
+      response.request().method() === 'POST' &&
+      response.request().postDataJSON().action === 'codex-run' &&
+      response.request().postDataJSON().runId === background.runId &&
+      (await response.json()).result?.threadId === 'thread-beta',
+  )
+  outcome = 'mismatched'
+  await expect.poll(() => mismatchedReads).toBe(1)
+  await (await mismatchedResponse).finished()
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  )
+  await expect(archiveAlpha).toBeDisabled()
+  await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  try {
+    background.state = { phase: 'succeeded', turnId: 'turn-alpha' }
+    outcome = 'terminal'
+    await emitCodexEvent(page, {
+      sequence: 70,
+      kind: 'thread-state',
+      method: 'turn/completed',
+      threadId: 'thread-alpha',
+      turnId: 'turn-alpha',
+      itemId: '',
+      approvalId: '',
+      text: '',
+      rawJson: '{}',
+    } satisfies TengriCodexEvent)
+    await expect.poll(() => terminalReads).toBe(1)
+    const readsBefore = selectedReads
+    await expect.poll(() => selectedReads).toBeGreaterThan(readsBefore + 1)
+    expect(terminalReads).toBe(1)
+    await expect(archiveAlpha).toBeDisabled()
+    await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  } finally {
+    releaseTerminal()
+  }
+  await expect(archiveAlpha).toBeEnabled()
+  await expect(sidebar.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
+  await expect(composer).toHaveValue('Keep the selected conversation draft')
+  await expect(chat.getByRole('alert')).toHaveCount(0)
+  expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
+})

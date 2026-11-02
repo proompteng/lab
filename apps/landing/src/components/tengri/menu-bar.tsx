@@ -30,6 +30,8 @@ type MenuBarProps = {
   onOpenSpotlight: () => void
   onSignOut: () => void
   onToggleMaximize: () => void
+  onToggleSplitWorkspace?: () => void
+  splitWorkspace?: boolean
   onActivateWindow: (id: string) => void
   windows: readonly DesktopWindow[]
   userName: string
@@ -49,6 +51,8 @@ export const MenuBar = memo(function MenuBar({
   onOpenSpotlight,
   onSignOut,
   onToggleMaximize,
+  onToggleSplitWorkspace,
+  splitWorkspace = false,
   onActivateWindow,
   windows,
   userName,
@@ -111,6 +115,9 @@ export const MenuBar = memo(function MenuBar({
       { label: 'Paste', shortcut: '⌘V', run: () => runEditCommand('paste') },
     ],
     View: [
+      ...(onToggleSplitWorkspace
+        ? [{ label: splitWorkspace ? 'Back to Desktop' : 'Chat + Work', run: onToggleSplitWorkspace }]
+        : []),
       {
         label: activeWindow?.mode === 'maximized' ? 'Restore Window' : 'Fill Window',
         shortcut: '⌃⌘F',
@@ -231,6 +238,16 @@ export const MenuBar = memo(function MenuBar({
         })}
       </nav>
       <div aria-label="Desktop status" className="flex min-w-0 shrink-0 items-center gap-2 text-white/90 sm:gap-3.5">
+        {onToggleSplitWorkspace ? (
+          <button
+            type="button"
+            aria-pressed={splitWorkspace}
+            onClick={onToggleSplitWorkspace}
+            className="hidden h-6 items-center rounded border border-white/20 bg-white/10 px-2 text-xs font-medium hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-white min-[960px]:inline-flex [@media(pointer:coarse)]:hidden"
+          >
+            Chat + work
+          </button>
+        ) : null}
         <span className="hidden items-center gap-1.5 lg:flex">
           <span
             aria-hidden="true"
