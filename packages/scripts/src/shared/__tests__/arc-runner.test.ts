@@ -27,9 +27,7 @@ const runnerScaleSetBlock = (name: string): string => {
   return arcApplication.slice(start, next === -1 ? arcApplication.length : next)
 }
 
-const arcRunnerBuildTriggerPaths = Array.from(
-  new Set(Array.from(arcRunnerBuildWorkflow.matchAll(/^\s+- '([^']+)'$/gm), ([, path]) => path)),
-)
+const arcRunnerBuildTriggerPaths = YAML.parse(arcRunnerBuildWorkflow).on.push.paths as string[]
 
 const arcRunnerToolchainScriptPaths = Array.from(
   new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
@@ -272,24 +270,20 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain(
       "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
     )
-    expect(arcRunnerBuildTriggerPaths).not.toContain('flake.nix')
+    expect(arcRunnerBuildTriggerPaths).toContain('flake.nix')
+    expect(arcRunnerBuildTriggerPaths).toContain('flake.lock')
+    expect(arcRunnerBuildTriggerPaths).toContain('nix/packages.nix')
     expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
     expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerBuildWorkflow).not.toContain('docker run')
     expect(arcRunnerBuildWorkflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
-    expect(arcRunnerBuildWorkflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
+    expect(arcRunnerBuildTriggerPaths).not.toContain('.github/workflows/nix-oci-build-common.yml')
     expect(arcRunnerBuildWorkflow).toContain("- 'nix/oci-push.sh'")
     expect(arcRunnerBuildWorkflow).not.toContain("- '.github/workflows/arc-runner-build-push.yml'")
     expect(arcRunnerBuildWorkflow).not.toContain("'packages/scripts/src/shared/__tests__/arc-runner.test.ts'")
     expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
     expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
     for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
-      if (
-        toolchainScriptPath === 'nix/oci-release-contract.sh' ||
-        toolchainScriptPath === 'nix/cache-push.sh' ||
-        toolchainScriptPath === 'nix/oci-inspect-archive.sh'
-      )
-        continue
       expect(arcRunnerBuildTriggerPaths, `${toolchainScriptPath} must start ARC runner image builds`).toContain(
         toolchainScriptPath,
       )
