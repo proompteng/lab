@@ -4864,6 +4864,18 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
     )
     expect(narrowResponseBounds.x).toBeCloseTo(narrowConversationBounds.x, 0)
   }).toPass({ timeout: 10_000 })
+  const conversationScroll = tengri.getByTestId('agent-conversation-scroll')
+  // Approval controls and resizing can preserve a different reading position.
+  // Compare the same transcript viewport without changing its layout or tolerance.
+  await conversationScroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect
+    .poll(() =>
+      conversationScroll.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
+    )
+    .toBeLessThan(2)
+  await expect(tengri.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0)
   await page.mouse.move(0, 0)
   await expect.soft(tengri).toHaveScreenshot('tengri-compact-chat-narrow.png')
 })
