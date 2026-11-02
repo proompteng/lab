@@ -2,7 +2,6 @@ import { Clock, Effect } from 'effect'
 import { TestClock } from 'effect/testing'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { decideJevEntry } from '../jev/decision'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -100,7 +99,6 @@ export const makeControlJev = (
             Effect.provideService(JevBatchStore, binding.journal.batches),
             Effect.provideService(JevEvaluationStore, binding.journal.evaluations),
             Effect.provideService(JevClient, timing.clients.jev),
-            Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, binding.journal.handoffs),
             Effect.catchTags({
               JevAwaitingFreshWindow: (cause) => Effect.succeed({ status: 'ALREADY_OBSERVED' as const, cause }),
