@@ -197,6 +197,31 @@ describe('CodexAppServerClient v2 notifications', () => {
     vi.useRealTimers()
   })
 
+  it('observes continuation notifications after the requested turn stream has closed', async () => {
+    const observed = vi.fn()
+    const { child, client } = setupClient({ onNotification: observed })
+    await respondToInitialize(child)
+    const started = client.runTurnStream('task')
+    await respondToThreadStart(child, 'thread-observed')
+    await respondToTurnStart(child, 'first-turn')
+    const { stream } = await started
+    writeLine(child, {
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-observed',
+        turn: { id: 'first-turn', rootTurnId: null, items: [], itemsView: 'full', status: 'completed', error: null },
+      },
+    })
+    await drainStream(stream)
+    const continuation = {
+      method: 'thread/tokenUsage/updated',
+      params: { threadId: 'thread-observed', turnId: 'next-turn', tokenUsage: { total: { totalTokens: 42 } } },
+    }
+    writeLine(child, continuation)
+    await vi.waitFor(() => expect(observed).toHaveBeenCalledWith(continuation))
+    client.stop()
+  })
+
   it('opts into experimental app-server APIs during initialize', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child, (request) => {
