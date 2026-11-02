@@ -13,7 +13,8 @@ arbitrary address, credential, protocol or command arguments. Examples:
 
 Supported operations are `identity`, `sensors`, `events`, `inventory` and `power_status` on both nodes,
 plus `module_sensors` and `fan_state` on Altra. Events are bounded to the last 50 entries.
-Power status does not expose power controls. The shell image includes IPMI and SSH clients.
+Power status does not expose power controls. The shell image includes IPMI and SSH clients. Its passwd/group
+entries resolve the deployed UID/GID 1000. OpenSSH requires this local account even when the remote user is explicit.
 
 IPMI uses dedicated `agents-reader` accounts with channel privilege USER, level 2. The client explicitly requests
 an encrypted `lanplus` cipher-suite-17 USER session. Slot 3 on channel 1 was verified unused before provisioning
