@@ -34,7 +34,7 @@ class Fixture:
     def __init__(self):
         self.uid, self.gid = os.getuid(), os.getgid()
         if self.uid == 0:
-            identity = pwd.getpwnam("ofz-fixture")
+            identity = pwd.getpwnam("nobody")
             self.uid, self.gid = identity.pw_uid, identity.pw_gid
         self.directory = Path(tempfile.mkdtemp(prefix="ofz-platform-"))
         self.processes = []

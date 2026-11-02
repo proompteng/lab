@@ -462,8 +462,8 @@ let
 
   runnerIdentity = pkgs.runCommand "agentrun-fixture-identity" { } ''
     mkdir -p "$out/etc"
-    printf 'root:x:0:0:root:/root:/bin/bash\nofz-fixture:x:65532:65532:Disposable fixture:/tmp:/bin/sh\n' > "$out/etc/passwd"
-    printf 'root:x:0:\nofz-fixture:x:65532:\n' > "$out/etc/group"
+    printf 'root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534:Disposable fixture:/tmp:/bin/sh\n' > "$out/etc/passwd"
+    printf 'root:x:0:\nnobody:x:65534:\n' > "$out/etc/group"
   '';
 
   agentsShellIdentity = pkgs.runCommand "agents-shell-identity" { } ''

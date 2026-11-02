@@ -27,7 +27,8 @@ exits nonzero and does not produce a passing result. The browser/toolchain needs
 `test-control.sh platform`, `test-policy.sh` and `qualify-platform.sh` use `tests/platform_fixture.py`. Each invocation
 starts its own PostgreSQL 18.6 and production-pinned SpiceDB 1.56.2, temporary data directory, loopback listeners and
 one-day fixture CA. PostgreSQL connections require TLS. Dispatch caches remain disabled, preserving the policy
-expiration/revocation qualification. Root Jobs run PostgreSQL as the image's unprivileged `ofz-fixture` identity.
+expiration/revocation qualification. Root callers run PostgreSQL as the standard unprivileged `nobody` identity,
+which is also declared in the runner image. No image-specific account is required on a normal Unix host.
 
 The fixture terminates its process groups and deletes its directory on success, failure and normal termination.
 It never reads a production DSN or changes production relationships. No Kubernetes resource permissions, Docker

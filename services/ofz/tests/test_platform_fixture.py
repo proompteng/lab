@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import unittest
 import urllib.request
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -13,6 +14,25 @@ spec.loader.exec_module(fixture_module)
 
 
 class DisposableFixtureTests(unittest.TestCase):
+    def test_root_uses_a_standard_account_without_runner_provisioning(self):
+        original_lookup = fixture_module.pwd.getpwnam
+
+        def system_account(name):
+            if name != "nobody":
+                raise KeyError(name)
+            return original_lookup(name)
+
+        with (
+            patch.object(fixture_module.os, "getuid", return_value=0),
+            patch.object(fixture_module.os, "chown") as chown,
+            patch.object(fixture_module.pwd, "getpwnam", side_effect=system_account),
+        ):
+            with fixture_module.Fixture() as fixture:
+                self.assertNotEqual(fixture.uid, 0)
+                chown.assert_called_once_with(
+                    fixture.directory, fixture.uid, fixture.gid
+                )
+
     def test_real_service_and_directory_are_removed_after_failure(self):
         with self.assertRaisesRegex(RuntimeError, "simulated test failure"):
             with fixture_module.Fixture() as fixture:
