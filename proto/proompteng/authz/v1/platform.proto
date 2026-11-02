@@ -250,6 +250,10 @@ message ReadWorkspaceActivityRequest {
   PlatformHumanSession administrator = 1;
   string workspace_id = 2;
   string cursor = 3;
+  // Exact filters apply before the bounded cursor page. Empty means all values.
+  string action = 4;
+  string outcome = 5; // empty, allowed, denied
+  string actor_id = 6;
 }
 message ReadWorkspaceActivityResponse {
   repeated AuditReceipt receipts = 1;
@@ -490,9 +494,15 @@ message CancelPlatformAccessRequestResponse {
 message ListPlatformAccessRequestsRequest {
   PlatformHumanSession administrator = 1;
   string workspace_id = 2;
+  // Pending requests are bounded by the queue ceiling. History is cursor-paginated.
+  bool history = 3;
+  string cursor = 4;
+  // Exact workspace-scoped detail lookup, independent of queue/history pagination.
+  string request_id = 5;
 }
 message ListPlatformAccessRequestsResponse {
   repeated PlatformAccessRequest requests = 1;
+  string cursor = 2;
 }
 message PutPlatformConnectionRequest {
   string operation_id = 1;
