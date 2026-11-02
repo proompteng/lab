@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
-import { decodeDecisionsResponse, type DecisionsRequest } from './decisions'
+import { decodeJevResponse, type JevRequest } from './contract'
 import { selectEntryAblationProposal } from './entry-ablation'
 import { deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
@@ -44,33 +44,33 @@ const fixture = () => {
     makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
   )
   const anchors: Readonly<Record<string, number>> = { support_anchor: 6, resistance_anchor: 2, base_last_bar: 4 }
-  const responseFor = (prepared: DecisionsRequest) =>
+  const responseFor = (prepared: JevRequest) =>
     Result.getOrThrow(
-      decodeDecisionsResponse(prepared, {
+      decodeJevResponse(prepared, {
         model: prepared.model,
-        answers: prepared.questions.map((question) => {
-          if (question.type === 'predicate') return { type: 'predicate', name: question.name, probability: 0.8 }
-          const minute = question.name.startsWith('base_first_bar') ? 5 : anchors[question.name]
-          const bar = chart.bars.find((candidate) => candidate.minuteBeforeWindowEnd === minute)
-          const choice = question.choices.find((candidate) => candidate.value === bar?.id) ?? question.choices[0]
-          if (choice === undefined) throw new Error(`Missing funded source choice for ${question.name}`)
-          return {
-            type: 'choice',
-            name: question.name,
-            choice: choice.value,
-            confidence: 0.8,
-            probabilities: question.choices.map((candidate) => ({
-              value: candidate.value,
-              probability: candidate.value === choice.value ? 1 : 0,
-            })),
-          }
-        }),
-        usage: {
-          input_tokens: 100,
-          input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-          output_tokens: 0,
-          total_tokens: 100,
-        },
+        answers: Object.fromEntries(
+          Object.entries(prepared.questions).map(([name, question]) => {
+            if (question.type === 'noul') return [name, { type: 'noul', noul: 0.8 }]
+            if (question.type !== 'choice') throw new Error('Expected chart choice')
+            const minute = name.startsWith('base_first_bar') ? 5 : anchors[name]
+            const bar = chart.bars.find((candidate) => candidate.minuteBeforeWindowEnd === minute)
+            const choice =
+              Object.keys(question.criteria).find((value) => value === bar?.id) ?? Object.keys(question.criteria)[0]
+            if (choice === undefined) throw new Error(`Missing source choice for ${name}`)
+            return [
+              name,
+              {
+                type: 'choice',
+                choice,
+                confidence: 0.8,
+                probabilities: Object.fromEntries(
+                  Object.keys(question.criteria).map((value) => [value, value === choice ? 1 : 0]),
+                ),
+              },
+            ]
+          }),
+        ),
+        usage: { input_tokens: 100, output_tokens: 0 },
       }),
     )
   const response = responseFor(visualRequest.request)

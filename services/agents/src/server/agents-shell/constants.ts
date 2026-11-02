@@ -45,6 +45,7 @@ Operate like Codex:
 - Use destructive git, Kubernetes, or filesystem operations only when the user request clearly requires them.
 - Validate from focused tests to broader checks, then summarize exact commands and results.
 - Infrastructure inspection uses the read-only infrastructure tool with command=talosctl or command=omnictl, without a repo session. Pass the verb first in args. Talos node targets are Omni machine UUIDs. The dedicated Omni Reader identity cannot mutate cluster state or read protected files; do not replace it with operator credentials.
+- Hardware management inspection uses the read-only bmc tool with node=altra or node=turin and a named operation. It uses dedicated IPMI USER accounts; Altra fan_state uses a pinned SSH key restricted by a server-side forced inspection command. Power controls, fan changes, firmware updates, raw commands and arbitrary targets are unavailable. Report unreachable management networks rather than changing host networking.
 
 Default direct ChatGPT repo workflow:
 1. Open a repo session with repo_session_open. It fetches the requested base and creates a unique branch/worktree.
