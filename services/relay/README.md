@@ -64,6 +64,19 @@ connections. Adding a client requires no second identity allowlist in Relay.
 `packages/platform-client` supplies Rust protobuf types, exact-peer SPIFFE TLS and the shared execution body.
 The `relay-client` binary is an MCP stdio bridge for independent workloads such as OpenCode. Each operation asserts
 that workload's registered identity; it contains no Tengri workspace or human session.
+
+`tools/list` follows the negotiated MCP `2025-03-26` cursor protocol. Tools are ordered lexicographically by their
+`connector__operation` name, with at most 50 tools per response. Pass the returned `nextCursor` as `params.cursor`
+to continue; final and empty pages omit `nextCursor`. Clients must treat the bounded cursor as opaque and must not
+persist it across sessions. Malformed, out-of-range or stale cursors return JSON-RPC `-32602` (invalid params);
+restart without a cursor after a catalog change.
+
+Every page refreshes authorized `ListOperations` discovery. Cursors bind the position to the full authorized catalog,
+including descriptions, schemas, annotations, actions and resource targets, so a permission or registration change
+invalidates continuation even when tool names and counts stay the same. No cached page can disclose removed tools.
+Discovery denial or unavailability fails closed with the existing server error. Listing never dispatches `Execute`,
+looks up an execution or invokes a provider operation; the existing transport message budgets still apply.
+
 Successful tool responses include operation and receipt IDs in `_meta.relay`. After a failed call or an unusable
 response, the bridge performs one authorized status lookup with the retained original body, including for
 Kubernetes RBAC and missing-resource failures. It never resends Execute. The MCP response remains an error because the
@@ -93,28 +106,32 @@ For example, after enrolling `inventory.account` and `inventory.items.read` in O
 ```json
 {
   "version": 1,
-  "connectors": [{
-    "type": "http",
-    "id": "inventory",
-    "endpoint": "https://inventory.example.com/",
-    "authentication": { "type": "bearer_file", "path": "/var/run/inventory/token" },
-    "operations": [{
-      "operation": {
-        "name": "items",
-        "description": "Search the approved inventory account",
-        "action": "inventory.items.read",
-        "target": { "name": "Team inventory", "kind": "inventory.account", "id": "inventory/team" },
-        "input_schema": {
-          "type": "object",
-          "properties": { "query": { "type": "string", "maxLength": 128 } },
-          "required": ["query"],
-          "additionalProperties": false
+  "connectors": [
+    {
+      "type": "http",
+      "id": "inventory",
+      "endpoint": "https://inventory.example.com/",
+      "authentication": { "type": "bearer_file", "path": "/var/run/inventory/token" },
+      "operations": [
+        {
+          "operation": {
+            "name": "items",
+            "description": "Search the approved inventory account",
+            "action": "inventory.items.read",
+            "target": { "name": "Team inventory", "kind": "inventory.account", "id": "inventory/team" },
+            "input_schema": {
+              "type": "object",
+              "properties": { "query": { "type": "string", "maxLength": 128 } },
+              "required": ["query"],
+              "additionalProperties": false
+            }
+          },
+          "method": "GET",
+          "path": "/items"
         }
-      },
-      "method": "GET",
-      "path": "/items"
-    }]
-  }]
+      ]
+    }
+  ]
 }
 ```
 
@@ -165,4 +182,7 @@ and child-process termination. The shared connector type contains opaque adapter
 request paths and query parameters stay inside each adapter.
 The fixture never uses production credentials or grants. The MCP fixture runs the actual Rust client with an isolated
 Workload API and verifies the expected peer, rejection of a trusted certificate bearing another SPIFFE identity, and
-lookup after lost responses without another execution. Production cluster acceptance is a distinct rollout gate.
+lookup after lost responses without another execution. Interactive stdio pagination tests traverse 125 tools exactly
+once, check full and partial final pages and an empty catalog, reject malformed, out-of-range and stale cursors,
+and change authorized discovery between pages while asserting zero execution dispatches or lookups. Production cluster
+acceptance is a distinct rollout gate.

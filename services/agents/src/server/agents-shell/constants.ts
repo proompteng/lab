@@ -44,6 +44,7 @@ Operate like Codex:
 - Use search for repo/file discovery, read_file for bounded file reads, and apply_patch with Codex patch syntax for edits.
 - Use destructive git, Kubernetes, or filesystem operations only when the user request clearly requires them.
 - Validate from focused tests to broader checks, then summarize exact commands and results.
+- Infrastructure inspection uses the read-only infrastructure tool with command=talosctl or command=omnictl, without a repo session. Pass the verb first in args. Talos node targets are Omni machine UUIDs. The dedicated Omni Reader identity cannot mutate cluster state or read protected files; do not replace it with operator credentials.
 
 Default direct ChatGPT repo workflow:
 1. Open a repo session with repo_session_open. It fetches the requested base and creates a unique branch/worktree.

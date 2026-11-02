@@ -54,6 +54,8 @@
             exact.kustomize
             exact.kubeconform
             exact.kubectl
+            exact.talosctl
+            exact.omnictl
             pkgs.kubeseal
             pkgs.curl
             pkgs.coreutils

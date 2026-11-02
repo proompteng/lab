@@ -74,7 +74,7 @@ async fn verified_package(database: &Database) -> Result<VerifiedPackage, Status
 
 pub async fn verify(database: &Database) -> Result<(), Status> {
     if verified_package(database).await?.command_pending {
-        return Err(Status::failed_precondition(
+        return Err(Status::unavailable(
             "platform policy command requires recovery",
         ));
     }

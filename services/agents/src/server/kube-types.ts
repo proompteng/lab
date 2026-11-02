@@ -521,6 +521,8 @@ export const createKubernetesClient = (): KubernetesClient => ({
   delete: async (resource, name, namespace, options) => {
     const objects = getKubeClients().objects
     const target = resolveTargetFromResource(resource)
+    // Kubernetes ignores query deletion options when a DeleteOptions body is present.
+    const gracePeriodSeconds = options?.timeoutSeconds ?? (options?.wait === false ? 0 : undefined)
     try {
       return (await objects.delete(
         {
@@ -533,14 +535,15 @@ export const createKubernetesClient = (): KubernetesClient => ({
         },
         undefined,
         undefined,
-        options?.wait === false ? 0 : undefined,
         undefined,
-        'Background',
+        undefined,
+        undefined,
         {
           apiVersion: 'v1',
           kind: 'DeleteOptions',
+          propagationPolicy: 'Background',
           ...(options?.uid ? { preconditions: { uid: options.uid } } : {}),
-          ...(options?.timeoutSeconds ? { gracePeriodSeconds: options.timeoutSeconds } : {}),
+          ...(gracePeriodSeconds === undefined ? {} : { gracePeriodSeconds }),
         },
       )) as Record<string, unknown>
     } catch (error) {
