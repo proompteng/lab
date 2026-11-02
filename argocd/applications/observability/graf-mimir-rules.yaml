@@ -1033,6 +1033,23 @@ data:
                 rate(ceph_bluestore_kv_sync_lat_sum{job="ceph-exporter"}[5m]) /
                 (rate(ceph_bluestore_kv_sync_lat_count{job="ceph-exporter"}[5m]) > 0)
               )
+          # Bytes include replica work, not unique logical scrub coverage.
+          - record: ceph_storage:bluefs_sst_write_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_bytes_written_sst{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluefs_wal_write_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_bytes_written_wal{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluefs_read_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_read_bytes{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_osd_scrub_replicated_read_bytes{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:osd_scrub_blocked_ops_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_osd_scrub_replicated_io_blocked{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluestore_throttle_seconds:mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                rate(ceph_bluestore_txc_throttle_lat_sum{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) /
+                (rate(ceph_bluestore_txc_throttle_lat_count{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) > 0)
+              )
           - record: ceph_storage:host_disk_busy_ratio:rate5m
             expr: max by (node, device) (rate(node_disk_io_time_seconds_total{job="node-storage"}[5m]))
           - record: ceph_storage:host_disk_queue_depth:mean5m
