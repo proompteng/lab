@@ -17,6 +17,17 @@ smoke() (
   rustfmt --version
   postgres --version
   spicedb version
+  uuidgen | python3 -c 'import sys, uuid; uuid.UUID(sys.stdin.read().strip())'
+  (
+    cd "$temporary"
+    apply_patch <<'PATCH'
+*** Begin Patch
+*** Add File: patch-smoke.txt
++agentrun-patch-ok
+*** End Patch
+PATCH
+    grep -Fx agentrun-patch-ok patch-smoke.txt
+  )
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=agentrun-smoke \
     -keyout "$temporary/key.pem" -out "$temporary/certificate.pem" 2>/dev/null
   printf 'fn main() { println!("agentrun-rust-ok"); }\n' > "$temporary/main.rs"
@@ -45,6 +56,7 @@ output="$(cd "$output" && pwd)"
 rm -f "$output/result.json"
 cd "$repository"
 smoke 2>&1 | tee "$output/toolchain.log"
+buf lint --path proto/proompteng/authz --path proto/proompteng/relay 2>&1 | tee "$output/contracts.log"
 bun install --frozen-lockfile --ignore-scripts \
   --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
 # shellcheck disable=SC2016
@@ -65,6 +77,6 @@ import json, pathlib, sys
 output = pathlib.Path(sys.argv[1])
 screenshots = sorted(str(p.relative_to(output)) for p in output.glob('screenshots/*.png'))
 assert screenshots, 'Browser acceptance did not retain any screenshots'
-(output / 'result.json').write_text(json.dumps({'status': 'passed', 'checks': ['toolchain', 'browser', 'platform', 'policy', 'qualification'], 'screenshots': screenshots}, indent=2) + '\n')
+(output / 'result.json').write_text(json.dumps({'status': 'passed', 'checks': ['toolchain', 'contracts', 'browser', 'platform', 'policy', 'qualification'], 'screenshots': screenshots}, indent=2) + '\n')
 print('PASS: fresh-image acceptance, including real Ofz fixtures and screenshots')
 PY
