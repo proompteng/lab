@@ -245,11 +245,12 @@ class ClickHouseSinkTest {
 
       sink.enqueue(candleRecord(seq = 2))
       withTimeout(1_000) {
+        // The flush counter increments before the batch summary is registered and recorded.
         while (registry
-            .find("torghut_hyperliquid_clickhouse_flushes_total")
-            .tags("table", "hyperliquid_candles", "reason", "size")
-            .counter()
-            ?.count() != 1.0
+            .find("torghut_hyperliquid_clickhouse_batch_rows")
+            .tag("table", "hyperliquid_candles")
+            .summary()
+            ?.totalAmount() != 2.0
         ) {
           delay(10)
         }

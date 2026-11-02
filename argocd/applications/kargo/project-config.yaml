@@ -88,3 +88,6 @@ spec:
     - stageSelector:
         name: relay
       autoPromotionEnabled: true
+    - stageSelector:
+        name: torghut-webull-feed
+      autoPromotionEnabled: true
