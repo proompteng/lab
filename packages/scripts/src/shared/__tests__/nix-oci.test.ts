@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'bun:test'
+import { fileURLToPath } from 'node:url'
 
 import { buildNixOciBuildPlan, buildNixOciReleaseContract } from '../nix-oci'
 
 describe('Nix OCI build contract', () => {
+  it('excludes retried cache downloads and retains terminal failures in the CI summary', () => {
+    const result = Bun.spawnSync([
+      '/bin/bash',
+      fileURLToPath(new URL('../../../../../nix/ci-nix-oci-summary.test.sh', import.meta.url)),
+    ])
+
+    expect(result.stderr.toString()).toBe('')
+    expect(result.exitCode).toBe(0)
+  })
+
   it('builds the shared GitHub Actions and manual deploy image plan', () => {
     const plan = buildNixOciBuildPlan({
       service: 'oirat',
