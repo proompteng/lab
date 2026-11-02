@@ -16,7 +16,7 @@ import {
 import {
   entryAblationStrategyIdentity,
   makeEntryAblationPolicy,
-  entryAblationQuestionPolicyHash,
+  historicalAblationQuestionPolicyHash,
 } from '../jev/entry-ablation-policy'
 import { IsoDateSchema } from '../schemas'
 import { canonicalHashV1Result, sha256 } from '../hash'
@@ -95,7 +95,11 @@ const baseRegistrationFixture = (
   sessionCount: number,
   protocol: typeof HistoricalJevProtocolSchema.Type,
 ): SystemRegistration => {
-  const ablationIdentity = Result.getOrThrow(entryAblationStrategyIdentity(makeEntryAblationPolicy(protocol)))
+  const ablationIdentity = Result.getOrThrow(
+    entryAblationStrategyIdentity(
+      makeEntryAblationPolicy(protocol, Result.getOrThrow(historicalAblationQuestionPolicyHash(protocol))),
+    ),
+  )
   const momentumIdentity = Result.getOrThrow(repeatedMomentumStrategyIdentity(makeRepeatedMomentumPolicy(protocol)))
   return {
     schemaVersion: 'bayn.system-registration.v3',
@@ -142,10 +146,12 @@ const baseRegistrationFixture = (
             cachedInputMicrosPerMillionTokens: '0',
             cacheWriteInputMicrosPerMillionTokens: '0',
           },
-        }).rates.filter(
-          (rate) =>
-            policy === JevResearchPolicy.Candidate ||
-            (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
+        }).rates.filter((rate) =>
+          protocol.schemaVersion === 'bayn.jev.protocol.v37'
+            ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
+              rate.provider === 'typesafe'
+            : policy === JevResearchPolicy.Candidate ||
+              (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
         ),
       },
       executionModelHash: sha256(`${policy}:execution`),
@@ -163,7 +169,7 @@ const baseRegistrationFixture = (
             strategyHash: ablationIdentity.strategy.behaviorHash,
             parametersHash: ablationIdentity.strategy.parameterHash,
             protocolHash: ablationIdentity.protocolHash,
-            promptsHash: entryAblationQuestionPolicyHash,
+            promptsHash: Result.getOrThrow(historicalAblationQuestionPolicyHash(protocol)),
             executionModelHash: testHash(protocol.executionModel),
           }
         : {}),
@@ -260,6 +266,8 @@ export const registrationFixture = (
           Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
             ...defaultJevProtocolDocument,
             schemaVersion: 'bayn.jev.protocol.v35',
+            entrySignalPolicy: 'openai-decisions-then-jev' as const,
+            entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
             executionModel: retainedIntradayExecutionModel,
           }),
         )

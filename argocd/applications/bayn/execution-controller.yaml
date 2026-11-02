@@ -86,7 +86,7 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "adc171283bdd8086af3357629e05b241253d9661a41d8f9c5bde33fb521b5611"
+              value: "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -97,11 +97,11 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"4d52a9791c001fcc212b971bd773515526e1146b9a2da3d7c88b496d643963b3","authoredActivation":{"sourceRevision":"6d81cfec5e5ef78456d75e351978f4e28731a34e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:38487a2a3622fad9a14d2ad2f25126a3aec5cdb71226be5787170e4595dfc1b2"},"activation":{"sourceRevision":"6d81cfec5e5ef78456d75e351978f4e28731a34e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:38487a2a3622fad9a14d2ad2f25126a3aec5cdb71226be5787170e4595dfc1b2"}}'
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"95de935585ec10df17ab42d6c12747d1fb6c51fc08e18cc88e4b4fc876c519ac","authoredActivation":{"sourceRevision":"58ec60180e55e76e860804c444632031a6a8d51d","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:224ce4ce17dff46ac3836522ed378771485b3cedd7a0f2cd501ed735aac37b8b"},"activation":{"sourceRevision":"58ec60180e55e76e860804c444632031a6a8d51d","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:224ce4ce17dff46ac3836522ed378771485b3cedd7a0f2cd501ed735aac37b8b"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "fd1adaf06499346446c83ee8beb29200bd3d0b3f82155e13ed4c850d153deb89"
+              value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -195,12 +195,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: bayn-jev-auth
-                  key: api-key
-                  optional: true
-            - name: BAYN_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-openai-auth
                   key: api-key
                   optional: true
             - name: VALKEY_PASSWORD

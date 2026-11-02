@@ -124,7 +124,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v10',
+      schemaVersion: 'bayn.backtest.v11',
       policy: 'JEV' as const,
       latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -134,7 +134,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       inference: {
         mode: 'measured-providers',
         maximumCalls: 1000,
-        models: { jev: jevModel, chart: 'gpt-6-luna' },
+        models: { jev: jevModel },
         inputDefinition: 'bayn.jev-entry-state.v23',
         costs: replayRateCardFixture({
           jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },

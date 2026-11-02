@@ -138,7 +138,9 @@ const registeredControllerOwns = (
       accountId,
     })
     const historicalBehavior = sha256(
-      protocol.schemaVersion === 'bayn.jev.protocol.v35'
+      protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+        protocol.schemaVersion === 'bayn.jev.protocol.v37'
         ? 'bayn.candidate-chart-entry.behavior.v1'
         : 'bayn.chart-first-entry.behavior.v1',
     )

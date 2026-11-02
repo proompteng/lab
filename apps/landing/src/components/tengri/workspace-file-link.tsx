@@ -27,12 +27,10 @@ const WorkspaceResourcesContext = createContext<{
   files: FileTarget[]
   pins: FileTarget[]
   activePath: string | null
-  view: 'chat' | 'results'
   storageAvailable: boolean
   openFile: (file: FileTarget) => void
   closeFile: (path: string) => void
   showChat: () => void
-  showResults: () => void
   togglePin: (file: FileTarget) => void
 } | null>(null)
 const MAX_PREVIEW_CHARACTERS = 200_000
@@ -43,7 +41,6 @@ export function WorkspaceFileLinkProvider({ agentId, children }: { agentId: stri
   const [pins, setPins] = useState<FileTarget[]>([])
   const [loaded, setLoaded] = useState(false)
   const [storageAvailable, setStorageAvailable] = useState(true)
-  const [view, setView] = useState<'chat' | 'results'>('chat')
   useEffect(() => {
     setResources(readWorkspaceResources(agentId))
     setPins(readWorkspacePins(agentId))
@@ -67,11 +64,6 @@ export function WorkspaceFileLinkProvider({ agentId, children }: { agentId: stri
     }))
   }, [])
   const showChat = useCallback(() => {
-    setView('chat')
-    setResources((current) => ({ ...current, activePath: null }))
-  }, [])
-  const showResults = useCallback(() => {
-    setView('results')
     setResources((current) => ({ ...current, activePath: null }))
   }, [])
   const closeFile = (path: string) =>
@@ -93,12 +85,10 @@ export function WorkspaceFileLinkProvider({ agentId, children }: { agentId: stri
         files: resources.tabs,
         pins,
         activePath: resources.activePath,
-        view,
         storageAvailable,
         openFile,
         closeFile,
         showChat,
-        showResults,
         togglePin,
       }}
     >
@@ -160,32 +150,13 @@ export function WorkspacePinnedResources({ onOpen }: { onOpen: () => void }) {
   )
 }
 
-export function WorkspaceFileTabs({
-  children,
-  results,
-  resultCount = 0,
-}: {
-  children: ReactNode
-  results?: ReactNode
-  resultCount?: number
-}) {
-  const {
-    agentId,
-    files,
-    activePath,
-    view,
-    closeFile: removeFile,
-    showChat,
-    showResults,
-    openFile,
-  } = useWorkspaceResources()
+export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
+  const { agentId, files, activePath, closeFile: removeFile, showChat, openFile } = useWorkspaceResources()
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [focusedPath, setFocusedPath] = useState<string | null>(null)
   const id = useId()
   const activeFile = files.find((file) => file.path === activePath)
-  const resultsSelected = Boolean(results && view === 'results' && !activeFile)
-  const chatSelected = !activeFile && !resultsSelected
-  const primaryTabs = results ? 2 : 1
+  const chatSelected = !activeFile
   useEffect(() => {
     if (activePath)
       document.getElementById(`${id}-file-${files.findIndex((file) => file.path === activePath)}`)?.focus()
@@ -195,7 +166,7 @@ export function WorkspaceFileTabs({
     setHoveredPath(null)
     setFocusedPath(null)
     if (!activePath || activePath === path) {
-      document.getElementById(`${id}-${results && view === 'results' ? 'results' : 'chat'}`)?.focus()
+      document.getElementById(`${id}-chat`)?.focus()
     }
   }
   return (
@@ -203,7 +174,7 @@ export function WorkspaceFileTabs({
       <div
         className="grid shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
         style={{
-          gridTemplateColumns: `repeat(${files.length + primaryTabs}, minmax(7rem, 14rem))`,
+          gridTemplateColumns: files.length ? `repeat(${files.length + 1}, minmax(7rem, 14rem))` : 'max-content',
         }}
       >
         <div
@@ -244,20 +215,6 @@ export function WorkspaceFileTabs({
           >
             Chat
           </button>
-          {results ? (
-            <button
-              role="tab"
-              id={`${id}-results`}
-              aria-controls={`${id}-results-panel`}
-              aria-selected={resultsSelected}
-              tabIndex={resultsSelected ? 0 : -1}
-              type="button"
-              onClick={showResults}
-              className={`min-w-0 border-b-2 px-4 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${resultsSelected ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
-            >
-              Results{resultCount ? ` · ${resultCount}` : ''}
-            </button>
-          ) : null}
           {files.map((file, index) => (
             <button
               key={file.path}
@@ -286,7 +243,7 @@ export function WorkspaceFileTabs({
           <div
             key={file.path}
             className="pointer-events-none relative row-start-1 min-w-0"
-            style={{ gridColumn: index + primaryTabs + 1 }}
+            style={{ gridColumn: index + 2 }}
           >
             <button
               type="button"
@@ -317,17 +274,6 @@ export function WorkspaceFileTabs({
       >
         {children}
       </div>
-      {results ? (
-        <div
-          role="tabpanel"
-          id={`${id}-results-panel`}
-          aria-labelledby={`${id}-results`}
-          hidden={!resultsSelected}
-          className={resultsSelected ? 'min-h-0 flex-1' : 'hidden'}
-        >
-          {results}
-        </div>
-      ) : null}
       {files.map((file, index) => (
         <div
           key={file.path}
