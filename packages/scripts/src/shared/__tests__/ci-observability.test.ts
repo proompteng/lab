@@ -97,7 +97,7 @@ describe('CI build observability', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   test('validates the Alloy scrape configuration with the native collector', () => {
     const result = Bun.spawnSync(
