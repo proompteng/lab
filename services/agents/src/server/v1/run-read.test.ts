@@ -1,3 +1,4 @@
+import { createRunnerTelemetry } from '../../runner/telemetry'
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
 
@@ -104,6 +105,31 @@ const cancellationFixture = () => {
 
 describe('AgentRun cancellation and retained results', () => {
   const request = () => new Request('http://agents.local/v1/agent-runs/record-1', { method: 'DELETE' })
+
+  it('exposes a UID-bound live snapshot and retains it after resource cleanup', async () => {
+    const f = cancellationFixture()
+    const resource = { ...(f.record().payload.resource as Record<string, unknown>), spec: { runtime: { type: 'job' } } }
+    f.setResource(resource)
+    const telemetry = createRunnerTelemetry({ model: 'gpt-6-astra', effort: 'high', write: () => {} }).snapshot()
+    vi.mocked(f.kube.list).mockResolvedValue({
+      items: [
+        { metadata: { ownerReferences: [{ uid: 'another-run' }] }, data: { 'telemetry.json': '{invalid' } },
+        {
+          metadata: { ownerReferences: [{ uid: 'original-uid' }] },
+          data: { 'telemetry.json': JSON.stringify(telemetry) },
+        },
+      ],
+    })
+    let response = await getAgentRunHandler('record-1', new Request('http://test/run'), f.deps)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ resource: { status: { runner: { telemetry } } } })
+    f.setResource(null)
+    response = await getAgentRunHandler('record-1', new Request('http://test/run'), f.deps)
+    expect(await response.json()).toMatchObject({
+      resource: null,
+      agentRun: { payload: { resource: { status: { runner: { telemetry } } } } },
+    })
+  })
 
   it('persists cancellation intent before deleting the matching UID and retains the record after cleanup', async () => {
     const f = cancellationFixture()
