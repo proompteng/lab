@@ -24,6 +24,7 @@ on:
       - 'bun.lock'
       - '.github/scripts/install-tengri-chromium.mjs'
       - 'nix/images/ofz.nix'
+      - 'nix/images/agentrun-tools.nix'
       - 'nix/tengri-schema-hash.py'
       - 'nix/packages.nix'
       - 'flake.nix'
@@ -120,6 +121,14 @@ jobs:
           buf format --path proto/proompteng/authz --path proto/proompteng/relay --diff --exit-code
           python3 services/ofz/tests/inventory.py
           python3 -m unittest discover -s services/ofz/tests -p 'test_*.py'
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned native platform fixture tools
+        run: |
+          set -euo pipefail
+          tools="$(nix build --no-link --print-out-paths .#ofz-fixture-tools)"
+          echo "${tools}/bin" >> "$GITHUB_PATH"
       - name: Validate Ofz
         working-directory: services/ofz
         run: |
