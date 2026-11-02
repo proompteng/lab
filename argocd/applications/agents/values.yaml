@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: kargo-sha-5546c602224449784a8235ca720965ac4e57d294-run-41395131486
-  digest: sha256:90eaba7dc953ec7c883c7006bce363d22e627de47d206379407f6ce7565e57c0
+  tag: kargo-sha-d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7-run-41400771533
+  digest: sha256:c082379e0cba2ffc69fea32dbdd8cf6cd5b6e40f0f76dc010cc27ca31447013d
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,26 +14,26 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: kargo-sha-5546c602224449784a8235ca720965ac4e57d294-run-41395131486
-    digest: sha256:395a67dde03ca84da81beb3a8cdbc45f4b2756344860ca55246402a800496ede
+    tag: kargo-sha-d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7-run-41400771533
+    digest: sha256:78de6e9fc6b8be9cc5ad984bf7b85d272e362fb272b447e749edfdb32ae87baa
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 5546c602224449784a8235ca720965ac4e57d294
-      AGENTS_GITOPS_REVISION: 5546c602224449784a8235ca720965ac4e57d294
-      AGENTS_SOURCE_CI_RUN_ID: "41395131486"
+      AGENTS_SOURCE_HEAD_SHA: d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7
+      AGENTS_GITOPS_REVISION: d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7
+      AGENTS_SOURCE_CI_RUN_ID: "41400771533"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:395a67dde03ca84da81beb3a8cdbc45f4b2756344860ca55246402a800496ede
-      AGENTS_SERVING_BUILD_COMMIT: 5546c602224449784a8235ca720965ac4e57d294
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:395a67dde03ca84da81beb3a8cdbc45f4b2756344860ca55246402a800496ede
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:78de6e9fc6b8be9cc5ad984bf7b85d272e362fb272b447e749edfdb32ae87baa
+      AGENTS_SERVING_BUILD_COMMIT: d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:78de6e9fc6b8be9cc5ad984bf7b85d272e362fb272b447e749edfdb32ae87baa
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: kargo-sha-5546c602224449784a8235ca720965ac4e57d294-run-41395131486
-    digest: sha256:3c8e434b4986b53d39963b1007deac7df34a093f06bd718141685702fa00c82b
+    tag: kargo-sha-d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7-run-41400771533
+    digest: sha256:ff52fe2bf60eed6ec8757295fafd0b02fa102512ed429aa181ed8025bae1b952
 linearMcpGateway:
   enabled: false
   replicaCount: 2
@@ -56,8 +56,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: kargo-sha-5546c602224449784a8235ca720965ac4e57d294-run-41395131486
-    digest: sha256:d0a72886e0b36992b3c0bf49985d58fad82b4939c7826bf912210110dfbcb673
+    tag: kargo-sha-d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7-run-41400771533
+    digest: sha256:f45f91345cdff01a872d1116cee7c5aea56e6eb528ad5bc80211ebf11b93f0a6
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -205,8 +205,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: kargo-sha-5546c602224449784a8235ca720965ac4e57d294-run-41395131486
-    digest: sha256:90eaba7dc953ec7c883c7006bce363d22e627de47d206379407f6ce7565e57c0
+    tag: kargo-sha-d5948cbe0a182af6e9b0ed4f4b4d5e97abbc7ef7-run-41400771533
+    digest: sha256:c082379e0cba2ffc69fea32dbdd8cf6cd5b6e40f0f76dc010cc27ca31447013d
   autoscaling:
     enabled: false
 swarm:
