@@ -12,6 +12,7 @@ let
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+  runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
   pstackVersion = "0.9.30";
   pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
 
@@ -307,6 +308,8 @@ let
     "services/agents/package.json"
     "services/agents/scripts/codex"
     "services/agents/scripts/codex-config-container.toml"
+    "services/agents/scripts/apply_patch.py"
+    "services/agents/scripts/runner-acceptance.sh"
     "services/agents/src/linear-mcp/bridge-auth.ts"
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
@@ -453,6 +456,12 @@ let
     "$out/usr/bin/env" --version >/dev/null
   '';
 
+  runnerIdentity = pkgs.runCommand "agentrun-fixture-identity" { } ''
+    mkdir -p "$out/etc"
+    printf 'root:x:0:0:root:/root:/bin/bash\nofz-fixture:x:65532:65532:Disposable fixture:/tmp:/bin/sh\n' > "$out/etc/passwd"
+    printf 'root:x:0:\nofz-fixture:x:65532:\n' > "$out/etc/group"
+  '';
+
   agentsShellIdentity = pkgs.runCommand "agents-shell-identity" { } ''
     mkdir -p "$out/etc"
     printf 'agents-shell:x:1000:1000:Agent Shell:/workspace/.agents-shell/home:/bin/bash\n' > "$out/etc/passwd"
@@ -477,7 +486,10 @@ let
     pkgs.wget
   ];
 
-  runnerRuntimeContents = [
+  runnerRuntimeContents = runnerTools.contents ++ [
+    agentsShellInterpreterCompat
+    runnerIdentity
+    applyPatch
     bun
     nodejs
     openaiCodexCli
@@ -557,6 +569,7 @@ let
     mkdir -p \
       "$out/app/node_modules/@proompteng/codex" \
       "$out/app/services/agents/scripts/codex" \
+      "$out/app/services/agents/scripts" \
       "$out/root/.codex" \
       "$out/workspace" \
       "$out/usr/bin" \
@@ -568,6 +581,8 @@ let
     cp "$TMPDIR/agents-runner/linear-mcp-bridge.js" "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
+    cp "$TMPDIR/work/services/agents/scripts/apply_patch.py" "$out/app/services/agents/scripts/apply_patch.py"
+    install -Dm755 "$TMPDIR/work/services/agents/scripts/runner-acceptance.sh" "$out/usr/local/bin/agentrun-acceptance"
     printf '{}\n' > "$out/root/.codex/auth.json"
     printf '%s\n' unspecified > "$out/root/.codex/auth.checksum"
 
@@ -643,6 +658,13 @@ let
         "BUN_INSTALL=/usr/local"
         "BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache"
         "BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache"
+        "PLAYWRIGHT_BROWSERS_PATH=${runnerTools.browser}/opt/playwright-browsers"
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1"
+        "AGENTRUN_PLAYWRIGHT_VERSION=${runnerTools.playwrightVersion}"
+        "PLATFORM_UI_CHROMIUM=${runnerTools.browser}/bin/agentrun-chromium"
+        "FONTCONFIG_FILE=${runnerTools.fontConfig}"
+        "CC=${pkgs.stdenv.cc}/bin/cc"
+        "CXX=${pkgs.stdenv.cc}/bin/c++"
       ];
     };
 in
@@ -715,4 +737,8 @@ in
   };
 
   "agents-codex-runner-image" = mkRunnerImage;
+  "ofz-fixture-tools" = pkgs.buildEnv {
+    name = "ofz-fixture-tools";
+    paths = [ runnerTools.postgres runnerTools.spicedb pkgs.openssl ];
+  };
 }

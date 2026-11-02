@@ -56,7 +56,11 @@ const ALL_IMAGE_EXACT_PATHS = new Set([
   'packages/scripts/src/shared/nix-oci-deploy.ts',
 ])
 
-const RUNNER_IMAGE_EXACT_PATHS = new Set(['nix/images/openai-codex-cli.nix'])
+const RUNNER_IMAGE_EXACT_PATHS = new Set([
+  'nix/images/openai-codex-cli.nix',
+  'nix/images/agentrun-tools.nix',
+  'services/agents/scripts/runner-acceptance.sh',
+])
 
 const CONTROL_PLANE_IMAGE_PREFIXES = [
   'packages/agent-contracts/',

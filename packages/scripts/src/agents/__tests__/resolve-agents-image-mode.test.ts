@@ -60,6 +60,12 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
+  it('rebuilds the runner when its toolchain or acceptance command changes', () => {
+    for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
+      expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
+    }
+  })
+
   it('rebuilds every image that embeds the shared Linear MCP bridge contract', () => {
     for (const path of [
       'services/agents/src/linear-mcp/bridge-auth.ts',
