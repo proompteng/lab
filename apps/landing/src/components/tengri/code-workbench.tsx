@@ -18,6 +18,7 @@ export function CodeWorkbench({
   ownerId,
   onDirtyChange,
   onFocus,
+  onOpenChat,
   previewGatewayOrigin,
   registerGuard,
   request,
@@ -30,6 +31,7 @@ export function CodeWorkbench({
   ownerId: string
   onDirtyChange: (dirty: boolean) => void
   onFocus: () => void
+  onOpenChat?: () => void
   previewGatewayOrigin: string
   registerGuard: (windowId: string, guard: (close: boolean) => Promise<boolean>) => () => void
   request: CodeOpenRequest | null
@@ -194,6 +196,21 @@ export function CodeWorkbench({
 
   return (
     <div inert={lifecycleBusy || undefined} className="relative flex h-full min-h-0 flex-col bg-[#1f1f1f]">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-zinc-900 px-3 py-2 text-xs text-zinc-300">
+        <p>
+          <span className="font-medium text-zinc-100">VS Code editor</span>
+          <span className="ml-2">Editor assistants have a separate history from Tengri chat.</span>
+        </p>
+        {onOpenChat ? (
+          <button
+            type="button"
+            className="shrink-0 rounded px-2 py-1 text-sky-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-300"
+            onClick={onOpenChat}
+          >
+            Open Tengri chat
+          </button>
+        ) : null}
+      </div>
       {drafts.length > 0 ? (
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-white/10 px-3 py-2 text-[12px] text-white/70">
           <span>Recovered drafts from the previous editor:</span>

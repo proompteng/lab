@@ -108,27 +108,56 @@ describe('AgentRun cancellation and retained results', () => {
 
   it('exposes a UID-bound live snapshot and retains it after resource cleanup', async () => {
     const f = cancellationFixture()
-    const resource = { ...(f.record().payload.resource as Record<string, unknown>), spec: { runtime: { type: 'job' } } }
+    const resource = {
+      ...(f.record().payload.resource as Record<string, unknown>),
+      spec: { runtime: { type: 'job' }, secrets: ['agents-artifacts'] },
+    }
     f.setResource(resource)
     const telemetry = createRunnerTelemetry({ model: 'gpt-6-astra', effort: 'high', write: () => {} }).snapshot()
-    vi.mocked(f.kube.list).mockResolvedValue({
-      items: [
-        { metadata: { ownerReferences: [{ uid: 'another-run' }] }, data: { 'telemetry.json': '{invalid' } },
-        {
-          metadata: { ownerReferences: [{ uid: 'original-uid' }] },
-          data: { 'telemetry.json': JSON.stringify(telemetry) },
-        },
-      ],
-    })
-    let response = await getAgentRunHandler('record-1', new Request('http://test/run'), f.deps)
+    const originalGet = f.kube.get
+    f.kube.get = vi.fn(async (...args: Parameters<KubernetesClient['get']>) =>
+      args[0] === 'secret'
+        ? {
+            data: {
+              AWS_ACCESS_KEY_ID: Buffer.from('test').toString('base64'),
+              AWS_SECRET_ACCESS_KEY: Buffer.from('secret').toString('base64'),
+            },
+          }
+        : originalGet(...args),
+    )
+    const fetchSnapshot = vi.fn(
+      async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+        new Response(JSON.stringify(telemetry)),
+    )
+    const deps = {
+      ...f.deps,
+      kubeClient: f.kube,
+      env: { AGENTS_ARTIFACTS_ENDPOINT: 'http://storage.test', AGENTS_ARTIFACTS_BUCKET: 'agents-artifacts' },
+      fetch: Object.assign(fetchSnapshot, { preconnect: () => undefined }),
+    }
+    let response = await getAgentRunHandler('record-1', new Request('http://test/run'), deps)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ resource: { status: { runner: { telemetry } } } })
+    expect(String(fetchSnapshot.mock.calls[0]?.[0])).toContain('/runner-telemetry/agents/original-uid.json')
     f.setResource(null)
-    response = await getAgentRunHandler('record-1', new Request('http://test/run'), f.deps)
+    response = await getAgentRunHandler('record-1', new Request('http://test/run'), deps)
     expect(await response.json()).toMatchObject({
       resource: null,
       agentRun: { payload: { resource: { status: { runner: { telemetry } } } } },
     })
+  })
+
+  it('rejects a replacement UID before reading artifact credentials', async () => {
+    const f = cancellationFixture()
+    f.setResource({
+      metadata: { name: 'agent-run-1', namespace: 'agents', uid: 'replacement-uid' },
+      spec: { runtime: { type: 'job' }, secrets: ['agents-artifacts'] },
+      status: { phase: 'Running' },
+    })
+    const response = await getAgentRunHandler('record-1', new Request('http://test/run'), f.deps)
+    expect(response.status).toBe(409)
+    expect(f.kube.get).toHaveBeenCalledTimes(1)
+    expect(f.store.updateAgentRunDetails).not.toHaveBeenCalled()
   })
 
   it('persists cancellation intent before deleting the matching UID and retains the record after cleanup', async () => {
