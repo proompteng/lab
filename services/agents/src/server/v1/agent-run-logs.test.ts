@@ -63,18 +63,20 @@ describe('getAgentRunLogs', () => {
     })
   })
 
-  it('returns ok with empty pods when none are found', async () => {
+  it('reports unavailable logs when neither a live Pod nor a retained run exists', async () => {
     const response = await getAgentRunLogsHandler(
       new Request('http://localhost/v1/control-plane/logs?name=run-1&namespace=agents'),
-      { kubeClient: createKubeMock() },
+      {
+        kubeClient: createKubeMock(),
+        storeFactory: () => ({
+          ready: Promise.resolve(),
+          close: async () => {},
+          getAgentRunByExternalRunId: async () => null,
+        }),
+      },
     )
-
-    expect(response.status).toBe(200)
-    const payload = (await response.json()) as Record<string, unknown>
-    expect(payload.ok).toBe(true)
-    expect(payload.pods).toEqual([])
-    expect(payload.logs).toBe('')
-    expect(payload.pod).toBeNull()
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: 'AgentRun logs not found' })
   })
 
   it('requires name and namespace', async () => {

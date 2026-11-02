@@ -1,6 +1,13 @@
+import { parseRunnerTelemetry, type RunnerTelemetry } from '../../runner-telemetry'
 import { asRecord, asString, readNested } from '../primitives'
 import type { KubernetesClient } from '../kube-types'
 import { AGENT_RUNNER_RESULT_PREVIEW_CHARS, type AgentRunnerResultPreview } from '../../runner-result'
+import {
+  RUNNER_STATUS_EVENT,
+  RUNNER_STATUS_LOG_BYTES,
+  runnerStatusDigest,
+  runnerStatusReferenceSchema,
+} from '../../runner-status'
 
 export type RunnerTerminalPhase = 'succeeded' | 'failed' | 'cancelled'
 
@@ -25,6 +32,7 @@ export type RunnerTerminalStatus = {
   }
   error?: string
   result?: AgentRunnerResultPreview
+  telemetry?: RunnerTelemetry
 }
 
 export type RunnerTerminalOutcome = {
@@ -70,6 +78,8 @@ export const parseRunnerTerminalStatus = (value: unknown): RunnerTerminalStatus 
   if (!record) return null
   const status = asString(record.status)
   if (!status || !RUNNER_STATUS_VALUES.has(status as RunnerTerminalPhase)) return null
+  const telemetry = record.telemetry === undefined ? null : parseRunnerTelemetry(record.telemetry)
+  if (record.telemetry !== undefined && !telemetry) return null
   const artifacts = normalizeArtifacts(record.artifacts)
   const rawResult = asRecord(record.result)
   const resultText = asString(rawResult?.text)
@@ -84,6 +94,7 @@ export const parseRunnerTerminalStatus = (value: unknown): RunnerTerminalStatus 
       : undefined
   return {
     status: status as RunnerTerminalPhase,
+    ...(telemetry ? { telemetry } : {}),
     ...(asString(record.provider) ? { provider: asString(record.provider) as string } : {}),
     ...(asString(record.adapter) ? { adapter: asString(record.adapter) as string } : {}),
     ...(asString(record.binary) ? { binary: asString(record.binary) as string } : {}),
@@ -108,7 +119,9 @@ const parseTerminationMessage = (message: unknown) => {
   const trimmed = raw.trim()
   if (!trimmed.startsWith('{')) return null
   try {
-    return parseRunnerTerminalStatus(JSON.parse(trimmed) as unknown)
+    const value: unknown = JSON.parse(trimmed)
+    const reference = runnerStatusReferenceSchema.safeParse(value)
+    return reference.success ? reference.data : parseRunnerTerminalStatus(value)
   } catch {
     return null
   }
@@ -140,7 +153,11 @@ const listJobPods = async (kube: Pick<KubernetesClient, 'list'>, namespace: stri
   return []
 }
 
-const collectPodRunnerStatuses = (pod: Record<string, unknown>) => {
+const collectPodRunnerStatuses = async (
+  pod: Record<string, unknown>,
+  kube: Pick<KubernetesClient, 'logs'>,
+  namespace: string,
+) => {
   const rawStatuses = [
     ...(Array.isArray(readNested(pod, ['status', 'containerStatuses']))
       ? (readNested(pod, ['status', 'containerStatuses']) as unknown[])
@@ -149,27 +166,64 @@ const collectPodRunnerStatuses = (pod: Record<string, unknown>) => {
       ? (readNested(pod, ['status', 'initContainerStatuses']) as unknown[])
       : []),
   ]
-  return rawStatuses
+  const containers = rawStatuses
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => !!item)
     .sort(
       (left, right) =>
         (asString(right.name) === 'agent-runner' ? 1 : 0) - (asString(left.name) === 'agent-runner' ? 1 : 0),
     )
-    .flatMap((containerStatus) => [
-      parseTerminationMessage(readNested(containerStatus, ['state', 'terminated', 'message'])),
-      parseTerminationMessage(readNested(containerStatus, ['lastState', 'terminated', 'message'])),
-    ])
-    .filter((item): item is RunnerTerminalStatus => !!item)
+  const statuses: RunnerTerminalStatus[] = []
+  for (const container of containers) {
+    for (const state of ['state', 'lastState']) {
+      const message = parseTerminationMessage(readNested(container, [state, 'terminated', 'message']))
+      if (!message) continue
+      if (!('runnerStatusDigest' in message)) {
+        statuses.push(message)
+        continue
+      }
+      const podName = asString(readNested(pod, ['metadata', 'name']))
+      const containerName = asString(container.name)
+      if (!podName || !containerName) throw new Error('runner status reference has no Pod/container identity')
+      const logs = await kube.logs({
+        pod: podName,
+        namespace,
+        container: containerName,
+        tailLines: 100,
+        limitBytes: RUNNER_STATUS_LOG_BYTES,
+      })
+      let resolved: RunnerTerminalStatus | null = null
+      for (const line of logs.trimEnd().split('\n').reverse()) {
+        let value: unknown
+        try {
+          value = JSON.parse(line)
+        } catch {
+          continue
+        }
+        const event = asRecord(readNested(value, ['event']))
+        const status = asRecord(event?.status)
+        if (event?.type !== RUNNER_STATUS_EVENT || !status || runnerStatusDigest(status) !== message.runnerStatusDigest)
+          continue
+        resolved = parseRunnerTerminalStatus(status)
+        if (resolved) break
+      }
+      if (!resolved) throw new Error('runner status log reference could not be resolved')
+      statuses.push(resolved)
+    }
+  }
+  return statuses
 }
 
 export const extractRunnerStatusFromJobPods = async (
-  kube: Pick<KubernetesClient, 'list'>,
+  kube: Pick<KubernetesClient, 'list' | 'logs'>,
   namespace: string,
   jobName: string,
   preferredStatuses: RunnerTerminalPhase[] = [],
 ) => {
-  const candidates = (await listJobPods(kube, namespace, jobName)).flatMap(collectPodRunnerStatuses)
+  const candidates: RunnerTerminalStatus[] = []
+  for (const pod of await listJobPods(kube, namespace, jobName)) {
+    candidates.push(...(await collectPodRunnerStatuses(pod, kube, namespace)))
+  }
   for (const preferred of preferredStatuses) {
     const match = candidates.find((candidate) => candidate.status === preferred)
     if (match) return match
@@ -199,6 +253,7 @@ export const runnerStatusToTerminalOutcome = (status: RunnerTerminalStatus): Run
 
 export const runnerStatusForAgentRunStatus = (status: RunnerTerminalStatus): Record<string, unknown> => ({
   status: status.status,
+  ...(status.telemetry ? { telemetry: status.telemetry } : {}),
   ...(status.provider ? { provider: status.provider } : {}),
   ...(status.adapter ? { adapter: status.adapter } : {}),
   ...(status.binary ? { binary: status.binary } : {}),
