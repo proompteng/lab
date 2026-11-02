@@ -49,8 +49,8 @@ have 44px touch targets; reduced motion applies to portaled menus as well as the
 
 - `bun install --frozen-lockfile --ignore-scripts` — passed. The first ordinary install failed on the image's missing
   `/usr/bin/env`; no lockfile changes were retained. The existing BusyBox `env` was linked locally to run installed CLIs.
-- `PATH=<installed-openssl>/bin:$PATH bun run --filter landing test` — **488 passed**, zero failures.
-- `bun run --cwd apps/landing test:admin` — **4 admin BFF, 12 provider BFF and 18 real Chromium tests passed**.
+- `PATH=<installed-openssl>/bin:$PATH bun run --filter landing test` — **489 passed**, zero failures.
+- `bun run --cwd apps/landing test:admin` — **4 admin BFF, 12 provider BFF and 21 real Chromium tests passed**.
   Browser execution used `FONTCONFIG_FILE=/tmp/admin-fonts.conf` and `LD_LIBRARY_PATH` pointing to isolated downloaded
   browser libraries because the minimal runner lacked them. Chromium 147 was installed by the pinned Playwright 1.59.1
   CLI. The downloaded browser's ELF interpreter was adapted to the image's existing glibc. No repository runtime,
@@ -87,6 +87,18 @@ All major pages were captured at 390, 768 and 1440px. Representative retained ca
   [empty filtered collection](admin-portal-screenshots/people-empty-768.png)
 
 These are synthetic fixture identities and resources, not production screenshots. Fixture proof is not live Ofz proof.
+
+### Connected review fixes
+
+Automatic review of [PR #15597](https://github.com/proompteng/lab/pull/15597) identified three actionable defects.
+Resource URLs and selector values now bind both kind and ID, with a same-ID/different-kind browser regression.
+Overview refresh explicitly retries both summary reads and clears stale errors; a browser regression exercises failed
+and successful refreshes. Bounded pending counts display `128+` when the server supplies a next cursor.
+Ofz now marks validation rejections only after locked reconciliation/completed-operation lookup and before journaling.
+The BFF carries that explicit outcome, so definitively rejected changes no longer permanently block new edits while
+unmarked authority/session/network failures retain the original intent. Real service assertions cover inadmissible
+membership and last-admin rejection; RPC/BFF/client and Chromium tests cover the marker and subsequent edits.
+
 
 ## Delivery and live acceptance gate
 

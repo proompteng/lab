@@ -13,12 +13,14 @@ import {
   type GetPlatformWorkspaceResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 
-export function WorkspaceOverview({ detail }: { detail: GetPlatformWorkspaceResponse }) {
+export function WorkspaceOverview({ detail, revision }: { detail: GetPlatformWorkspaceResponse; revision: number }) {
   const workspace = detail.workspace!
-  const [summary, setSummary] = useState<{ requests: number; connections: number; reconnect: number }>()
+  const [summary, setSummary] = useState<{ requests: string; connections: number; reconnect: number }>()
   const [error, setError] = useState('')
   useEffect(() => {
     const controller = new AbortController()
+    setSummary(undefined)
+    setError('')
     const query = '?' + new URLSearchParams({ workspaceId: workspace.id })
     void Promise.all([
       fetch('/api/platform/access-requests' + query, { signal: controller.signal, cache: 'no-store' })
@@ -32,7 +34,7 @@ export function WorkspaceOverview({ detail }: { detail: GetPlatformWorkspaceResp
         if (controller.signal.aborted) return
         const shared = providers.connections.filter((profile) => profile.workspaceManaged)
         setSummary({
-          requests: requests.requests.length,
+          requests: `${requests.requests.length}${requests.cursor ? '+' : ''}`,
           connections: shared.filter((profile) => profile.state === ProviderConnectionState.READY).length,
           reconnect: shared.filter((profile) => profile.state === ProviderConnectionState.RECONNECT).length,
         })
@@ -41,7 +43,7 @@ export function WorkspaceOverview({ detail }: { detail: GetPlatformWorkspaceResp
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Summary unavailable.')
       })
     return () => controller.abort()
-  }, [workspace.id])
+  }, [workspace.id, revision])
   const cards = [
     {
       name: 'Active members',

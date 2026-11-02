@@ -302,7 +302,7 @@ export function AdminPortal({
               {!error && props ? (
                 <Suspense fallback={<Skeleton aria-label="Loading page" className="h-64" />}>
                   <div key={`${identity.humanId}:${workspaceId}:${section}`}>
-                    {section === 'overview' ? <WorkspaceOverview detail={props.detail} /> : null}
+                    {section === 'overview' ? <WorkspaceOverview detail={props.detail} revision={revision} /> : null}
                     {section === 'people' ? <WorkspacePeople {...props} /> : null}
                     {section === 'integrations' ? <WorkspaceClients {...props} /> : null}
                     {section === 'resources' ? <ResourceAccessPanel {...props} /> : null}

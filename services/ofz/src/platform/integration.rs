@@ -740,6 +740,22 @@ async fn workspace_administration(
             enabled: true,
         }],
     };
+    let mut inadmissible = grant.clone();
+    inadmissible.operation_id = Uuid::new_v4().to_string();
+    inadmissible.relationships[0].subject_id = "d".repeat(64);
+    let rejected = mutations::execute(
+        database,
+        native,
+        ADMIN,
+        Command::Relationships(inadmissible),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(rejected.code(), Code::PermissionDenied);
+    assert_eq!(
+        rejected.metadata().get("x-ofz-command-outcome").unwrap(),
+        "rejected"
+    );
     mutations::execute(
         database,
         native,
@@ -806,12 +822,13 @@ async fn workspace_administration(
         })
         .collect();
     grant.operation_id = Uuid::new_v4().to_string();
+    let rejected = mutations::execute(database, native, ADMIN, Command::Relationships(grant))
+        .await
+        .unwrap_err();
+    assert_eq!(rejected.code(), Code::FailedPrecondition);
     assert_eq!(
-        mutations::execute(database, native, ADMIN, Command::Relationships(grant))
-            .await
-            .unwrap_err()
-            .code(),
-        Code::FailedPrecondition
+        rejected.metadata().get("x-ofz-command-outcome").unwrap(),
+        "rejected"
     );
     let activity = workspaces::activity(
         database,

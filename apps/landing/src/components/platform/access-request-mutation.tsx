@@ -72,8 +72,8 @@ export function useAccessRequestMutation(storageKey: string, onChanged: () => vo
     } catch (cause) {
       if (
         cause instanceof PlatformClientError &&
-        cause.status < 500 &&
-        ![401, 403, 408, 428, 429].includes(cause.status)
+        ((cause.commandRejected && ![401, 428].includes(cause.status)) ||
+          (cause.status < 500 && ![401, 403, 408, 428, 429, 499].includes(cause.status)))
       ) {
         sessionStorage.removeItem(storageKey)
         setPending(undefined)

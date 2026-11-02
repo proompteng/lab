@@ -43,6 +43,8 @@ const schema = z.object({
 })
 type Form = z.infer<typeof schema>
 type Recipient = { key: string; name: string; kind: 'human' | 'workload' | 'workspace'; ids: string[] }
+const resourceIdentity = (resource: { kind: string; id: string } | undefined) =>
+  resource ? JSON.stringify([resource.kind, resource.id]) : ''
 const permissionNames: Record<string, string> = {
   status_reader: 'Pod status',
   log_reader: 'Pod logs',
@@ -65,7 +67,7 @@ export function ResourceAccessPanel({
   const collection = useCollection(workspace.resources, (entry) => entry.name)
   const resourceParam =
     collection.query.get('resource') ||
-    (workspace.resources.length === 1 ? workspace.resources[0]!.resource?.id || '' : '')
+    (workspace.resources.length === 1 ? resourceIdentity(workspace.resources[0]!.resource) : '')
   const recipientParam = collection.query.get('recipient') || 'workspace'
   const form = useForm<Form>({
     resolver: zodResolver(schema),
@@ -109,7 +111,7 @@ export function ResourceAccessPanel({
       })),
   ]
   const recipient = recipients.find((entry) => entry.key === recipientKey)
-  const target = workspace.resources.find((entry) => entry.resource?.id === resourceKey)
+  const target = workspace.resources.find((entry) => resourceIdentity(entry.resource) === resourceKey)
   const key = JSON.stringify([recipientKey, resourceKey])
   const saved = snapshot?.key === key ? snapshot.values : undefined
   const relations =
@@ -227,11 +229,11 @@ export function ResourceAccessPanel({
           </TableHeader>
           <TableBody>
             {collection.rows.map((entry) => (
-              <TableRow key={entry.resource?.id}>
+              <TableRow key={resourceIdentity(entry.resource)}>
                 <TableCell>
                   <button
                     className="min-h-10 text-left underline underline-offset-4"
-                    onClick={() => collection.change({ resource: entry.resource!.id })}
+                    onClick={() => collection.change({ resource: resourceIdentity(entry.resource) })}
                   >
                     {entry.name}
                   </button>
@@ -294,7 +296,10 @@ export function ResourceAccessPanel({
                   }}
                   id={`${id}-resource`}
                   placeholder="Choose a resource"
-                  options={workspace.resources.map((entry) => ({ value: entry.resource!.id, label: entry.name }))}
+                  options={workspace.resources.map((entry) => ({
+                    value: resourceIdentity(entry.resource),
+                    label: entry.name,
+                  }))}
                 />
               )}
             />

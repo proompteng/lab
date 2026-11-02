@@ -24,6 +24,9 @@ let directoryFailures = 0
 let loginStarts = 0
 let loginReturn = ''
 let policyStatus = 0
+let policyRejected = false
+let summaryFailure = false
+let summaryReads = 0
 let staleRequest = false
 let activityPages = false
 let workspaceDelay = 0
@@ -156,6 +159,10 @@ beforeAll(async () => {
         return Response.json({ url: url.origin + '/signed-in' })
       }
       if (url.pathname === '/api/platform/access-requests') {
+        if (request.method === 'GET') {
+          summaryReads++
+          if (summaryFailure) return Response.json({ error: 'Summary temporarily unavailable.' }, { status: 503 })
+        }
         if (request.method === 'GET')
           return Response.json({
             requests: (url.searchParams.get('history') === 'true' ? requestOutcomes.size > 0 : requestPending)
@@ -251,18 +258,16 @@ beforeAll(async () => {
             policyCatalogJson: JSON.stringify({
               version: 1,
               actions: [],
-              resources: [
-                {
-                  kind: 'kubernetes.namespace',
-                  workspaceScoped: true,
-                  relations: [
-                    { name: 'status_reader', subjects: ['human', 'workload'] },
-                    { name: 'log_reader', subjects: ['human', 'workload'] },
-                    { name: 'status_workspace', subjects: ['workspace'] },
-                    { name: 'log_workspace', subjects: ['workspace'] },
-                  ],
-                },
-              ],
+              resources: metadata.resources.map((entry) => ({
+                kind: entry.resource.kind,
+                workspaceScoped: true,
+                relations: [
+                  { name: 'status_reader', subjects: ['human', 'workload'] },
+                  { name: 'log_reader', subjects: ['human', 'workload'] },
+                  { name: 'status_workspace', subjects: ['workspace'] },
+                  { name: 'log_workspace', subjects: ['workspace'] },
+                ],
+              })),
             }),
           })
         }
@@ -270,7 +275,10 @@ beforeAll(async () => {
         writes.push(write)
         if (policyStatus)
           return Response.json(
-            { error: policyStatus === 401 ? 'Your session expired.' : 'Workspace permission was revoked.' },
+            {
+              error: policyStatus === 401 ? 'Your session expired.' : 'Workspace permission was revoked.',
+              commandRejected: policyRejected,
+            },
             { status: policyStatus },
           )
         if (requireMfa) return Response.json({ error: 'Verify with your passkey before continuing.' }, { status: 428 })
@@ -890,3 +898,90 @@ test('enrolls and disables registered clients without creating resource grants',
     await page.close()
   }
 }, 25_000)
+
+test('distinguishes registered resources with the same ID across kinds in links and writes', async () => {
+  const page = await browser.newPage()
+  page.setDefaultTimeout(7000)
+  const original = [...metadata.resources]
+  const prior = grants.get(workspace)
+  metadata.resources.push({
+    name: 'Synthetic pod',
+    resource: { kind: 'kubernetes.pod', id: metadata.resources[0]!.resource.id },
+  })
+  grants.set(workspace, [])
+  loseReply = false
+  try {
+    await page.goto(`${base}/workspaces/${workspace}/resources`)
+    await page.getByRole('button', { name: 'Synthetic pod', exact: true }).click()
+    await browserExpect(page.getByLabel('Resource', { exact: true })).toContainText('Synthetic pod')
+    await page.reload()
+    await browserExpect(page.getByLabel('Resource', { exact: true })).toContainText('Synthetic pod')
+    await page.getByRole('checkbox', { name: 'Pod logs', exact: true }).check()
+    await page.getByLabel('Reason for this change').fill('Approve only the selected resource kind')
+    await page.getByRole('button', { name: 'Save access', exact: true }).click()
+    await browserExpect(page.getByText('Access updated.', { exact: true })).toBeVisible()
+    expect(writes.at(-1)?.relationships[0]?.resource).toEqual(metadata.resources[1]!.resource)
+    expect(new URL(page.url()).searchParams.get('resource')).toBe(
+      JSON.stringify(['kubernetes.pod', original[0]!.resource.id]),
+    )
+  } finally {
+    metadata.resources = original
+    if (prior) grants.set(workspace, prior)
+    else grants.delete(workspace)
+    await page.close()
+  }
+}, 20_000)
+
+test('refresh retries failed overview summaries and updates successful summaries', async () => {
+  const page = await browser.newPage()
+  page.setDefaultTimeout(7000)
+  summaryFailure = true
+  requestPending = false
+  try {
+    await page.goto(`${base}/workspaces/${workspace}/overview`)
+    await browserExpect(page.getByRole('alert')).toContainText('Summary temporarily unavailable.')
+    summaryFailure = false
+    const before = summaryReads
+    await page.getByRole('button', { name: 'Refresh workspace' }).click()
+    await browserExpect(page.getByText('0 pending access requests', { exact: true })).toBeVisible()
+    expect(summaryReads).toBeGreaterThan(before)
+    requestPending = true
+    await page.getByRole('button', { name: 'Refresh workspace' }).click()
+    await browserExpect(page.getByText('1 pending access requests', { exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('alert')).toHaveCount(0)
+  } finally {
+    summaryFailure = false
+    requestPending = false
+    await page.close()
+  }
+}, 20_000)
+
+test('releases definitively rejected changes without discarding uncertain authority failures', async () => {
+  const page = await browser.newPage()
+  page.setDefaultTimeout(7000)
+  detail.clients[0]!.enabled = false
+  loseReply = false
+  try {
+    await page.goto(`${base}/workspaces/${workspace}/integrations?client=fixture`)
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Reason', { exact: true }).fill('Server rejected this exact intent')
+    policyStatus = 403
+    policyRejected = true
+    await dialog.getByRole('button', { name: 'Enable client' }).click()
+    await browserExpect(dialog.getByText('Workspace permission was revoked.')).toBeVisible()
+    const rejected = writes.at(-1)!
+    await browserExpect(dialog.getByRole('button', { name: 'Retry saved change' })).toHaveCount(0)
+    await browserExpect(dialog.getByRole('button', { name: 'Enable client' })).toBeEnabled()
+    await page.reload()
+    policyStatus = 0
+    await dialog.getByLabel('Reason', { exact: true }).fill('Submit corrected eligible access')
+    await dialog.getByRole('button', { name: 'Enable client' }).click()
+    await browserExpect(dialog).toBeHidden()
+    expect(writes.at(-1)?.operationId).not.toBe(rejected.operationId)
+    expect(detail.clients[0]!.enabled).toBe(true)
+  } finally {
+    policyStatus = 0
+    policyRejected = false
+    await page.close()
+  }
+}, 20_000)

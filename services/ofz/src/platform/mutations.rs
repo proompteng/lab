@@ -537,6 +537,12 @@ pub async fn execute(
                 .parse()
                 .map_err(|_| Status::internal("invalid audit receipt"))?,
         );
+        // Under the command lock, reconciliation and completed replay have finished and
+        // validation failed before journaling. Consumers may release this rejected intent;
+        // authentication/transport failures outside this boundary remain uncertain.
+        error
+            .metadata_mut()
+            .insert("x-ofz-command-outcome", "rejected".parse().unwrap());
         return Err(error);
     }
     client.execute("INSERT INTO ofz.platform_commands(operation_id,workload_id,fingerprint,prepared) VALUES($1,$2,$3,$4)", &[&operation,&peer,&fingerprint,&store::encode(&prepared)?]).await.map_err(sql_error)?;
