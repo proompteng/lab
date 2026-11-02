@@ -148,7 +148,7 @@ describePostgres('Durable per-account broker observations', () => {
         yield* advanceToTicket(ticket)
         const value = snapshot(ticket)
         yield* store.publish(ticket, value, 0)
-        const intentId = randomUUID()
+        const intentId = 'd'.repeat(64)
         yield* reserve(sql, intentId, utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 1))
         let reads = 0
         const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
