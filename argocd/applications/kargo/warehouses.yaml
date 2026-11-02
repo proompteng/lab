@@ -693,6 +693,7 @@ spec:
           - charts/agents/crds
           - nix/images/agents.nix
           - nix/images/openai-codex-cli.nix
+          - nix/images/agentrun-tools.nix
           - argocd/applications/agents
           - charts/agents
         excludePaths:
@@ -1082,5 +1083,35 @@ spec:
         strictSemvers: true
         allowTagsRegexes:
           - ^kargo-sha-[0-9a-f]{40}$
+        platform: linux/amd64
+        cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: torghut-webull-feed
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/torghut-webull-feed').Annotations['ai.proompteng.github-actions-run-id']
+  subscriptions:
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/torghut-webull-feed
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - ^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$
         platform: linux/amd64
         cacheByTag: true

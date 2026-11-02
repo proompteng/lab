@@ -17,7 +17,7 @@ function Fixture() {
     <AdminPortal
       identity={identity}
       workspaceId={parts[2]}
-      section={portalSections.find((section) => section === parts[3]) || 'integrations'}
+      section={portalSections.find((section) => section === parts[3]) || 'overview'}
     />
   )
 }
