@@ -189,7 +189,7 @@ async function runAction(request: Request) {
         result = await listCodexModels(identity, action.agentId, action.cursor, request.signal)
         break
       case 'active-codex-runs':
-        result = await getActiveCodexRuns(identity, action.agentId, request.signal)
+        result = await getActiveCodexRuns(identity, action.agentId, action.threadId, request.signal)
         break
       case 'codex-run':
         result = await getCodexRun(identity, action.agentId, action.runId, request.signal)

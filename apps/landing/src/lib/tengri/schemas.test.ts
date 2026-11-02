@@ -7,6 +7,19 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('scopes active-run reads to a validated conversation without changing workspace reads', () => {
+    const action = { action: 'active-codex-runs', agentId: 'agent-test' }
+    expect(tengriActionSchema.parse(action)).toEqual(action)
+    expect(tengriActionSchema.parse({ ...action, threadId: 'thread-selected' })).toEqual({
+      ...action,
+      threadId: 'thread-selected',
+    })
+    for (const threadId of ['', ' ', '../other', 'x'.repeat(161), null]) {
+      expect(tengriActionSchema.safeParse({ ...action, threadId }).success).toBe(false)
+    }
+    expect(tengriActionSchema.safeParse({ ...action, ownerHash: 'other' }).success).toBe(false)
+  })
+
   test('power settings enforce integer idle limits and reject modes that retain RAM', () => {
     const action = { action: 'update-power-settings', agentId: 'agent-test' }
     for (const idleTimeoutMinutes of [0, 5, 60, 1440]) {

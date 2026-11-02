@@ -676,10 +676,15 @@ export async function sendCodexTurn(
   )
 }
 
-export async function getActiveCodexRuns(identity: PlatformIdentity, agentId: string, signal?: AbortSignal) {
+export async function getActiveCodexRuns(
+  identity: PlatformIdentity,
+  agentId: string,
+  threadId?: string,
+  signal?: AbortSignal,
+) {
   const result = await unary<RawRecord>(
     'getActiveCodexRuns',
-    { id: agentId },
+    { id: agentId, threadId },
     identity,
     TENGRI_UNARY_TIMEOUT_MS,
     signal,

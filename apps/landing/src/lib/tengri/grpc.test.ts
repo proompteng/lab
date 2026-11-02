@@ -831,6 +831,16 @@ describe('Tengri gRPC BFF transport', () => {
     expect(receivedRequest).toEqual({ id: 'agent-test' })
     expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
   })
+  test('carries the selected conversation in the signed active-run request', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    const runs = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.threadId).toBe('thread-selected')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
+    expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+    expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
+  })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
     try {
@@ -1751,7 +1761,7 @@ describe('Tengri gRPC BFF transport', () => {
     const controller = new AbortController()
     const pending = (
       kind === 'active runs'
-        ? getActiveCodexRuns(identity, 'codex-run-read-cancel', controller.signal)
+        ? getActiveCodexRuns(identity, 'codex-run-read-cancel', 'thread-selected', controller.signal)
         : getCodexRun(identity, 'codex-run-read-cancel', '11111111-1111-4111-8111-111111111111', controller.signal)
     ).catch((error: unknown) => error)
     try {
