@@ -308,6 +308,31 @@ describe('agents-shell MCP OAuth metadata', () => {
 })
 
 describe('agents-shell MCP tools', () => {
+  it('rejects BMC controls and target overrides before invoking a process', async () => {
+    const config = makeConfig()
+    const runner = new AgentsShellRunner(config)
+    const processCall = vi.spyOn(runner, 'runProcess')
+    const { client, server } = await connectServer(config, makeAuth(['agents-shell.read']), runner)
+    try {
+      for (const args of [
+        { node: 'altra', operation: 'power_cycle' },
+        { node: 'turin', operation: 'raw' },
+        { node: 'other-host', operation: 'identity' },
+        { node: 'turin', operation: 'module_sensors' },
+        { node: 'turin', operation: 'fan_state' },
+      ]) {
+        const result = await client.callTool({ name: 'bmc', arguments: args })
+        expect(result.isError).toBe(true)
+      }
+      expect(processCall).not.toHaveBeenCalled()
+    } finally {
+      processCall.mockRestore()
+      runner.shutdown()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('lists focused tools with annotations and OAuth metadata', async () => {
     const config = makeConfig()
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
@@ -331,6 +356,7 @@ describe('agents-shell MCP tools', () => {
         'kubectl',
         'kubectl_admin',
         'infrastructure',
+        'bmc',
         'create_agent_run',
         'cancel_agent_run',
         'get_agent_run',
@@ -388,7 +414,7 @@ describe('agents-shell MCP tools', () => {
       securitySchemes: linkedOauthScheme,
     })
 
-    for (const name of ['infrastructure']) {
+    for (const name of ['infrastructure', 'bmc']) {
       const tool = tools.tools.find((candidate) => candidate.name === name)
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: true })
       expect(tool?._meta).toMatchObject({ securitySchemes: linkedOauthScheme })
@@ -407,7 +433,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(24_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(25_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)

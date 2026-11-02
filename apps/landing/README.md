@@ -58,12 +58,40 @@ its own service account, SPIFFE identity, confidential OIDC client and host-only
 Relay executor, database, HMAC or guest credential. The issuer can reuse existing verified passkey SSO across clients;
 Ofz keeps their session authority separate. Step-up returns to the same local page.
 
-The portal's workspace selector controls the visible context. Ofz separately checks the administrator's current role
-for every resource, person, client and activity request. People & access manages workspace membership and prevents
-removing the last active administrator. Integrations enrolls clients and grants named resource operations to workspace
-members, individual people or registered clients. Activity shows changes, execution outcomes and denied access;
-receipt IDs stay inside details. Access changes require a reason and contextual fresh verification. Unconfirmed changes
-retain their exact operation in per-person, per-workspace browser storage until reconciled.
+The administration console has addressable Overview, People & access, Integrations, Resource access, Connections,
+Access requests, Activity and Settings pages under `/workspaces/<id>/<section>`. The responsive shadcn sidebar and
+workspace switcher preserve the selected area while resetting workspace-specific query state. Search, filters,
+collection pages and detail selections use URL state; reads are cancelled or superseded on context changes.
+Ofz separately checks current authority on every request. The initial directory and workspace reads run concurrently
+on the server, and heavy panels load only when selected.
+
+Membership uses admitted GitHub identities, not email invitations, and preserves the last-active-administrator
+invariant. Registered clients can be enrolled or disabled; enrollment is not a health check or a resource grant.
+Resource grants cover named operations for members, individual people and clients. The editor shows direct grants,
+not an unsupported effective-access calculation. Provider connections record consent and never add permissions.
+Destructive changes require confirmation, and access changes require reasons and contextual fresh verification.
+Unconfirmed changes retain their original operation ID and exact payload across reload and authentication; a
+permission failure does not discard an uncertain operation. Renewed sessions can reconcile the original Ofz intent.
+
+Access requests have a bounded pending queue, cursor-paginated decided history and workspace-scoped detail lookup.
+Activity filters exact action, actor and allowed/denied outcome **before** the 100-receipt cursor page. Successful
+administration reads are excluded. Receipt IDs and technical fields stay inside details; historical serialized
+command receipts render only known resource/grant fields, never an arbitrary request dump.
+Administration workspace names, registered identities, resource ceilings and provider destinations remain reviewed
+Ofz registry configuration, not editable VM or global-policy controls. See the
+[capability matrix and acceptance evidence](../../docs/platform/admin-portal-acceptance.md).
+
+Run the real Chromium/axe platform fixture separately from the Tengri Playwright test directory:
+
+```sh
+node .github/scripts/install-tengri-chromium.mjs
+PLATFORM_UI_SCREENSHOT_DIR=/tmp/admin-portal-screenshots bun run --cwd apps/landing test:admin
+```
+
+`test:admin` also runs the isolated admin/provider BFF contract tests. The PR landing gate invokes it and uploads
+synthetic screenshots. `PLATFORM_UI_CHROMIUM` optionally selects an already-installed compatible Chromium executable.
+Fixture proof does not replace `bash services/ofz/test-control.sh platform`, policy qualification or authorized live
+portal acceptance. No production account, grant, provider consent or credential needs to be changed to run these tests.
 
 Settings → Privacy & Security contains personal workspace sharing, scoped diagnostics, ownership transfer and passkey
 management. `/access` opens the administration portal. Product policy/quota/global-audit editors and their replaced
@@ -258,9 +286,6 @@ control; Terminal is ready for typing when opened. Minimize preserves the window
 Maximized windows fill the desktop below the menu bar with square corners and no margins. The Dock hides until the
 pointer reaches the bottom edge or a Dock control receives keyboard focus. Normal windows remain above the Dock.
 The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
-The menu bar's **Chat + work** control arranges Tengri chat beside **Browser**, **Code**, or **Files** on a wide desktop.
-Switching work views keeps the existing windows and sessions mounted, including unsaved editor contents. **Back to desktop**
-restores the ordinary window layout and focus. Narrow or touch layouts retain the existing single-window presentation.
 
 Finder's toolbar, sidebar proportions, row density, action menu, and icon view were compared directly with Finder
 on macOS 26.5.2. The toolbar shows the current folder; Go to Folder opens a validated location dialog. Sortable
@@ -304,8 +329,6 @@ Code runs the upstream VS Code workbench through [code-server 4.135.0](https://g
 (Code 1.135.0) inside the user's Nanoagent guest. Explorer, tabs, search, Source Control, integrated terminals, language
 servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
 may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
-The editor identifies itself as **VS Code editor**, explains that its assistants have a separate history, and provides
-**Open Tengri chat**. This distinction is supplied by the desktop shell and also applies to retained guest editors.
 
 The composer's **Approvals** selector offers **Ask first** and **Auto approve**. The browser remembers this per
 workspace and automatically resolves advertised action confirmations while the chat is open. Questions remain manual:
@@ -319,12 +342,6 @@ Resolved approvals and answers stay retired for the open workspace, including ac
 run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
 navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
-The task-status panel explains the last confirmed execution state and its next action, with reason details available
-when the controller supplies them. **Status unavailable** describes a failed observation and retains the last known
-state; it never reports that the task has stopped. **Retry status**, **Stop task**, and **Retry stop** act on the selected
-task. **Since submitted** uses the actual recorded first submission attempt, preserved across uncertain retries in
-display metadata separate from the durable operation identity. Recovered tasks without that observation omit elapsed
-time. **Last update received** comes from new matching task events, while **Last checked** records successful status reads.
 Brief event-stream interruptions retry quietly. A connection warning appears after three seconds of continuous
 interruption and clears after recovery. Authentication and permission failures keep their original errors.
 A follow-up confirmed undispatched because its previous turn finished waits for
@@ -334,11 +351,6 @@ approving another turn.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
-
-The **Results** tab gathers referenced files, web links, and recorded changes from loaded assistant and tool output in
-the selected conversation. Prompts, plans, and proposed commands are not treated as results. File references reuse the
-authenticated preview and pin controls; opening a reference reads its current contents. Recorded diffs remain distinct
-from current file contents, and a reference alone does not assert that a file exists or a task succeeded.
 
 Local `/workspace/...` links in agent messages open file tabs above the conversation. The sidebar remains visible,
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
