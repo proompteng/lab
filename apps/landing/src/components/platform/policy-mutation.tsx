@@ -2,7 +2,7 @@
 
 import { fromJson } from '@bufbuild/protobuf'
 import { Button } from '@proompteng/design/ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { startSignIn } from '@/lib/platform/auth-client'
 import { PlatformClientError, readPlatformResponse } from '@/lib/platform/client'
@@ -11,12 +11,22 @@ import { WritePolicyRelationshipsResponseSchema } from '@/lib/tengri/generated/p
 
 export function usePolicyMutation(workspaceId: string, humanId: string, scope: string, onChanged: () => void) {
   const storageKey = `platform-policy:${humanId}:${workspaceId}:${scope}`
+  const inFlight = useRef(false)
+  const active = useRef(true)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
   const [ready, setReady] = useState(false)
   const [pending, setPending] = useState<PolicyWrite>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<Error>()
   const [receipt, setReceipt] = useState('')
   useEffect(() => {
+    setReady(false)
+    setPending(undefined)
     try {
       const saved = sessionStorage.getItem(storageKey)
       if (saved) {
@@ -30,15 +40,24 @@ export function usePolicyMutation(workspaceId: string, humanId: string, scope: s
     }
   }, [storageKey, workspaceId])
   const save = async (request: PolicyWrite) => {
+    if (inFlight.current || !active.current) return
+    inFlight.current = true
     setBusy(true)
     setError(undefined)
     try {
-      sessionStorage.setItem(storageKey, JSON.stringify(request))
+      const saved = sessionStorage.getItem(storageKey)
+      if (
+        saved &&
+        JSON.stringify(policyWriteSchema.parse(JSON.parse(saved))) !== JSON.stringify(policyWriteSchema.parse(request))
+      )
+        throw new Error('Reconcile the saved change before submitting a different operation.')
+      const body = saved || JSON.stringify(policyWriteSchema.parse(request))
+      sessionStorage.setItem(storageKey, body)
       setPending(request)
       const response = await fetch('/api/platform/policies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
+        body,
       })
       const result = fromJson(WritePolicyRelationshipsResponseSchema, await readPlatformResponse(response))
       if (!result.decision?.allowed || !result.decision.auditReceiptId)
@@ -47,35 +66,35 @@ export function usePolicyMutation(workspaceId: string, humanId: string, scope: s
       setPending(undefined)
       setReceipt(result.decision.auditReceiptId)
       toast.success('Access updated')
-      onChanged()
+      if (active.current) onChanged()
     } catch (cause) {
-      if (cause instanceof PlatformClientError && cause.status < 500 && cause.status !== 428) {
+      if (
+        cause instanceof PlatformClientError &&
+        cause.status < 500 &&
+        ![401, 403, 408, 428, 429].includes(cause.status)
+      ) {
         sessionStorage.removeItem(storageKey)
         setPending(undefined)
       }
       setError(cause instanceof Error ? cause : new Error('The change could not be confirmed.'))
     } finally {
-      setBusy(false)
+      inFlight.current = false
+      if (active.current) setBusy(false)
     }
   }
-  const cancel = () => {
-    if (busy || !(error instanceof PlatformClientError) || error.status !== 428) return
-    sessionStorage.removeItem(storageKey)
-    setPending(undefined)
-    setError(undefined)
-  }
-  return { save, cancel, ready, pending, busy, error, receipt }
+  return { save, ready, pending, busy, error, receipt }
 }
 
 export function PolicyMutationStatus({ mutation }: { mutation: ReturnType<typeof usePolicyMutation> }) {
-  const verify = mutation.error instanceof PlatformClientError && mutation.error.status === 428
+  const status = mutation.error instanceof PlatformClientError ? mutation.error.status : 0
+  const verify = status === 428 || status === 401
   const [verifying, setVerifying] = useState(false)
   const [verificationError, setVerificationError] = useState<Error>()
   const verifyIdentity = async () => {
     setVerifying(true)
     setVerificationError(undefined)
     try {
-      await startSignIn('step-up')
+      await startSignIn(status === 428 ? 'step-up' : 'login')
     } catch (cause) {
       setVerificationError(cause instanceof Error ? cause : new Error('Verification could not start.'))
       setVerifying(false)
@@ -112,17 +131,6 @@ export function PolicyMutationStatus({ mutation }: { mutation: ReturnType<typeof
                   ? 'Verify & continue'
                   : 'Retry saved change'}
           </Button>
-          {verify ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={mutation.busy || verifying}
-              onClick={mutation.cancel}
-            >
-              Cancel change
-            </Button>
-          ) : null}
           {verificationError ? (
             <p role="alert" className="text-red-300">
               {verificationError.message}
