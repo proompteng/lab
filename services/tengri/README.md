@@ -547,6 +547,11 @@ records the exact run binding, so subsequent key rotation does not strand accept
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
+Status reads retain their pending response within the existing fifteen-second recovery budget. A response still
+pending after five seconds emits a warning and continues under the same deadline; it does not start another durable
+query. Only returned transient errors trigger bounded retries with a freshly signed query. The two-second admission
+expiry and authorization checks remain unchanged.
+
 Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
 RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
 Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
