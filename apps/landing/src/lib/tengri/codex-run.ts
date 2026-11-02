@@ -34,6 +34,19 @@ export function codexRunIsTerminal(run: TengriCodexRun) {
   return ['succeeded', 'failed', 'cancelled', 'rejected'].includes(run.state.phase)
 }
 
+export function codexRunCanStop(
+  run: TengriCodexRun | null,
+  identity: { agentId: string; threadId: string; runId: string },
+) {
+  return Boolean(
+    run &&
+    run.agentId === identity.agentId &&
+    run.threadId === identity.threadId &&
+    run.runId === identity.runId &&
+    !codexRunIsTerminal(run),
+  )
+}
+
 export function recoveredCodexRun(
   runs: readonly TengriCodexRun[],
   recovered: boolean,

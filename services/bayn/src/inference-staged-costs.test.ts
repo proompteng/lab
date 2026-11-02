@@ -19,7 +19,7 @@ import {
   type InferenceExpenseSource,
 } from './inference-expense'
 import { makeNativeChartEvidence } from './jev/chart-evidence'
-import { type DecisionsRequest, type DecisionsResponse } from './jev/decisions'
+import { type JevRequest, type JevResponse } from './jev/contract'
 import {
   entryEvaluationRequestFixture,
   entryCompletionFixture,
@@ -39,31 +39,32 @@ const request = entryEvaluationRequestFixture()
 const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
 const chartSource = { chart, protocol: request.request.protocol, funding: request.request.funding }
 const initial = Result.getOrThrow(makeInitialChartStageRequest(chartSource))
-const responseFor = (prepared: DecisionsRequest, noBase = false): DecisionsResponse => ({
+const responseFor = (prepared: JevRequest, noBase = false): JevResponse => ({
   model: prepared.model,
-  answers: prepared.questions.map((question) => {
-    if (question.type === 'predicate') return { type: 'predicate', name: question.name, probability: 0.8 }
-    const choice =
-      question.name === 'base_last_bar'
-        ? noBase
-          ? 'no_base'
-          : question.choices.filter((item) => item.value !== 'no_base').at(-1)?.value
-        : question.choices[0]?.value
-    if (choice === undefined) throw new Error('Fixture requires an admissible choice')
-    return {
-      type: 'choice',
-      name: question.name,
-      choice,
-      confidence: 0.8,
-      probabilities: question.choices.map((item) => ({ value: item.value, probability: 1 / question.choices.length })),
-    }
-  }),
-  usage: {
-    input_tokens: 100,
-    input_tokens_details: { cached_tokens: 10, cache_write_tokens: 0 },
-    output_tokens: 10,
-    total_tokens: 110,
-  },
+  answers: Object.fromEntries(
+    Object.entries(prepared.questions).map(([name, question]) => {
+      if (question.type === 'noul') return [name, { type: 'noul', noul: 0.8 }]
+      if (question.type !== 'choice') throw new Error('Expected chart choice')
+      const values = Object.keys(question.criteria)
+      const choice =
+        name === 'base_last_bar'
+          ? noBase
+            ? 'no_base'
+            : values.filter((value) => value !== 'no_base').at(-1)
+          : values[0]
+      if (choice === undefined) throw new Error('Expected source choice')
+      return [
+        name,
+        {
+          type: 'choice',
+          choice,
+          confidence: 0.8,
+          probabilities: Object.fromEntries(values.map((value) => [value, value === choice ? 1 : 0])),
+        },
+      ]
+    }),
+  ),
+  usage: { input_tokens: 100, output_tokens: 10 },
 })
 const chartClaim = Result.getOrThrow(
   makeStagedDispatchClaim({
@@ -368,7 +369,7 @@ test('late BASE_START metering preserves both unknown quote histories without ch
   const base = quotes(after).find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.BaseStart)
   if (base === undefined) throw new Error('Missing base expense')
   expect(base.schemaVersion).toBe('bayn.inference-expense-quote.v4')
-  expect(base.rate?.provider).toBe('openai')
+  expect(base.rate?.provider).toBe('typesafe')
   const { quoteHash: _, ...material } = { ...base, line: { ...base.line, stageClaimHash: null } }
   expect(
     Result.isFailure(

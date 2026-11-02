@@ -11,7 +11,7 @@ import {
 } from '../inference-expense'
 import { summarizeForwardInferenceExpenses } from '../forward-performance/inference-expenses'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { decodeDecisionsResponse, type DecisionsRequest } from './decisions'
+import { decodeJevResponse, type JevRequest } from './contract'
 import { deriveEntryHandoffDisposition } from './entry-inference'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { prepareEntryInferenceInput } from './entry-inference-input'
@@ -56,41 +56,34 @@ const fixture = () => {
   const first = chart.bars[1]
   const last = chart.bars[2]
   if (first === undefined || last === undefined) throw new Error('Expected narrow observed base')
-  const inference = (provider: { request: DecisionsRequest; requestHash: string }) => {
+  const inference = (provider: { request: JevRequest; requestHash: string }) => {
     const response = Result.getOrThrow(
-      decodeDecisionsResponse(provider.request, {
+      decodeJevResponse(provider.request, {
         model: provider.request.model,
-        answers: provider.request.questions.map((question) => {
-          if (question.type === 'predicate')
-            return {
-              type: 'predicate',
-              name: question.name,
-              probability: question.name.includes('base') ? 1 : 0,
-            }
-          const choice =
-            question.name === 'base_last_bar'
-              ? last.id
-              : question.name.startsWith('base_first_bar')
-                ? first.id
-                : question.choices.find((item) => !chart.bars.some((bar) => bar.id === item.value))?.value
-          if (choice === undefined) throw new Error('Expected explicit absent anchor')
-          return {
-            type: 'choice',
-            name: question.name,
-            choice,
-            confidence: 1,
-            probabilities: question.choices.map((item) => ({
-              value: item.value,
-              probability: item.value === choice ? 1 : 0,
-            })),
-          }
-        }),
-        usage: {
-          input_tokens: 100,
-          input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-          output_tokens: 10,
-          total_tokens: 110,
-        },
+        answers: Object.fromEntries(
+          Object.entries(provider.request.questions).map(([name, question]) => {
+            if (question.type === 'noul') return [name, { type: 'noul', noul: name.includes('base') ? 1 : 0 }]
+            if (question.type !== 'choice') throw new Error('Expected chart choice')
+            const values = Object.keys(question.criteria)
+            const choice =
+              name === 'base_last_bar'
+                ? last.id
+                : name.startsWith('base_first_bar')
+                  ? first.id
+                  : values.find((value) => !chart.bars.some((bar) => bar.id === value))
+            if (choice === undefined) throw new Error('Expected explicit absent anchor')
+            return [
+              name,
+              {
+                type: 'choice',
+                choice,
+                confidence: 1,
+                probabilities: Object.fromEntries(values.map((value) => [value, value === choice ? 1 : 0])),
+              },
+            ]
+          }),
+        ),
+        usage: { input_tokens: 100, output_tokens: 10 },
       }),
     )
     return {
@@ -210,7 +203,7 @@ const fixture = () => {
   return { source, evidence }
 }
 
-test('v35 unfunded selection retains both paid stages exactly once without charging JEV', () => {
+test('Jev-only unfunded selection retains both paid stages exactly once without charging JEV', () => {
   const { source, evidence } = fixture()
   const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard))
   expect(quotes).toHaveLength(3)
@@ -218,8 +211,8 @@ test('v35 unfunded selection retains both paid stages exactly once without charg
   expect(paid).toHaveLength(2)
   for (const quote of paid) {
     expect(quote.line.usageStatus).toBe(InferenceUsageStatus.Received)
-    // 100 uncached input tokens at 100,000 micro-USD/million; output is free in the frozen tariff.
-    expect(quote.line.estimatedCostPicoUsd).toBe('10000000')
+    // 100 Jev input tokens at 42,000 micro-USD/million; output is free in the frozen tariff.
+    expect(quote.line.estimatedCostPicoUsd).toBe('4200000')
   }
   const jev = quotes.find((quote) => 'stage' in quote.line && quote.line.stage === 'JEV')
   expect(jev?.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
@@ -234,7 +227,7 @@ test('v35 unfunded selection retains both paid stages exactly once without charg
       stableU128(`bayn.inference-expense.transfer.v3:${evidence.accountBindingHash}:${source.requestId}:BASE_START`),
     ]),
   )
-  const total = 20000000n
+  const total = 8400000n
   expect(plan.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n)).toBe(total)
   const frozen = quotes.map((quote) => ({ quote, verifiedAt: source.asOf }))
   const summary = Result.getOrThrow(summarizeForwardInferenceExpenses(evidence, source.accountId, frozen))

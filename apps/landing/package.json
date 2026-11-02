@@ -9,6 +9,7 @@
     "start": "next start",
     "test": "bun test --path-ignore-patterns='**/*.e2e.test.ts' src/lib/tengri src/lib/platform src/components/tengri src/lib/observability",
     "test:e2e": "playwright test --config playwright.config.ts",
+    "test:admin": "bun test src/lib/platform/admin-routes.e2e.test.ts && bun test src/lib/platform/provider-routes.e2e.test.ts && bun test src/components/platform/admin-portal.e2e.test.ts",
     "lint": "bunx oxfmt --check",
     "format": "bunx oxfmt",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

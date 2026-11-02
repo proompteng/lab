@@ -1,3 +1,4 @@
+import { entryProviderFixture } from './entry-inference.test-support'
 import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Fiber, Logger, Option, References, Result, Tracer } from 'effect'
@@ -353,8 +354,9 @@ describe('entry observation admission', () => {
           recordAll: () => Effect.die('No paid inference'),
           abandon: () => Effect.die('No abandonment'),
         }),
-        Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call') }),
         Effect.provide(entryInferenceFixtureLayer),
+        Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => Effect.die('No provider call') })),
+
         Effect.provide(TestClock.layer()),
         Effect.provide(Logger.layer([])),
         Effect.provide(NodeServices.layer),
@@ -430,8 +432,12 @@ describe('entry observation admission', () => {
             recordAll: () => Effect.die('No inference can be recorded'),
             abandon: () => Effect.die('No inference can be abandoned'),
           }),
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call is allowed') }),
           Effect.provide(entryInferenceFixtureLayer),
+          Effect.provideService(
+            JevClient,
+            entryProviderFixture({ evaluate: () => Effect.die('No provider call is allowed') }),
+          ),
+
           Effect.provide(TestClock.layer()),
           Effect.provide(Logger.layer([logger])),
           Effect.provide(NodeServices.layer),

@@ -205,7 +205,6 @@ const baseConfig = (
   alpaca,
   kafka: parsed.kafka,
   jevKey: parsed.jevKey,
-  openAiKey: parsed.openAiKey,
   clickhouse: parsed.clickhouse,
   postgres: parsed.postgres,
   nativeArrivalPostgres: parsed.nativeArrivalPostgres,

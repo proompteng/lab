@@ -1,3 +1,4 @@
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { registeredReplayInferenceTariff } from './inference-costs'
@@ -47,14 +48,14 @@ const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v10',
+    schemaVersion: 'bayn.backtest.v11',
     policy: 'JEV' as const,
     latencyStress: null,
     jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
     inference: {
       mode: 'measured-providers',
       maximumCalls: 1000,
-      models: { jev: jevModel, chart: 'gpt-6-luna' },
+      models: { jev: jevModel },
       inputDefinition: 'bayn.jev-entry-state.v23',
       costs: replayRateCardFixture({
         jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -258,6 +259,10 @@ test('registered latency replay preserves every equity session and the exact can
     },
     inference: {
       ...original.inference,
+      costs: {
+        ...original.inference.costs,
+        rates: original.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+      },
       mode: 'retained-responses' as const,
       recording,
       recordingHash: testHash(recording),
@@ -300,7 +305,10 @@ test('registered latency replay preserves every equity session and the exact can
             }),
             riskPolicyHash: testHash(material.riskPolicy),
             riskPolicy: material.riskPolicy,
-            inferenceRateCard: input.inference.costs,
+            inferenceRateCard: {
+              ...input.inference.costs,
+              rates: input.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+            },
             promptsHash: testHash(material.prompts),
             continuationAndExitsHash: testHash(material.continuationAndExits),
             protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(prepared.strategy.provenance.strategy)),
@@ -324,6 +332,7 @@ test('registered latency replay preserves every equity session and the exact can
       },
       input.interval,
       JevResearchPolicy.Candidate,
+      defaultJevProtocolDocument,
     ),
   )
   const scheduledRegistration = {
@@ -420,6 +429,10 @@ test('retained replay binds the recording to its exact source, source revision a
     ...original,
     inference: {
       ...original.inference,
+      costs: {
+        ...original.inference.costs,
+        rates: original.inference.costs.rates.filter((rate) => rate.provider === 'typesafe'),
+      },
       mode: 'retained-responses',
       recording: retained,
       recordingHash: Result.getOrThrow(canonicalHashV1Result(retained)),
@@ -477,7 +490,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v36')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v37')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)

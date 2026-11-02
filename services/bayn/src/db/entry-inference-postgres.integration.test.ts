@@ -1,5 +1,7 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
+import jevOnlyInference from '../../migrations/0172_jev_only_inference'
 import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
-import * as currentChartStages from '../jev/staged-chart-questions'
+import * as observedChartStages from '../jev/retained-observed-staged-chart-questions'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import candidateEntryEvidence from '../../migrations/0166_candidate_entry_evidence'
 import chartStructureBeforeFunding from '../../migrations/0167_chart_structure_before_funding'
@@ -13,6 +15,7 @@ import {
   RetainedJevProtocolV33Schema,
   RetainedJevProtocolV34Schema,
   RetainedJevProtocolV35Schema,
+  RetainedJevProtocolV36Schema,
 } from '../jev/protocol'
 import * as retainedChartStages from '../jev/retained-filtered-staged-chart-questions'
 import focusedEntryEvidence from '../../migrations/0164_focused_entry_evidence'
@@ -63,7 +66,6 @@ import {
   retainedStagedQuestionPolicyHash,
   retainedMarketQuestionPolicyHash,
 } from '../jev/staged-inference-cost-evidence'
-import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
@@ -143,6 +145,7 @@ const conditionalInput = {
     ...request.request.protocol,
     executionModel: retainedIntradayExecutionModel,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
+    entrySignalPolicy: 'openai-decisions-then-jev' as const,
     inputDefinition: 'bayn.jev-entry-state.v22' as const,
     lookbackMinutes: 30 as const,
     entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
@@ -306,6 +309,7 @@ integration('committed sequential provider handoff', () => {
     [166, candidateEntryEvidence, 'bayn.jev.protocol.v33'],
     [167, chartStructureBeforeFunding, 'bayn.jev.protocol.v34'],
     [171, datedExecutionFees, 'bayn.jev.protocol.v35'],
+    [172, jevOnlyInference, 'bayn.jev.protocol.v36'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -330,18 +334,25 @@ integration('committed sequential provider handoff', () => {
             retiredProtocol === 'bayn.jev.protocol.v32' ||
             retiredProtocol === 'bayn.jev.protocol.v33' ||
             retiredProtocol === 'bayn.jev.protocol.v34' ||
-            retiredProtocol === 'bayn.jev.protocol.v35'
+            retiredProtocol === 'bayn.jev.protocol.v35' ||
+            retiredProtocol === 'bayn.jev.protocol.v36'
               ? {
                   ...request.request.protocol,
-                  executionModel: retainedIntradayExecutionModel,
+                  entrySignalPolicy: 'openai-decisions-then-jev' as const,
+                  executionModel:
+                    retiredProtocol === 'bayn.jev.protocol.v36'
+                      ? request.request.protocol.executionModel
+                      : retainedIntradayExecutionModel,
                   schemaVersion: retiredProtocol,
                   inputDefinition:
-                    retiredProtocol === 'bayn.jev.protocol.v34' || retiredProtocol === 'bayn.jev.protocol.v35'
+                    retiredProtocol === 'bayn.jev.protocol.v34' ||
+                    retiredProtocol === 'bayn.jev.protocol.v35' ||
+                    retiredProtocol === 'bayn.jev.protocol.v36'
                       ? ('bayn.jev-entry-state.v23' as const)
                       : ('bayn.jev-entry-state.v22' as const),
                   entryQuestionPolicyHash:
-                    retiredProtocol === 'bayn.jev.protocol.v35'
-                      ? request.request.protocol.entryQuestionPolicyHash
+                    retiredProtocol === 'bayn.jev.protocol.v35' || retiredProtocol === 'bayn.jev.protocol.v36'
+                      ? 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325'
                       : retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
                         ? '864658b2565a176ecad7e6e2460a9f9be9340bf9f304d5af41db81ce49551158'
                         : retiredProtocol === 'bayn.jev.protocol.v32'
@@ -352,12 +363,14 @@ integration('committed sequential provider handoff', () => {
                     retiredProtocol === 'bayn.jev.protocol.v32' ||
                     retiredProtocol === 'bayn.jev.protocol.v33' ||
                     retiredProtocol === 'bayn.jev.protocol.v34' ||
-                    retiredProtocol === 'bayn.jev.protocol.v35'
+                    retiredProtocol === 'bayn.jev.protocol.v35' ||
+                    retiredProtocol === 'bayn.jev.protocol.v36'
                       ? IntradayCandidateEvidencePolicy.MarketQuotesV2
                       : IntradayCandidateEvidencePolicy.MarketQuotes,
                 }
               : {
                   ...request.request.protocol,
+                  entrySignalPolicy: 'openai-decisions-then-jev' as const,
                   executionModel: retainedIntradayExecutionModel,
                   schemaVersion: retiredProtocol,
                   inputDefinition: 'bayn.jev-entry-state.v22' as const,
@@ -380,13 +393,14 @@ integration('committed sequential provider handoff', () => {
               RetainedJevProtocolV33Schema,
               RetainedJevProtocolV34Schema,
               RetainedJevProtocolV35Schema,
+              RetainedJevProtocolV36Schema,
             ]),
           )(protocolMaterial)
           const input = {
             ...request.request,
             numericalState: { ...request.request.numericalState, schemaVersion: protocol.inputDefinition },
             schemaVersion:
-              retiredProtocol === 'bayn.jev.protocol.v35'
+              retiredProtocol === 'bayn.jev.protocol.v35' || retiredProtocol === 'bayn.jev.protocol.v36'
                 ? ('bayn.entry-inference-input.v8' as const)
                 : retiredProtocol === 'bayn.jev.protocol.v34'
                   ? ('bayn.entry-inference-input.v7' as const)
@@ -405,8 +419,8 @@ integration('committed sequential provider handoff', () => {
           const checkpoint = stagedCheckpointFixture(
             original,
             original.observedAt,
-            retiredProtocol === 'bayn.jev.protocol.v35'
-              ? currentChartStages
+            retiredProtocol === 'bayn.jev.protocol.v35' || retiredProtocol === 'bayn.jev.protocol.v36'
+              ? observedChartStages
               : retiredProtocol === 'bayn.jev.protocol.v33' || retiredProtocol === 'bayn.jev.protocol.v34'
                 ? retainedCandidateChartStages
                 : retainedChartStages,
@@ -464,7 +478,7 @@ integration('committed sequential provider handoff', () => {
             Schema.Struct({ code: Schema.Literal('23514'), message: Schema.String }),
           )(rejectedHandoff.failure.reason.cause)
           expect(failure.message).toContain(
-            retiredProtocol === 'bayn.jev.protocol.v35'
+            retiredProtocol === 'bayn.jev.protocol.v35' || retiredProtocol === 'bayn.jev.protocol.v36'
               ? 'entry handoff differs from its original versioned source'
               : 'retired entry protocol',
           )
@@ -762,6 +776,7 @@ integration('committed sequential provider handoff', () => {
             ...request.request.protocol,
             executionModel: retainedIntradayExecutionModel,
             schemaVersion: 'bayn.jev.protocol.v26',
+            entrySignalPolicy: 'openai-decisions-then-jev' as const,
             inputDefinition: 'bayn.jev-entry-state.v22' as const,
             lookbackMinutes: 30,
             candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
@@ -1410,6 +1425,45 @@ integration('committed sequential provider handoff', () => {
     30_000,
   )
 
+  test('rejects a retired provider response on a current Jev stage before admitting financial evidence', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const current = stagedCheckpointFixture(request)
+        const claim = current.claims[0]
+        const terminal = current.terminals[0]
+        if (claim === undefined || terminal?.outcome.status !== 'RECEIVED')
+          throw new Error('Missing current chart fixture')
+        yield* persistVisualClaimFixture(yield* EntryInferenceJournal, claim)
+        const substituted = {
+          ...terminal,
+          outcome: {
+            ...terminal.outcome,
+            inference: {
+              ...terminal.outcome.inference,
+              response: { ...terminal.outcome.inference.response, model: 'gpt-6-luna' },
+            },
+          },
+        }
+        const rejected =
+          yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
+        VALUES (${request.requestId},'CHART',${claim.claimHash},${terminal.terminalHash},${sql.json(substituted)})`.pipe(
+            Effect.result,
+          )
+        if (Result.isSuccess(rejected)) throw new Error('Retired provider was admitted for current Jev inference')
+        yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+          rejected.failure.reason.cause,
+        )
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([])
+        yield* persistVisualTransitionFixture(yield* EntryInferenceJournal, { terminal, successor: { kind: 'NONE' } })
+        expect(
+          (yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`).length,
+        ).toBe(1)
+      }),
+    ))
+
   test('commits the exact handoff once and binds the completed receipt to it', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -1440,24 +1494,32 @@ integration('committed sequential provider handoff', () => {
         const events: string[] = []
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(evaluateAdmittedFixture(dispatch)),
-          Effect.provideService(DecisionsClient, {
-            evaluate: (raw) =>
-              Effect.gen(function* () {
-                events.push(events.length === 0 ? 'chart' : 'base-start')
-                return nativeChartInference(raw, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
-              }),
-          }),
-          Effect.provideService(JevClient, {
-            evaluate: (raw) =>
-              Effect.gen(function* () {
-                const prepared = Result.getOrThrow(prepareJevRequest(raw))
-                const [stored] = yield* sql`SELECT payload #>> '{disposition,jevRequestHash}' AS request_hash
+          Effect.provideService(
+            JevClient,
+            entryProviderFixture(
+              {
+                evaluate: (raw) =>
+                  Effect.gen(function* () {
+                    const prepared = Result.getOrThrow(prepareJevRequest(raw))
+                    const [stored] = yield* sql`SELECT payload #>> '{disposition,jevRequestHash}' AS request_hash
           FROM jev_inference_handoffs WHERE request_id=${request.requestId}`.pipe(Effect.orDie)
-                expect(stored?.['request_hash']).toBe(prepared.requestHash)
-                events.push('jev-after-committed-handoff')
-                return nativeJevInference(prepared.request, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
-              }),
-          }),
+                    expect(stored?.['request_hash']).toBe(prepared.requestHash)
+                    events.push('jev-after-committed-handoff')
+                    return nativeJevInference(
+                      prepared.request,
+                      utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                    )
+                  }),
+              },
+              {
+                evaluate: (raw) =>
+                  Effect.gen(function* () {
+                    events.push(events.length === 0 ? 'chart' : 'base-start')
+                    return nativeChartInference(raw, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
+                  }),
+              },
+            ),
+          ),
           Effect.provide(TestClock.layer()),
         )
         expect(events).toEqual(['chart', 'base-start', 'jev-after-committed-handoff'])
@@ -1993,6 +2055,7 @@ integration('committed sequential provider handoff', () => {
               ...request.request.protocol,
               executionModel: retainedIntradayExecutionModel,
               schemaVersion: 'bayn.jev.protocol.v24',
+              entrySignalPolicy: 'openai-decisions-then-jev' as const,
               inputDefinition: 'bayn.jev-entry-state.v22' as const,
               entryQuestionPolicyHash: 'd35ee4093641285aa36385c4ab35de978de7485ff754bebb523648adf80c8939',
             },
@@ -2051,6 +2114,7 @@ integration('committed sequential provider handoff', () => {
     ['observed-resistance', observedResistance],
     ['conditional-base-anchor', conditionalBaseAnchors],
     ['dated-execution-fee', datedExecutionFees],
+    ['Jev-only', jevOnlyInference],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
