@@ -250,23 +250,25 @@ private suspend fun runWebullFeed(
         logEvent("webull.catalog.loaded", mapOf("candidateSymbols" to catalog.symbols.size.toString(), "catalogId" to catalog.identity))
         val bars =
           launch {
-            var previousCutoff: Instant? = null
+            var previousSweep: Instant? = null
             while (isActive) {
-              val cutoff = Instant.now().truncatedTo(ChronoUnit.MINUTES)
-              previousCutoff?.takeIf { it < cutoff.minus(5, ChronoUnit.MINUTES) }?.let { previous ->
+              val sweepStartedAt = Instant.now().truncatedTo(ChronoUnit.MINUTES)
+              previousSweep?.takeIf { it < sweepStartedAt.minus(5, ChronoUnit.MINUTES) }?.let { previous ->
                 control(
                   "gap",
                   buildJsonObject {
                     put("channel", "bars")
                     put("reason", "bounded_recovery_window_exceeded")
+                    put("scope", "catalog_sweep")
                     put("from", previous.toString())
-                    put("to", cutoff.minus(5, ChronoUnit.MINUTES).toString())
+                    put("to", sweepStartedAt.minus(5, ChronoUnit.MINUTES).toString())
                     put("catalogId", activeCatalog.identity)
                   },
                 )
               }
-              previousCutoff = cutoff
+              previousSweep = sweepStartedAt
               for (batch in activeCatalog.symbols.filter { it !in progress.invalidBarSymbols }.chunked(MAX_WEBULL_BAR_SYMBOLS)) {
+                val cutoff = Instant.now().truncatedTo(ChronoUnit.MINUTES)
                 try {
                   collectWebullBarBatch(batch, {
                     progress.requestedBars += it
@@ -288,7 +290,7 @@ private suspend fun runWebullFeed(
                 }
               }
               control("coverage", progress.report())
-              val next = cutoff.plus(1, ChronoUnit.MINUTES).toEpochMilli() - System.currentTimeMillis()
+              val next = sweepStartedAt.plus(1, ChronoUnit.MINUTES).toEpochMilli() - System.currentTimeMillis()
               if (next > 0) delay(next)
             }
           }

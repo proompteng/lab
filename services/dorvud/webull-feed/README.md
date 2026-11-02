@@ -34,7 +34,8 @@ The production stock-bar endpoint rejected 100 symbols with `ILLEGAL_PARAMETER` 
 `symbols size must be between 1 and 20.`; a 20-symbol request succeeded. This limit is independent of
 the streaming subscription batch size. A full catalog sweep spans several minutes, so the five-minute
 window retains completed bars across those sweeps; `/coverage` reports each symbol's actual latest bar time.
-Each sweep uses one completed UTC-minute cutoff and a five-minute recovery window. Request pacing is
+Each batch uses a current completed UTC-minute cutoff and a five-minute recovery window, so later
+batches do not remain pinned to an earlier sweep's window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
 [documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects
 numeric or HTTP-date Retry-After without truncating long cooldowns, or waits 60 seconds. The final
@@ -43,7 +44,11 @@ failures reconnect instead of blindly repeating side effects.
 
 One invalid symbol rejects a whole provider batch. Bisection isolates invalid symbols without
 excluding valid peers. Invalid symbols are retried after catalog refresh. Empty responses remain
-empty: no synthetic bars or implied coverage. Expired recovery windows, disconnects, failures, and
+empty: no synthetic bars or implied coverage. Webull can include an older cached bar outside the
+requested window. The raw response remains intact; coverage and archive observation indexes exclude
+out-of-window and unfinished bars without discarding their completed peers. `/coverage` counts those
+exclusions in `excludedOutOfWindowBars`. Malformed prices or non-minute timestamps still fail validation.
+Expired recovery windows, disconnects, failures, and
 unknown gaps across process starts are archived as collector gap records. Initial invalid-symbol
 discovery can take several minutes; `/coverage` reports requested, observed, invalid, and uncovered
 symbols independently.
@@ -57,6 +62,10 @@ includes session ID and topic. Authentication headers and secrets never enter th
 Numeric strings and raw provider timestamps remain unchanged. The protobuf inspector reads the
 [provider's message fields](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/)
 without converting prices or sizes to binary floating point.
+MQTT observation indexes and freshness checks use `Basic.timestamp`, which the official SDK converts
+from Unix milliseconds to UTC. Live stock `Tick.time` values contain only a clock such as `04:04:58`;
+they remain in the native payload. MQTT latency measures the provider message timestamp against receipt,
+without inferring a date or timezone for that clock. Completed bars use their native `time` field.
 
 The HTTP signer follows the official Python SDK 3.0.4 HMAC-SHA256 implementation, verified against a
 fixed independent vector and a real provider call. The older SHA1 prose example does not match the
