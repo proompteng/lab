@@ -6,7 +6,6 @@ permissions:
 on:
   pull_request:
     paths:
-      - '.github/workflows/headlamp-ci.yml'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'

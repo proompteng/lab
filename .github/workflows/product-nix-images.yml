@@ -24,7 +24,6 @@ on:
       - 'nix/images/app.nix'
       - 'nix/check-bun-dependency-closure.sh'
       - '.github/workflows/nix-bun-dependency-closure.yml'
-      - '.github/workflows/product-nix-images.yml'
       - 'nix/images/docs.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/tengri-schema-hash.py'

@@ -46,13 +46,13 @@ const publicationWorkflows = readdirSync('.github/workflows').filter((filename) 
   )
 })
 
-test.each(publicationWorkflows)(
-  '%s does not publish images for CI orchestration or Kargo control changes',
-  (filename) => {
-    const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
-    const push = property(property(workflow, 'on'), 'push')
-    if (push === undefined) return
-    const paths = property(push, 'paths')
+test.each(publicationWorkflows)('%s keeps native work scoped to runtime inputs', (filename) => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${filename}`, 'utf8'))
+  for (const event of ['push', 'pull_request']) {
+    const input = property(property(workflow, 'on'), event)
+    if (input === undefined || input === null) continue
+    const paths = property(input, 'paths')
+    if (paths === undefined) continue
     if (!Array.isArray(paths)) throw new Error(`Missing publication input boundaries: ${filename}`)
     const patterns = paths.map(text)
     for (const file of [
@@ -76,11 +76,45 @@ test.each(publicationWorkflows)(
       'nix/oci-release-contract.sh',
     ]) {
       expect(matchesPaths(file, patterns)).toBe(
-        ['arc-runner-build-push.yml', 'opencode-build-push.yml'].includes(filename),
+        event === 'push' && ['arc-runner-build-push.yml', 'opencode-build-push.yml'].includes(filename),
       )
     }
-  },
-)
+  }
+})
+
+test('Bayn CI does not run trading qualification or native images for orchestration changes', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing Bayn planner')
+  const filters: unknown = Bun.YAML.parse(
+    text(
+      property(
+        property(
+          steps.find((step) => property(step, 'id') === 'filter'),
+          'with',
+        ),
+        'filters',
+      ),
+    ),
+  )
+  for (const target of ['bayn', 'image']) {
+    const paths = property(filters, target)
+    if (!Array.isArray(paths)) throw new Error('Missing Bayn validation inputs')
+    for (const file of [
+      '.github/workflows/bayn-ci.yml',
+      '.github/workflows/bayn-build-push.yml',
+      '.github/workflows/common-monorepo.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/action.yml',
+      'nix/cache-push.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-push.sh',
+    ])
+      expect(matchesPaths(file, paths.map(text))).toBe(false)
+    expect(matchesPaths('services/bayn/src/runtime.ts', paths.map(text))).toBe(true)
+    expect(matchesPaths('nix/images/bayn.nix', paths.map(text))).toBe(true)
+  }
+})
 
 test('App source changes do not force dependency downloads; dependency input changes still do', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
@@ -457,7 +491,7 @@ test('Tengri frontend PRs skip native images while main publishes coordinated re
       '.github/workflows/tengri-images.yml',
     ]) {
       expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(
-        runtimeSource.startsWith('.github/') ? event === 'pull_request' : true,
+        !runtimeSource.startsWith('.github/'),
       )
     }
   }

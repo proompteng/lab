@@ -52,8 +52,9 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 Automatic image publication follows runtime source, dependency and image-definition inputs. Changes confined to CI
 orchestration, image publishing, cache uploads, timing reports or Kargo control resources run workflow and script
-validation without rebuilding service images. ARC runner and OpenCode still rebuild when their embedded CI tools
-change. Manual workflow dispatch remains available for publication diagnostics.
+validation on pull requests and main without rebuilding service images or starting unrelated service test matrices.
+ARC runner and OpenCode still rebuild when their embedded CI tools change. Existing manual workflow dispatch remains
+available for publication diagnostics.
 
 App dependency-closure checks recompute both native fixed-output hashes when dependency inputs change. App UI source
 edits reuse the qualified dependency closure. A failed or cancelled closure check blocks publication; an unnecessary

@@ -20,11 +20,12 @@ on:
       - 'apps/landing/src/app/api/platform/**'
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
-      - '.github/workflows/tengri-images.yml'
       - 'nix/tengri-schema-hash.py'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
+      - '!packages/scripts/src/tengri/__tests__/**'
+      - '!packages/scripts/src/tengri/**/*.test.ts'
   push:
     branches:
       - main

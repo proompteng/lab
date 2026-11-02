@@ -24,7 +24,6 @@ on:
       - 'packages/scripts/src/ci/**'
       - 'services/oirat/**'
       - 'nix/images/oirat.nix'
-      - '.github/workflows/oirat-ci.yml'
       - '.github/workflows/nix-bun-dependency-closure.yml'
       - 'nix/check-bun-dependency-closure.sh'
       - 'nix/images/bun-workspace-service.nix'

@@ -15,7 +15,6 @@ on:
       - 'argocd/applications/relay/**'
       - 'nix/packages/relay.nix'
       - 'nix/images/relay.nix'
-      - '.github/workflows/relay.yml'
   push:
     branches: [main]
     paths:

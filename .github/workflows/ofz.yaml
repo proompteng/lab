@@ -22,7 +22,6 @@ on:
       - 'argocd/applications/proompteng/ingressroute.yaml'
       - 'apps/landing/package.json'
       - 'bun.lock'
-      - '.github/workflows/ofz.yaml'
       - '.github/scripts/install-tengri-chromium.mjs'
       - 'nix/images/ofz.nix'
       - 'nix/tengri-schema-hash.py'

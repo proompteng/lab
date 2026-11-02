@@ -5,7 +5,6 @@ on:
   pull_request:
     paths:
       - 'services/temporal-worker/**'
-      - '.github/workflows/temporal-worker-images.yml'
       - 'argocd/applications/temporal/**'
       - 'argocd/applicationsets/platform.yaml'
   push:
