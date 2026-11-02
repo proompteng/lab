@@ -312,6 +312,9 @@ let
     "services/agents/src/linear-mcp/contract.ts"
     "services/agents/src/runner"
     "services/agents/src/runner-result.ts"
+    "services/agents/src/runner-status.ts"
+    "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];
 
@@ -451,6 +454,8 @@ let
   '';
 
   agentsShellContents = commonContents ++ [
+    exact.talosctl
+    exact.omnictl
     agentsShellInterpreterCompat
     applyPatch
     pstackBundle

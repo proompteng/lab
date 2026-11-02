@@ -644,18 +644,17 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts create-index')
     expect(nixOciWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts assert')
-    expect(nixOciWorkflow).toContain('printf \'%s\\n\' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
     expect(nixOciWorkflow).not.toContain('Prime OCI helper closures')
     expect(nixOciWorkflow).not.toContain('Push build platform helper closures to Attic')
-    expect(nixOciWorkflow).toContain('Warm Nix image archive output in Attic')
-    expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
-    expect(nixOciWorkflow).toContain("ATTIC_PUSH_NO_CLOSURE: 'true'")
+    expect(nixOciWorkflow).toContain('Warm Nix build outputs in Attic')
+    expect(nixOciWorkflow).toContain('bash nix/cache-push.sh --build ".#${PACKAGE_ATTR}"')
+    expect(nixOciWorkflow).toContain("ATTIC_PUSH_BATCH_SIZE: '64'")
     expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 30m')
     expect(nixOciWorkflow).toContain(
-      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"',
+      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh --build ".#${PACKAGE_ATTR}"',
     )
     expect(nixOciWorkflow).toContain(
-      'Attic image output push failed for ${ARCH}; registry image push remains authoritative.',
+      'Attic build output push failed for ${ARCH}; registry image push remains authoritative.',
     )
     expect(nixOciWorkflow).not.toContain('cache_paths=("${helper_paths[@]}" "${image_paths[@]}")')
     expect(nixOciWorkflow).not.toContain('nix run .#cache-push')
@@ -678,7 +677,6 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).not.toContain('helper_attrs=')
     expect(nixOciWorkflow).not.toContain('helper_paths')
     expect(nixOciWorkflow).not.toContain('No build-platform helper closure paths were captured.')
-    expect(nixOciWorkflow).toContain('No Nix image output paths were captured.')
     expect(nixOciWorkflow).not.toContain('No index helper closure paths were captured.')
     expect(nixOciWorkflow).toContain('Start checkout timer')
     expect(nixOciWorkflow).toContain('Record checkout timing')
@@ -730,8 +728,8 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Total timed seconds')
     expect(ciNixOciSummaryScript).toContain('Cache substitutions')
     expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm successes')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm failures')
+    expect(ciNixOciSummaryScript).toContain('Attic upload successes')
+    expect(ciNixOciSummaryScript).toContain('Attic upload failures')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
@@ -1071,7 +1069,7 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain("github.event_name == 'workflow_dispatch'")
     expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('name: Push platform image without Docker')
-    expect(nixOciWorkflow).toContain('name: Warm Nix image archive output in Attic')
+    expect(nixOciWorkflow).toContain('name: Warm Nix build outputs in Attic')
     expect(nixOciWorkflow).toContain('publish-index:')
     for (const workflow of [
       oiratWorkflow,

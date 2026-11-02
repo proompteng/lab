@@ -78,6 +78,8 @@ agentsShell:
       AGENTS_SHELL_GIT_USER_NAME: Greg Konush
       AGENTS_SHELL_GIT_USER_EMAIL: 12027037+gregkonush@users.noreply.github.com
       AGENTS_SHELL_REPO_BASE_BRANCH: main
+      OMNI_ENDPOINT: https://nuc.ide-newton.ts.net:443
+      TALOSCONFIG: /var/run/secrets/agents-shell-omni/talosconfig
     secrets:
       - name: GITHUB_TOKEN
         secretName: github-token
@@ -85,6 +87,12 @@ agentsShell:
       - name: GH_TOKEN
         secretName: github-token
         key: token
+      - name: OMNI_SERVICE_ACCOUNT_KEY
+        secretName: agents-shell-omni
+        key: service-account-key
+      - name: SIDEROV1_SERVICE_ACCOUNT_KEY
+        secretName: agents-shell-omni
+        key: service-account-key
   rbac:
     clusterAdmin: true
     extraReadNamespaces:
@@ -317,6 +325,8 @@ env:
     AGENTS_MEMORY_DB_POOL_MAX: "2"
     PGQUERY_TIMEOUT_MS: "90000"
     AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
     OPENAI_API_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_MODEL: qwen3-embedding-saigak:8b
