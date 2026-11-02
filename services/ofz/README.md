@@ -177,9 +177,12 @@ and verifies database TLS. Configure `OFZ_DATABASE_DSN`,
 This deployment uses the existing Ceph storage configuration without SSE or a separate key manager. Versioning,
 COMPLIANCE retention, payload hashes, version-specific readback and archive freshness gates remain required.
 
-The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a fifteen-second database
-idle-session limit bound abandoned connections. Every batch records ordered sequences, original receipts, target
-hashes and database timestamps. Its immutable key includes the complete payload hash. SQL acknowledges a batch only
+The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a ninety-second database
+idle-session limit bound abandoned connections. Archive requests allow two seconds to connect and twenty seconds to
+read, with a twenty-two-second total timeout. The database idle limit covers the four sequential storage requests
+that can occur between SQL statements. SQL statement, lock and idle-transaction limits remain unchanged.
+Every batch records ordered sequences, original receipts, target hashes and database timestamps. Its immutable key
+includes the complete payload hash. SQL acknowledges a batch only
 after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
