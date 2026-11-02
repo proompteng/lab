@@ -24,6 +24,7 @@ on:
       - 'bun.lock'
       - '.github/scripts/install-tengri-chromium.mjs'
       - 'nix/images/ofz.nix'
+      - 'nix/images/agentrun-tools.nix'
       - 'nix/tengri-schema-hash.py'
       - 'nix/packages.nix'
       - 'flake.nix'

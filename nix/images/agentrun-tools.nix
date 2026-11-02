@@ -27,9 +27,9 @@ let
     src = pkgs.fetchurl { url = platform.browserUrl; hash = platform.browserHash; };
     nativeBuildInputs = [ pkgs.unzip pkgs.autoPatchelfHook pkgs.makeWrapper ];
     buildInputs = with pkgs; [
-      glib nss nspr dbus atk at-spi2-atk cups libdrm expat libxkbcommon
+      glib nss nspr dbus at-spi2-core cups libdrm expat libxkbcommon
       xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext xorg.libXfixes
-      xorg.libXrandr xorg.libxcb xorg.libxshmfence mesa pango cairo alsa-lib
+      xorg.libXrandr xorg.libxcb xorg.libxshmfence libgbm pango cairo alsa-lib
       systemd fontconfig freetype vulkan-loader stdenv.cc.cc.lib
     ];
     unpackPhase = ''unzip -q "$src" -d browser'';
