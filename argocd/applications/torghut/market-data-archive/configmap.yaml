@@ -4,6 +4,7 @@ metadata:
   name: market-data-archive-config
   namespace: torghut
 data:
+  ARCHIVE_WEBULL_TOPIC: "dorvud.webull.raw.v1"
   ARCHIVE_CRYPTO_TOPIC: "bayn.market-data.crypto.v1"
   ARCHIVE_CRYPTO_FEATURES_TOPIC: "bayn.market-data.crypto.features.v1"
   ARCHIVE_CRYPTO_LOCATION: "us"

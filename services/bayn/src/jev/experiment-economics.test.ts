@@ -279,7 +279,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   const call: ReplayInferenceCall = {
     stage: 'JEV',
     budgetMs: 10_000,
-    schemaVersion: 'bayn.replay-inference-call.v2',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     request: prepared.request,
     requestHash: prepared.requestHash,
     simulatedStartedAt: at,
@@ -288,7 +288,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     outcome: { status: 'RECEIVED', inference },
   }
   const chartCall: ReplayInferenceCall = {
-    schemaVersion: 'bayn.replay-inference-call.v2',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     stage: 'CHART',
     budgetMs: 10_000,
     request: visualRequest.request,
@@ -299,7 +299,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     outcome: { status: 'RECEIVED', inference: visual },
   }
   const baseCall: ReplayInferenceCall = {
-    schemaVersion: 'bayn.replay-inference-call.v3',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     stage: 'BASE_START',
     budgetMs: 10_000,
     request: baseRequest.request,
@@ -362,7 +362,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
       definition: {
         mode: 'measured-providers',
         maximumCalls: 1000,
-        models: { jev: jevModel, chart: 'gpt-6-luna' },
+        models: { jev: jevModel },
         inputDefinition: defaultJevProtocolDocument.inputDefinition,
         costs: tariff,
       },
@@ -415,7 +415,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     ],
   }
   const comparisonInput = Schema.decodeUnknownSync(BacktestComparisonInputSchema)({
-    schemaVersion: 'bayn.backtest.v10',
+    schemaVersion: 'bayn.backtest.v11',
     policy: 'JEV' as const,
     latencyStress: null,
     inference: material.inference.definition,
@@ -541,7 +541,7 @@ test('native fills and metered calls reproduce net returns with fees booked once
   expect(report.inference.costs.jevCallCount).toBe(1)
   expect(report.inference.costs.unresolvedCallCount).toBe(0)
   expect(report.inference.costs.inputTokens).toBe('300')
-  expect(report.inference.costs.knownCostMicros).toBe('25')
+  expect(report.inference.costs.knownCostMicros).toBe('15')
   const next = reseal({ ...report, runId: 'b'.repeat(64), source: { ...report.source, runId: 'b'.repeat(64) } })
   expect(Result.getOrThrow(project(next)).contextHash).toBe(result.contextHash)
 })
@@ -630,7 +630,7 @@ test('interrupted and defective calls retain consumed budget and incomplete cost
       const costs = calculateReplayInferenceCosts(calls, original.inference.definition.costs)
       expect(costs.callCount).toBe(failedStage === 'JEV' ? 3 : 2)
       expect(costs.unresolvedCallCount).toBe(1)
-      expect(costs.knownCostMicros).toBe(failedStage === 'JEV' ? '20' : '10')
+      expect(costs.knownCostMicros).toBe(failedStage === 'JEV' ? '10' : '5')
       const material = {
         ...original,
         completion: 'INCOMPLETE',

@@ -1,3 +1,4 @@
+import { jevModel } from './jev/contract'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, stableU128, stableU64 } from './hash'
@@ -300,7 +301,7 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         return yield* Result.fail(
           new InferenceCostError({ message: 'Undispatched inference cannot consume cache tokens' }),
         )
-      if (quote.rate !== null && quote.rate.provider !== (line.stage === InferenceStage.Jev ? 'typesafe' : 'openai'))
+      if (quote.rate !== null && quote.rate.provider !== (line.model === jevModel ? 'typesafe' : 'openai'))
         return yield* Result.fail(new InferenceCostError({ message: 'Stage tariff belongs to another provider' }))
     }
     if (line.usageStatus === InferenceUsageStatus.Unknown) {

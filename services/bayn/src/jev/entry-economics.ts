@@ -15,6 +15,7 @@ import type { JevProtocolMaterial } from './protocol'
 
 export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: string) =>
   // Retired protocols retain their original price arithmetic for immutable financial evidence.
+  protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
@@ -37,7 +38,8 @@ export const jevMaximumEntryAskMicros = (
   observedAsk: bigint,
 ): bigint => {
   const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
-  return protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+  return protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v33' ||

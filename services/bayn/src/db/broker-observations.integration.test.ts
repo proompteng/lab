@@ -110,6 +110,65 @@ describePostgres('Durable per-account broker observations', () => {
       }),
     ))
 
+  test.each([60_000, 60_001])('expired available metadata at %sms fails before reading cache bytes', async (ageMs) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        const value = snapshot(ticket)
+        yield* store.publish(ticket, value, 0)
+        let reads = 0
+        const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
+          ...cacheFixture.cache,
+          get: (key) => Effect.sync(() => reads++).pipe(Effect.andThen(cacheFixture.cache.get(key))),
+        })
+        yield* advanceToTicket(ticket, 59_999)
+        expect(yield* measured.read).toEqual(value)
+        expect(yield* measured.readState).toEqual(observedBrokerState(value))
+        expect(reads).toBe(2)
+        reads = 0
+        yield* advanceToTicket(ticket, ageMs)
+        for (const read of [measured.read, measured.readState]) {
+          const failure = yield* Effect.flip(read)
+          expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(failure.retryable).toBe(true)
+          expect(failure.observationFailure).toBeUndefined()
+        }
+        expect(reads).toBe(0)
+      }),
+    ),
+  )
+
+  test.each([60_000, 60_001])('expired available submission metadata at %sms skips cache bytes', async (ageMs) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        const value = snapshot(ticket)
+        yield* store.publish(ticket, value, 0)
+        const intentId = 'd'.repeat(64)
+        yield* reserve(sql, intentId, utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 1))
+        let reads = 0
+        const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
+          ...cacheFixture.cache,
+          get: (key) => Effect.sync(() => reads++).pipe(Effect.andThen(cacheFixture.cache.get(key))),
+        })
+        yield* advanceToTicket(ticket, 59_999)
+        expect(yield* measured.readForSubmit(intentId)).toEqual(observedBrokerState(value))
+        expect(reads).toBe(1)
+        reads = 0
+        yield* advanceToTicket(ticket, ageMs)
+        const failure = yield* Effect.flip(measured.readForSubmit(intentId))
+        expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(failure.retryable).toBe(true)
+        expect(failure.observationFailure).toBeUndefined()
+        expect(reads).toBe(0)
+      }),
+    ),
+  )
+
   test('missing or corrupt Valkey bytes fail without a database payload fallback', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {

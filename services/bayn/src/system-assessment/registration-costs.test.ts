@@ -6,7 +6,7 @@ import type { InferenceRateSchema } from '../inference-costs'
 import { registrationFixture } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { validateSystemRegistration } from './policy'
-import { decisionsModel } from '../jev/decisions'
+import { jevModel } from '../jev/contract'
 
 const rateCard = (inputRate: string) =>
   replayRateCardFixture({
@@ -33,7 +33,7 @@ test('inference policies require uninterrupted tariffs for each actual model acr
         { ...rate, effectiveUntil: '2026-11-10T12:00:00.000Z' },
         { ...rate, effectiveFrom: '2026-11-10T12:00:00.001Z' },
       ]),
-      complete.rates.filter((rate) => rate.model !== decisionsModel),
+      complete.rates.filter((rate) => rate.model !== jevModel),
       ...(policy === JevResearchPolicy.Candidate
         ? [complete.rates.filter((rate) => rate.provider !== 'typesafe')]
         : []),
@@ -66,7 +66,7 @@ test('adjacent tariffs cover inference policies while deterministic controls nee
           definition.policy === JevResearchPolicy.Candidate
             ? rates
             : definition.policy === JevResearchPolicy.Ablation
-              ? rates.filter((rate) => rate.provider === 'openai')
+              ? rates.filter((rate) => rate.provider === 'typesafe')
               : [],
       },
     })),

@@ -11,11 +11,15 @@ on:
       - 'nix/images/arc-runner.nix'
       - 'nix/cache-doctor.sh'
       - 'nix/oci-doctor.sh'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'nix/toolchain-doctor.sh'
       - 'argocd/applications/arc/**'
+      - flake.nix
+      - flake.lock
+      - nix/packages.nix
+      - nix/cache-push.sh
+      - nix/oci-inspect-archive.sh
+      - nix/oci-release-contract.sh
   workflow_dispatch:
 
 concurrency:

@@ -467,6 +467,15 @@ pub async fn activity(
     peer: &str,
     request: proto::ReadWorkspaceActivityRequest,
 ) -> Result<proto::ReadWorkspaceActivityResponse, Status> {
+    if !["", "allowed", "denied"].contains(&request.outcome.as_str())
+        || request.action.len() > 128
+        || request.actor_id.len() > 512
+        || [&request.action, &request.actor_id]
+            .iter()
+            .any(|value| value.chars().any(char::is_control))
+    {
+        return Err(Status::invalid_argument("invalid activity filters"));
+    }
     let session = request
         .administrator
         .ok_or_else(|| Status::unauthenticated("human session required"))?;
@@ -494,7 +503,16 @@ pub async fn activity(
         .get()
         .await
         .map_err(|_| Status::unavailable("workspace activity unavailable"))?;
-    let rows = connection.query("SELECT sequence,created_at_ms,receipt FROM ofz.audit WHERE sequence<$1 AND receipt ? 'platform_workspace_id' AND receipt->>'platform_workspace_id'=$2 AND (receipt->>'allowed'='false' OR receipt->>'platform_action' NOT IN ('ofz.workspaces.read','ofz.workspaces.activity','ofz.relationships.read')) ORDER BY sequence DESC LIMIT 101", &[&cursor,&request.workspace_id]).await.map_err(sql_error)?;
+    let rows = connection.query(
+        "SELECT sequence,created_at_ms,receipt FROM ofz.audit
+         WHERE sequence<$1 AND receipt->>'platform_workspace_id'=$2
+         AND (receipt->>'allowed'='false' OR receipt->>'platform_action' NOT IN ('ofz.workspaces.read','ofz.workspaces.activity','ofz.relationships.read','ofz.access_requests.list'))
+         AND ($3='' OR receipt->>'platform_action'=$3)
+         AND ($4='' OR receipt->>'allowed'=CASE WHEN $4='allowed' THEN 'true' ELSE 'false' END)
+         AND ($5='' OR receipt->'actor'->'identity'->>'HumanId'=$5 OR receipt->>'platform_client'=$5)
+         ORDER BY sequence DESC LIMIT 101",
+        &[&cursor, &request.workspace_id, &request.action, &request.outcome, &request.actor_id],
+    ).await.map_err(sql_error)?;
     let mut receipts = Vec::new();
     for row in rows.iter().take(100) {
         let mut receipt: proto::AuditReceipt = store::decode(row.get(2))?;
