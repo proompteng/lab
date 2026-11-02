@@ -129,12 +129,41 @@ describePostgres('Durable per-account broker observations', () => {
         expect(reads).toBe(2)
         reads = 0
         yield* advanceToTicket(ticket, ageMs)
-        for (const read of [measured.read, measured.readState, measured.readForSubmit('expired-cut-intent')]) {
+        for (const read of [measured.read, measured.readState]) {
           const failure = yield* Effect.flip(read)
           expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
           expect(failure.retryable).toBe(true)
           expect(failure.observationFailure).toBeUndefined()
         }
+        expect(reads).toBe(0)
+      }),
+    ),
+  )
+
+  test.each([60_000, 60_001])('expired available submission metadata at %sms skips cache bytes', async (ageMs) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        const value = snapshot(ticket)
+        yield* store.publish(ticket, value, 0)
+        const intentId = randomUUID()
+        yield* reserve(sql, intentId, utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 1))
+        let reads = 0
+        const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
+          ...cacheFixture.cache,
+          get: (key) => Effect.sync(() => reads++).pipe(Effect.andThen(cacheFixture.cache.get(key))),
+        })
+        yield* advanceToTicket(ticket, 59_999)
+        expect(yield* measured.readForSubmit(intentId)).toEqual(observedBrokerState(value))
+        expect(reads).toBe(1)
+        reads = 0
+        yield* advanceToTicket(ticket, ageMs)
+        const failure = yield* Effect.flip(measured.readForSubmit(intentId))
+        expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(failure.retryable).toBe(true)
+        expect(failure.observationFailure).toBeUndefined()
         expect(reads).toBe(0)
       }),
     ),
