@@ -299,7 +299,9 @@ async fn active_recovery_isolates_conversations_without_hiding_selected_failures
 async fn scoped_status_read_child() {
     let service = fixture();
     let principal = principal();
-    let snapshots = active(&service, &principal, "thread-working").await.unwrap();
+    let snapshots = active(&service, &principal, "thread-working")
+        .await
+        .unwrap();
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].run_id, "run-working");
     assert!(matches!(snapshots[0].state, State::Running { .. }));
