@@ -32,12 +32,12 @@ let
       xorg.libXrandr xorg.libxcb xorg.libxshmfence mesa pango cairo alsa-lib
       systemd fontconfig freetype vulkan-loader stdenv.cc.cc.lib
     ];
-    unpackPhase = ''unzip -q "$src"'';
+    unpackPhase = ''unzip -q "$src" -d browser'';
     dontBuild = true;
     installPhase = ''
       target="$out/opt/playwright-browsers/chromium_headless_shell-1217"
       mkdir -p "$target" "$out/bin"
-      cp -R ./* "$target/"
+      cp -R browser/* "$target/"
       executable="$(find "$target" -type f \( -name headless_shell -o -name chrome-headless-shell \) | head -n 1)"
       test -n "$executable"
       chmod +x "$executable"
