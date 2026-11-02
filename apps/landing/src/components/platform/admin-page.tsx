@@ -7,10 +7,13 @@ import type { PortalSection } from '@/lib/platform/portal'
 import { platformSession } from '@/lib/platform/auth'
 import { ofzCall } from '@/lib/platform/ofz'
 import { PlatformAuthorizationService } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
+import { isPlatformRateLimited, PlatformRequestError } from '@/lib/platform/http'
 
 export async function AdminPage({ workspaceId, section }: { workspaceId?: string; section?: PortalSection } = {}) {
   if (!isAdminPortal()) notFound()
   const identity = await getPlatformIdentity(await headers())
+  if (identity && isPlatformRateLimited(identity.subject))
+    throw new PlatformRequestError('Request rate limit exceeded', 429)
   // Independent authenticated reads run on the server. Failed reads are retried through the BFF's error UI.
   const [directory, workspace] = identity
     ? await Promise.allSettled([

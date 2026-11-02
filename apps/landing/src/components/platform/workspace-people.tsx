@@ -109,6 +109,9 @@ export function WorkspacePeople({
         confirmed: false,
       })
       setOpen(true)
+    } else {
+      setPerson(undefined)
+      setOpen(false)
     }
   }, [selectedId, detail.members, form])
   const blocked = !mutation.ready || mutation.busy || Boolean(mutation.pending) || resolving

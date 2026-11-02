@@ -830,7 +830,15 @@ test('collection search, paging and detail URLs survive reload and browser navig
     await page.keyboard.press('Escape')
     await page.goBack()
     await browserExpect(page.getByRole('dialog')).toBeVisible()
-    await page.keyboard.press('Escape')
+    await page.evaluate(() => {
+      const url = new URL(location.href)
+      url.searchParams.set('person', 'f'.repeat(64))
+      history.pushState(null, '', url)
+      dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await browserExpect(page.getByRole('dialog')).toBeHidden()
+    await browserExpect(page.getByRole('alert')).toContainText('This person is not a member of this workspace.')
+    await page.getByRole('button', { name: 'Back to people' }).click()
     await page.getByLabel('Search people').fill('no such synthetic member')
     await browserExpect(
       page.getByText('No people match these filters. Clear the search or add an admitted person.'),

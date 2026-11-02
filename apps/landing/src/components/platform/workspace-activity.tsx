@@ -127,7 +127,13 @@ export function WorkspaceActivity({ detail }: { detail: GetPlatformWorkspaceResp
                 </div>
                 <p className="text-xs text-zinc-400">
                   {actor?.displayName ||
-                    (actor ? `GitHub ${actor.githubId}` : receipt.platformClient || 'Platform service')}
+                    (actor
+                      ? `GitHub ${actor.githubId}`
+                      : receipt.actor?.identity.case === 'humanId'
+                        ? 'Former member'
+                        : receipt.actor?.identity.case === 'agentId'
+                          ? 'Delegated agent'
+                          : receipt.platformClient || 'Platform service')}
                 </p>
                 <details className="text-xs text-zinc-400">
                   <summary className="cursor-pointer">Details</summary>
@@ -135,6 +141,8 @@ export function WorkspaceActivity({ detail }: { detail: GetPlatformWorkspaceResp
                   <dl className="mt-2 space-y-2 break-all">
                     <dt>Action</dt>
                     <dd>{receipt.platformAction}</dd>
+                    <dt>Actor</dt>
+                    <dd>{receipt.actor?.identity.value || receipt.workloadId || 'Platform service'}</dd>
                     <dt>Outcome</dt>
                     <dd>{receipt.allowed ? 'Allowed' : 'Denied'}</dd>
                     <dt>Client</dt>
@@ -162,7 +170,9 @@ export function WorkspaceActivity({ detail }: { detail: GetPlatformWorkspaceResp
             )
           })}
           {!page.receipts.length ? (
-            <li className="p-4 text-sm text-zinc-400">No activity in this workspace yet.</li>
+            <li className="p-4 text-sm text-zinc-400">
+              No activity matches this view. Clear filters or return to newest activity.
+            </li>
           ) : null}
         </ul>
       ) : null}
