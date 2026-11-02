@@ -80,6 +80,7 @@ internal suspend fun verifyWebullArchive(
     ).toProperties().apply { put("max.partition.fetch.bytes", (8 * 1024 * 1024).toString()) }
   val sampled = linkedMapOf<Pair<Int, Long>, ConsumerRecord<String, String>>()
   val ranges = mutableListOf<JsonObject>()
+  val channelWitnesses = mutableListOf<JsonObject>()
   KafkaConsumer<String, String>(properties).use { consumer ->
     val partitions = consumer.partitionsFor(topic).map { TopicPartition(topic, it.partition()) }
     require(partitions.isNotEmpty()) { "Webull Kafka topic has no partitions" }
@@ -105,6 +106,43 @@ internal suspend fun verifyWebullArchive(
           sampled[record.partition() to record.offset()] = record
         }
       }
+    }
+    // A short tail can fall between bar sweeps. Verify one recent archived witness per market channel against Kafka too.
+    val witnesses =
+      query(
+        """
+        SELECT channel, argMax((source_partition,source_offset),received_at) AS coordinate
+        FROM signal.webull_market_events_v1 FINAL
+        WHERE source_topic='$topic' AND validation_status='VALID' AND notEmpty(symbols)
+          AND received_at >= now() - INTERVAL 15 MINUTE
+          AND ((channel IN ('quotes','trades') AND JSONExtractString(capture,'source','type')='mqtt')
+            OR (channel='bars' AND JSONExtractString(capture,'source','type')='http'))
+        GROUP BY channel
+        """.trimIndent(),
+      )
+    for (witness in witnesses) {
+      val coordinate = witness.getValue("coordinate") as JsonArray
+      val partition = (coordinate[0] as JsonPrimitive).content.toInt()
+      val offset = (coordinate[1] as JsonPrimitive).content.toLong()
+      val key = partition to offset
+      if (key !in sampled) {
+        val source = TopicPartition(topic, partition)
+        consumer.assign(listOf(source))
+        consumer.seek(source, offset)
+        val witnessDeadline = Instant.now().plusSeconds(20)
+        while (key !in sampled) {
+          require(Instant.now() < witnessDeadline) { "archived Webull channel witness is missing from Kafka" }
+          consumer.poll(Duration.ofMillis(500)).forEach { record ->
+            if (record.partition() == partition && record.offset() == offset) sampled[key] = record
+          }
+        }
+      }
+      channelWitnesses +=
+        buildJsonObject {
+          put("channel", witness.requiredText("channel"))
+          put("partition", partition)
+          put("offset", offset)
+        }
     }
   }
   require(sampled.isNotEmpty()) { "Webull Kafka topic is empty" }
@@ -188,6 +226,7 @@ internal suspend fun verifyWebullArchive(
       put("imageDigest", System.getenv("WEBULL_FEED_IMAGE_DIGEST") ?: "development")
       put("topic", topic)
       put("sampleRanges", JsonArray(ranges))
+      put("recentChannelWitnesses", JsonArray(channelWitnesses))
       put("sampledKafkaRecords", sampled.size)
       put("missingOrDifferentArchiveRecords", mismatches)
       put("pipelineVerified", mismatches == 0)

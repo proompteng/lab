@@ -22,7 +22,8 @@ fill scarce slots first; remaining candidates are alphabetical. This feed does n
 consolidated SIP/NBBO or complete all-exchange tick coverage.
 
 Full v3 cursor pagination for COMMON_STOCK and ETF produced 55,381 rows and 12,295 distinct listed,
-active candidates in the initial probe. Known OTC exchanges, other instrument types, and inactive
+active candidates in the initial SDK probe. The later native collector probe validated 59 responses
+and found 12,282 current candidates; these observed counts can change. Known OTC exchanges, other instrument types, and inactive
 records are excluded with counts. Candidate status is provisional: every channel still needs API
 admission and observed data. Catalog identity hashes the sorted symbol/instrument/exchange/type
 mapping. Refresh happens daily; a failed refresh leaves existing sessions running.
@@ -116,6 +117,8 @@ Run `ai.proompteng.dorvud.webull.WebullFeedAppKt verify` using the deployed coll
 Kafka environment. Send a JSON object containing the existing authorized ClickHouse reader's
 `username` and `password` on stdin through an approved secret path; never place them in argv or a
 saved report. The verifier reads the last 50 Kafka records per partition without committing offsets,
+plus a recent Kafka witness for each archived market channel so intervals between bar sweeps cannot
+hide coverage. It
 compares exact envelopes, hashes, identities, and nanosecond receipts with ClickHouse FINAL, and
 reports sampled symbol coverage, source ages, archive lag, bytes, recent table coverage, and local
 replica storage. Bar source age includes the completed bar's interval and collection cadence; it is
