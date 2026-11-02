@@ -9,6 +9,7 @@ resources:
   - agents-shell-tunnel-runtime-sealedsecret.yaml
   - agents-shell-tunnel-deployment.yaml
   - agents-shell-tunnel-networkpolicy.yaml
+  - agents-shell-omni-externalsecret.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
   - graf-codex-agentprovider.yaml
@@ -65,6 +66,32 @@ replacements:
           - spec.template.metadata.annotations.[agents-shell.proompteng.ai/runtime-key-version]
         options:
           create: true
+patches:
+  - target:
+      kind: Deployment
+      name: agents-shell
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: agents-shell
+      spec:
+        template:
+          spec:
+            containers:
+              - name: agents-shell
+                volumeMounts:
+                  - name: omni
+                    mountPath: /var/run/secrets/agents-shell-omni
+                    readOnly: true
+            volumes:
+              - name: omni
+                secret:
+                  secretName: agents-shell-omni
+                  defaultMode: 0400
+                  items:
+                    - key: talosconfig
+                      path: talosconfig
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:
