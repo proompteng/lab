@@ -1120,7 +1120,7 @@ test('keeps an initialized Chrome viewer interactive after a clipboard failure',
   await page.route(`${previewOrigin}/**`, (route) =>
     route.fulfill({
       contentType: 'text/html',
-      body: `<!doctype html><body style="padding:96px 24px">
+      body: `<!doctype html><style>body{padding:192px 48px;font-size:32px}input,button{font-size:26px}</style><body>
         <label>Retained browser text <input></label>
         <button id="fail">Report clipboard failure</button>
         <button id="continue">Continue using Chrome</button><output role="status"></output>
