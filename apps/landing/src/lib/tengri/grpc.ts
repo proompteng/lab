@@ -690,7 +690,10 @@ export async function getActiveCodexRuns(
     signal,
   )
   if (!Array.isArray(result.runs)) throw new TengriUnavailableError('Invalid active run list')
-  return result.runs.map(normalizeRun)
+  const runs = result.runs.map(normalizeRun)
+  if (runs.some((run) => run.agentId !== agentId || (threadId !== undefined && run.threadId !== threadId)))
+    throw new TengriUnavailableError('Invalid active run scope')
+  return runs
 }
 
 export async function getCodexRun(identity: PlatformIdentity, agentId: string, runId: string, signal?: AbortSignal) {

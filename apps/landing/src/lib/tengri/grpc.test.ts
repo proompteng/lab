@@ -841,6 +841,13 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
     expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
   })
+  test('rejects an out-of-scope active-run response instead of treating the selected conversation as idle', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await rejection(getActiveCodexRuns(identity, 'agent-test', 'thread-another'))).toMatchObject({
+      message: 'Invalid active run scope',
+      status: 503,
+    })
+  })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
     try {

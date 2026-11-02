@@ -8,7 +8,7 @@ import {
 
 describe('Tengri BFF action schema', () => {
   test('scopes active-run reads to a validated conversation without changing workspace reads', () => {
-    const action = { action: 'active-codex-runs', agentId: 'agent-test' }
+    const action = { action: 'active-codex-runs', agentId: 'agent-test' } as const
     expect(tengriActionSchema.parse(action)).toEqual(action)
     expect(tengriActionSchema.parse({ ...action, threadId: 'thread-selected' })).toEqual({
       ...action,
