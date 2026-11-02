@@ -41,7 +41,7 @@ test('a newer unpublished main commit cannot hold a verified Bayn image or mix i
   expect(JSON.stringify(steps)).not.toContain('commitFrom(vars.gitRepo)')
 })
 
-test('isolates both inference credentials to the worker while retaining independent recovery when absent', () => {
+test('isolates the sole Jev inference credential to the worker while retaining independent recovery when absent', () => {
   const secret = read('argocd/applications/bayn/jev-sealedsecret.yaml')
   expect(secret.metadata).toMatchObject({
     name: 'bayn-jev-auth',
@@ -67,16 +67,7 @@ test('isolates both inference credentials to the worker while retaining independ
           ]
         : [],
     )
-    expect(environment.filter((entry: { name: string }) => entry.name === 'BAYN_OPENAI_API_KEY')).toEqual(
-      file === 'execution-controller'
-        ? [
-            {
-              name: 'BAYN_OPENAI_API_KEY',
-              valueFrom: { secretKeyRef: { name: 'bayn-openai-auth', key: 'api-key', optional: true } },
-            },
-          ]
-        : [],
-    )
+    expect(environment.filter((entry: { name: string }) => entry.name === 'BAYN_OPENAI_API_KEY')).toEqual([])
     const brokerKeys = environment.filter((entry: { name: string }) =>
       ['BAYN_ALPACA_KEY_ID', 'BAYN_ALPACA_SECRET_KEY'].includes(entry.name),
     )

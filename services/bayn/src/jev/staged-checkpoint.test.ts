@@ -94,11 +94,12 @@ test('full staged handoff reproduces two separate visual calls and rejects termi
   const graph = Result.getOrThrow(readStagedInferenceCostEvidence(row))
   expect(graph.visualStages.map((stage) => stage.outcome)).toEqual(['RECEIVED', 'RECEIVED'])
   const base = checkpoint.terminals[1]
-  if (base?.outcome.status !== 'RECEIVED') throw new Error('Expected base response')
+  if (base?.outcome.status !== 'RECEIVED' || base.outcome.inference.response.model !== 'jev-1.13.0')
+    throw new Error('Expected Jev base response')
   const { terminalHash: _, ...material } = base
   const response = {
     ...base.outcome.inference.response,
-    usage: { ...base.outcome.inference.response.usage, input_tokens: 101, total_tokens: 101 },
+    usage: { ...base.outcome.inference.response.usage, input_tokens: 101 },
   }
   const changed = Result.getOrThrow(
     makeStagedTerminalReceipt({

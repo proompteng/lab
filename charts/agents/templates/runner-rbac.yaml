@@ -18,11 +18,6 @@ rules:
       - get
       - list
       - watch
-  - apiGroups: [""]
-    resources:
-      - configmaps
-    verbs:
-      - patch
 {{- with .Values.runnerServiceAccount.rbac.extraRules }}
   {{- toYaml . | nindent 2 }}
 {{- end }}

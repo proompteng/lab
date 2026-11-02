@@ -25,7 +25,6 @@ import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
-import { DecisionsClient } from './jev/decisions'
 import { EntryInferenceJournal } from './jev/entry-inference'
 import { buildObserveCycleDecision } from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy } from './execution/risk-policy'
@@ -214,13 +213,7 @@ const unusedAuthorityStore: AuthorityGenerationStoreShape = {
   readAuthorityGenerationLineage: () => unusedAuthority,
 }
 
-type JevTestServices =
-  | JevBatchStore
-  | JevEvaluationStore
-  | JevClient
-  | JevPositionStore
-  | DecisionsClient
-  | EntryInferenceJournal
+type JevTestServices = JevBatchStore | JevEvaluationStore | JevClient | JevPositionStore | EntryInferenceJournal
 
 const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
   const unexpected = Effect.die('Composition fixture uses already committed Jev entry evidence')
@@ -245,7 +238,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
       abandon: () => unexpected,
     }),
     Effect.provideService(JevClient, { evaluate: () => unexpected }),
-    Effect.provideService(DecisionsClient, { evaluate: () => unexpected }),
+
     Effect.provideService(EntryInferenceJournal, {
       recordVisualClaims: () => unexpected,
       recordTransitions: () => unexpected,

@@ -143,7 +143,7 @@ describe('immutable source binding', () => {
         stageClaimHash: claim.claimHash,
         stageTerminalHash: terminal?.terminalHash ?? null,
         usageStatus: terminal === null ? InferenceUsageStatus.Unknown : InferenceUsageStatus.Received,
-        estimatedCostPicoUsd: terminal === null ? null : '100',
+        estimatedCostPicoUsd: terminal === null ? null : '4200000',
       })
       const assessment = Result.getOrThrow(
         assessSession(session, input.registration, definition, input.asOf, bound.verifiedSources),
