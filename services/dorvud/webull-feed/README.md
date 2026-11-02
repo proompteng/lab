@@ -10,8 +10,12 @@ have no Webull dependency.
 The November 1, 2026 backend probe accepted 500 distinct streaming symbols: 100 on each of five
 simultaneous sessions. Each session rejected an additional single symbol with
 `TOO_MANY_SYMBOLS_SUBSCRIPTION`. That established subscription admission, not live delivery. The
-collector discovers each session's actual capacity and records the quota witness; it does not assume
-that 500 is a permanent plan-wide limit.
+collector records admission separately from delivery. Active-market probes on November 2 showed data
+moving to the most recently updated session: reasserting 100 admitted symbols on session 0 started its
+data; updating session 1 then stopped session 0's data while both connections remained online. The
+verified concurrent delivering set was 100 symbols, despite 500 admissions. The collector therefore
+uses one active connection and discovers its capacity from provider responses instead of assuming a
+permanent total symbol cap. Additional idle connections do not count as delivered coverage.
 
 Webull documents [five concurrent connections, a one-minute reconnect wait, and at most three pushes
 per second per connection](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/).
@@ -123,7 +127,8 @@ isolation, exact decimal/timestamp serialization, unfinished-bar rejection, arch
 unchanged existing Flink operator IDs.
 
 The installed main accepts `probe` for a bounded direct HTTP/MQTT authentication/admission check.
-It opens a provider connection, so do not run it alongside five production sessions.
+Do not run it alongside the production collector: another streaming subscriber using the same backend
+key can take over delivery even when the production connection remains online.
 
 The production service exposes `/healthz`, `/readyz`, `/coverage`, and `/metrics` on port 8080.
 Readiness establishes recent Kafka acknowledgments and admitted connections; actual market delivery

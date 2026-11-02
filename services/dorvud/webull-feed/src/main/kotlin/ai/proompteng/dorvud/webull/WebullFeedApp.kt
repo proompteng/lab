@@ -294,94 +294,80 @@ private suspend fun runWebullFeed(
               if (next > 0) delay(next)
             }
           }
-        val sessions = mutableListOf<kotlinx.coroutines.Job>()
-        val assigned = mutableSetOf<String>()
-        for (slot in 0 until 5) {
-          val pending =
-            (prioritySymbols.filter { it in catalog.symbols } + catalog.symbols)
-              .distinct()
-              .filter { it !in assigned && it !in progress.invalidSymbols }
-          if (pending.isEmpty()) break
-          val initialized = kotlinx.coroutines.CompletableDeferred<WebullSubscriptionCoverage>()
-          sessions +=
-            launch {
-              var candidates = pending
-              while (isActive) {
-                val mqtt =
-                  WebullMqtt(credentials, receive = { capture ->
-                    runBlocking { withTimeout(5_000) { enqueue(capture) } }
-                  }, heartbeat = { progress.lastHeartbeatAt.set(System.currentTimeMillis()) })
-                try {
-                  mqtt.connect()
-                  val admission = api.subscribeMaximum(mqtt.sessionId, candidates)
-                  candidates = admission.accepted.toList()
-                  progress.accepted[slot] = admission.accepted
-                  progress.connected.add(slot)
-                  progress.requestedStreaming += admission.requested
-                  progress.invalidSymbols += admission.invalid
-                  admission.quotaWitness?.let { progress.quotaWitnesses[slot] = it }
-                  initialized.complete(admission)
-                  if (admission.accepted.isEmpty()) return@launch
-                  control(
-                    "subscriptions",
-                    buildJsonObject {
-                      put("sessionId", mqtt.sessionId)
-                      put("slot", slot)
-                      put("requested", buildJsonArray { admission.requested.forEach { add(JsonPrimitive(it)) } })
-                      put("accepted", buildJsonArray { admission.accepted.forEach { add(JsonPrimitive(it)) } })
-                      put("invalid", buildJsonArray { admission.invalid.forEach { add(JsonPrimitive(it)) } })
-                      admission.quotaWitness?.let { put("quotaWitness", it) }
-                    },
-                  )
-                  val failure = mqtt.disconnected.await()
-                  control(
-                    "gap",
-                    buildJsonObject {
-                      put("channel", "mqtt")
-                      put("sessionId", mqtt.sessionId)
-                      put("errorClass", failure?.javaClass?.simpleName ?: "connection_closed")
-                    },
-                  )
-                } catch (cancelled: CancellationException) {
-                  throw cancelled
-                } catch (failure: Exception) {
-                  if (failure is WebullApiFailure && failure.status in setOf(401, 403)) {
-                    initialized.completeExceptionally(failure)
-                    throw failure
-                  }
-                  logEvent("webull.mqtt.retry", mapOf("slot" to slot.toString(), "errorClass" to failure.javaClass.simpleName))
-                  control(
-                    "gap",
-                    buildJsonObject {
-                      put("channel", "mqtt")
-                      put("slot", slot)
-                      put("errorClass", failure.javaClass.simpleName)
-                    },
-                  )
-                } finally {
-                  progress.connected.remove(slot)
-                  withContext(NonCancellable) {
-                    runCatching { mqtt.close(::enqueue) }.onFailure { failure ->
-                      logEvent(
-                        "webull.mqtt.close.failure",
-                        mapOf(
-                          "sessionId" to mqtt.sessionId,
-                          "errorClass" to failure.javaClass.simpleName,
-                        ),
-                      )
-                    }
+        val stream =
+          launch {
+            val slot = 0
+            var candidates = (prioritySymbols.filter { it in activeCatalog.symbols } + activeCatalog.symbols).distinct()
+            while (isActive) {
+              val mqtt =
+                WebullMqtt(credentials, receive = { capture ->
+                  runBlocking { withTimeout(5_000) { enqueue(capture) } }
+                }, heartbeat = { progress.lastHeartbeatAt.set(System.currentTimeMillis()) })
+              try {
+                mqtt.connect()
+                val admission = api.subscribeMaximum(mqtt.sessionId, candidates)
+                candidates = admission.accepted.toList()
+                progress.accepted[slot] = admission.accepted
+                progress.connected.add(slot)
+                progress.requestedStreaming += admission.requested
+                progress.invalidSymbols += admission.invalid
+                admission.quotaWitness?.let { progress.quotaWitnesses[slot] = it }
+                if (admission.accepted.isEmpty()) return@launch
+                control(
+                  "subscriptions",
+                  buildJsonObject {
+                    put("sessionId", mqtt.sessionId)
+                    put("slot", slot)
+                    put("requested", buildJsonArray { admission.requested.forEach { add(JsonPrimitive(it)) } })
+                    put("accepted", buildJsonArray { admission.accepted.forEach { add(JsonPrimitive(it)) } })
+                    put("invalid", buildJsonArray { admission.invalid.forEach { add(JsonPrimitive(it)) } })
+                    admission.quotaWitness?.let { put("quotaWitness", it) }
+                  },
+                )
+                val failure = mqtt.disconnected.await()
+                control(
+                  "gap",
+                  buildJsonObject {
+                    put("channel", "mqtt")
+                    put("sessionId", mqtt.sessionId)
+                    put("errorClass", failure?.javaClass?.simpleName ?: "connection_closed")
+                  },
+                )
+              } catch (cancelled: CancellationException) {
+                throw cancelled
+              } catch (failure: Exception) {
+                if (failure is WebullApiFailure && failure.status in setOf(401, 403)) {
+                  throw failure
+                }
+                logEvent("webull.mqtt.retry", mapOf("slot" to slot.toString(), "errorClass" to failure.javaClass.simpleName))
+                control(
+                  "gap",
+                  buildJsonObject {
+                    put("channel", "mqtt")
+                    put("slot", slot)
+                    put("errorClass", failure.javaClass.simpleName)
+                  },
+                )
+              } finally {
+                progress.connected.remove(slot)
+                withContext(NonCancellable) {
+                  runCatching { mqtt.close(::enqueue) }.onFailure { failure ->
+                    logEvent(
+                      "webull.mqtt.close.failure",
+                      mapOf(
+                        "sessionId" to mqtt.sessionId,
+                        "errorClass" to failure.javaClass.simpleName,
+                      ),
+                    )
                   }
                 }
-                delay(60_000)
               }
+              delay(60_000)
             }
-          val admission = initialized.await()
-          assigned += admission.accepted
-          if (admission.accepted.isEmpty() && admission.quotaWitness != null) break
-        }
+          }
         delay(24 * 60 * 60_000L)
         val refreshed = loadCatalog()
-        sessions.forEach { it.cancelAndJoin() }
+        stream.cancelAndJoin()
         bars.cancelAndJoin()
         progress.accepted.clear()
         progress.invalidSymbols.clear()
