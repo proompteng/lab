@@ -77,8 +77,34 @@ describe('run-authorized progress transport', () => {
     const kube = { get: vi.fn(async () => null) }
     const resource = { metadata: { uid: 'run-uid' }, spec: { runtime: { type: 'job' }, secrets: ['codex-auth'] } }
     const before = requests.length
-    expect(await withRunnerTelemetry(kube, resource, 'agents')).toBe(resource)
+    expect(
+      await withRunnerTelemetry(kube, resource, 'agents', {
+        env: { AGENTS_ARTIFACTS_ENDPOINT: endpoint, AGENTS_ARTIFACTS_BUCKET: 'agents-artifacts' },
+      }),
+    ).toBe(resource)
     expect(kube.get).not.toHaveBeenCalled()
     expect(requests).toHaveLength(before)
   })
+
+  it.each([{}, { AGENTS_ARTIFACTS_ENDPOINT: 'http://storage.test' }])(
+    'keeps run reads available without complete control-plane storage configuration: %j',
+    async (env) => {
+      const kube = {
+        get: vi.fn(async () => ({
+          data: {
+            AWS_ACCESS_KEY_ID: Buffer.from('test-access').toString('base64'),
+            AWS_SECRET_ACCESS_KEY: Buffer.from('test-secret').toString('base64'),
+          },
+        })),
+      }
+      const resource = {
+        metadata: { uid: 'run-uid' },
+        spec: { runtime: { type: 'job' }, secrets: ['agents-artifacts'] },
+      }
+      const before = requests.length
+      expect(await withRunnerTelemetry(kube, resource, 'agents', { env })).toBe(resource)
+      expect(kube.get).not.toHaveBeenCalled()
+      expect(requests).toHaveLength(before)
+    },
+  )
 })

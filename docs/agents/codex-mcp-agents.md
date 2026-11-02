@@ -154,6 +154,9 @@ For Job runtimes with authorized artifact storage, `get_agent_run` exposes
 `resource.status.runner.telemetry` while the worker is active. The worker publishes
 to an S3 key derived from the namespace and exact AgentRun UID. The API reads that bounded snapshot with the run-authorized
 `agents-artifacts` Secret; it never writes progress into the Kubernetes AgentRun status.
+Configure `AGENTS_ARTIFACTS_ENDPOINT` and `AGENTS_ARTIFACTS_BUCKET` on the control
+plane to enable live snapshot reads. Run reads remain available when this optional
+configuration is absent.
 The snapshot is retained in `agentRun.payload.resource.status.runner.telemetry`
 after resource cleanup. Terminal runner status carries the final snapshot.
 Termination files are bounded to 4 KiB of compact UTF-8 JSON. When a larger

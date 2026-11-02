@@ -17,7 +17,9 @@ export const withRunnerTelemetry = async (
   const uid = asString(readNested(resource, ['metadata', 'uid']))
   const secrets = readNested(resource, ['spec', 'secrets'])
   if (!uid || !hasRunArtifactStorage(secrets)) return resource
-  const config = await readRunArtifactStorage(kube, namespace, secrets, options.env ?? process.env)
+  const env = options.env ?? process.env
+  if (!env.AGENTS_ARTIFACTS_ENDPOINT?.trim() || !env.AGENTS_ARTIFACTS_BUCKET?.trim()) return resource
+  const config = await readRunArtifactStorage(kube, namespace, secrets, env)
   const tail = await getS3ObjectTail({
     config,
     key: runnerTelemetryKey(namespace, uid),
