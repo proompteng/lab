@@ -309,7 +309,6 @@ let
     "services/agents/scripts/codex"
     "services/agents/scripts/codex-config-container.toml"
     "services/agents/scripts/apply_patch.py"
-    "services/agents/scripts/runner-acceptance.sh"
     "services/agents/src/linear-mcp/bridge-auth.ts"
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
@@ -437,6 +436,10 @@ let
     exec ${pkgs.python3}/bin/python3 /app/services/agents/scripts/apply_patch.py "$@"
   '';
 
+  runnerAcceptance = pkgs.writeShellScriptBin "agentrun-acceptance" (
+    builtins.readFile (repoRoot + "/services/agents/scripts/runner-acceptance.sh")
+  );
+
   commonContents = [
     kubectl
     nodejs
@@ -487,6 +490,7 @@ let
   ];
 
   runnerRuntimeContents = runnerTools.contents ++ [
+    runnerAcceptance
     agentsShellInterpreterCompat
     runnerIdentity
     applyPatch
@@ -582,7 +586,6 @@ let
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
     cp "$TMPDIR/work/services/agents/scripts/apply_patch.py" "$out/app/services/agents/scripts/apply_patch.py"
-    install -Dm755 "$TMPDIR/work/services/agents/scripts/runner-acceptance.sh" "$out/usr/local/bin/agentrun-acceptance"
     printf '{}\n' > "$out/root/.codex/auth.json"
     printf '%s\n' unspecified > "$out/root/.codex/auth.checksum"
 
