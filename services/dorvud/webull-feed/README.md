@@ -126,7 +126,10 @@ compares exact envelopes, hashes, identities, and nanosecond receipts with Click
 reports sampled symbol coverage, source ages, archive lag, bytes, recent table coverage, and local
 replica storage. Bar source age includes the completed bar's interval and collection cadence; it is
 not wire latency. The verifier exits unsuccessfully until MQTT quotes, MQTT trades, and nonempty
-completed bars are all observed in its bounded sample. Run it during PRE/RTH/ATH market activity.
+completed bars are all observed with parsed recent provider times: within two minutes for MQTT
+quotes/trades and six minutes for completed bars, allowing at most five seconds of future clock skew.
+Old cached ticks or a delayed bar sweep cannot establish active-market acceptance. Run during
+PRE/RTH/ATH market activity.
 
 Runtime acceptance also requires the deployed revision/digest, a controlled restart/reconnect with
 new session/subscription receipts, and archive replay readback. Local tests or admitted subscriptions

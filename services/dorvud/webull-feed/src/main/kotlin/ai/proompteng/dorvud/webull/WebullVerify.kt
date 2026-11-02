@@ -27,6 +27,11 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
+internal val webullVerificationSourceAgeLimits = mapOf("mqtt.quotes" to 120_000L, "mqtt.trades" to 120_000L, "bars" to 360_000L)
+
+internal fun hasFreshWebullMarketData(sourceAges: Map<String, List<Long>>): Boolean =
+  webullVerificationSourceAgeLimits.all { (channel, limit) -> sourceAges[channel].orEmpty().any { it in -5_000L..limit } }
+
 // Diagnostic credentials arrive on stdin, never arguments, logs, pod configuration, or disk.
 internal suspend fun verifyWebullArchive(
   kafka: KafkaProducerSettings,
@@ -196,7 +201,7 @@ internal suspend fun verifyWebullArchive(
     query(
       "SELECT sum(bytes_on_disk) AS compressed_bytes, sum(rows) AS physical_rows FROM system.parts WHERE active AND database='signal' AND table='webull_market_events_v1'",
     )
-  val activeMarket = listOf("mqtt.quotes", "mqtt.trades", "bars").all { observed[it].orEmpty().isNotEmpty() }
+  val activeMarket = hasFreshWebullMarketData(sourceAges)
 
   fun latency(values: List<Long>): JsonObject =
     buildJsonObject {
@@ -231,6 +236,14 @@ internal suspend fun verifyWebullArchive(
       put("missingOrDifferentArchiveRecords", mismatches)
       put("pipelineVerified", mismatches == 0)
       put("activeMarketAccepted", activeMarket && mismatches == 0)
+      put(
+        "maximumSourceAgeMillis",
+        buildJsonObject {
+          webullVerificationSourceAgeLimits.forEach { (channel, limit) ->
+            put(channel, limit)
+          }
+        },
+      )
       put("sampleNativeBytes", nativeBytes)
       put("sampleKafkaEnvelopeBytes", kafkaBytes)
       put(
