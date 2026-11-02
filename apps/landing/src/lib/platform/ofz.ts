@@ -26,7 +26,7 @@ export class OfzError extends Error {
                 ? 'The access request is invalid.'
                 : status === 428
                   ? 'Verify with your passkey before continuing.'
-                  : 'Ofz is unavailable. Try again shortly.',
+                  : 'Access management is temporarily unavailable. Try again shortly.',
     )
     this.cause = cause
     this.name = 'OfzError'

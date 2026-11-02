@@ -168,6 +168,46 @@ let
     };
   };
 
+  talosctlVersion = "1.14.5";
+  talosctlSource = sourceFor "talosctl" {
+    x86_64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-linux-amd64";
+      hash = "sha256-/0MraJhnCea2nFY6CKLO1CMtUZaw3M1tLng+nXFNfX0=";
+    };
+    aarch64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-linux-arm64";
+      hash = "sha256-39OqM8MVmBDiFvw5r7aF1NEgyPJyjgF9jH92NdMTk4I=";
+    };
+    x86_64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-darwin-amd64";
+      hash = "sha256-z5lPL5s7JJQfMxEkut4njra9hOnywrG7DPtffLSdsTw=";
+    };
+    aarch64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/talos/releases/download/v${talosctlVersion}/talosctl-darwin-arm64";
+      hash = "sha256-yGUHe9/JnDjXCzd3CGgu7BqP66uYfwYjIG5xOdkBMJY=";
+    };
+  };
+
+  omnictlVersion = "1.11.0";
+  omnictlSource = sourceFor "omnictl" {
+    x86_64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-linux-amd64";
+      hash = "sha256-NY6LEC/adcmkKYrGcgN5J2uxnJ2o/fD+ekkDQrTqF1Q=";
+    };
+    aarch64-linux.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-linux-arm64";
+      hash = "sha256-9Xk0bPmmAw72wjtYPSpqKrMiQdYztswW9EyxltZg3Lc=";
+    };
+    x86_64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-darwin-amd64";
+      hash = "sha256-8NMgq0mNGjglKGFnT+2yZHG4Cy64ab3TQ2zB1NZTEjY=";
+    };
+    aarch64-darwin.src = fetchurl {
+      url = "https://github.com/siderolabs/omni/releases/download/v${omnictlVersion}/omnictl-darwin-arm64";
+      hash = "sha256-S7sUmjtbL4UFH0xNvBVinmOcpTJ9bl8cNwKO/zzBB18=";
+    };
+  };
+
   argoWorkflowsVersion = "4.0.5";
   argoWorkflowsSource = sourceFor "argo-workflows" {
     x86_64-linux.src = fetchurl {
@@ -349,6 +389,18 @@ in
     pname = "kubectl";
     version = kubectlVersion;
     source = kubectlSource;
+  };
+
+  talosctl = mkRawBin {
+    pname = "talosctl";
+    version = talosctlVersion;
+    source = talosctlSource;
+  };
+
+  omnictl = mkRawBin {
+    pname = "omnictl";
+    version = omnictlVersion;
+    source = omnictlSource;
   };
 
   argo-workflows = mkGzipBin {

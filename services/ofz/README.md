@@ -45,6 +45,9 @@ grant's database-clock deadline in Ofz. Re-enabling caching requires a fresh exp
 
 The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `ofz migrate` creates the checksum-bound
 control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
+While serving, Ofz checks for unfinished policy commands every second and retries their existing durable intents
+under the same command lock. Temporary failures keep reads unavailable until recovery commits the original receipt;
+page retries do not create another command or require an API restart.
 The control DDL and its non-null checksum commit in one transaction. Interrupted initialization leaves neither visible;
 an existing missing, null or different checksum is rejected and never filled from the current binary.
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed

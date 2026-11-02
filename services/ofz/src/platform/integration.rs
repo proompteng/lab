@@ -1863,7 +1863,14 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     acknowledge_fixture_archive(&admin).await;
     let mut interrupted = create.clone();
     interrupted.operation_id = Uuid::new_v4().to_string();
-    connection.batch_execute("CREATE FUNCTION ofz.fixture_interrupt_delegation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.receipt->>'platform_action'='ofz.delegations.create' THEN RAISE EXCEPTION 'isolated delegation interruption'; END IF; RETURN NEW; END $$; CREATE TRIGGER fixture_interrupt_delegation BEFORE INSERT ON ofz.audit FOR EACH ROW EXECUTE FUNCTION ofz.fixture_interrupt_delegation();").await.unwrap();
+    let recovery_database = database.clone();
+    let recovery_native = native.clone();
+    let recovery = tokio::spawn(async move {
+        crate::commands::maintain_recovery(&recovery_database, &recovery_native).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    assert!(!recovery.is_finished());
+    connection.batch_execute("CREATE SEQUENCE ofz.fixture_recovery_attempt; GRANT USAGE ON SEQUENCE ofz.fixture_recovery_attempt TO ofz_api; CREATE FUNCTION ofz.fixture_interrupt_delegation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.receipt->>'platform_action'='ofz.delegations.create' THEN PERFORM nextval('ofz.fixture_recovery_attempt'); RAISE EXCEPTION 'isolated delegation interruption'; END IF; RETURN NEW; END $$; CREATE TRIGGER fixture_interrupt_delegation BEFORE INSERT ON ofz.audit FOR EACH ROW EXECUTE FUNCTION ofz.fixture_interrupt_delegation();").await.unwrap();
     assert_eq!(
         mutations::execute(
             &database,
@@ -1883,9 +1890,62 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
-    assert!(onboarding::verify(&database).await.is_err());
+    assert_eq!(
+        onboarding::verify(&database).await.unwrap_err().code(),
+        Code::Unavailable,
+        "an interrupted command must report temporary unavailability, not an access constraint"
+    );
     onboarding::verify_configuration(&database).await.unwrap();
-    connection.batch_execute("DROP TRIGGER fixture_interrupt_delegation ON ofz.audit; DROP FUNCTION ofz.fixture_interrupt_delegation();").await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while connection
+            .query_one("SELECT last_value FROM ofz.fixture_recovery_attempt", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+            < 2
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the recovery worker must retry after a transient failure");
+    connection.batch_execute("DROP TRIGGER fixture_interrupt_delegation ON ofz.audit; DROP FUNCTION ofz.fixture_interrupt_delegation(); DROP SEQUENCE ofz.fixture_recovery_attempt;").await.unwrap();
+    let directory = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match super::workspaces::list(
+                &database,
+                &native,
+                ADMIN,
+                p::ListPlatformWorkspacesRequest {
+                    administrator: Some(administrators[0].clone()),
+                },
+            )
+            .await
+            {
+                Ok(directory) => break directory,
+                Err(error) if matches!(error.code(), Code::Unavailable | Code::Aborted) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(error) => panic!("workspace directory recovery failed: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("workspace reads must recover without another command or a restart");
+    assert!(!directory.workspaces.is_empty());
+    super::workspaces::get(
+        &database,
+        &native,
+        ADMIN,
+        p::GetPlatformWorkspaceRequest {
+            administrator: Some(administrators[0].clone()),
+            workspace_id: directory.workspaces[0].id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    recovery.abort();
+    assert!(recovery.await.unwrap_err().is_cancelled());
     let recovered = mutations::execute(
         &database,
         &native,
