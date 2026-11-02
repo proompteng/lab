@@ -155,7 +155,6 @@ const main = Effect.gen(function* () {
         {
           env: {
             BAYN_PUBLIC_INFORMATION_PROXY: '',
-            BAYN_OPENAI_API_KEY: '',
             BAYN_JEV_API_KEY: '',
             BAYN_BACKTEST_POSTGRES_URL: baynTestPostgresUrl,
             BAYN_BACKTEST_TIGERBEETLE_ADDRESS: baynTestTigerBeetleAddress,

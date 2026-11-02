@@ -625,13 +625,23 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             if ((yield* Effect.fromResult(canonicalHashV1Result(call.request))) !== call.requestHash)
               return yield* failure('Provider call differs from its sealed request bytes')
             const subject = Schema.Struct({ symbol: SymbolSchema })
-            const { symbol } = yield* call.stage !== 'JEV'
+            const { symbol } = yield* call.schemaVersion === 'bayn.replay-inference-call.v4'
               ? call.stage === 'CHART'
-                ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
-                : Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(
-                    call.request.input[0].content[2].data,
-                  ).pipe(Effect.map((value) => value.source))
-              : Schema.decodeUnknownEffect(subject)(call.request.state)
+                ? Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(call.request.state).pipe(
+                    Effect.map((value) => value.source),
+                  )
+                : call.stage === 'BASE_START'
+                  ? Schema.decodeUnknownEffect(Schema.Struct({ source: Schema.Struct({ source: subject }) }))(
+                      call.request.state,
+                    ).pipe(Effect.map((value) => value.source.source))
+                  : Schema.decodeUnknownEffect(subject)(call.request.state)
+              : call.stage !== 'JEV'
+                ? call.stage === 'CHART'
+                  ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
+                  : Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(
+                      call.request.input[0].content[2].data,
+                    ).pipe(Effect.map((value) => value.source))
+                : Schema.decodeUnknownEffect(subject)(call.request.state)
             const matches = []
             for (const request of plannedRequests.values()) {
               if (

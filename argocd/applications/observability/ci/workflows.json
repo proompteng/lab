@@ -453,6 +453,12 @@
       "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
     }
   ],
+  "torghut-webull-feed-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
   "torghut-ws-build-push.yaml": [
     {
       "id": "nix-image",

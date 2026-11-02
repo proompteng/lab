@@ -77,6 +77,75 @@ prometheus.scrape "ci_observability" {
 	forward_to      = [prometheus.remote_write.mimir.receiver]
 }
 
+prometheus.exporter.blackbox "attic" {
+	config = `{modules: {cache: {prober: http, timeout: 5s, http: {preferred_ip_protocol: ip4, fail_if_body_not_matches_regexp: ["StoreDir: /nix/store"]}}}}`
+
+	target {
+		name    = "attic-cache"
+		address = "http://attic.attic.svc.cluster.local/lab/nix-cache-info"
+		module  = "cache"
+		labels  = {namespace = "attic", service = "attic"}
+	}
+}
+
+prometheus.scrape "attic" {
+	targets         = prometheus.exporter.blackbox.attic.targets
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+discovery.kubernetes "attic_logs" {
+	role = "pod"
+
+	namespaces {
+		names = ["attic"]
+	}
+}
+
+discovery.relabel "attic_logs" {
+	targets = discovery.kubernetes.attic_logs.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		action        = "keep"
+		regex         = "attic"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		target_label  = "container"
+	}
+}
+
+loki.source.kubernetes "attic" {
+	targets    = discovery.relabel.attic_logs.output
+	forward_to = [loki.process.attic.receiver]
+}
+
+loki.process "attic" {
+	stage.decolorize { }
+
+	stage.drop {
+		expression = `INFO.*sqlx::query`
+	}
+
+	stage.static_labels {
+		values = {service = "attic"}
+	}
+	forward_to = [loki.write.bayn.receiver]
+}
+
 discovery.kubernetes "cnpg_pods" {
 	role = "pod"
 

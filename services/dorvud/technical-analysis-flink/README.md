@@ -213,6 +213,13 @@ Bayn's guarded disposable ClickHouse CI verifies the production JDBC writer and 
 rows, sub-millisecond boundaries, duplicate revisions, and cursor progression. The actual JDBC rows then pass through Bayn's production reader, including subnormals, finite
 extremes, signed volume zeros, adjacent ULPs, and NULL VWAP. Native tests do not run against production.
 
+## Webull raw archive
+
+Set `ARCHIVE_WEBULL_TOPIC=dorvud.webull.raw.v1` to enable the independent native Webull source and
+`signal.webull_market_events_v1` sink. It retains exact capture envelopes and Kafka coordinates without
+changing the existing archive operators. See [Webull ingestion](../webull-feed/README.md) for its
+payload contract, coverage, credential scope, delivery order, and runtime verification.
+
 ## Feature archive
 
 Set `ARCHIVE_FEATURES_TOPIC=torghut.market-features.v1` on `MarketDataArchiveJob`. The archive consumes the published

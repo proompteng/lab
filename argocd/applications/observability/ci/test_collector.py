@@ -179,6 +179,30 @@ class CollectorTests(unittest.TestCase):
         )
         self.assertEqual(bad["state"], "unknown")
 
+    def test_nix_upload_and_download_failures_reach_metrics(self):
+        cache = cache_evidence(
+            "| Attic substitutions | 4 |\n| cache.nixos.org substitutions | 2 |\n"
+            "| Local derivation builds | 1 |\n| Attic upload successes | 0 |\n"
+            "| Attic upload failures | 1 |\n| Attic download failures | 2 |\n"
+            "| cache.nixos.org download failures | 3 |"
+        )
+        self.assertEqual(cache["attic_upload_failures"], 1)
+        self.assertEqual(cache["attic_download_failures"], 2)
+        self.store.save_job(job_record(run(), job()), cache)
+        metrics = self.store.render(self.now)
+        for kind, value in (
+            ("attic_upload_failures", 1),
+            ("attic_download_failures", 2),
+            ("nixos_download_failures", 3),
+        ):
+            lines = [
+                line
+                for line in metrics.splitlines()
+                if line.startswith("ci_nix_cache_events") and f'kind="{kind}"' in line
+            ]
+            self.assertTrue(lines)
+            self.assertTrue(all(line.endswith(f" {value}") for line in lines))
+
     def test_real_step_names_separate_setup_build_publication_and_validation(self):
         expected = {
             "Set up job": "runner_setup",
@@ -443,6 +467,39 @@ class CollectorTests(unittest.TestCase):
         ):
             self.assertIn(value, line)
         self.assertTrue(observer.last_poll > 0)
+
+    def test_running_build_age_disappears_after_completion(self):
+        active_run, running = run(), job()
+        active_run["status"] = "in_progress"
+        running.update(status="in_progress", completed_at=None, steps=[])
+        api = FakeGitHub({}, {})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([running])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+            patch.object(observer, "collect_job"),
+        ):
+            observer.poll(self.now)
+            expected = self.now - timestamp(running["started_at"])
+            self.assertIn("ci_job_oldest_execution_seconds", observer.active_metrics)
+            self.assertTrue(
+                any(
+                    line.endswith(f" {expected}")
+                    for line in observer.active_metrics.splitlines()
+                    if line.startswith("ci_job_oldest_execution_seconds")
+                )
+            )
+            running["status"] = "completed"
+            observer.poll(self.now)
+            self.assertNotIn("ci_job_oldest_execution_seconds", observer.active_metrics)
 
     def test_finished_job_is_collected_before_its_workflow_finishes(self):
         active_run = run()

@@ -1,10 +1,10 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
 import { RepeatedMomentumTargetSchema } from '../strategy/repeated-momentum/decision'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { makeReplayInferenceBudget } from './inference-timing'
@@ -159,7 +159,7 @@ durableTest.each(
   async ({ scenario: mode }) => {
     const ablation = mode === 'ablation-fill'
     const momentum = mode.startsWith('momentum-')
-    const chartProvider: DecisionsClient['Service'] =
+    const chartProvider: JevClient['Service'] =
       momentum || mode === 'missing-candidate'
         ? { evaluate: () => Effect.die('This scenario must not dispatch chart provider requests') }
         : chartProviderFixture
@@ -437,7 +437,7 @@ durableTest.each(
     )
     const stores = Layer.mergeAll(
       EntryInferenceJournalLive,
-      Layer.succeed(DecisionsClient, chartProvider),
+
       CandidateObservationStoreLive,
       JevBatchStoreLive,
       JevPositionStoreLive,
@@ -574,7 +574,7 @@ durableTest.each(
           ? yield* makeReplayInferenceTiming({
               budget: makeReplayInferenceBudget(1000),
               measureDatabaseTime: (operation) => operation,
-              providers: { jev: provider, chart: chartProviderFixture },
+              providers: { jev: provider },
               providerClock,
               advanceTo: (atMs) =>
                 advanceMarketTo(atMs).pipe(
@@ -774,7 +774,7 @@ durableTest.each(
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
           Effect.provideService(JevClient, timing?.clients.jev ?? provider),
-          Effect.provideService(DecisionsClient, timing?.clients.chart ?? chartProvider),
+
           (operation) => (timing === undefined ? operation : timing.run(operation)),
           Effect.map((engine) => ({
             ...engine,
@@ -1332,7 +1332,7 @@ durableTest.each(
             Context.add(IntentStore, intents),
             Context.add(MutationStore, mutations),
             Context.add(JevClient, yield* JevClient),
-            Context.add(DecisionsClient, yield* DecisionsClient),
+
             Context.add(EntryInferenceJournal, yield* EntryInferenceJournal),
             Context.add(JevEvaluationStore, yield* JevEvaluationStore),
             Context.add(JevBatchStore, yield* JevBatchStore),
@@ -1994,7 +1994,7 @@ durableTest.each(
           const [source] = yield* sql<{ count: number; candidate_only: boolean; current_protocol: boolean }>`SELECT
             count(*)::int AS count,
             bool_and(NOT ((payload #> '{manifest,symbols}') ? 'SPY')) AS candidate_only,
-            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v36') AS current_protocol
+            bool_and(payload #>> '{protocol,schemaVersion}' = 'bayn.jev.protocol.v37') AS current_protocol
             FROM intraday_candidate_observations WHERE payload->>'schemaVersion' = 'bayn.jev-observation.v1'`
           expect(source?.count).toBeGreaterThan(0)
           expect(source?.candidate_only).toBe(true)
@@ -2062,49 +2062,55 @@ durableTest.each(
         return { _tag: 'Fill' as const, brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
       }).pipe(
         Effect.scoped,
-        Effect.provideService(JevClient, {
-          evaluate: (raw) =>
-            Effect.gen(function* () {
-              if (ablation || momentum || mode === 'missing-candidate')
-                return yield* Effect.die('This control must not dispatch a Jev provider request')
-              const started = yield* Clock.currentTimeMillis
-              const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
-              const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
-                request.state,
-              ).pipe(Effect.orDie)
-              if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
-                managementCalls += 1
-                throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
-              }
-              if (measured) {
-                if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
-                yield* measuredProviderClock.adjust(100)
-              }
-              const now = yield* Clock.currentTimeMillis
-              if (scenario === 'failed-model-response') {
-                const rejected = {
-                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), true).response,
-                  answers: {},
-                }
-                return yield* new JevError({
-                  failure: JevFailure.Response,
-                  message: 'Response has billed usage but no valid decision answers',
-                  requestHash,
-                  responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
-                  rejectedResponse: Redacted.make(rejected),
-                })
-              }
-              return {
-                ...nativeJevInference(
-                  raw,
-                  utcInstantFromEpochMillis(now),
-                  noTrade || !['AAPL', 'AMZN'].includes(symbol) ? false : true,
-                  symbol === 'AMZN' ? 0.8 : 0.9,
-                ),
-                startedAt: utcInstantFromEpochMillis(started),
-              }
-            }),
-        }),
+        Effect.provideService(
+          JevClient,
+          entryProviderFixture(
+            {
+              evaluate: (raw) =>
+                Effect.gen(function* () {
+                  if (ablation || momentum || mode === 'missing-candidate')
+                    return yield* Effect.die('This control must not dispatch a Jev provider request')
+                  const started = yield* Clock.currentTimeMillis
+                  const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
+                  const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+                    request.state,
+                  ).pipe(Effect.orDie)
+                  if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
+                    managementCalls += 1
+                    throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
+                  }
+                  if (measured) {
+                    if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
+                    yield* measuredProviderClock.adjust(100)
+                  }
+                  const now = yield* Clock.currentTimeMillis
+                  if (scenario === 'failed-model-response') {
+                    const rejected = {
+                      ...nativeJevInference(raw, utcInstantFromEpochMillis(now), true).response,
+                      answers: {},
+                    }
+                    return yield* new JevError({
+                      failure: JevFailure.Response,
+                      message: 'Response has billed usage but no valid decision answers',
+                      requestHash,
+                      responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
+                      rejectedResponse: Redacted.make(rejected),
+                    })
+                  }
+                  return {
+                    ...nativeJevInference(
+                      raw,
+                      utcInstantFromEpochMillis(now),
+                      noTrade || !['AAPL', 'AMZN'].includes(symbol) ? false : true,
+                      symbol === 'AMZN' ? 0.8 : 0.9,
+                    ),
+                    startedAt: utcInstantFromEpochMillis(started),
+                  }
+                }),
+            },
+            chartProvider,
+          ),
+        ),
         Effect.provide(stores),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),

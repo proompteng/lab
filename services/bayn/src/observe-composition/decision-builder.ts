@@ -17,7 +17,6 @@ import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
 import { JevDecisionEvidenceSchema } from '../jev/decision'
@@ -836,7 +835,6 @@ type JevDecisionServices =
   | JevBatchStore
   | JevEvaluationStore
   | JevClient
-  | DecisionsClient
   | EntryInferenceJournal
 
 const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
