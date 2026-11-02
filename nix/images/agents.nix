@@ -451,6 +451,8 @@ let
   '';
 
   agentsShellContents = commonContents ++ [
+    exact.talosctl
+    exact.omnictl
     agentsShellInterpreterCompat
     applyPatch
     pstackBundle

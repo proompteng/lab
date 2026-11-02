@@ -86,7 +86,7 @@ All fifteen PostgreSQL primary SQL probes passed after Altra returned. Each repo
 instance's PostgreSQL process shut down cleanly but its CNPG manager hung. The manager was stopped only after
 confirming the clean database shutdown and zombie-only PostgreSQL process state. No Pod was force-deleted.
 
-## Workspace impact and remaining acceptance
+## Workspace impact and authenticated acceptance
 
 Turin's graceful shutdown terminated six standalone Tengri slot Pods and a standalone performance-test Pod.
 Extended `NoExecute` tolerations and drain exclusions did not preserve the slot-local VM snapshots. The original
@@ -106,6 +106,15 @@ when the revision retires. No invocation was reset, resumed or reassigned. This 
 both retained worker Pods became Running and Ready. It does not fix retention of dependencies across future
 application promotions.
 
-Authenticated workspace resume with retained-file and conversation verification remains incomplete. Passkey
-sign-in requires the user. The original home PVC and MicroVM identities are preserved, but host readiness and a
-prepared sleeping guest do not prove successful user access or retained conversation contents.
+The later authenticated check confirmed the original MicroVM Ready, with the same home PVC, guest image and
+active-run pin. Its saved power preference remained 60 minutes. The browser refreshed the live Finder listing
+and successfully rendered the retained `/workspace/relay-stage-1-implementation.md` through Quick Look.
+Existing conversations and their message/tool history remained accessible, including the original pending
+input request. No new message, answer, invocation reset or permission grant was submitted for this verification.
+The agent connection recovered from `Reconnecting` to `Input requested` after refreshing the workspace.
+
+This completes the retained-home and authenticated-access checks for the rebuilt guest. The original Pod-local
+memory snapshot remains lost; the replacement guest's `SnapshotRestored` condition does not establish recovery
+of that original snapshot. The separate [post-upgrade NIC and storage observations](../../../docs/incidents/2026-11-01-altra-nic-and-switch-receive-path.md#post-upgrade-verification)
+still show receive loss, PCIe errors and material storage latency, so OS acceptance does not mean the performance
+incident is fixed.

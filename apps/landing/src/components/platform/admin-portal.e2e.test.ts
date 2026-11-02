@@ -366,6 +366,25 @@ test('keeps verification beside its access change and removes stale content afte
   }
 }, 30_000)
 
+test('shows activity at its recorded time in the browser timezone', async () => {
+  const context = await browser.newContext({ locale: 'en-US', timezoneId: 'America/Los_Angeles' })
+  const page = await context.newPage()
+  try {
+    await page.goto(`${base}/workspaces/${workspace}/activity`)
+    const timestamp = page.getByRole('region', { name: 'Workspace activity', exact: true }).locator('time')
+    await browserExpect(timestamp).toHaveAttribute('datetime', '2026-11-01T05:13:20.000Z')
+    await browserExpect(timestamp).toHaveText('10/31/2026, 10:13:20 PM')
+    if (process.env.PLATFORM_UI_SCREENSHOT_DIR)
+      await page.screenshot({
+        path: process.env.PLATFORM_UI_SCREENSHOT_DIR + '/activity-timestamp.png',
+        fullPage: true,
+        animations: 'disabled',
+      })
+  } finally {
+    await context.close()
+  }
+}, 30_000)
+
 test('keeps portal navigation and member controls usable on desktop and phones', async () => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const page = await context.newPage()

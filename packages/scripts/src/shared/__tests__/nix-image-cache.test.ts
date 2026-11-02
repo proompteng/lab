@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +30,89 @@ if (!isMap(stepEnvironment)) throw new Error('Missing image cache upload environ
 const workflowEnv = Object.fromEntries(
   [...environment.items, ...stepEnvironment.items].map(({ key, value }) => [String(key), String(value)]),
 )
+const buildStep = steps.items.find((step) => isMap(step) && step.get('name') === 'Build Nix image archive')
+const buildScript = isMap(buildStep) ? buildStep.get('run') : undefined
+const setupStep = steps.items.find((step) => isMap(step) && step.get('name') === 'Set up Nix toolchain')
+const nixConfig = isMap(setupStep) ? setupStep.getIn(['with', 'extra-nix-config']) : undefined
+if (typeof buildScript !== 'string' || typeof nixConfig !== 'string') throw new Error('Missing Nix image build')
+
+it.each([
+  { mode: 'cache-error', status: 1 },
+  { mode: 'compile-error', status: 23 },
+  { mode: 'stall', status: 124 },
+  { mode: 'success', status: 0 },
+])('runs one bounded image build for $mode without a source fallback', ({ mode, status }) => {
+  const dir = mkdtempSync(join(tmpdir(), 'nix-image-build-'))
+  try {
+    const bin = join(dir, 'bin')
+    const logs = join(dir, 'logs')
+    const archive = join(dir, 'image.tar.gz')
+    const calls = join(dir, 'calls')
+    const compiler = join(dir, 'compiler-started')
+    const output = join(dir, 'github-output')
+    mkdirSync(bin)
+    mkdirSync(logs)
+    mkdirSync(join(dir, 'nix'))
+    writeFileSync(join(dir, 'nix/ci-run-timed.sh'), readFileSync(join(repoRoot, 'nix/ci-run-timed.sh')))
+    writeFileSync(archive, 'image archive')
+    writeFileSync(output, '')
+    writeFileSync(
+      join(bin, 'nix'),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'build\\n' >> "$NIX_TEST_CALLS"
+fallback="$(printf '%s\\n' "$NIX_CONFIG" | awk '$1 == "fallback" { print $3 }')"
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --option)
+      if [[ "$2" == fallback ]]; then fallback="$3"; fi
+      shift 3 ;;
+    --out-link) out_link="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$NIX_TEST_MODE" in
+  cache-error)
+    if [[ "$fallback" != true ]]; then
+      echo 'error: unable to download cached NAR: HTTP 503' >&2
+      exit 1
+    fi
+    printf 'compiler bootstrap\\n' > "$NIX_TEST_COMPILER" ;;
+  compile-error) exit 23 ;;
+  stall) sleep 10 ;;
+esac
+ln -s "$NIX_TEST_ARCHIVE" "$out_link"
+`,
+      { mode: 0o755 },
+    )
+    const result = Bun.spawnSync(['bash', '-c', buildScript.replaceAll('${{ matrix.platform }}', 'linux/amd64')], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        ...Object.fromEntries(
+          Object.entries(workflowEnv).map(([key, value]) => [key, key.startsWith('NIX_IMAGE_BUILD_') ? '1s' : value]),
+        ),
+        PATH: `${bin}:${process.env.PATH}`,
+        NIX_CONFIG: nixConfig,
+        PACKAGE_ATTR: 'fixture-image',
+        ARCH: 'amd64',
+        NIX_OCI_LOG_DIR: logs,
+        NIX_TEST_MODE: mode,
+        NIX_TEST_CALLS: calls,
+        NIX_TEST_COMPILER: compiler,
+        NIX_TEST_ARCHIVE: archive,
+        GITHUB_OUTPUT: output,
+      },
+      timeout: 10_000,
+    })
+    expect(result.exitCode).toBe(status)
+    expect(existsSync(compiler)).toBe(false)
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1)
+    expect(readFileSync(output, 'utf8')).toBe(status === 0 ? `image_tar=${realpathSync(archive)}\n` : '')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 it.each([0, 17, 'stall'])('bounds a multi-GiB archive upload and records Attic result %s', (uploadStatus) => {
   const dir = mkdtempSync(join(tmpdir(), 'nix-image-cache-'))
