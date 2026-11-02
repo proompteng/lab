@@ -77,6 +77,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   curl \
   gh \
   git \
+  ipmitool \
   jq \
   python3 \
   ripgrep \

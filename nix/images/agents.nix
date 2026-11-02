@@ -456,6 +456,7 @@ let
   agentsShellContents = commonContents ++ [
     exact.talosctl
     exact.omnictl
+    pkgs.ipmitool
     agentsShellInterpreterCompat
     applyPatch
     pstackBundle
