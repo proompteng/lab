@@ -319,6 +319,7 @@ describe('agents-shell MCP tools', () => {
         { node: 'turin', operation: 'raw' },
         { node: 'other-host', operation: 'identity' },
         { node: 'turin', operation: 'module_sensors' },
+        { node: 'turin', operation: 'fan_state' },
       ]) {
         const result = await client.callTool({ name: 'bmc', arguments: args })
         expect(result.isError).toBe(true)

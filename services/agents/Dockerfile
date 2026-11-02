@@ -78,6 +78,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   gh \
   git \
   ipmitool \
+  openssh-client \
   jq \
   python3 \
   ripgrep \
