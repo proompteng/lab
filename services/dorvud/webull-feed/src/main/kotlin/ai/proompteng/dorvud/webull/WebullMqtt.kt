@@ -25,8 +25,7 @@ class WebullMqtt(
   private val client = MqttClient(broker, sessionId, MemoryPersistence())
   val disconnected = CompletableDeferred<Throwable?>()
 
-  @Volatile var undelivered: WebullCapture? = null
-    private set
+  @Volatile private var undelivered: WebullCapture? = null
 
   init {
     val uri = URI(broker)
@@ -78,12 +77,20 @@ class WebullMqtt(
       )
     }
 
-  suspend fun close() =
-    runInterruptible(Dispatchers.IO) {
-      try {
-        if (client.isConnected) client.disconnect(2_000)
-      } finally {
-        client.close(true)
+  suspend fun close(retain: suspend (WebullCapture) -> Unit) {
+    try {
+      runInterruptible(Dispatchers.IO) {
+        try {
+          if (client.isConnected) client.disconnect(2_000)
+        } finally {
+          client.close(true)
+        }
+      }
+    } finally {
+      undelivered?.let { capture ->
+        retain(capture)
+        undelivered = null
       }
     }
+  }
 }

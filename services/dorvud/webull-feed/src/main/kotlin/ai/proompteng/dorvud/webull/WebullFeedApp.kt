@@ -96,7 +96,7 @@ fun main(args: Array<String>): Unit =
           ),
         )
       } finally {
-        mqtt.close()
+        mqtt.close {}
       }
       return@runBlocking
     }
@@ -359,10 +359,15 @@ private suspend fun runWebullFeed(
                 } finally {
                   progress.connected.remove(slot)
                   withContext(NonCancellable) {
-                    withTimeoutOrNull(5_000) {
-                      runCatching { mqtt.close() }
-                      mqtt.undelivered?.let { enqueue(it) }
-                    } ?: logEvent("webull.mqtt.shutdown.gap", mapOf("sessionId" to mqtt.sessionId))
+                    runCatching { mqtt.close(::enqueue) }.onFailure { failure ->
+                      logEvent(
+                        "webull.mqtt.close.failure",
+                        mapOf(
+                          "sessionId" to mqtt.sessionId,
+                          "errorClass" to failure.javaClass.simpleName,
+                        ),
+                      )
+                    }
                   }
                 }
                 delay(60_000)

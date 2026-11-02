@@ -60,7 +60,8 @@ working backend protocol.
 
 Captures are bounded to 4 MiB, the shared queue to 16 captures, and Kafka records/fetches to 8 MiB.
 Backpressure blocks producers. An MQTT enqueue timeout retains the in-flight capture, disconnects,
-and drains it before reconnecting. Graceful shutdown stops inputs first and allows the independently
+and transfers it to the publisher before reconnecting, even if normal backpressure lasts beyond five
+seconds. Only service shutdown imposes a drain deadline. Graceful shutdown stops inputs first and allows the independently
 owned publisher up to 20 seconds to drain accepted captures; an exhausted deadline logs a gap.
 Kafka retries preserve the capture UUID. Ambiguous acknowledgments
 can still create multiple offsets for one UUID; these are identifiable capture retries.
@@ -127,7 +128,8 @@ reports sampled symbol coverage, source ages, archive lag, bytes, recent table c
 replica storage. Bar source age includes the completed bar's interval and collection cadence; it is
 not wire latency. The verifier exits unsuccessfully until MQTT quotes, MQTT trades, and nonempty
 completed bars are all observed with parsed recent provider times: within two minutes for MQTT
-quotes/trades and six minutes for completed bars, allowing at most five seconds of future clock skew.
+quotes/trades and six minutes for completed bars, measured against the verification clock and allowing
+at most five seconds of future clock skew. Provider-to-receipt lag remains a separate diagnostic.
 Old cached ticks or a delayed bar sweep cannot establish active-market acceptance. Run during
 PRE/RTH/ATH market activity.
 

@@ -29,8 +29,13 @@ import java.util.UUID
 
 internal val webullVerificationSourceAgeLimits = mapOf("mqtt.quotes" to 120_000L, "mqtt.trades" to 120_000L, "bars" to 360_000L)
 
-internal fun hasFreshWebullMarketData(sourceAges: Map<String, List<Long>>): Boolean =
-  webullVerificationSourceAgeLimits.all { (channel, limit) -> sourceAges[channel].orEmpty().any { it in -5_000L..limit } }
+internal fun hasFreshWebullMarketData(
+  providerTimes: Map<String, List<Instant>>,
+  verifiedAt: Instant,
+): Boolean =
+  webullVerificationSourceAgeLimits.all { (channel, limit) ->
+    providerTimes[channel].orEmpty().any { Duration.between(it, verifiedAt).toMillis() in -5_000L..limit }
+  }
 
 // Diagnostic credentials arrive on stdin, never arguments, logs, pod configuration, or disk.
 internal suspend fun verifyWebullArchive(
@@ -163,7 +168,8 @@ internal suspend fun verifyWebullArchive(
   }
   var mismatches = 0
   val observed = mutableMapOf<String, MutableSet<String>>()
-  val sourceAges = mutableMapOf<String, MutableList<Long>>()
+  val deliveryLags = mutableMapOf<String, MutableList<Long>>()
+  val providerTimes = mutableMapOf<String, MutableList<Instant>>()
   val archiveLags = mutableListOf<Long>()
   var nativeBytes = 0L
   var kafkaBytes = 0L
@@ -189,7 +195,8 @@ internal suspend fun verifyWebullArchive(
     for (observation in parsed.observations) {
       observed.getOrPut(channel) { mutableSetOf() }.add(observation.symbol)
       webullProviderInstant(observation.sourceTime)?.let { time ->
-        sourceAges.getOrPut(channel) { mutableListOf() }.add(Duration.between(time, Instant.parse(capture.receivedAt)).toMillis())
+        providerTimes.getOrPut(channel) { mutableListOf() }.add(time)
+        deliveryLags.getOrPut(channel) { mutableListOf() }.add(Duration.between(time, Instant.parse(capture.receivedAt)).toMillis())
       }
     }
   }
@@ -201,7 +208,9 @@ internal suspend fun verifyWebullArchive(
     query(
       "SELECT sum(bytes_on_disk) AS compressed_bytes, sum(rows) AS physical_rows FROM system.parts WHERE active AND database='signal' AND table='webull_market_events_v1'",
     )
-  val activeMarket = hasFreshWebullMarketData(sourceAges)
+  val verifiedAt = Instant.now()
+  val currentSourceAges = providerTimes.mapValues { (_, times) -> times.map { Duration.between(it, verifiedAt).toMillis() } }
+  val activeMarket = hasFreshWebullMarketData(providerTimes, verifiedAt)
 
   fun latency(values: List<Long>): JsonObject =
     buildJsonObject {
@@ -226,7 +235,7 @@ internal suspend fun verifyWebullArchive(
   val report =
     buildJsonObject {
       put("schemaVersion", "dorvud.webull.verification.v1")
-      put("reportedAt", Instant.now().toString())
+      put("reportedAt", verifiedAt.toString())
       put("sourceRevision", System.getenv("WEBULL_FEED_COMMIT") ?: "development")
       put("imageDigest", System.getenv("WEBULL_FEED_IMAGE_DIGEST") ?: "development")
       put("topic", topic)
@@ -255,9 +264,17 @@ internal suspend fun verifyWebullArchive(
         },
       )
       put(
-        "sampleSourceAgeMillis",
+        "sampleProviderToReceiptLagMillis",
         buildJsonObject {
-          sourceAges.toSortedMap().forEach { (channel, values) ->
+          deliveryLags.toSortedMap().forEach { (channel, values) ->
+            put(channel, latency(values))
+          }
+        },
+      )
+      put(
+        "sampleCurrentSourceAgeMillis",
+        buildJsonObject {
+          currentSourceAges.toSortedMap().forEach { (channel, values) ->
             put(channel, latency(values))
           }
         },
