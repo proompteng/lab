@@ -1,0 +1,42 @@
+name: torghut-webull-feed-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - 'services/dorvud/webull-feed/**'
+      - 'nix/images/dorvud-jvm-service.nix'
+      - 'nix/images/torghut-webull-feed.nix'
+      - 'argocd/applications/torghut-webull-feed/**'
+      - 'flake.nix'
+      - 'flake.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: torghut-webull-feed-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: torghut-webull-feed
+      package_attr: torghut-webull-feed-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      kargo_tag_include_run_id: true
+      release_artifact_name: torghut-webull-feed-release
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit

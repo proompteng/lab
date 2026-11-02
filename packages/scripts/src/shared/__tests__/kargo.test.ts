@@ -143,6 +143,14 @@ const receiptCriteriaExpression = (
 }
 
 const expected = {
+  'torghut-webull-feed': {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('torghut-webull-feed')],
+    apps: ['torghut-webull-feed'],
+    includePaths: [],
+  },
   ofz: {
     creationCriteria: 'image-revision',
     requiresBuildReceipt: true,
