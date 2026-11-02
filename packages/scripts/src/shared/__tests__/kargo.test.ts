@@ -1131,19 +1131,19 @@ describe('Kargo direct-push GitOps contract', () => {
     expectYamlUpdate('arc-runner', './out/argocd/applications/arc/application.yaml', [
       ...[1, 2].map((index) => `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`),
       'spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image',
-      'spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image',
       'spec.sources.3.helm.valuesObject.template.spec.containers.0.image',
       'spec.sources.4.helm.valuesObject.template.spec.containers.0.image',
     ])
+    expect(stagesSource).not.toContain('spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image')
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [
       'spec.template.spec.containers.0.env.6.value',
     ])
     expectYamlUpdate('jangar', './out/argocd/applications/jangar/deployment.yaml', [
+      'spec.template.spec.containers.0.env.129.value',
+      'spec.template.spec.containers.0.env.130.value',
+      'spec.template.spec.containers.0.env.131.value',
       'spec.template.spec.containers.0.env.132.value',
       'spec.template.spec.containers.0.env.133.value',
-      'spec.template.spec.containers.0.env.134.value',
-      'spec.template.spec.containers.0.env.135.value',
-      'spec.template.spec.containers.0.env.136.value',
     ])
     const jangarSteps = stageMap.get('jangar')?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
     const jangarProofUpdate = jangarSteps.find(
@@ -1152,19 +1152,30 @@ describe('Kargo direct-push GitOps contract', () => {
     const jangarProofValues = Object.fromEntries(
       (jangarProofUpdate?.config?.updates ?? []).map((update: Record<string, any>) => [update.key, update.value]),
     )
-    expect(jangarProofValues['spec.template.spec.containers.0.env.132.value']).toBe(
+    expect(jangarProofValues['spec.template.spec.containers.0.env.129.value']).toBe(
       "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}",
     )
-    expect(jangarProofValues['spec.template.spec.containers.0.env.133.value']).toBe(
+    expect(jangarProofValues['spec.template.spec.containers.0.env.130.value']).toBe(
       "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-build-conclusion']) }}",
     )
     for (const key of [
       'spec.template.spec.containers.0.env.2.value',
       'spec.template.spec.containers.0.env.3.value',
-      'spec.template.spec.containers.0.env.135.value',
+      'spec.template.spec.containers.0.env.132.value',
     ]) {
       expect(jangarProofValues[key]).toBe('${{ commitFrom(vars.gitRepo).ID }}')
     }
+    const jangarDeployment = YAML.parse(readRepoFile('argocd/applications/jangar/deployment.yaml')) as Manifest
+    const jangarEnv = jangarDeployment.spec?.template.spec.containers[0].env as Array<{ name: string }>
+    expect(Object.keys(jangarProofValues).map((key) => jangarEnv[Number(key.split('.')[6])]?.name)).toEqual([
+      'JANGAR_SOURCE_HEAD_SHA',
+      'JANGAR_GITOPS_REVISION',
+      'JANGAR_SOURCE_CI_RUN_ID',
+      'JANGAR_SOURCE_CI_CONCLUSION',
+      'JANGAR_MANIFEST_IMAGE_DIGEST',
+      'JANGAR_SERVING_BUILD_COMMIT',
+      'JANGAR_SERVING_IMAGE_DIGEST',
+    ])
     expectYamlUpdate('agents', './out/argocd/applications/agents/values.yaml', [
       'controllers.image.repository',
       'controllers.image.tag',

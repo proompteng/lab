@@ -1,6 +1,9 @@
 import { writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { compilerDependencyBytes } from './jev-compiler-dependencies'
+import { Result } from 'effect'
+import { nativeReplayPolicyManifest } from '../src/intraday-replay/native-policy'
+import { loadActiveStrategyProtocol } from '../src/strategy'
 
 const [outputFlag, output, sourceFlag, sourceRevision, ...args] = process.argv.slice(2)
 if (
@@ -55,11 +58,12 @@ if (!compiler.success || compiler.outputs.length !== 1) throw Error(JSON.stringi
 await writeFile(
   join(dirname(output), 'jev-compiler-dependencies.json'),
   JSON.stringify({
-    schemaVersion: 'bayn.jev-compiler-dependencies.v2',
+    schemaVersion: 'bayn.jev-compiler-dependencies.v4',
     sourceRevision,
     bunVersion: '1.4.2',
     files: dependencies.files(),
     controlFiles: controlDependencies.files(),
     compilerFiles: compilerDependencies.files(),
+    nativeReplayPolicies: Result.getOrThrow(Result.flatMap(loadActiveStrategyProtocol(), nativeReplayPolicyManifest)),
   }),
 )

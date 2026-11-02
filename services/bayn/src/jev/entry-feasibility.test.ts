@@ -5,8 +5,13 @@ import fc from 'fast-check'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { jevEntryEconomics } from './entry-economics'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
-import { makeEntryProposals, mayHaveFundableSourceProposal } from './entry-proposals'
+import { makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
 import type { ChartAssessments } from './chart-questions'
+
+const sourceIsFeasible = (input: Parameters<typeof makeEntrySourceCandidates>[0]) =>
+  makeEntrySourceCandidates(input).pipe(
+    Result.map((c) => c.baseWindows.length > 0 || (c.supportBarIds.length > 0 && c.resistanceBarIds.length > 0)),
+  )
 
 const check = (symbol: string, values: readonly { high: number; low: number }[], bid: number, capital: string) => {
   const request = entryEvaluationRequestFixture(undefined, symbol)
@@ -25,6 +30,7 @@ const check = (symbol: string, values: readonly { high: number; low: number }[],
   )
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: request.request.protocol,
       symbol,
       bidMicros: BigInt(bid),
@@ -35,14 +41,14 @@ const check = (symbol: string, values: readonly { high: number; low: number }[],
   )
   if (economics === null) return
   const input = { chart, economics, protocol: request.request.protocol, bidMicros: BigInt(bid) }
-  const feasible = Result.getOrThrow(mayHaveFundableSourceProposal(input))
+  const feasible = Result.getOrThrow(sourceIsFeasible(input))
   const first = chart.bars[0]
   if (first === undefined) throw new Error('Expected source bars')
   const refused = { status: 'REFUSED' } as const
   const assessed = { status: 'ASSESSED', probability: 1 } as const
   const anchor = (barId: string) => ({ ...assessed, barId })
   const assessments: ChartAssessments = {
-    schemaVersion: 'bayn.chart-assessments.v1',
+    schemaVersion: 'bayn.chart-assessments.v4',
     symbol,
     windowEndAt: chart.windowEndAt,
     barsHash: chart.barsHash,
@@ -111,6 +117,7 @@ describe('pre-chart source feasibility', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence({ ...request.request.chartSource, bars }))
     const economics = Result.getOrThrow(
       jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
         protocol: request.request.protocol,
         symbol: chart.symbol,
         bidMicros: 104_000_000n,
@@ -146,7 +153,7 @@ describe('pre-chart source feasibility', () => {
     expect(proposals.proposals).toHaveLength(1)
     expect(
       Result.getOrThrow(
-        mayHaveFundableSourceProposal({
+        sourceIsFeasible({
           chart,
           economics,
           protocol: request.request.protocol,
@@ -171,6 +178,7 @@ describe('pre-chart source feasibility', () => {
       )
       const economics = Result.getOrThrow(
         jevEntryEconomics({
+          feeAt: '2026-09-04T14:15:00.000Z',
           protocol: request.request.protocol,
           symbol: chart.symbol,
           bidMicros: 101_500_000n,
@@ -182,7 +190,7 @@ describe('pre-chart source feasibility', () => {
       if (economics === null) throw new Error('Expected funded quantity')
       expect(
         Result.getOrThrow(
-          mayHaveFundableSourceProposal({
+          sourceIsFeasible({
             chart,
             economics,
             protocol: request.request.protocol,

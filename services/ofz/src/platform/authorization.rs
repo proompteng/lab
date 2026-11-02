@@ -20,12 +20,12 @@ pub struct Evaluation {
     pub state: State,
 }
 
-pub fn resource_check(
+pub fn resource_checks(
     resource: &proto::PlatformResource,
     action: &str,
     kind: &str,
     subject: &str,
-) -> Result<Check, Status> {
+) -> Result<Vec<Check>, Status> {
     if resource.id.is_empty()
         || resource.id.len() > 256
         || !resource
@@ -46,13 +46,25 @@ pub fn resource_check(
             "action does not apply to this resource",
         ));
     }
-    Ok(Check::new(
-        &catalog.resource(&resource.kind)?.native_type,
+    let definition = catalog.resource(&resource.kind)?;
+    let mut checks = vec![Check::new(
+        &definition.native_type,
         &resource.id,
         &action.permission,
         kind,
         subject,
-    ))
+    )];
+    if definition.workspace_scoped {
+        let workspace = registry::configured()?.resource_workspace(&resource.kind, &resource.id)?;
+        checks.push(Check::new(
+            "platform_workspace",
+            &workspace.id,
+            "use",
+            kind,
+            subject,
+        ));
+    }
+    Ok(checks)
 }
 
 pub fn caller<'a>(
@@ -96,7 +108,7 @@ pub async fn human_context(
     database: &Database,
     session: &proto::PlatformHumanSession,
     operation: &str,
-    administration: bool,
+    fresh_mfa: bool,
 ) -> Result<(proto::RequestContext, State, u64), Status> {
     let state = database.state().await?;
     let context = proto::RequestContext {
@@ -118,10 +130,10 @@ pub async fn human_context(
     let expiry = decision::session(
         database,
         &context,
-        if administration {
+        if fresh_mfa {
             proto::Action::TargetsManage
         } else {
-            proto::Action::WorkspaceMetadataRead
+            proto::Action::PolicyRead
         },
         &state,
     )
@@ -154,7 +166,7 @@ pub async fn binding_checks(
                     "delegation issuer no longer owns this execution",
                 ));
             }
-            Ok(vec![resource_check(
+            resource_checks(
                 &proto::PlatformResource {
                     kind: policy.resource_kind.clone(),
                     id: binding.id.clone(),
@@ -163,7 +175,7 @@ pub async fn binding_checks(
                 &policy.action,
                 "human",
                 human,
-            )?])
+            )
         }
         _ => Err(Status::permission_denied(
             "registered execution binding required",
@@ -188,6 +200,7 @@ pub async fn evaluate(
         ));
     }
     onboarding::verify(database).await?;
+    let workspace = super::workspaces::resource_workspace_id(&request.resources)?;
     let registry = registry::configured()?;
     let subject = request
         .subject
@@ -206,6 +219,17 @@ pub async fn evaluate(
     };
     let mut valid_until = decision::decision_deadline(context.deadline_unix_ms, &state)?;
     let mut checks = Vec::new();
+    if !workspace.is_empty() {
+        checks.extend(client.identities.iter().map(|identity| {
+            Check::new(
+                "platform_workspace",
+                &workspace,
+                "use",
+                "workload",
+                &policy::workload_object_id(identity),
+            )
+        }));
+    }
     match subject
         .identity
         .as_ref()
@@ -222,16 +246,11 @@ pub async fn evaluate(
             });
             let id = policy::workload_object_id(identity);
             for resource in &request.resources {
-                checks.push(resource_check(resource, &request.action, "workload", &id)?);
+                checks.extend(resource_checks(resource, &request.action, "workload", &id)?);
             }
         }
         platform_subject::Identity::Human(session) => {
-            if !client
-                .roles
-                .iter()
-                .any(|role| role == "platform.human-session")
-                || !client.origins.contains(&session.origin)
-            {
+            if !client.allows_origin(&session.origin) {
                 return Err(Status::permission_denied(
                     "client cannot assert this human session",
                 ));
@@ -248,7 +267,7 @@ pub async fn evaluate(
                 &session.human_id,
             ));
             for resource in &request.resources {
-                checks.push(resource_check(
+                checks.extend(resource_checks(
                     resource,
                     &request.action,
                     "human",
@@ -268,8 +287,18 @@ pub async fn evaluate(
                 .get()
                 .await
                 .map_err(|_| Status::unavailable("delegation database pool unavailable"))?;
-            let row = connection.query_opt("SELECT agent_id,issuer_id,client_service,credential_hash,proof_key_thumbprint,actions,resources,binding,expires_at_ms,recovery_generation FROM ofz.platform_delegations WHERE id=$1 AND active AND NOT revoked AND expires_at_ms>ofz.now_ms()", &[&id]).await.map_err(sql_error)?
+            let row = connection.query_opt("SELECT d.agent_id,d.issuer_id,d.client_service,d.credential_hash,d.proof_key_thumbprint,d.actions,d.resources,d.binding,d.expires_at_ms,d.recovery_generation,d.workspace_id FROM ofz.platform_delegations d JOIN ofz.platform_connections c ON c.id=d.connection_id AND c.enabled AND c.version=d.connection_version AND c.last_delegation_id=d.id WHERE d.id=$1 AND d.active AND NOT d.revoked AND d.expires_at_ms>ofz.now_ms()", &[&id]).await.map_err(sql_error)?
                 .ok_or_else(|| Status::unauthenticated("active delegation required"))?;
+            if row
+                .get::<_, Option<Uuid>>(10)
+                .map(|id| id.to_string())
+                .as_deref()
+                != Some(&super::workspaces::resource_workspace_id(
+                    &request.resources,
+                )?)
+            {
+                return Err(Status::permission_denied("delegation workspace changed"));
+            }
             if row.get::<_, String>(2) != client.id
                 || row.get::<_, Vec<u8>>(3) != Sha256::digest(proof.credential.as_bytes()).to_vec()
                 || row.get::<_, i64>(9) as u64 != state.recovery_generation
@@ -335,7 +364,12 @@ pub async fn evaluate(
             ));
             checks.push(Check::new("platform", "lab", "admit", "human", &issuer));
             for resource in &request.resources {
-                checks.push(resource_check(resource, &request.action, "human", &issuer)?);
+                checks.extend(resource_checks(
+                    resource,
+                    &request.action,
+                    "human",
+                    &issuer,
+                )?);
             }
         }
     }
@@ -394,6 +428,7 @@ pub async fn check(
     receipt.revision = initial.revision;
     receipt.recovery_generation = initial.state.recovery_generation;
     receipt.platform_action = request.action.clone();
+    receipt.platform_workspace_id = super::workspaces::resource_workspace_id(&request.resources)?;
     receipt.platform_resources = request
         .resources
         .iter()
@@ -432,6 +467,14 @@ pub async fn check(
         ));
     }
     onboarding::verify(database).await?;
+    if !request.audit_receipt_id.is_empty() {
+        super::providers::verify_execution_connection(
+            database,
+            &request.operation_id,
+            &request.audit_receipt_id,
+        )
+        .await?;
+    }
     Ok(proto::PlatformDecision {
         allowed: true,
         revision: recorded.revision,

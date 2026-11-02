@@ -558,6 +558,7 @@ const buildAgentRunnerSpec = (
     },
     artifacts: {
       statusPath: '/workspace/.agent/status.json',
+      resultPath: '/workspace/.agent/result.json',
       logPath: '/workspace/.agent/runner.log',
       logRetentionSeconds,
     },

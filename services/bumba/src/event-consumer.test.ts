@@ -314,7 +314,7 @@ test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the 
 
 test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge', async () => {
   process.env.OPENAI_API_BASE_URL = 'http://flamingo.test/v1'
-  process.env.OPENAI_COMPLETION_MODEL = 'qwen36-flamingo'
+  process.env.OPENAI_COMPLETION_MODEL = 'qwen38-flamingo'
   let requestBody: Record<string, unknown> | undefined
   globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
     requestBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
@@ -366,7 +366,7 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
     tags: ['bumba', 'temporal', 'event-consumer'],
   })
   expect(requestBody).toMatchObject({
-    model: 'qwen36-flamingo',
+    model: 'qwen38-flamingo',
     stream: false,
     temperature: 0.1,
     top_p: 0.8,

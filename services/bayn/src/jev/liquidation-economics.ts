@@ -9,10 +9,11 @@ import { quantityScale } from '../quantity'
 import { calculateSessionFees, cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { scaledNumber } from '../strategy/execution-model/fixed-point'
 import { JevContractError } from './contract'
-import type { JevProtocol } from './protocol'
+import type { JevProtocolMaterial } from './protocol'
 
 interface LiquidationInput {
-  readonly protocol: JevProtocol
+  readonly feeAt: string
+  readonly protocol: JevProtocolMaterial
   readonly symbol: string
   readonly costMultiplierMicros?: bigint
   readonly quantityAtoms: bigint
@@ -28,6 +29,7 @@ export const jevExitLimitValue = (input: LiquidationInput & { readonly limitPric
       input.protocol.executionModel,
       input.costMultiplierMicros ?? 1_000_000n,
       cryptoMaximumTakerFeeBps,
+      input.feeAt,
     )
     const schedule = input.protocol.executionModel.fees
     const crypto = instrumentMarket(input.symbol) === MarketKind.Crypto

@@ -77,10 +77,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     commands::recover(&database, &native).await?;
     tracing::debug!("pending commands reconciled");
-    let issuer = Issuer::new(
-        env::var("OFZ_OIDC_ISSUER")?,
-        env::var("OFZ_OIDC_CLIENT_ID")?,
-    )?;
+    let issuer = Issuer::new(env::var("OFZ_OIDC_ISSUER")?)?;
     let tls = transport::server_config().await?;
     tracing::debug!("attested authorization transport initialized");
     let listener =
@@ -89,31 +86,33 @@ async fn main() -> anyhow::Result<()> {
         contract_version = ofz::CONTRACT_VERSION,
         "Ofz authorization API listening"
     );
-    transport::server()
+    let server = transport::server()
         .layer(
             tower_http::trace::TraceLayer::new_for_grpc()
                 .make_span_with(ofz::telemetry::RequestSpan)
                 .on_failure(ofz::telemetry::grpc_failure),
         )
         .add_service(
-            TengriAuthorizationServiceServer::new(Service::new(
-                database.clone(),
-                native.clone(),
-                issuer,
-            ))
-            .max_decoding_message_size(128 * 1024)
-            .max_encoding_message_size(1_048_576),
+            TengriAuthorizationServiceServer::new(Service::new(database.clone(), native.clone()))
+                .max_decoding_message_size(128 * 1024)
+                .max_encoding_message_size(1_048_576),
         )
         .add_service(
             PlatformAuthorizationServiceServer::new(ofz::platform::service::Service::new(
-                database, native,
+                database.clone(),
+                native.clone(),
+                issuer,
+                ofz::platform::providers::Providers::from_environment()?,
             ))
             .max_decoding_message_size(128 * 1024)
             .max_encoding_message_size(1_048_576),
         )
         .serve_with_incoming_shutdown(transport::incoming(listener, tls), async {
             let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+        });
+    tokio::select! {
+        result = server => result?,
+        () = commands::maintain_recovery(&database, &native) => {}
+    }
     Ok(())
 }
