@@ -1,8 +1,12 @@
 package ai.proompteng.dorvud.webull
 
+import ai.proompteng.dorvud.platform.WEBULL_BARS_PATH
 import ai.proompteng.dorvud.platform.WEBULL_QUOTES_PATH
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
 import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.charset.StandardCharsets.UTF_8
@@ -16,6 +20,37 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WebullApiTest {
+  @Test
+  fun `bar requests accept twenty symbols and reject an oversized batch before sending`() =
+    runBlocking {
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      val requestedSizes = mutableListOf<Int>()
+      server.createContext(WEBULL_BARS_PATH) { exchange ->
+        val request = Json.parseToJsonElement(exchange.requestBody.readAllBytes().decodeToString()).jsonObject
+        val size = (request.getValue("symbols") as JsonArray).size
+        requestedSizes += size
+        val body =
+          if (size <= 20) {
+            """{"result":[]}"""
+          } else {
+            """{"error_code":"ILLEGAL_PARAMETER","message":"symbols size must be between 1 and 20."}"""
+          }
+        val bytes = body.toByteArray()
+        exchange.sendResponseHeaders(if (size <= 20) 200 else 417, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
+      }
+      server.start()
+      try {
+        val api = WebullApi(WebullCredentials("key", "secret"), origin = URI("http://127.0.0.1:${server.address.port}"))
+        val cutoff = Instant.parse("2026-11-02T08:00:00Z")
+        api.completedBars((1..20).map { "S$it" }, cutoff)
+        assertFailsWith<IllegalArgumentException> { api.completedBars((1..21).map { "S$it" }, cutoff) }
+        assertEquals(listOf(20), requestedSizes)
+      } finally {
+        server.stop(0)
+      }
+    }
+
   @Test
   fun `exhausted rate limit retries still delay the next batch until the final cooldown expires`() =
     runBlocking {
