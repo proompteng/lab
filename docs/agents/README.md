@@ -9,6 +9,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 
 - Source-read implementation map: `current-source-state.md`
 - Safe AgentRun creation: `agentrun-creation-guide.md`
+- Runner tools and browser/platform acceptance: `runner-environment.md`
 - CRD contract and YAML examples: `crd-yaml-spec.md`
 - Helm implementation contract: `agents-helm-chart-implementation.md`
 - Installation, upgrade, and incident operations: `runbooks.md`

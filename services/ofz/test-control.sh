@@ -4,6 +4,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 fixture_mode="${1:-control}"
 case "$fixture_mode" in control|platform|bootstrap|archive|identity|runtime|editor|failover) ;; *) printf 'Expected control, platform, bootstrap, archive, identity, runtime, editor or failover fixture\n' >&2; exit 2 ;; esac
+if [[ "$fixture_mode" == platform ]]; then
+  exec python3 tests/platform_fixture.py platform
+fi
 fixture_dir="$(mktemp -d)"
 fixture_name="ofz-control-$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')"
 fixture_database="$fixture_name-db"
@@ -94,44 +97,6 @@ for attempt in $(seq 1 60); do
   if curl --silent --fail --max-time 1 "$OFZ_TEST_NATIVE_ENDPOINT/healthz" >/dev/null; then
     if [[ "$fixture_mode" == control ]]; then
       cargo test --locked --lib control_integration -- --ignored --nocapture
-    elif [[ "$fixture_mode" == platform ]]; then
-      python3 - "$fixture_dir" <<'PY'
-import json
-import pathlib
-import sys
-directory = pathlib.Path(sys.argv[1])
-services = json.loads(pathlib.Path('platform/services.json').read_text())
-services['services'].append({
-    'id': 'fixture-client',
-    'identities': [
-        'spiffe://proompteng.ai/ns/fixture/sa/first',
-        'spiffe://proompteng.ai/ns/fixture/sa/second',
-    ],
-    'roles': ['platform.client', 'relay.client'],
-})
-services['workspaces'][0]['initial_clients'].append('fixture-client')
-services['workspaces'][0]['resources'].extend([
-    {'kind': 'kubernetes.namespace', 'id': 'galactic/11111111-1111-4111-8111-111111111111', 'name': 'fixture'},
-    {'kind': 'kubernetes.namespace', 'id': 'galactic/22222222-2222-4222-8222-222222222222', 'name': 'approved'},
-])
-services['workspaces'].append({
-    'id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'name': 'Other workspace',
-    'resources': [{'kind': 'kubernetes.namespace', 'id': 'galactic/33333333-3333-4333-8333-333333333333', 'name': 'private'}],
-    'initial_clients': ['fixture-client'], 'import_platform_members': False,
-})
-policies = json.loads(pathlib.Path('platform/policies.json').read_text())
-policies['actions'].append({
-    'id': 'fixture.status.read',
-    'resourceKind': 'kubernetes.namespace',
-    'permission': 'read_status',
-    'grantRelation': 'status_reader',
-})
-(directory / 'services.json').write_text(json.dumps(services))
-(directory / 'policies.json').write_text(json.dumps(policies))
-PY
-      export OFZ_SERVICES_FILE="$fixture_dir/services.json"
-      export OFZ_POLICY_CATALOG_FILE="$fixture_dir/policies.json"
-      cargo test --locked --lib platform::integration -- --ignored --nocapture
     elif [[ "$fixture_mode" == bootstrap ]]; then
       cargo build --locked
       OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \

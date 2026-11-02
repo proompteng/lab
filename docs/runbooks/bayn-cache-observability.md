@@ -54,8 +54,13 @@ Fixed stage, operation, dependency, outcome, service, namespace and source-revis
 The OTLP resource identifies the pod. Cache keys, content hashes, account/order/cycle identifiers and raw errors
 are excluded from metric labels.
 
-- `bayn.valkey.put` includes queueing, SET and the complete required replica acknowledgement. Its child
-  `bayn.valkey.set` and `bayn.valkey.replica-ack` spans/histograms separate those components. The original single
+- `bayn.valkey.put` includes queueing, connection readiness, SET and the complete required replica acknowledgement.
+  `bayn.valkey.queue` ends when the single connection permit is acquired; `bayn.valkey.connect` covers checking
+  the existing connection and connecting when closed. Their bounded `operation` label distinguishes get/put/remove.
+  An interrupted queue phase with no connect phase means the command never owned the connection. An interrupted
+  connect phase with no SET means connection readiness did not finish, not a slow SET or replica acknowledgement.
+  An already-open connection still records a successful readiness check; it is not a reconnect count.
+  The `bayn.valkey.set` and `bayn.valkey.replica-ack` child spans/histograms separate the write components. The original single
   one-second command deadline, cancellation and one-replica requirement remain in force.
 - `bayn_valkey_reads_total` counts successful GET results as `hit` or `miss`. A required materialization miss still
   fails closed. Transport failures are counted separately in `bayn_valkey_failures_total` by bounded category.
