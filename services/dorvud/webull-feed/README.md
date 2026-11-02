@@ -10,8 +10,12 @@ have no Webull dependency.
 The November 1, 2026 backend probe accepted 500 distinct streaming symbols: 100 on each of five
 simultaneous sessions. Each session rejected an additional single symbol with
 `TOO_MANY_SYMBOLS_SUBSCRIPTION`. That established subscription admission, not live delivery. The
-collector discovers each session's actual capacity and records the quota witness; it does not assume
-that 500 is a permanent plan-wide limit.
+collector records admission separately from delivery. Active-market probes on November 2 showed data
+moving to the most recently updated session: reasserting 100 admitted symbols on session 0 started its
+data; updating session 1 then stopped session 0's data while both connections remained online. The
+verified concurrent delivering set was 100 symbols, despite 500 admissions. The collector therefore
+uses one active connection and discovers its capacity from provider responses instead of assuming a
+permanent total symbol cap. Additional idle connections do not count as delivered coverage.
 
 Webull documents [five concurrent connections, a one-minute reconnect wait, and at most three pushes
 per second per connection](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/).
@@ -34,7 +38,8 @@ The production stock-bar endpoint rejected 100 symbols with `ILLEGAL_PARAMETER` 
 `symbols size must be between 1 and 20.`; a 20-symbol request succeeded. This limit is independent of
 the streaming subscription batch size. A full catalog sweep spans several minutes, so the five-minute
 window retains completed bars across those sweeps; `/coverage` reports each symbol's actual latest bar time.
-Each sweep uses one completed UTC-minute cutoff and a five-minute recovery window. Request pacing is
+Each batch uses a current completed UTC-minute cutoff and a five-minute recovery window, so later
+batches do not remain pinned to an earlier sweep's window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
 [documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects
 numeric or HTTP-date Retry-After without truncating long cooldowns, or waits 60 seconds. The final
@@ -43,7 +48,11 @@ failures reconnect instead of blindly repeating side effects.
 
 One invalid symbol rejects a whole provider batch. Bisection isolates invalid symbols without
 excluding valid peers. Invalid symbols are retried after catalog refresh. Empty responses remain
-empty: no synthetic bars or implied coverage. Expired recovery windows, disconnects, failures, and
+empty: no synthetic bars or implied coverage. Webull can include an older cached bar outside the
+requested window. The raw response remains intact; coverage and archive observation indexes exclude
+out-of-window and unfinished bars without discarding their completed peers. `/coverage` counts those
+exclusions in `excludedOutOfWindowBars`. Malformed prices or non-minute timestamps still fail validation.
+Expired recovery windows, disconnects, failures, and
 unknown gaps across process starts are archived as collector gap records. Initial invalid-symbol
 discovery can take several minutes; `/coverage` reports requested, observed, invalid, and uncovered
 symbols independently.
@@ -57,6 +66,10 @@ includes session ID and topic. Authentication headers and secrets never enter th
 Numeric strings and raw provider timestamps remain unchanged. The protobuf inspector reads the
 [provider's message fields](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/)
 without converting prices or sizes to binary floating point.
+MQTT observation indexes and freshness checks use `Basic.timestamp`, which the official SDK converts
+from Unix milliseconds to UTC. Live stock `Tick.time` values contain only a clock such as `04:04:58`;
+they remain in the native payload. MQTT latency measures the provider message timestamp against receipt,
+without inferring a date or timezone for that clock. Completed bars use their native `time` field.
 
 The HTTP signer follows the official Python SDK 3.0.4 HMAC-SHA256 implementation, verified against a
 fixed independent vector and a real provider call. The older SHA1 prose example does not match the
@@ -114,7 +127,8 @@ isolation, exact decimal/timestamp serialization, unfinished-bar rejection, arch
 unchanged existing Flink operator IDs.
 
 The installed main accepts `probe` for a bounded direct HTTP/MQTT authentication/admission check.
-It opens a provider connection, so do not run it alongside five production sessions.
+Do not run it alongside the production collector: another streaming subscriber using the same backend
+key can take over delivery even when the production connection remains online.
 
 The production service exposes `/healthz`, `/readyz`, `/coverage`, and `/metrics` on port 8080.
 Readiness establishes recent Kafka acknowledgments and admitted connections; actual market delivery
