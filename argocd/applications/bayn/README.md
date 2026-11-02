@@ -9,10 +9,14 @@ remain enforced. Migration 172 requires the existing terminal, flat, settled and
 It preserves original provider receipts, late costs, authority generations and all financial history. Historical
 OpenAI codecs and tariffs remain read-only; its transport, key wiring, ExternalSecret and proxy host are removed.
 
-The source cutover temporarily uses native OBSERVE bootstrap because the old mandate binds v36. After immutable v37
-publication, a reviewed same-account PAPER mandate must bind that exact image through Kargo build lineage. Completion
-requires restored PAPER authority, unchanged limits and natural successful Jev-only native receipts. Source merge or
-an OBSERVE rollout alone does not complete this migration. Reliability remains 99.9%, with zero safety violations.
+The sealed v37 request binds the same sandbox account, unchanged risk policy and unchanged activation limits to the
+first published immutable v37 image. Kargo carries that authored request into subsequent build lineages. Native
+activation appends a successor authority generation and preserves accounting, loss, turnover and equity-peak history.
+The read-only bootstrap remains the starting configuration for verified native PAPER activation.
+
+Protocol cutovers use OBSERVE bootstrap while the previous mandate is incompatible. Completion requires restored
+PAPER authority, unchanged limits and natural successful Jev-only native receipts. A source merge or OBSERVE rollout
+alone does not complete delivery. Reliability remains 99.9%, with zero safety violations.
 
 ## Dated fees and statistical claims
 
