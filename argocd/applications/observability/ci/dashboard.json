@@ -1527,7 +1527,7 @@
         "type": "prometheus",
         "uid": "prom"
       },
-      "description": "Counts from existing Nix cache summaries. Substitutions and local builds are distinct events, not a Docker layer-hit ratio.",
+      "description": "Log-derived substitution attempts, local derivations, and cache upload/download outcomes. Missing outcomes in historical records are unknown. These counts are not a byte hit ratio.",
       "fieldConfig": {
         "defaults": {
           "decimals": 1,
@@ -1570,6 +1570,54 @@
                 "value": "Built locally"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attic_upload_successes"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Attic uploads succeeded"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attic_upload_failures"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Attic uploads failed"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attic_download_failures"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Attic downloads failed"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nixos_download_failures"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "NixOS downloads failed"
+              }
+            ]
           }
         ]
       },
@@ -1597,7 +1645,7 @@
           "refId": "A"
         }
       ],
-      "title": "Nix downloads and local builds",
+      "title": "Nix cache activity and failures",
       "type": "timeseries"
     },
     {
