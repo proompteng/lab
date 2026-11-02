@@ -1,0 +1,72 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: counter rates and means preserve OSD identity and correct units
+    interval: 30s
+    input_series:
+      - series: ceph_bluefs_bytes_written_sst{job="ceph-exporter",node="turin",ceph_daemon="osd.0",pod="exporter"}
+        values: 0+3000x20
+      - series: ceph_bluefs_bytes_written_wal{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+600x20
+      - series: ceph_bluefs_read_bytes{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+1500x20
+      - series: ceph_osd_scrub_replicated_read_bytes{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+30000x20
+      - series: ceph_osd_scrub_replicated_io_blocked{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+3x20
+      - series: ceph_bluestore_txc_throttle_lat_sum{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+0.3x20
+      - series: ceph_bluestore_txc_throttle_lat_count{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+30x20
+    promql_expr_test:
+      - expr: ceph_storage:bluefs_sst_write_bytes_per_second:rate5m
+        eval_time: 5m
+        exp_samples:
+          - {labels: 'ceph_storage:bluefs_sst_write_bytes_per_second:rate5m{node="turin",ceph_daemon="osd.0"}', value: 100}
+      - expr: ceph_storage:bluefs_wal_write_bytes_per_second:rate5m
+        eval_time: 5m
+        exp_samples:
+          - {labels: 'ceph_storage:bluefs_wal_write_bytes_per_second:rate5m{node="turin",ceph_daemon="osd.0"}', value: 20}
+      - expr: ceph_storage:bluefs_read_bytes_per_second:rate5m
+        eval_time: 5m
+        exp_samples:
+          - {labels: 'ceph_storage:bluefs_read_bytes_per_second:rate5m{node="turin",ceph_daemon="osd.0"}', value: 50}
+      - expr: ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+        eval_time: 5m
+        exp_samples:
+          - {labels: 'ceph_storage:osd_scrub_read_bytes_per_second:rate5m{node="turin",ceph_daemon="osd.0"}', value: 1000}
+      - expr: ceph_storage:osd_scrub_blocked_ops_per_second:rate5m
+        eval_time: 5m
+        exp_samples:
+          - {labels: 'ceph_storage:osd_scrub_blocked_ops_per_second:rate5m{node="turin",ceph_daemon="osd.0"}', value: 0.1}
+      - expr: ceph_storage:bluestore_throttle_seconds:mean5m
+        eval_time: 5m
+        exp_samples:
+          - {labels: 'ceph_storage:bluestore_throttle_seconds:mean5m{node="turin",ceph_daemon="osd.0"}', value: 0.01}
+  - name: idle operations have no fabricated latency and missing metrics remain absent
+    interval: 30s
+    input_series:
+      - series: ceph_bluestore_txc_throttle_lat_sum{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+0x20
+      - series: ceph_bluestore_txc_throttle_lat_count{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+0x20
+    promql_expr_test:
+      - expr: ceph_storage:bluestore_throttle_seconds:mean5m
+        eval_time: 5m
+        exp_samples: []
+      - expr: ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+        eval_time: 5m
+        exp_samples: []
+  - name: counter resets do not produce negative rates and non-OSD series are excluded
+    interval: 30s
+    input_series:
+      - series: ceph_bluefs_bytes_written_sst{job="ceph-exporter",node="turin",ceph_daemon="osd.0"}
+        values: 0+3000x5 0+3000x15
+      - series: ceph_bluefs_bytes_written_sst{job="ceph-exporter",node="turin",ceph_daemon="mon.o"}
+        values: 0+30000x20
+    promql_expr_test:
+      - expr: ceph_storage:bluefs_sst_write_bytes_per_second:rate5m > bool 0
+        eval_time: 5m
+        exp_samples:
+          - {labels: '{node="turin",ceph_daemon="osd.0"}', value: 1}
