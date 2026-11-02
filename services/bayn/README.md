@@ -140,6 +140,14 @@ judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchm
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
 current execution and database guards accept v36 and its exact question-policy hash.
+
+OpenAI failures emit `bayn.decisions.failure.v1` with the provider error code and type, request ID, HTTP status,
+response hash and a parsed `Retry-After` time when supplied. Join its `requestHash` to the staged dispatch claim's
+`providerRequestHash`. Diagnostics omit provider messages, credentials and source inputs. Existing financial receipts
+and hashes remain unchanged; failed calls retain observed metering or unknown cost. The client does not retry an
+admitted stage or renew its original deadline. `credit_balance_exhausted` identifies missing API credits in the OpenAI
+organization behind the configured key; a spending limit and TypeSafe credits are separate from that balance.
+
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
 preflight still prevents provider calls when neither proposal template can fund an entry. Once a source is feasible,
