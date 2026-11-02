@@ -29,7 +29,11 @@ admission and observed data. Catalog identity hashes the sorted symbol/instrumen
 mapping. Refresh happens daily; a failed refresh leaves existing sessions running.
 
 Completed M1 [bars](https://developer.webull.com/apis/docs/reference/historical-bars/) are requested
-for every candidate in batches of 100, with real-time entitlement required and PRE/RTH/ATH sessions.
+for every candidate in batches of 20, with real-time entitlement required and PRE/RTH/ATH sessions.
+The production stock-bar endpoint rejected 100 symbols with `ILLEGAL_PARAMETER` and
+`symbols size must be between 1 and 20.`; a 20-symbol request succeeded. This limit is independent of
+the streaming subscription batch size. A full catalog sweep spans several minutes, so the five-minute
+window retains completed bars across those sweeps; `/coverage` reports each symbol's actual latest bar time.
 Each sweep uses one completed UTC-minute cutoff and a five-minute recovery window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
 [documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects

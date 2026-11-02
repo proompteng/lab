@@ -266,7 +266,7 @@ private suspend fun runWebullFeed(
                 )
               }
               previousCutoff = cutoff
-              for (batch in activeCatalog.symbols.filter { it !in progress.invalidBarSymbols }.chunked(100)) {
+              for (batch in activeCatalog.symbols.filter { it !in progress.invalidBarSymbols }.chunked(MAX_WEBULL_BAR_SYMBOLS)) {
                 try {
                   collectWebullBarBatch(batch, {
                     progress.requestedBars += it
