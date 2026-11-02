@@ -150,9 +150,13 @@ collector forwards stdout through Loki. Events include tool activity, bounded
 output, cumulative usage, rate-limit snapshots, and a heartbeat every ten seconds.
 The notification observer remains attached across native goal continuation turns.
 
-For Job runtimes, `get_agent_run` exposes `resource.status.runner.telemetry` while
-the worker is active. The API reads a dedicated ConfigMap owned by the exact
-AgentRun UID; it never writes progress into the Kubernetes AgentRun status.
+For Job runtimes with authorized artifact storage, `get_agent_run` exposes
+`resource.status.runner.telemetry` while the worker is active. The worker publishes
+to an S3 key derived from the namespace and exact AgentRun UID. The API reads that bounded snapshot with the run-authorized
+`agents-artifacts` Secret; it never writes progress into the Kubernetes AgentRun status.
+Configure `AGENTS_ARTIFACTS_ENDPOINT` and `AGENTS_ARTIFACTS_BUCKET` on the control
+plane to enable live snapshot reads. Run reads remain available when this optional
+configuration is absent.
 The snapshot is retained in `agentRun.payload.resource.status.runner.telemetry`
 after resource cleanup. Terminal runner status carries the final snapshot.
 Termination files are bounded to 4 KiB of compact UTF-8 JSON. When a larger
@@ -168,13 +172,14 @@ authoritative snapshots, not increments to sum. Quota describes the shared accou
 limit identified by `limitId`; it is not usage attributed to one run. `finished`
 means the telemetry producer stopped; the AgentRun outcome remains separate.
 
-Live publication uses the Job's existing Kubernetes ServiceAccount credential and
-ConfigMap permissions. Providers that use a separate, audience-scoped identity
-projection keep local/stdout and terminal telemetry without adding a Kubernetes
-API credential. Publication failures are logged and counted without failing the
-task. Heartbeat liveness and model/tool activity have separate timestamps.
-The optional chart-managed runner Role grants ConfigMap patch for publication;
-its other resource permissions remain read-only.
+Live publication uses the existing artifact credentials and bucket. Kubernetes
+permissions stay unchanged, including the optional chart-managed runner Role's
+read-only access. Audience-scoped identity projections also retain live progress
+when the run authorizes artifact storage. Runs without artifact storage retain
+local/stdout and terminal telemetry. Publication failures are logged and counted
+without failing the task. Heartbeat liveness and model/tool activity have separate
+timestamps. Live reads are bounded to 32 KiB, and missing startup snapshots remain
+unknown until the worker publishes them.
 
 With the existing `agents-artifacts` Secret and a keyed `runner-result` artifact,
 the runner archives the completed JSONL log at `<result-key>.events.jsonl` on both
