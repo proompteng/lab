@@ -17,9 +17,6 @@ on:
       - 'services/dorvud/hyperliquid-feed/**'
       - 'nix/images/dorvud-jvm-service.nix'
       - 'nix/images/torghut-hyperliquid-feed.nix'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/torghut-hyperliquid-feed/**'
   workflow_dispatch:
 

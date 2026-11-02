@@ -7,17 +7,13 @@ on:
       - 'services/temporal-worker/**'
       - '.github/workflows/temporal-worker-images.yml'
       - 'argocd/applications/temporal/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
   push:
     branches: [main]
     paths:
       - 'services/temporal-worker/**'
-      - '.github/workflows/temporal-worker-images.yml'
       - 'argocd/applications/temporal/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
-      - 'packages/scripts/src/shared/__tests__/kargo.test.ts'
 
 concurrency:
   group: temporal-worker-images-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && '-diagnostic' || '' }}

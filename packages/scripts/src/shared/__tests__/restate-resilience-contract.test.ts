@@ -12,11 +12,16 @@ test('Restate image promotion requires native build proofs and uploaded release 
   const publish = workflow.jobs.publish
   const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
   expect(workflow.on.push.branches).toEqual(['main'])
-  expect(workflow.on.pull_request.paths).toEqual([
-    '.github/actions/affected-inputs/**',
-    'packages/scripts/src/ci/**',
-    ...workflow.on.push.paths,
-  ])
+  expect(workflow.on.pull_request.paths).toContain('.github/workflows/restate-images.yml')
+  expect(
+    workflow.on.pull_request.paths.filter(
+      (path: string) =>
+        ![
+          '.github/workflows/restate-images.yml',
+          'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
+        ].includes(path),
+    ),
+  ).toEqual(['.github/actions/affected-inputs/**', 'packages/scripts/src/ci/**', ...workflow.on.push.paths])
   expect(build.needs).toBe('changes')
   expect(build.if).toBe("needs.changes.outputs.changed == 'true'")
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
@@ -26,7 +31,7 @@ test('Restate image promotion requires native build proofs and uploaded release 
   const runtime = build.steps.find((step: { name?: string }) => step.name === 'Build runtime')
   expect(runtime.with.push).toBe("${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
   expect(runtime.with.load).toBeUndefined()
-  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/cli.ts')
+  expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toBe(mainOnly)
   expect(publish.needs).toEqual(['build'])

@@ -31,13 +31,6 @@ on:
       - 'nix/images/synthesis.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'nix/oci-push.sh'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
@@ -45,16 +38,18 @@ on:
       - 'argocd/applications/app/**'
       - 'argocd/applications/synthesis/**'
       - 'argocd/applications/docs/**'
+      - package.json
+      - bunfig.toml
+      - .npmrc
+      - patches/**
+      - tsconfig.base.json
+      - nix/images/relativize-bun-cache.sh
+      - nix/images/prune-bun-dependency-metadata.sh
+      - '**/package.json'
   push:
     branches:
       - main
     paths:
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/ofz.yaml'
-      - '.github/workflows/product-nix-images.yml'
-      - '.github/workflows/tengri-images.yml'
       - 'apps/app/**'
       - 'apps/docs/**'
       - 'apps/landing/**'
@@ -66,7 +61,6 @@ on:
       - 'apps/synthesis/**'
       - 'argocd/applications/app/**'
       - 'argocd/applications/docs/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applications/keycloak/tengri/**'
       - 'argocd/applications/ofz/**'
       - 'argocd/applications/proompteng/**'
@@ -78,26 +72,19 @@ on:
       - 'devices/galactic/omni/tengri-runner-*.json'
       - 'flake.lock'
       - 'flake.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/check-bun-dependency-closure.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
       - 'nix/images/app.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/docs.nix'
       - 'nix/images/ofz.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
-      - 'nix/oci-*.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
       - 'nix/packages.nix'
       - 'nix/tengri-schema-hash.py'
       - 'packages/backend/**'
       - 'packages/design/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'packages/scripts/src/tengri/**'
+      - '!packages/scripts/src/tengri/__tests__/**'
+      - '!packages/scripts/src/tengri/**/*.test.ts'
       - 'proto/proompteng/authz/**'
       - 'services/relay/**'
       - 'packages/platform-client/**'
@@ -114,6 +101,13 @@ on:
       - 'services/ofz/src/**'
       - 'services/ofz/test-control.sh'
       - 'services/tengri/**'
+      - package.json
+      - bunfig.toml
+      - .npmrc
+      - patches/**
+      - tsconfig.base.json
+      - nix/images/relativize-bun-cache.sh
+      - nix/images/prune-bun-dependency-metadata.sh
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -156,6 +150,7 @@ jobs:
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app }}
       synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || fromJSON(steps.filter.outputs.affected).synthesis }}
       docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || fromJSON(steps.filter.outputs.affected).docs }}
+      app_dependencies: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app_dependencies }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -185,20 +180,15 @@ jobs:
             app: ['', 'apps/app', 'packages/design']
             synthesis: ['', 'apps/synthesis', 'packages/design']
             docs: ['', 'apps/docs', 'packages/design']
+            app_dependencies: ['', 'apps/app', 'packages/design']
           filters: |
             proompteng:
-              - '.github/actions/setup-nix-toolchain/**'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - '.github/workflows/ofz.yaml'
-              - '.github/workflows/product-nix-images.yml'
-              - '.github/workflows/tengri-images.yml'
               - 'apps/landing/**'
               - 'apps/landing/package.json'
               - 'apps/landing/src/app/api/auth/**'
               - 'apps/landing/src/app/api/tengri/**'
               - 'apps/landing/src/components/tengri/**'
               - 'apps/landing/src/lib/tengri/**'
-              - 'argocd/applications/kargo/**'
               - 'argocd/applications/keycloak/tengri/**'
               - 'argocd/applications/ofz/**'
               - 'argocd/applications/proompteng/**'
@@ -209,22 +199,16 @@ jobs:
               - 'devices/galactic/omni/tengri-runner-*.json'
               - 'flake.lock'
               - 'flake.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/images/ofz.nix'
               - 'nix/images/proompteng.nix'
-              - 'nix/oci-*.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - 'nix/oci-push.sh'
               - 'nix/packages.nix'
               - 'nix/tengri-schema-hash.py'
               - 'packages/backend/**'
               - 'packages/design/**'
-              - 'packages/scripts/src/shared/cli.ts'
-              - 'packages/scripts/src/shared/oci.ts'
               - 'packages/scripts/src/tengri/**'
+              - '!packages/scripts/src/tengri/__tests__/**'
+              - '!packages/scripts/src/tengri/**/*.test.ts'
               - 'proto/proompteng/authz/**'
               - 'services/relay/**'
               - 'packages/platform-client/**'
@@ -241,60 +225,80 @@ jobs:
               - 'services/ofz/src/**'
               - 'services/ofz/test-control.sh'
               - 'services/tengri/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - tsconfig.base.json
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
             app:
               - 'apps/app/**'
               - 'packages/design/**'
               - 'nix/images/app.nix'
-              - 'nix/check-bun-dependency-closure.sh'
-              - '.github/workflows/nix-bun-dependency-closure.yml'
-              - '.github/workflows/product-nix-images.yml'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - 'packages/scripts/src/shared/oci.ts'
-              - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
               - 'argocd/applications/app/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+              - tsconfig.base.json
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
               - 'nix/images/synthesis.nix'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - 'packages/scripts/src/shared/oci.ts'
-              - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
               - 'argocd/applications/synthesis/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - tsconfig.base.json
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
               - 'nix/images/docs.nix'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - 'packages/scripts/src/shared/oci.ts'
-              - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
               - 'argocd/applications/docs/**'
+              - package.json
+              - bunfig.toml
+              - .npmrc
+              - patches/**
+              - tsconfig.base.json
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+            app_dependencies:
+              - "**/package.json"
+              - bun.lock
+              - bunfig.toml
+              - .npmrc
+              - tsconfig.base.json
+              - patches/**
+              - nix/images/app.nix
+              - nix/images/bun-workspace-service.nix
+              - nix/images/relativize-bun-cache.sh
+              - nix/images/prune-bun-dependency-metadata.sh
+              - nix/packages.nix
+              - flake.nix
+              - flake.lock
+              - nix/check-bun-dependency-closure.sh
+              - .github/workflows/nix-bun-dependency-closure.yml
       - name: Manual build selection
         id: manual
         if: github.event_name == 'workflow_dispatch'
@@ -321,7 +325,7 @@ jobs:
   verify-app-dependency-closure:
     name: Verify App dependency closure
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: needs.changes.outputs.app_dependencies == 'true' && (github.event_name == 'pull_request' || needs.changes.outputs.app == 'true')
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: app
@@ -331,7 +335,11 @@ jobs:
     needs:
       - changes
       - verify-app-dependency-closure
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.app == 'true'
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.changes.result == 'success' && needs.changes.outputs.app == 'true' &&
+      (needs.verify-app-dependency-closure.result == 'success' ||
+      (needs.changes.outputs.app_dependencies != 'true' && needs.verify-app-dependency-closure.result == 'skipped'))
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: app

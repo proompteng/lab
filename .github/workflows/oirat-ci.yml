@@ -8,9 +8,6 @@ on:
       - 'services/oirat/**'
       - 'packages/discord/**'
       - 'nix/images/oirat.nix'
-      - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - 'nix/check-bun-dependency-closure.sh'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/bun-workspace-deps-source.nix'
       - 'nix/images/bun-workspace-deps-source.test.sh'
@@ -20,9 +17,6 @@ on:
       - 'bunfig.toml'
       - '.npmrc'
       - 'patches/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/oirat/**'
   pull_request:
     paths:
@@ -42,9 +36,6 @@ on:
       - 'bunfig.toml'
       - '.npmrc'
       - 'patches/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/oirat/**'
   workflow_dispatch:
 
