@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { nativeReplayPolicyIdentity } from './native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
@@ -201,8 +202,10 @@ durableTest(
         const timing = yield* makeReplayInferenceTiming({
           budget: makeReplayInferenceBudget(1000),
           providers: {
-            jev: { evaluate: () => Effect.die('Closing-cut regression does not infer') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('Closing-cut regression does not infer') },
+              chartProviderFixture,
+            ),
           },
           providerClock,
           advanceTo,
@@ -310,7 +313,7 @@ durableTest.each([
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v10',
+          schemaVersion: 'bayn.backtest.v11',
           policy,
           latencyStress: null,
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -324,7 +327,7 @@ durableTest.each([
                 }
               : { mode: 'measured-providers' }),
             maximumCalls: 1000,
-            models: { jev: jevModel, chart: 'gpt-6-luna' },
+            models: { jev: jevModel },
             inputDefinition: 'bayn.jev-entry-state.v23',
             costs: replayRateCardFixture({
               jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -421,8 +424,10 @@ durableTest.each([
           boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum
             ? null
             : {
-                chart: chartProviderFixture,
-                jev: { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+                jev: entryProviderFixture(
+                  { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+                  chartProviderFixture,
+                ),
               },
         ).pipe(
           Effect.provide(TestClock.layer()),
@@ -541,7 +546,6 @@ durableTest.each([
               {
                 env: {
                   BAYN_PUBLIC_INFORMATION_PROXY: '',
-                  BAYN_OPENAI_API_KEY: '',
                   BAYN_JEV_API_KEY: '',
                   BAYN_BACKTEST_POSTGRES_URL: baynTestPostgresUrl,
                   BAYN_BACKTEST_TIGERBEETLE_ADDRESS: baynTestTigerBeetleAddress,

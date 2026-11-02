@@ -215,7 +215,8 @@ test('prices a committed chart response after a crash without pretending Jev was
 
 test('subtracts cache reads and writes from total input before applying their own tariffs', () => {
   const disposition = completion.handoff.disposition
-  if (disposition.status !== 'READY') throw new Error('Expected funded fixture')
+  if (disposition.status !== 'READY' || disposition.visual.response.model !== 'gpt-6-luna')
+    throw new Error('Expected retained funded fixture')
   const response = {
     ...disposition.visual.response,
     usage: {

@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
@@ -638,8 +639,10 @@ test.each([0, 100])(
           budget: makeReplayInferenceBudget(1000),
           measureDatabaseTime: (operation) => operation,
           providers: {
-            jev: { evaluate: () => Effect.die('This timing case does not need inference') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('This timing case does not need inference') },
+              chartProviderFixture,
+            ),
           },
           providerClock,
           retain: () => Effect.void,

@@ -77,6 +77,7 @@ test('retained v26 funding reproduces its original entry allowance and broker fe
         inputDefinition: 'bayn.jev-entry-state.v22' as const,
         lookbackMinutes: 30 as const,
         schemaVersion: 'bayn.jev.protocol.v26',
+        entrySignalPolicy: 'openai-decisions-then-jev' as const,
       },
       symbol: 'BTC/USD',
       bidMicros: 80_000_000_000n,
@@ -126,6 +127,7 @@ test('the capped crypto order funds a source target that the former buy allowanc
       inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       schemaVersion: 'bayn.jev.protocol.v26',
+      entrySignalPolicy: 'openai-decisions-then-jev' as const,
     }).resistanceBarIds,
   ).toEqual([])
   expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toEqual(['bar_2026-10-23T14:28:00.000Z'])
@@ -164,6 +166,7 @@ test('an equity buy capped at its inference ask funds the observed target withou
       inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       schemaVersion: 'bayn.jev.protocol.v27',
+      entrySignalPolicy: 'openai-decisions-then-jev' as const,
     }).resistanceBarIds,
   ).toEqual([])
   expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toContain('bar_2026-10-23T14:28:00.000Z')
