@@ -13,7 +13,8 @@ arbitrary address, credential, protocol or command arguments. Examples:
 
 Supported operations are `identity`, `sensors`, `events`, `inventory` and `power_status` on both nodes,
 plus `module_sensors` and `fan_state` on Altra. Events are bounded to the last 50 entries.
-Power status does not expose power controls. The shell image includes IPMI and SSH clients.
+Power status does not expose power controls. The shell image includes IPMI and SSH clients. Its passwd/group
+entries resolve the deployed UID/GID 1000. OpenSSH requires this local account even when the remote user is explicit.
 
 IPMI uses dedicated `agents-reader` accounts with channel privilege USER, level 2. The client explicitly requests
 an encrypted `lanplus` cipher-suite-17 USER session. Slot 3 on channel 1 was verified unused before provisioning
@@ -104,5 +105,16 @@ Agents Freight, `kargo/agents` revision, Argo reconciliation, and deployed shell
 and each available BMC through the private tunnel and the intended ChatGPT conversation. Test a rejected mutation at the tool boundary
 without sending an actual mutation to a host. Record catalog refresh failures separately from backend authorization.
 
-The image rollout restarts Agent Shell and ends its in-memory sessions and running commands. Check for active work
-before rollout. This feature does not authorize changes to Talos machines, firmware, PCIe settings or Ceph tuning.
+The production workspace currently uses `emptyDir`. Replacing its Pod removes repository checkouts and persisted
+session metadata as well as in-memory execution receipts. Before image publication can trigger promotion, check
+active commands and all session worktrees. Finish and publish work, or securely transfer unpublished Git objects,
+branches, index/working changes, untracked source and session metadata. Exclude environment values and credential
+stores from that transfer. Verify a coherent capture rather than treating clean worktrees as proof that their commits
+have been published.
+
+After restoring source, verify exact Git heads and staged/unstaged contents, then reload the session registry and
+exercise the original session IDs. A container restart within the same Pod retains `emptyDir`; another Pod replacement
+would discard the restored data. Check for active commands before restarting. See Kubernetes's
+[emptyDir lifecycle](https://kubernetes.io/docs/concepts/storage/volumes/#emptydir).
+
+This feature does not authorize changes to Talos machines, firmware, PCIe settings or Ceph tuning.
