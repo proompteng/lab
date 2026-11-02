@@ -693,6 +693,57 @@ data:
               runbook_url: docs/runbooks/mimir-email-alerting.md
       - name: ci-build-performance.rules
         rules:
+          - alert: AtticCacheUnavailable
+            expr: absent(probe_success{job="integrations/blackbox/attic-cache"}) or probe_success{job="integrations/blackbox/attic-cache"} == 0
+            for: 3m
+            labels:
+              severity: warning
+              team: platform
+              service: attic
+              notify: email
+            annotations:
+              summary: Attic cache is unavailable or its probe is missing
+              description: The internal Nix cache metadata probe has failed or disappeared for three minutes. Check Attic, PostgreSQL, and object storage.
+          - alert: AtticCacheUploadFailed
+            expr: |
+              sum by (workflow, architecture) (ci_nix_cache_events{kind="attic_upload_failures",window="1h",event="push"}) > 0
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 1m
+            labels:
+              severity: warning
+              team: platform
+              service: attic
+              notify: email
+            annotations:
+              summary: A CI build failed to populate Attic
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} reported an unsuccessful or timed-out build-cache upload. The published image does not establish cache health."
+          - alert: NixCacheDownloadFailed
+            expr: |
+              sum by (workflow, architecture, kind) (ci_nix_cache_events{kind=~"attic_download_failures|nixos_download_failures",window="1h",event="push"}) > 0
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 1m
+            labels:
+              severity: warning
+              team: platform
+              service: attic
+              notify: email
+            annotations:
+              summary: A CI build exhausted Nix cache download retries
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} reported {{ $labels.kind }}. Check the build logs and network path before retrying."
+          - alert: CiBuildStalled
+            expr: |
+              ci_job_oldest_execution_seconds{job_role="build",event="push"} > 1200
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: An individual image build has exceeded twenty minutes
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} is still running after twenty minutes. Inspect the job while it is active; this alert does not require a median regression."
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiObservabilityUnavailable
             expr: |
               absent(up{job="ci-observability"}) or up{job="ci-observability"} == 0
