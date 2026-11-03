@@ -99,15 +99,25 @@ The BFF carries that explicit outcome, so definitively rejected changes no longe
 unmarked authority/session/network failures retain the original intent. Real service assertions cover inadmissible
 membership and last-admin rejection; RPC/BFF/client and Chromium tests cover the marker and subsequent edits.
 
-
 ## Delivery and live acceptance gate
 
-Implementation and local browser/BFF proof are recorded above. PR/required CI/review/merge and release evidence are
-not yet established by this document. Do not treat this as a completed rollout certificate.
+The console merged in [PR #15597](https://github.com/proompteng/lab/pull/15597) at
+`140091e929f60e8db59054d52aba7e37bc2608ec`. Changed-area and Ofz validation passed for its final head
+`cb61bd152d1e5f48f1cce978ed78c5bdd5a086db`; all three automatic review findings were resolved.
+
+Verified on 2026-11-03, the deployed coordinated source is `d8f133e3fc3885700ca9878282b1bf3e8aa86208`, which includes that
+merge. [Ofz release validation](https://github.com/proompteng/lab/actions/runs/41421956698) passed real PostgreSQL/SpiceDB
+platform execution, native policy qualification, Keycloak/passkey SSO, gateway/session isolation, cookie replacement,
+revocation and failover checks. The shared web/admin image is
+`sha256:2dadb2811bf777f4bd7ea54a6fada4a8d334e3f359a5cd9307a81879a210d90a`; both admin replicas reported that digest and
+were ready. Argo `proompteng` was synced and healthy on Kargo commit `e2cb92d01cdc9d1ffe92199a94c8acab3c49c72c`, with
+the matching Ofz/Tengri stages verified. A fresh local `test:admin` run passed 4 admin BFF, 12 provider BFF and 21
+Chromium tests. These establish release and fixture evidence, not final authenticated production acceptance.
 
 Normal delivery must remain the coordinated Ofz → web immutable image publication, Kargo promotion and Argo
 reconciliation path. Record the merged commit, immutable image digest, Kargo promotion commit and deployed revision
 at delivery. No production grants, memberships, provider connections, identities or credential permissions were
-changed during development. Live authenticated portal acceptance requires an authorized session and any human
-passkey step-up; Pod health alone cannot satisfy it. If that identity is unavailable, report the exact outstanding
-live acceptance rather than manufacturing a login or mutating real accounts.
+changed during development. Live authenticated portal acceptance remains pending: the 2026-11-03 readback found no
+unexpired portal session, and browser control reported that local browser use is disabled in Work settings.
+An authorized session and any human passkey step-up are required; Pod health alone cannot satisfy this check.
+Do not manufacture a login or mutate real accounts to replace the missing acceptance.

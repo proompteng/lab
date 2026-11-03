@@ -1,3 +1,4 @@
+import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import jevOnlyInference from '../../migrations/0172_jev_only_inference'
 import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
@@ -1994,6 +1995,7 @@ integration('committed sequential provider handoff', () => {
             ).toEqual([])
             return
           }
+          yield* sql.withTransaction(expenseSourceQueue)
           const expenses = makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01')
           const initialSource = (yield* expenses.newSources).find((value) => value.requestId === historical.requestId)
           if (initialSource === undefined) throw new Error('Missing retained funded claim')

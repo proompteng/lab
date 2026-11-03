@@ -319,6 +319,10 @@
               inherit pkgs lib;
               repoRoot = ./.;
             };
+            "torghut-webull-feed-image" = import ./nix/images/torghut-webull-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
             "torghut-notebook-image" = import ./nix/images/torghut-notebook.nix {
               inherit pkgs lib repoRevision;
               repoRoot = ./.;

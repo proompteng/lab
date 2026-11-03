@@ -1216,12 +1216,12 @@ crossProductDescribe('autonomous trader provider', () => {
   })
 
   it('preinstalls day-trading Python dependencies in the Codex runner image', () => {
-    const dockerfile = readFileSync(resolve(process.cwd(), 'services/agents/Dockerfile.codex-runner'), 'utf8')
+    const image = readFileSync(resolve(process.cwd(), 'nix/images/agents.nix'), 'utf8')
 
-    expect(dockerfile).toContain('"alpaca-py>=0.43"')
-    expect(dockerfile).toContain('"pandas>=2.2"')
-    expect(dockerfile).toContain('"pydantic>=2.8"')
-    expect(dockerfile).toContain('"pyarrow>=16.0"')
+    expect(image).toContain('alpacaPy')
+    expect(image).toContain('pythonPackages.pandas')
+    expect(image).toContain('pythonPackages.pydantic')
+    expect(image).toContain('ps.pyarrow')
   })
 
   it('wires the analysis daytrading bootstrap into the trader provider', () => {
