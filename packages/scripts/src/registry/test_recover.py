@@ -186,6 +186,30 @@ class RecoveryTest(unittest.TestCase):
         self.apply(plan)
         self.assertFalse(self.quarantine.exists())
 
+    def test_resume_preserves_a_newer_upload_to_an_already_restored_tag(self):
+        plan = self.prepare()
+        rename = Path.rename
+
+        def stop(path, *args, **kwargs):
+            if path.resolve() == self.quarantine.resolve():
+                raise InterruptedError("before recovery finalization")
+            return rename(path, *args, **kwargs)
+
+        with patch.object(Path, "rename", stop), self.assertRaises(InterruptedError):
+            self.apply(plan)
+        row = self.original["tags"][0]
+        target = (
+            self.fixture.store.repository(row["repository"])
+            / "_manifests/tags"
+            / row["tag"]
+        )
+        newer = self.fixture.image_manifest(
+            self.fixture.blob(b"new layer"), recent=True
+        )
+        (target / "current/link").write_text(newer)
+        self.apply(plan)
+        self.assertEqual((target / "current/link").read_text(), newer)
+
 
 if __name__ == "__main__":
     unittest.main()

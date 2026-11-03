@@ -261,7 +261,13 @@ def restore(store, plan, require_frozen, seconds=180):
             check_tag(saved, row["entries"])
             destination = saved
         else:
-            check_tag(target, row["entries"])
+            # This directory could only acquire its quarantine inode by our rename.
+            # Uploads may have legitimately advanced its link after an interrupted hold.
+            if (
+                not target.is_dir()
+                or target.stat().st_ino != row["entries"]["."]["inode"]
+            ):
+                raise ValueError("Restored tag directory identity changed")
             destination = target
         if destination == saved and saved.exists():
             check_tag(saved, row["entries"])
