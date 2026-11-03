@@ -91,6 +91,8 @@ import { assessBacktestSession } from '../intraday-replay/backtest'
 import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } from '../ledger-plan'
 import { CycleState, type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
+import { decisionReadinessContinuationDelayMs } from '../observe-composition/recovery-driver'
 import { isCycleStateTransitionAllowed } from '../cycle/transitions'
 import {
   decideActivation,
@@ -1683,6 +1685,38 @@ formal('pinned Lean executable conformance', () => {
         ),
       })),
     )
+    const retryCases = lifecycleCases.flatMap((c) => [true, false].map((expiredWaiting) => ({ ...c, expiredWaiting })))
+    const continuations = retryCases.map(
+      (c) =>
+        decisionReadinessContinuationDelayMs(
+          {
+            outcome: 'RECOVERED',
+            action: 'WAITING',
+            cycle: c.cycle,
+            observedAt: instant(c.now),
+            readiness: {
+              reason: c.expiredWaiting
+                ? DecisionReadinessReason.InferenceExpired
+                : DecisionReadinessReason.InferenceUnavailable,
+              message: 'Awaiting fresh inference',
+            },
+          },
+          30_000,
+          instant(c.now),
+        ) ?? null,
+    )
+    expect(continuations).toContain(1)
+    expect(continuations).toContain(null)
+    expect(
+      model(
+        retryCases.map((c) => ({
+          operation: 'expiredInferenceContinuation',
+          expiredWaiting: c.expiredWaiting,
+          cycle: encodeCycle(c.cycle),
+          now: String(c.now),
+        })),
+      ),
+    ).toEqual(continuations)
     const observing: ObserveShadowDecisionDocument = {
       schemaVersion: 'bayn.observe-shadow-decision.v2',
       mode: legacyObserveAuthorityToken,
