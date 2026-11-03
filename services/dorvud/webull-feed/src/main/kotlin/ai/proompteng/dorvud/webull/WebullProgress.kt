@@ -26,6 +26,7 @@ class WebullProgress {
   val received = AtomicLong()
   val acknowledgedBytes = AtomicLong()
   val malformed = AtomicLong()
+  val outOfWindowBars = AtomicLong()
   val kafkaFailures = AtomicLong()
   val lastAcknowledgedAt = AtomicLong()
   val lastHeartbeatAt = AtomicLong()
@@ -42,6 +43,7 @@ class WebullProgress {
     if (payload == null) {
       malformed.incrementAndGet()
     } else {
+      outOfWindowBars.addAndGet(payload.outOfWindowBars.toLong())
       val latest = latestObservations.computeIfAbsent(payload.channel) { ConcurrentHashMap() }
       for (observation in payload.observations) {
         latest.compute(observation.symbol) { _, previous ->
@@ -83,6 +85,7 @@ class WebullProgress {
       put("gapEvents", gaps.get())
       put("kafkaAcknowledgedNativeBytes", acknowledgedBytes.get())
       put("malformedNativeCaptures", malformed.get())
+      put("excludedOutOfWindowBars", outOfWindowBars.get())
       put("kafkaFailures", kafkaFailures.get())
       put("lastKafkaAcknowledgementEpochMillis", lastAcknowledgedAt.get())
       put("lastMqttHeartbeatEpochMillis", lastHeartbeatAt.get())

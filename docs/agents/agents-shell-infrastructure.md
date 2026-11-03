@@ -69,6 +69,17 @@ configuration read-only and supplies the signing key through `OMNI_SERVICE_ACCOU
 
 ## Consumer checks
 
+For Kubernetes resource reads, use `kubectl`. For pod `exec`, including read-only Ceph diagnostics, use
+`kubectl_admin` with an explicit namespace and the same argv. Neither tool requires a repository session.
+The admin name identifies the execution-capable route; it does not authorize mutations or bypass the existing
+OAuth, ServiceAccount or Kubernetes RBAC checks.
+
+If pod exec is sent to `kubectl`, it returns `KUBECTL_REQUIRES_ADMIN`, `layer: tool-policy`,
+`requiredTool: kubectl_admin` and `executionStarted: false`. No command was launched. Rediscover the named tool
+or refresh the full connector catalog if a filtered list omitted it, then retry only the authorized operation.
+Do not diagnose this routing response as missing infrastructure or a backend permission denial. An actual
+`kubectl_admin` invocation establishes access or supplies the failing layer and receipt.
+
 Enable Agent Shell Tunnel in the intended ChatGPT conversation. Verify its actual catalog includes the infrastructure tool;
 installation in the server alone does not prove a conversation has refreshed its connector catalog.
 
