@@ -973,15 +973,19 @@ const compileObserveStrategyDecision = <R>(
       })
     const pricingAt = yield* currentUtcInstant
     const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
+    const brokerHeadroomExhaustedAt = (at: number) =>
+      pricingReconciliation?.freshUntil !== undefined &&
+      at + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil
     if (
       Date.parse(pricingAt) >= Math.min(sourceExpiresAt, admissionExpiresAt) ||
-      (pricingReconciliation?.freshUntil !== undefined &&
-        Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
+      brokerHeadroomExhaustedAt(Date.parse(pricingAt))
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness:
-          Date.parse(pricingAt) >= sourceExpiresAt && Date.parse(pricingAt) < admissionExpiresAt
+          Date.parse(pricingAt) >= sourceExpiresAt &&
+          Date.parse(pricingAt) < admissionExpiresAt &&
+          !brokerHeadroomExhaustedAt(Date.parse(pricingAt))
             ? DecisionReadinessReason.InferenceExpired
             : DecisionReadinessReason.InferenceUnavailable,
       })
@@ -1009,7 +1013,9 @@ const compileObserveStrategyDecision = <R>(
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness:
-          Date.parse(evaluatedAt) >= sourceExpiresAt && Date.parse(evaluatedAt) < admissionExpiresAt
+          Date.parse(evaluatedAt) >= sourceExpiresAt &&
+          Date.parse(evaluatedAt) < admissionExpiresAt &&
+          !brokerHeadroomExhaustedAt(Date.parse(evaluatedAt))
             ? DecisionReadinessReason.InferenceExpired
             : DecisionReadinessReason.InferenceUnavailable,
       })
