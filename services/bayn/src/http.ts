@@ -695,7 +695,10 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   if (readiness !== undefined) {
     if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
       return result(ExecutionSessionCondition.Abstaining)
-    if (readiness.reason === DecisionReadinessReason.InferenceUnavailable)
+    if (
+      readiness.reason === DecisionReadinessReason.InferenceUnavailable ||
+      readiness.reason === DecisionReadinessReason.InferenceExpired
+    )
       return result(ExecutionSessionCondition.EvaluationUnavailable)
     if (
       readiness.reason !== DecisionReadinessReason.DecisionPending &&
