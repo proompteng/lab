@@ -2120,6 +2120,14 @@ describePostgres('PostgreSQL execution persistence', () => {
             })
           if (overreleased) {
             yield* fence.transaction(prepareFeeActivities(sql, accountId, [partial], config.tigerBeetle))
+            // These retained plans were explicitly posted above. Acknowledge only those plans,
+            // leaving the newly prepared correction unposted so its guard is exercised directly.
+            yield* fence.transaction(sql`INSERT INTO broker_fee_posting_acknowledgements(account_id,source_kind,source_id,ledger_plan_hash)
+              SELECT account_id,'ACCRUAL',accrual_id,ledger_plan_hash FROM broker_fee_accruals
+                WHERE account_id=${accountId} AND posted_at IS NOT NULL
+              UNION ALL
+              SELECT account_id,'ACTIVITY',activity_id,ledger_plan_hash FROM broker_fee_accounting
+                WHERE account_id=${accountId} AND posted_at IS NOT NULL`)
             const beforePosts = journalControl.postCount
             const retainedCorrections =
               yield* sql`SELECT correction_id,posted_at FROM broker_fee_match_corrections ORDER BY correction_id`
@@ -2131,7 +2139,10 @@ describePostgres('PostgreSQL execution persistence', () => {
                   postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle, 'verify-only'),
                 )
                 .pipe(Effect.flip),
-            ).toMatchObject({ failure: 'invariant' })
+            ).toMatchObject({
+              failure: 'invariant',
+              message: 'Fee correction posting requires an independently committed preparation',
+            })
             expect(
               yield* sql`SELECT correction_id,posted_at FROM broker_fee_match_corrections ORDER BY correction_id`,
             ).toEqual(retainedCorrections)

@@ -648,9 +648,11 @@ If recovery or fill accounting was required, ingestion cannot prove it performed
 pending settlement, accrual, activity or correction work, preparation commits independently before the second
 transaction posts and verifies it. Posted fee plans also require their exact acknowledgement before this work is
 complete. If no posting is required, verification and reconciliation share the preparation commit. Verification
-runs behind an owned savepoint: query failures, defects and interruption roll back its writes, commit the prepared
-broker facts, then surface the original failure. A failed savepoint rollback or commit remains an error and cannot
-claim that preparation was retained. The operation rejects an ambient transaction that would erase these boundaries.
+runs behind an owned savepoint: failures during verification, including query errors, defects and interruption,
+roll back its writes, commit the prepared broker facts, then surface the original failure. Cancellation after
+verification has completed still allows masked commit cleanup to finish and propagates interruption. A failed
+savepoint rollback or commit remains an error and cannot claim that preparation was retained. The operation rejects
+an ambient transaction that would erase these boundaries.
 Fee preparation rechecks the exact account, amount, time and precision binding without rewriting it. Failed
 preparation rolls back the new cut and its precision together; previously committed plans remain recoverable.
 Replay cannot change the retained precision or account binding, duplicate inventory debits or bypass writer fencing.
