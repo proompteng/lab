@@ -1337,6 +1337,14 @@ provider stage; retained single-provider Jev expenses keep their original identi
 units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
 estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
 
+Each account's expense pass has one nonblocking PostgreSQL advisory owner across execution-server replicas.
+Research expense projection uses a separate owner and continues independently. Each pass owns one physical
+PostgreSQL connection with the normal TLS and query, socket and connection deadlines. Its statements commit
+normally before ledger I/O; closing the connection releases ownership on completion, failure or interruption,
+including a lost lock-acquisition response. Other replicas retry on the existing 30-second cadence. Ownership
+avoids duplicate scans and quote contention; frozen evidence and deterministic ledger IDs still enforce correctness.
+Retained server versions that predate this ownership protocol remain uncoordinated until their normal retirement.
+
 Migration 150 stores the request wire version as a generated column derived from its immutable payload. Expense
 discovery groups historical quote coverage using that metadata, then materializes at most 64 pending request IDs.
 It loads full payloads only for that batch, avoiding repeated per-request quote probes and historical chart payload
