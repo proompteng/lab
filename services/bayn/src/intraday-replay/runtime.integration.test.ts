@@ -790,13 +790,14 @@ durableTest.each(
         )
         const runtime = yield* createRuntime
         if (latencyStress) {
-          const passes = []
+          const advances = []
           for (let attempt = 0; attempt < 6; attempt++) {
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1_000)
-            passes.push((yield* runtime.advance).observation)
+            advances.push(yield* runtime.advance)
             const releases = yield* runtime.decisionLatencyEvidence
             if (releases.receipts.length + releases.observationReceipts.length > 0) break
           }
+          const passes = advances.map((advance) => advance.observation)
           const evidence = yield* runtime.decisionLatencyEvidence
           expect(evidence.admittedBatchCount, JSON.stringify(passes)).toBe(momentum ? 0 : 1)
           expect(evidence.admittedObservationCount).toBe(momentum ? 1 : 0)
@@ -823,9 +824,18 @@ durableTest.each(
               passes.some(
                 (pass) =>
                   pass.result === 'SUCCESS' &&
-                  pass.readiness?.reason === (momentum ? 'NO_ELIGIBLE_CANDIDATE' : 'INFERENCE_UNAVAILABLE'),
+                  pass.readiness?.reason ===
+                    (momentum ? DecisionReadinessReason.NoEligibleCandidate : DecisionReadinessReason.InferenceExpired),
               ),
             ).toBe(true)
+            if (!momentum) {
+              const expired = advances.find(
+                (advance) =>
+                  advance.observation.result === 'SUCCESS' &&
+                  advance.observation.readiness?.reason === DecisionReadinessReason.InferenceExpired,
+              )
+              expect(expired?.nextDelayMs).toBe(1)
+            }
           } else {
             expect(state.orders.length, JSON.stringify(passes)).toBeGreaterThan(0)
             expect(state.fills.some((fill) => fill.side === OrderSide.Buy)).toBe(true)
