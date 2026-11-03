@@ -144,12 +144,12 @@ describe('unbound pre-submission cycle recovery', () => {
     BrokerReadErrorKind.Transport,
     BrokerReadErrorKind.RateLimited,
     BrokerReadErrorKind.Server,
-  ])('admits crypto independently when the equity calendar is temporarily unavailable: %s', async (kind) => {
+  ])('retains an equity calendar outage without admitting crypto: %s', async (kind) => {
     const input = fixture(null)
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(rearmAt))
-        return yield* discoverAutonomousCyclePass(context)
+        return yield* discoverAutonomousCyclePass(context).pipe(Effect.flip)
       }).pipe(
         Effect.provideService(BrokerRead, {
           ...input.broker,
@@ -167,11 +167,8 @@ describe('unbound pre-submission cycle recovery', () => {
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(result).toMatchObject({
-      outcome: 'ACQUIRED',
-      receipt: { cycle: { window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' } } },
-    })
-    expect(input.acquisitions()).toBe(1)
+    expect(result).toMatchObject({ operation: 'market-calendar', failure: 'calendar-read', cause: { kind } })
+    expect(input.acquisitions()).toBe(0)
   })
 
   test.each([
@@ -203,7 +200,7 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(input.acquisitions()).toBe(0)
   })
 
-  test('cancels a stalled equity calendar read before the pass deadline and admits only crypto', async () => {
+  test('cancels a stalled equity calendar read at its original deadline without admitting crypto', async () => {
     const input = fixture(null)
     let canceled = false
     const result = await Effect.runPromise(
@@ -224,6 +221,7 @@ describe('unbound pre-submission cycle recovery', () => {
               ),
           }),
           Effect.provideService(CycleStore, input.store),
+          Effect.flip,
           Effect.forkChild({ startImmediately: true }),
         )
         yield* Deferred.await(entered)
@@ -233,10 +231,11 @@ describe('unbound pre-submission cycle recovery', () => {
     )
     expect(canceled).toBe(true)
     expect(result).toMatchObject({
-      outcome: 'ACQUIRED',
-      receipt: { cycle: { window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' } } },
+      operation: 'market-calendar',
+      failure: 'calendar-read',
+      cause: { kind: BrokerReadErrorKind.Timeout },
     })
-    expect(input.acquisitions()).toBe(1)
+    expect(input.acquisitions()).toBe(0)
   })
 
   test.each([
@@ -247,15 +246,19 @@ describe('unbound pre-submission cycle recovery', () => {
     { at: '2026-09-18T13:31:02.000Z', equityReady: true },
   ])('starts the equity entry lease only when a completed minute can be observed: $at', async ({ at, equityReady }) => {
     const result = await fixture(null).run(context, at)
+    if (!equityReady) {
+      expect(result.outcome).toBe('WINDOW_CLOSED')
+      return
+    }
     expect(result.outcome).toBe('ACQUIRED')
     if (result.outcome !== 'ACQUIRED') throw new Error('entry cycle not acquired')
     expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe(
-      equityReady ? 'bayn.alpaca-market-calendar-observation.v2' : 'bayn.continuous-market-hours.v1',
+      'bayn.alpaca-market-calendar-observation.v2',
     )
     expect(unusedEntryExpiresAt(result.receipt.cycle)).toBe(Date.parse(at) + 60_000)
   })
 
-  test('keeps continuous admission available at equity open after a settled crypto attempt', async () => {
+  test('starts only equity after a settled historical crypto attempt', async () => {
     const createdAt = '2026-09-18T13:28:00.000Z'
     const previousSession = selectIntradayExecutionSession(continuousMarketHours, policy, createdAt)
     if (previousSession === undefined) throw new Error('continuous fixture session missing')
@@ -270,19 +273,19 @@ describe('unbound pre-submission cycle recovery', () => {
       stateVersion: 4,
       updatedAt: '2026-09-18T13:28:05.000Z',
       terminalAt: '2026-09-18T13:28:05.000Z',
-    }).run(context, session.openAt)
+    }).run(context, '2026-09-18T13:31:02.000Z')
     expect(result).toMatchObject({
       outcome: 'ACQUIRED',
       receipt: {
         cycle: {
           identity: { entryAttemptOrdinal: 3 },
-          window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
+          window: { executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2' },
         },
       },
     })
   })
 
-  test('completed attempts alternate markets even when lease and cooldown return to the same UTC minute parity', async () => {
+  test('completed attempts remain in the equity market regardless of ordinal parity', async () => {
     const { terminalReason: _, ...prior } = blockedCycle(1, {
       bindings: { snapshotId: '7'.repeat(64), decisionHash: '8'.repeat(64) },
       terminalAt: '2026-09-18T14:05:00.000Z',
@@ -294,7 +297,7 @@ describe('unbound pre-submission cycle recovery', () => {
       receipt: {
         cycle: {
           identity: { entryAttemptOrdinal: 2 },
-          window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
+          window: { executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2' },
         },
       },
     })
@@ -323,7 +326,9 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(result.receipt.cycle.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: session.date })
     expect(result.receipt.cycle.identity.cycleId).not.toBe(prior.identity.cycleId)
     expect(result.receipt.cycle.bindings).toEqual({})
-    expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
+    expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe(
+      'bayn.alpaca-market-calendar-observation.v2',
+    )
     expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
     expect((await f.run()).outcome).toBe('ALREADY_ACQUIRED')
     expect(f.acquisitions()).toBe(1)
@@ -336,15 +341,11 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(result.receipt.cycle.identity).toMatchObject({ entryAttemptOrdinal: 4 })
   })
 
-  test('retains the rearm cooldown and hands the closing equity session to continuous markets', async () => {
+  test('keeps equity closed before its first usable bar and at its entry cutoff without switching to crypto', async () => {
     const f = fixture()
-    expect((await f.run(context, '2026-09-18T13:05:59.999Z')).outcome).toBe('ALREADY_TERMINAL')
-    const cutoffResult = await f.run(context, '2026-09-18T19:55:00.000Z').catch((cause: unknown) => cause)
-    expect(cutoffResult).toMatchObject({
-      outcome: 'ACQUIRED',
-      receipt: { cycle: { window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' } } },
-    })
-    expect(f.acquisitions()).toBe(1)
+    expect((await f.run(context, '2026-09-18T13:05:59.999Z')).outcome).toBe('WINDOW_CLOSED')
+    expect((await f.run(context, '2026-09-18T19:55:00.000Z')).outcome).toBe('WINDOW_CLOSED')
+    expect(f.acquisitions()).toBe(0)
   })
 
   test('cannot recover without current execution authority', async () => {
@@ -394,7 +395,7 @@ describe('unbound pre-submission cycle recovery', () => {
 
   test('does not reinterpret a provenance block applied at or after submission open', async () => {
     const f = fixture(blockedCycle(1, { terminalAt: session.openAt, updatedAt: session.openAt }))
-    expect((await f.run(context, '2026-09-18T13:31:00.000Z')).outcome).toBe('ALREADY_TERMINAL')
+    expect((await f.run(context, '2026-09-18T13:31:02.000Z')).outcome).toBe('ALREADY_TERMINAL')
     expect(f.acquisitions()).toBe(0)
   })
 
