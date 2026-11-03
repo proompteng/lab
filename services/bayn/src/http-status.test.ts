@@ -1,3 +1,4 @@
+import { MarketKind } from './instruments'
 import { expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
@@ -194,4 +195,11 @@ test('status classifies failures in both pass projections without exposing their
     executionController: { status: { lastPass: projected } },
   })
   expect(JSON.stringify(response)).not.toContain('private-account-identity')
+})
+
+test('status exposes the enforced equity-only entry scope', () => {
+  expect(responseWithPass(undefined).tradingScope).toEqual({
+    entryMarkets: [MarketKind.Equity],
+    existingPositionExits: 'NORMAL_CAPITAL_AND_RISK_CHECKS',
+  })
 })

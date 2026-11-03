@@ -1,3 +1,4 @@
+import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../execution/trading-scope'
 import { JevAcceptanceVersion } from '../jev/acceptance'
 import { OrderStatus, OrderSchema } from '../execution/contracts'
 import type { SystemSourceCut } from './source-cut'
@@ -170,6 +171,25 @@ import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strat
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('equity-only entry scope and retained crypto sells agree with Lean', () => {
+    const cases = [MarketKind.Equity, MarketKind.Crypto].flatMap((market) =>
+      [OrderSide.Buy, OrderSide.Sell].map((side) => ({ market, side })),
+    )
+    expect(
+      model(
+        cases.map((c) => ({ operation: 'currentTradingScope', market: c.market, sell: c.side === OrderSide.Sell })),
+      ),
+    ).toEqual(
+      cases.map((c) => ({
+        entryAllowed: currentEntryMarketEnabled(c.market),
+        submissionAllowed: currentSubmissionMarketAllowed({
+          symbol: c.market === MarketKind.Equity ? 'AAPL' : 'BTC/USD',
+          side: c.side,
+        }),
+      })),
+    )
+  })
+
   test('physical execution build matching rejects missing and foreign source or image claims', () => {
     const registration = registrationFixture()
     const candidate = registration.policies.find((p) => p.policy === 'JEV')

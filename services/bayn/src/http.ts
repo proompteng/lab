@@ -1,3 +1,4 @@
+import { currentEntryMarkets } from './execution/trading-scope'
 import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
@@ -354,6 +355,7 @@ export const statusFacts = (
   const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
   return {
     service: 'bayn',
+    tradingScope: { entryMarkets: currentEntryMarkets, existingPositionExits: 'NORMAL_CAPITAL_AND_RISK_CHECKS' },
     operational: {
       status: state.status,
       ready: runtimeReady,
@@ -569,7 +571,9 @@ const executionPrerequisitesReady = (state: RuntimeState, runtimeReady: boolean)
 }
 
 export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean =>
-  state.cycle.current?.phase === CycleState.Active && executionPrerequisitesReady(state, runtimeReady)
+  state.cycle.current?.phase === CycleState.Active &&
+  state.cycle.current.executionCalendarSchemaVersion !== 'bayn.continuous-market-hours.v1' &&
+  executionPrerequisitesReady(state, runtimeReady)
 
 enum ExecutionSessionCondition {
   Unavailable = 'UNAVAILABLE',
@@ -662,6 +666,10 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   }
   if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
   if (session === null) return result(ExecutionSessionCondition.Unavailable)
+  if (session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1')
+    return result(
+      state.cycle.current === null ? ExecutionSessionCondition.Closed : ExecutionSessionCondition.RecoveryOnly,
+    )
   if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
   if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
     return result(
