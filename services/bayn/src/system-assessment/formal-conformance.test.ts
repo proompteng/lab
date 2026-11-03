@@ -87,6 +87,9 @@ import { continuousMarketHours } from '../market-hours'
 import { registeredSchedule } from './schedule'
 import { registrationFixture } from './fixtures.test-support'
 import { ObligationClass } from './reliability'
+import { ReliabilityStatus } from './reliability'
+import { operationalAssessmentVerdict } from './operational-assessment'
+import { operationalRegistrationFixture } from './operational-period.test-support'
 import { jevSignalWindowEndMs } from '../jev/observation-query'
 import { controllerClockDurations, nearestRank95 } from './controller-latency'
 import { fullBatchClockDuration } from './full-batch-latency'
@@ -190,6 +193,44 @@ formal('pinned Lean executable conformance', () => {
     )
   })
 
+  test('operational verdicts require complete reliability evidence and zero safety violations without shortening deadlines', () => {
+    const cases = Object.values(ReliabilityStatus).flatMap((reliability) =>
+      [0, 1].flatMap((missing) =>
+        [false, true].flatMap((safetyComplete) =>
+          [0, 1].map((violations) => ({ reliability, missing, safetyComplete, violations })),
+        ),
+      ),
+    )
+    expect(
+      model(
+        cases.map((value) => ({
+          operation: 'operationalAssessmentVerdict',
+          ...value,
+          missing: String(value.missing),
+          violations: String(value.violations),
+        })),
+      ),
+    ).toEqual(
+      cases.map((value) =>
+        operationalAssessmentVerdict(value.reliability, value.missing, value.safetyComplete, value.violations),
+      ),
+    )
+    const registration = operationalRegistrationFixture()
+    const schedule = Result.getOrThrow(registeredSchedule(registration))
+    expect(
+      model(
+        schedule.map((row) => ({
+          operation: 'nativeObligationDeadline',
+          due: String(Date.parse(row.dueAt)),
+          window: String(
+            row.class === ObligationClass.Decision
+              ? registration.obligations.decisionWindowMs
+              : registration.obligations.reconciliationFreshnessMs,
+          ),
+        })),
+      ),
+    ).toEqual(schedule.map((row) => String(Date.parse(row.deadlineAt))))
+  })
   test('physical execution build matching rejects missing and foreign source or image claims', () => {
     const registration = registrationFixture()
     const candidate = registration.policies.find((p) => p.policy === 'JEV')

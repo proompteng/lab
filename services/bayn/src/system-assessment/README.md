@@ -32,6 +32,24 @@ windows remain `UNDETERMINED`. Retained policy versions keep their original empt
 impossible timestamps fail validation. Safe failures and late recoveries count as missed service. Safety violations
 are evaluated separately by the combined assessment and have no error budget.
 
+Operational reporting uses `bayn.operational-registration.v1` in the `BAYN_OPERATIONAL_RELIABILITY` program. It binds
+one existing native PAPER policy, its sealed capital generation and physical execution build, the unchanged runtime
+deadlines, the complete native market scope, and a prospective contiguous reporting period. The registration retains
+the earlier incident evidence. Its attempt chain is append-only; a later period cannot erase an earlier failure.
+There is no research control, bootstrap, profit quota, minimum session count, or trade quota in this operating claim.
+
+The native schedule keeps globally aligned signal and reconciliation times. Starting a report does not restart the
+signal warmup or an admitted mutation's clock. Obligations due before the final reporting boundary keep their original
+deadlines afterward. Capture retains the whole event sequence for mutations active across the opening boundary,
+including unresolved work with no event inside the period. A report remains incomplete while required evidence or
+original deadlines are outstanding.
+
+`evaluateOperationalAssessment` shares the financial evaluator's schedule, durable witnesses, integer reliability
+measurement, capital identity checks, and safety audit predicate. Its separate immutable receipt can report
+`OPERATIONALLY_RELIABLE_PAPER`, `REJECTED`, or `INCONCLUSIVE`; economics remain `NOT_ASSESSED`. No operational receipt
+can certify economic qualification or grant capital. An operating period's dated scope does not establish behavior
+outside that period or substitute for the required native equity-opening verification.
+
 ## Realism
 
 `measureRealism` verifies causal input availability, persistence and routing order, position ownership, fixed order
@@ -231,6 +249,12 @@ evidence obligation.
    its receipt.
 6. `--authority-generation <sha256> --assessment <sha256>` includes the saved assessment in the scoped financial
    report. `--persist-receipt` also persists that forward-performance report.
+
+The same history, register, capture, and assess commands accept operational packets. Their program and schema select
+the operational evaluator; its input contains the saved registration, source-cut hash, and a verified source-bound
+safety audit. Counters and successful-event totals are derived from the committed evidence rather than supplied by
+the packet. Operational registration requires verified calendar/scope and retained incident artifacts and the
+existing durable authorized generation. Registration and reporting do not change trading authority or risk limits.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

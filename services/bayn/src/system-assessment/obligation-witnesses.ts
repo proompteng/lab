@@ -2,7 +2,7 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import { ObligationClass, type ScheduledObligationSchema } from './reliability'
 import type { SystemSourceCut } from './source-cut'
 
@@ -28,7 +28,7 @@ export const earliestDurableWitnesses = (cut: SystemSourceCut) => {
 /** Join each witness once to its scheduled time bucket or admitted mutation identity. */
 export const indexObligationWitnesses = (
   cut: SystemSourceCut,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   schedule: readonly Obligation[],
   controllerWork: ReadonlyMap<string, Work & { readonly completedAt: string }>,
   documentWork: ReadonlyMap<string, Work | undefined>,

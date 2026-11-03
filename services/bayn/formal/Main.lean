@@ -886,6 +886,11 @@ def evaluate (json : Json) : Except String Json := do
     let sell ← json.getObjValAs? Bool "sell"
     return Json.mkObj [("entryAllowed", toJson (currentEntryMarketAllowed market)),
       ("submissionAllowed", toJson (currentSubmissionMarketAllowed market sell))]
+  | "operationalAssessmentVerdict" =>
+    return toJson (operationalAssessmentVerdict (← json.getObjValAs? String "reliability")
+      (← readNatural json "missing") (← json.getObjValAs? Bool "safetyComplete") (← readNatural json "violations"))
+  | "nativeObligationDeadline" =>
+    return toJson (toString (nativeObligationDeadline (← readInteger json "due") (← readInteger json "window")))
   | "binaryEdge" =>
     let gain ← readNatural json "gainMicros"
     let loss ← readNatural json "lossMicros"
