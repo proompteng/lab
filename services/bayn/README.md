@@ -1344,6 +1344,8 @@ PostgreSQL connection with the normal TLS and query, socket and connection deadl
 normally before ledger I/O; closing the connection releases ownership on completion, failure or interruption,
 including a lost lock-acquisition response. Other replicas retry on the existing 30-second cadence. Ownership
 avoids duplicate scans and quote contention; frozen evidence and deterministic ledger IDs still enforce correctness.
+During ledger I/O, a same-session keepalive runs at half the configured PostgreSQL statement/connect budget to
+preserve ownership through the unchanged socket inactivity deadline. A keepalive failure interrupts the pass.
 Retained server versions that predate this ownership protocol remain uncoordinated until their normal retirement.
 
 Migration 173 backfills pending work once from the retained request and quote metadata. Inserts of resolutions,

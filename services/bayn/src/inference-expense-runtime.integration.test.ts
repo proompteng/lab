@@ -110,6 +110,75 @@ describePostgres('inference expense projection session ownership', () => {
     )
   })
 
+  test('retains ownership and acknowledges after external work exceeds the normal socket inactivity deadline', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const observer = yield* PgClient.PgClient
+        const postgres = yield* PgClient.PgClient.pipe(
+          Effect.map((sql) => sql.config),
+          Effect.provide(
+            PostgresClientLive(
+              { ...config, operationTimeoutMs: 2_000 },
+              { maxConnections: 1, applicationName: 'bayn-expense-owner-long-ledger' },
+            ),
+          ),
+        )
+        const projection = `account:${crypto.randomUUID()}`
+        const pid = yield* withInferenceExpenseOwner(postgres, projection, (sql) =>
+          Effect.gen(function* () {
+            const pid = yield* backendPid(sql)
+            // This real socket's existing inactivity deadline is 1.5 seconds.
+            yield* Effect.sleep('2 seconds')
+            expect(
+              yield* withInferenceExpenseOwner(observer.config, projection, () => Effect.succeed('duplicate')),
+            ).toBeUndefined()
+            // The post-ledger acknowledgement must still use the original, live owner session.
+            expect(yield* backendPid(sql)).toBe(pid)
+            return pid
+          }),
+        )
+        expect(yield* afterRelease(observer.config, projection)).toBe('replacement')
+        expect(yield* observer`SELECT pid FROM pg_stat_activity WHERE pid=${pid}`).toEqual([])
+      }),
+    )
+  }, 10_000)
+
+  test('interrupts external work when the ownership session is lost and allows a replacement', async () => {
+    let finalizations = 0
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const observer = yield* PgClient.PgClient
+          const projection = `account:${crypto.randomUUID()}`
+          const started = yield* Deferred.make<number>()
+          const owner = yield* withInferenceExpenseOwner(observer.config, projection, (sql) =>
+            backendPid(sql).pipe(
+              Effect.flatMap((pid) => Deferred.succeed(started, pid)),
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Effect.sync(() => finalizations++)),
+            ),
+          ).pipe(Effect.forkScoped)
+          const pid = yield* Deferred.await(started).pipe(Effect.raceFirst(Fiber.join(owner)))
+          yield* observer`SELECT pg_terminate_backend(${pid})`
+          const exit = yield* Fiber.await(owner).pipe(Effect.timeout('3 seconds'))
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            const [reason] = exit.cause.reasons
+            expect(reason?._tag).toBe('Fail')
+            if (reason?._tag === 'Fail')
+              expect(reason.error).toMatchObject({
+                _tag: 'InferenceCostError',
+                message: 'Inference expense ownership session was lost',
+              })
+          }
+          expect(finalizations).toBe(1)
+          expect(yield* afterRelease(observer.config, projection)).toBe('replacement')
+          expect(yield* observer`SELECT pid FROM pg_stat_activity WHERE pid=${pid}`).toEqual([])
+        }),
+      ),
+    )
+  })
+
   for (const failure of ['typed', 'defect', 'timeout'] as const)
     test(`closes the physical session and retains a ${failure} failure`, async () => {
       await runtime.runPromise(

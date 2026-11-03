@@ -1,7 +1,7 @@
 import { makeResearchStore, projectResearchExpenses } from './research-inference/store'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Schema } from 'effect'
+import { Cause, Duration, Effect, Schema } from 'effect'
 import { Statement } from 'effect/sql'
 
 import type { LoadedRuntimeConfig } from './config/model'
@@ -75,6 +75,9 @@ export const withInferenceExpenseOwner = <A, E, R>(
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const deadline = postgres.connectTimeout
+      if (deadline === undefined)
+        return yield* new InferenceCostError({ message: 'Inference expense ownership requires a PostgreSQL deadline' })
       const sql = yield* PgClient.PgClient
       const [{ acquired }] = yield* sql`
         SELECT pg_try_advisory_lock(hashtextextended(${`bayn.inference-expense-projection.v1:${projection}`}, 0)) AS acquired
@@ -85,7 +88,16 @@ export const withInferenceExpenseOwner = <A, E, R>(
         ),
       )
       if (!acquired) return
-      return yield* pass(sql)
+      // PostgresClientLive uses the statement budget for connectTimeout, below the socket inactivity deadline.
+      // Ledger requests can outlast that inactivity budget; keep this same session alive without a transaction.
+      const keepAlive = Effect.sleep(Duration.toMillis(deadline) / 2).pipe(
+        Effect.andThen(sql`SELECT 1`),
+        Effect.mapError(
+          (cause) => new InferenceCostError({ message: 'Inference expense ownership session was lost', cause }),
+        ),
+        Effect.forever,
+      )
+      return yield* Effect.raceFirst(pass(sql), keepAlive)
     }).pipe(
       // A physical session owns this advisory lock, including when its acquisition response is lost.
       // Closing it releases ownership on every exit; no pooled session or transaction spans ledger I/O.
