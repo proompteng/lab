@@ -689,7 +689,10 @@ and the original unused-entry lease remains open, the controller requests its mi
 instead of spending the ordinary poll interval idle. The next serialized pass reacquires current evidence and keeps
 the original cycle creation time, lease expiry, inference validity, risk checks, and authority. Expired receipts remain
 unusable. A consumed source window still waits for its next valid signal boundary. Missing, pending, failed, or
-inconsistent inference keeps the ordinary backoff. Both inference readiness
+inconsistent inference keeps the ordinary backoff. The same expiry classification applies when the source deadline
+passes during fresh reconciliation or pricing while the original lease is still open. A clock preceding the saved
+completion, missing reconciliation freshness, insufficient prospective quote coverage, or an expired admission
+keeps the ordinary backoff. Both inference readiness
 conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
 
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller

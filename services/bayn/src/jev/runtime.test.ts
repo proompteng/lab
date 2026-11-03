@@ -272,12 +272,14 @@ describe('entry-bound native position exits', () => {
 
 describe('entry observation admission', () => {
   test.each([
-    ['failed', 'INFERENCE_INCOMPLETE'],
-    ['expired', 'OUTSIDE_VALIDITY_WINDOW'],
-    ['future-clock', 'OUTSIDE_VALIDITY_WINDOW'],
-    ['corrupt', 'INVALID_EVIDENCE'],
-    ['pending', 'NOT_COMMITTED'],
-  ] as const)('committed batch %s reports its safe cause without authorizing entry', async (mode, reason) => {
+    ['failed', 'INFERENCE_INCOMPLETE', 'INFERENCE_UNAVAILABLE'],
+    ['expired', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_EXPIRED'],
+    ['expired-late-result', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_EXPIRED'],
+    ['expired-future-clock', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_UNAVAILABLE'],
+    ['future-clock', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_UNAVAILABLE'],
+    ['corrupt', 'INVALID_EVIDENCE', 'INFERENCE_UNAVAILABLE'],
+    ['pending', 'NOT_COMMITTED', 'INFERENCE_UNAVAILABLE'],
+  ] as const)('committed batch %s refuses entry with the safe cause', async (mode, reason, readiness) => {
     const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
     let pending: JevBatchEvidence | null = null
     const result = await Effect.runPromise(
@@ -338,11 +340,16 @@ describe('entry observation admission', () => {
                 makeJevBatchResult(plan, {
                   schemaVersion: 'bayn.jev-batch-result.v1',
                   batchId: plan.batchId,
-                  completedAt: plan.observedAt,
+                  completedAt:
+                    mode === 'expired-late-result' || mode === 'expired-future-clock'
+                      ? utcInstantFromEpochMillis(Date.parse(plan.expiresAt) + 1_000)
+                      : plan.observedAt,
                   candidates,
                 }),
               )
               if (mode === 'expired') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs)
+              if (mode === 'expired-late-result') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs + 1_000)
+              if (mode === 'expired-future-clock') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs + 500)
               if (mode === 'future-clock') yield* TestClock.adjust(-1)
               return {
                 plan,
@@ -367,7 +374,7 @@ describe('entry observation admission', () => {
     expect(result).toMatchObject({
       failure: {
         _tag: 'JevAwaitingEvidence',
-        readiness: mode === 'expired' ? 'INFERENCE_EXPIRED' : 'INFERENCE_UNAVAILABLE',
+        readiness,
         message: `Jev batch unavailable: ${reason}`,
       },
     })

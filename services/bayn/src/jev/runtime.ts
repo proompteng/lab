@@ -314,6 +314,8 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         message: jevAvailabilityMessage(reason),
         readiness:
           reason === JevAvailabilityReason.OutsideValidityWindow &&
+          saved.result !== null &&
+          Date.parse(decidedAt) >= Date.parse(saved.result.completedAt) &&
           Date.parse(decidedAt) >= Date.parse(saved.plan.expiresAt)
             ? DecisionReadinessReason.InferenceExpired
             : DecisionReadinessReason.InferenceUnavailable,

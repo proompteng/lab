@@ -972,14 +972,18 @@ const compileObserveStrategyDecision = <R>(
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingAt = yield* currentUtcInstant
+    const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
     if (
-      Date.parse(pricingAt) >= Math.min(protectedEntryExpiresAtMs(decision), admissionExpiresAt) ||
+      Date.parse(pricingAt) >= Math.min(sourceExpiresAt, admissionExpiresAt) ||
       (pricingReconciliation?.freshUntil !== undefined &&
         Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        readiness:
+          Date.parse(pricingAt) >= sourceExpiresAt && Date.parse(pricingAt) < admissionExpiresAt
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingQuery =
       decision.selectedSymbols.length === 0
@@ -1001,10 +1005,13 @@ const compileObserveStrategyDecision = <R>(
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
-    if (Date.parse(evaluatedAt) >= Math.min(protectedEntryExpiresAtMs(decision), admissionExpiresAt))
+    if (Date.parse(evaluatedAt) >= Math.min(sourceExpiresAt, admissionExpiresAt))
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        readiness:
+          Date.parse(evaluatedAt) >= sourceExpiresAt && Date.parse(evaluatedAt) < admissionExpiresAt
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
     return {
