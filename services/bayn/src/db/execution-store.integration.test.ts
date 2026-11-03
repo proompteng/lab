@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
 import type { Statement } from 'effect/sql/Statement'
 
 import {
@@ -60,7 +60,7 @@ import type { Observed } from '../simulation-reconciliation/broker-reconciler-mo
 import { persistStableSnapshot } from '../simulation-reconciliation/broker-persistence'
 import { ReconciliationClock, runOnce } from '../reconciler'
 import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
-import { verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
+import { makeReconciliation, verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { postCashSettlements, prepareCashSettlements, readCashSettlements } from './cash-settlements'
@@ -75,6 +75,7 @@ import {
   prepareObservedCoinFees,
   prepareObservedCashFees,
   readFeeAccruals,
+  postFeeAccruals,
 } from './fee-accruals'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -84,7 +85,9 @@ const observedAt = '2026-08-28T14:31:00.000Z'
 const occurredAt = '2026-08-28T14:30:59.000Z'
 const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const reconcileSnapshot = (store: ReconciliationStoreShape, snapshot: BrokerSnapshot) =>
-  store.reconcile(snapshot.account.accountId, Effect.succeed(snapshot)).pipe(Effect.map((result) => result.persisted))
+  store
+    .reconcile(snapshot.account.accountId, Effect.succeed({ ...snapshot, ledgerPostingRequired: false }))
+    .pipe(Effect.map((result) => result.persisted))
 const brokerIdentity = Result.getOrThrow(
   makeBrokerIdentity({
     schemaVersion: 'bayn.broker-identity.v2',
@@ -108,6 +111,7 @@ interface JournalControl {
   failPosts: boolean
   postCount: number
   beforePost?: Effect.Effect<void, OperationalError>
+  verifyAccount?: Effect.Effect<boolean, OperationalError>
 }
 
 const journal = (control: JournalControl): JournalService => ({
@@ -122,7 +126,7 @@ const journal = (control: JournalControl): JournalService => ({
           message: 'injected TigerBeetle failure',
         })
     }),
-  verifyAccount: () => Effect.succeed(true),
+  verifyAccount: () => control.verifyAccount ?? Effect.succeed(true),
   journalAndReconcile: () => Effect.die(new Error('unexpected simulation journal call')),
   check: Effect.void,
   checkRun: () => Effect.void,
@@ -262,6 +266,7 @@ const fillEvent = (id: string, side: OrderSide, quantityAtoms: string, priceMicr
     feeMicros: '100',
     occurredAt,
   }
+
   return {
     _tag: 'Fill',
     broker: Broker.Alpaca,
@@ -274,6 +279,51 @@ const fillEvent = (id: string, side: OrderSide, quantityAtoms: string, priceMicr
     fill,
   }
 }
+
+const ingestReconciliationCut = (openPosition: boolean, ledgerPostingRequired?: boolean) =>
+  Effect.gen(function* () {
+    const events = yield* BrokerEventStore
+    const account = openPosition ? accountEvent() : flatAccountEvent()
+    const accountReceipt = yield* events.ingest(account)
+    const sourceHash = hash('prepared-reconciliation-cut')
+    const positions = openPosition ? [positionEvent(sourceHash, 'NVDA', '1500000000', '150000000')] : []
+    const positionsReceipt = yield* events.ingestPositions(positionSnapshot(sourceHash, positions))
+    const valuation = yield* (yield* ValuationStore).value({
+      accountEventId: accountReceipt.eventId,
+      positionSnapshotId: positionsReceipt.snapshotId,
+    })
+    return {
+      account: account.account,
+      cashReportingQuantumMicros: '1' as const,
+      positions: positions.map((position) => position.position),
+      positionsObservedAt: observedAt,
+      positionSnapshotId: positionsReceipt.snapshotId,
+      accountEventId: accountReceipt.eventId,
+      orders: [],
+      ordersObservedAt: observedAt,
+      fills: [],
+      fees: [],
+      valuation,
+      reconciledAt: observedAt,
+      ...(ledgerPostingRequired === undefined ? {} : { ledgerPostingRequired }),
+    }
+  })
+
+const committedPreparationCounts = Effect.scoped(
+  Effect.gen(function* () {
+    const observer = yield* (yield* PgClient.PgClient).reserve
+    return yield* observer.executeValues(
+      `SELECT
+  (SELECT count(*)::integer FROM account_snapshots),
+  (SELECT count(*)::integer FROM account_cash_reporting),
+  (SELECT count(*)::integer FROM position_snapshots),
+  (SELECT count(*)::integer FROM positions),
+  (SELECT count(*)::integer FROM valuations),
+  (SELECT count(*)::integer FROM reconciliations)`,
+      [],
+    )
+  }),
+)
 
 describePostgres('PostgreSQL execution persistence', () => {
   const journalControl: JournalControl = { failPosts: false, postCount: 0 }
@@ -291,6 +341,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     journalControl.failPosts = false
     journalControl.postCount = 0
     delete journalControl.beforePost
+    delete journalControl.verifyAccount
     await runtime.runPromise(resetDatabase.pipe(Effect.provide(NodeServices.layer)))
   })
 
@@ -703,7 +754,167 @@ describePostgres('PostgreSQL execution persistence', () => {
     )
   })
 
+  for (const failure of ['typed', 'defect', 'sql', 'interruption'] as const) {
+    test(`retains the complete prepared broker cut after final verification ${failure} failure`, async () => {
+      const exit = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          journalControl.verifyAccount =
+            failure === 'typed'
+              ? Effect.fail(
+                  operationalError({ component: 'journal', operation: 'verify', message: 'verification failed' }),
+                )
+              : failure === 'defect'
+                ? Effect.die('verification defect')
+                : failure === 'sql'
+                  ? sql`SELECT 1 / 0`.pipe(
+                      Effect.as(true),
+                      Effect.mapError((cause) =>
+                        operationalError({
+                          component: 'journal',
+                          operation: 'verify',
+                          message: 'verification query failed',
+                          cause,
+                        }),
+                      ),
+                    )
+                  : Effect.interrupt
+          return yield* Effect.exit(
+            (yield* ReconciliationStore).reconcile(accountId, ingestReconciliationCut(true, false)),
+          )
+        }),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(journalControl.postCount).toBe(0)
+      expect(await runtime.runPromise(committedPreparationCounts)).toEqual([[1, 1, 1, 1, 1, 0]])
+    })
+  }
+
+  test('external final-verification interruption retains broker facts before returning and permits retry', async () => {
+    const exit = await runtime.runPromise(
+      Effect.gen(function* () {
+        const reached = yield* Deferred.make<void>()
+        journalControl.verifyAccount = Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.never))
+        const reconciliation = yield* ReconciliationStore
+        const running = yield* reconciliation
+          .reconcile(accountId, ingestReconciliationCut(true, false))
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(reached).pipe(Effect.raceFirst(Fiber.join(running)))
+        expect(yield* committedPreparationCounts).toEqual([[0, 0, 0, 0, 0, 0]])
+        yield* Fiber.interrupt(running)
+        return yield* Fiber.await(running)
+      }),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+    expect(await runtime.runPromise(committedPreparationCounts)).toEqual([[1, 1, 1, 1, 1, 0]])
+    delete journalControl.verifyAccount
+    await runtime.runPromise(Effect.flatMap(WriterFence, (fence) => fence.check))
+  })
+
+  test('a failed post-preparation eligibility query retains the complete prepared cut', async () => {
+    let eligibilityReads = 0
+    const exit = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            const query = statement.compile()[0]
+            if (query.includes('AS pending') && query.includes('broker_fee_posting_acknowledgements')) {
+              eligibilityReads += 1
+              if (eligibilityReads === 2) return sql`SELECT 1 / 0`
+            }
+            return statement
+          },
+        })
+        const reconciliation = makeReconciliation(monitored, journal(journalControl), config, yield* WriterFence)
+        return yield* Effect.exit(reconciliation.reconcile(accountId, ingestReconciliationCut(true, false)))
+      }),
+    )
+    expect(eligibilityReads).toBe(2)
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(await runtime.runPromise(committedPreparationCounts)).toEqual([[1, 1, 1, 1, 1, 0]])
+    expect(journalControl.postCount).toBe(0)
+  })
+
+  test('posted but unacknowledged zero-transfer activity retains the recovery commit boundary', async () => {
+    const commits: string[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        if (options.name === 'bayn.postgres.commit') commits.push(options.name)
+        return new Tracer.NativeSpan(options)
+      },
+    })
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const reconciliation = yield* ReconciliationStore
+        yield* fence.transaction(ingestReconciliationCut(false, false))
+        const fee = {
+          value: { accountId, activityId: 'zero-transfer-activity', date: '2026-08-28', netAmountMicros: '0' },
+          evidence: { requestId: 'zero-fee-read', status: 200, contentHash: hash('zero-fee-read'), observedAt },
+        }
+        yield* fence.transaction(prepareFeeActivities(sql, accountId, [fee], config.tigerBeetle))
+        const state = sql`SELECT posted_at, (SELECT count(*)::integer FROM broker_fee_posting_acknowledgements) AS acknowledgements
+        FROM broker_fee_accounting WHERE account_id=${accountId} AND activity_id=${fee.value.activityId}`
+        for (const posted of [false, true]) {
+          if (posted)
+            yield* sql`UPDATE broker_fee_accounting SET posted_at=clock_timestamp()
+          WHERE account_id=${accountId} AND activity_id=${fee.value.activityId}`
+          const before = yield* state
+          const failure = yield* fence
+            .transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle, 'verify-only'))
+            .pipe(Effect.flip)
+          expect(failure).toMatchObject({ failure: 'invariant' })
+          expect(yield* state).toEqual(before)
+          expect(journalControl.postCount).toBe(0)
+        }
+        commits.length = 0
+        const ingest = ingestReconciliationCut(false, false).pipe(
+          Effect.map((snapshot) => ({ ...snapshot, fees: [fee] })),
+        )
+        const recovered = yield* reconciliation.reconcile(accountId, ingest)
+        expect(recovered.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        expect(commits).toHaveLength(2)
+        expect(journalControl.postCount).toBe(0)
+        expect((yield* state)[0]?.['acknowledgements']).toBe(1)
+        commits.length = 0
+        yield* reconciliation.reconcile(accountId, ingest)
+        expect(commits).toHaveLength(1)
+      }).pipe(Effect.provideService(Tracer.Tracer, tracer)),
+    )
+  })
+
+  for (const posting of [undefined, true] as const) {
+    test(`retains two commits when ingestion posting is ${posting === undefined ? 'unknown' : 'required'}`, async () => {
+      const commits: string[] = []
+      const tracer = Tracer.make({
+        span(options) {
+          if (options.name === 'bayn.postgres.commit') commits.push(options.name)
+          return new Tracer.NativeSpan(options)
+        },
+      })
+      const result = await runtime.runPromise(
+        Effect.flatMap(ReconciliationStore, (store) =>
+          store.reconcile(accountId, ingestReconciliationCut(false, posting)),
+        ).pipe(Effect.provideService(Tracer.Tracer, tracer)),
+      )
+      expect(result.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(commits).toHaveLength(2)
+      expect(result.snapshot).not.toHaveProperty('ledgerPostingRequired')
+    })
+  }
+
   test('commits fee preparation with its source cut before posting and recovers it before replaying ingestion', async () => {
+    const commits: string[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        if (options.name === 'bayn.postgres.commit') commits.push(options.name)
+        return new Tracer.NativeSpan(options)
+      },
+    })
     await runtime.runPromise(
       Effect.gen(function* () {
         const reconciliation = yield* ReconciliationStore
@@ -734,6 +945,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             })
             return {
               account,
+              ledgerPostingRequired: false,
               cashReportingQuantumMicros: '1' as const,
               positions: [],
               positionsObservedAt: at,
@@ -748,6 +960,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             }
           })
         yield* reconciliation.reconcile(accountId, ingest(observedAt, '1000000000', []))
+        expect(commits).toHaveLength(1)
         const at = '2026-08-28T14:32:00.000Z'
         const fee: Observed<FeeActivity> = {
           value: { accountId, activityId: 'co-committed-fee', date: '2026-08-28', netAmountMicros: '-10000' },
@@ -779,15 +992,18 @@ describePostgres('PostgreSQL execution persistence', () => {
           ),
         )
         journalControl.failPosts = true
+        commits.length = 0
         const failed = yield* Effect.flip(reconciliation.reconcile(accountId, ingest(at, '999990000', [fee])))
         expect(failed).toMatchObject({ failure: 'ledger' })
         expect(journalControl.postCount).toBe(1)
+        expect(commits).toHaveLength(1)
         const [prepared] = yield* sql<{ pending: number; reconciliations: number }>`SELECT
           (SELECT count(*)::integer FROM broker_fee_accounting WHERE posted_at IS NULL) AS pending,
           (SELECT count(*)::integer FROM reconciliations) AS reconciliations`
         expect(prepared).toEqual({ pending: 1, reconciliations: 1 })
 
         journalControl.failPosts = false
+        commits.length = 0
         const recovered = yield* reconciliation.reconcile(
           accountId,
           Effect.sync(() => expect(journalControl.postCount).toBe(2)).pipe(
@@ -795,7 +1011,10 @@ describePostgres('PostgreSQL execution persistence', () => {
           ),
         )
         expect(recovered.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        expect(commits).toHaveLength(2)
+        commits.length = 0
         const replay = yield* reconciliation.reconcile(accountId, ingest(at, '999990000', [fee]))
+        expect(commits).toHaveLength(1)
         expect(replay.persisted).toEqual(recovered.persisted)
         expect(journalControl.postCount).toBe(2)
         const [counts] = yield* sql<{ accounts: number; fees: number; acknowledgements: number }>`SELECT
@@ -803,7 +1022,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           (SELECT count(*)::integer FROM broker_fee_accounting) AS fees,
           (SELECT count(*)::integer FROM broker_fee_posting_acknowledgements) AS acknowledgements`
         expect(counts).toEqual({ accounts: 2, fees: 1, acknowledgements: 1 })
-      }),
+      }).pipe(Effect.provideService(Tracer.Tracer, tracer)),
     )
   })
 
@@ -812,8 +1031,10 @@ describePostgres('PostgreSQL execution persistence', () => {
     const sourceHash = hash('transaction-positions')
     const positions = [positionEvent(sourceHash, 'NVDA', '3000000000', '300000000')]
     const spanEvents: string[] = []
+    const commits: string[] = []
     const tracer = Tracer.make({
       span(options) {
+        if (options.name === 'bayn.postgres.commit') commits.push(options.name)
         const span = new Tracer.NativeSpan(options)
         const event = span.event.bind(span)
         span.event = (name, time, attributes) => {
@@ -886,10 +1107,15 @@ describePostgres('PostgreSQL execution persistence', () => {
             }),
           )
           .pipe(Effect.provideService(Tracer.Tracer, tracer))
-        const reconciled = yield* reconcileSnapshot(reconciliation, material).pipe(
-          Effect.provideService(Tracer.Tracer, tracer),
-        )
+        commits.length = 0
+        const reconciled = yield* reconciliation
+          .reconcile(accountId, Effect.succeed({ ...material, ledgerPostingRequired: false }))
+          .pipe(
+            Effect.map((result) => result.persisted),
+            Effect.provideService(Tracer.Tracer, tracer),
+          )
         expect(reconciled.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        expect(commits).toHaveLength(1)
         const sql = yield* PgClient.PgClient
         const [reporting] = yield* sql<{ same_transaction: boolean }>`
           SELECT a.xmin=r.xmin AS same_transaction FROM account_snapshots a
@@ -1082,6 +1308,14 @@ describePostgres('PostgreSQL execution persistence', () => {
           const prepared = yield* readCashSettlements(sql, accountId)
           expect(prepared).toHaveLength(1)
           expect(prepared[0]).toMatchObject({ rounding_delta_micros: rounding, posted: false })
+          const beforeVerifyOnly = journalControl.postCount
+          expect(
+            yield* postCashSettlements(sql, journal(journalControl), accountId, config.tigerBeetle, 'verify-only').pipe(
+              Effect.flip,
+            ),
+          ).toMatchObject({ failure: 'invariant' })
+          expect(yield* readCashSettlements(sql, accountId)).toEqual(prepared)
+          expect(journalControl.postCount).toBe(beforeVerifyOnly)
           journalControl.failPosts = true
           const failed = yield* postCashSettlements(sql, journal(journalControl), accountId, config.tigerBeetle).pipe(
             Effect.flip,
@@ -1775,6 +2009,24 @@ describePostgres('PostgreSQL execution persistence', () => {
             table: 'schema_migrations',
           }).pipe(Effect.provide(NodeServices.layer))
         }
+        if (historical) {
+          const retained = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
+          const beforePosts = journalControl.postCount
+          expect(retained.every((row) => row.posted)).toBe(true)
+          expect(
+            yield* sql`SELECT count(*)::integer AS count FROM broker_fee_posting_acknowledgements WHERE source_kind='ACCRUAL'`,
+          ).toEqual([{ count: 0 }])
+          expect(
+            yield* postFeeAccruals(sql, journal(journalControl), accountId, config.tigerBeetle, 'verify-only').pipe(
+              Effect.flip,
+            ),
+          ).toMatchObject({ failure: 'invariant' })
+          expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toEqual(retained)
+          expect(
+            yield* sql`SELECT count(*)::integer AS count FROM broker_fee_posting_acknowledgements WHERE source_kind='ACCRUAL'`,
+          ).toEqual([{ count: 0 }])
+          expect(journalControl.postCount).toBe(beforePosts)
+        }
         expect(
           (yield* readFeeAccruals(sql, accountId, config.tigerBeetle))
             .map((row) => [row.data.kind, row.expenseMicros, row.posted])
@@ -1868,6 +2120,25 @@ describePostgres('PostgreSQL execution persistence', () => {
             })
           if (overreleased) {
             yield* fence.transaction(prepareFeeActivities(sql, accountId, [partial], config.tigerBeetle))
+            const beforePosts = journalControl.postCount
+            const retainedCorrections =
+              yield* sql`SELECT correction_id,posted_at FROM broker_fee_match_corrections ORDER BY correction_id`
+            const retainedAcknowledgements =
+              yield* sql`SELECT * FROM broker_fee_posting_acknowledgements ORDER BY account_id,source_kind,source_id`
+            expect(
+              yield* fence
+                .transaction(
+                  postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle, 'verify-only'),
+                )
+                .pipe(Effect.flip),
+            ).toMatchObject({ failure: 'invariant' })
+            expect(
+              yield* sql`SELECT correction_id,posted_at FROM broker_fee_match_corrections ORDER BY correction_id`,
+            ).toEqual(retainedCorrections)
+            expect(
+              yield* sql`SELECT * FROM broker_fee_posting_acknowledgements ORDER BY account_id,source_kind,source_id`,
+            ).toEqual(retainedAcknowledgements)
+            expect(journalControl.postCount).toBe(beforePosts)
             journalControl.failPosts = true
             expect(yield* settle([partial]).pipe(Effect.flip)).toMatchObject({ failure: 'ledger' })
             expect(
