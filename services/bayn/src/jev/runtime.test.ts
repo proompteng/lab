@@ -274,6 +274,7 @@ describe('entry observation admission', () => {
   test.each([
     ['failed', 'INFERENCE_INCOMPLETE'],
     ['expired', 'OUTSIDE_VALIDITY_WINDOW'],
+    ['future-clock', 'OUTSIDE_VALIDITY_WINDOW'],
     ['corrupt', 'INVALID_EVIDENCE'],
     ['pending', 'NOT_COMMITTED'],
   ] as const)('committed batch %s reports its safe cause without authorizing entry', async (mode, reason) => {
@@ -342,6 +343,7 @@ describe('entry observation admission', () => {
                 }),
               )
               if (mode === 'expired') yield* TestClock.adjust(fixture.protocol.inferenceValidityMs)
+              if (mode === 'future-clock') yield* TestClock.adjust(-1)
               return {
                 plan,
                 result: mode === 'corrupt' ? { ...saved, resultHash: 'a'.repeat(64) } : saved,
@@ -365,7 +367,7 @@ describe('entry observation admission', () => {
     expect(result).toMatchObject({
       failure: {
         _tag: 'JevAwaitingEvidence',
-        readiness: 'INFERENCE_UNAVAILABLE',
+        readiness: mode === 'expired' ? 'INFERENCE_EXPIRED' : 'INFERENCE_UNAVAILABLE',
         message: `Jev batch unavailable: ${reason}`,
       },
     })
@@ -446,7 +448,7 @@ describe('entry observation admission', () => {
       )
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result))
-        expect(result.failure).toMatchObject({ _tag: 'JevAwaitingEvidence', readiness: 'INFERENCE_UNAVAILABLE' })
+        expect(result.failure).toMatchObject({ _tag: 'JevAwaitingEvidence', readiness: 'INFERENCE_EXPIRED' })
       const warning = logs.find(
         ({ message }) => Array.isArray(message) && message[0] === 'Jev observation expired before batch admission',
       )

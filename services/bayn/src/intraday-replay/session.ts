@@ -76,6 +76,7 @@ export const driveReplaySession = <E>(
             break
           case DecisionReadinessReason.DecisionPending:
           case DecisionReadinessReason.InferenceUnavailable:
+          case DecisionReadinessReason.InferenceExpired:
           case DecisionReadinessReason.SnapshotUnavailable:
           case DecisionReadinessReason.SnapshotCoverage:
           case DecisionReadinessReason.SnapshotStale:
