@@ -195,14 +195,14 @@ persist a PVC UID/PV, batch directory inode or complete tag metadata inventory.
 Those facts cannot safely be invented by copying current metadata into a receipt.
 There is no parallel legacy purge path or automatic receipt upgrade.
 
-Batch `registry-collect-071cdc9382ed` remains behind this gate. The 2026-11-02
+Batch `registry-collect-071cdc9382ed` encountered this gate. The 2026-11-02
 scheduled run reported 2,000 quarantined blobs and 596 tags before purge failed.
 The supplied readback found unchanged inode/size/mtime but changed device numbers
 on five blobs. Version 2 compares device numbers for tags first, then blobs; an
 isolated remount regression reproduces `Quarantined tag changed`. The original
 remote stderr was only in the terminated Job's emptyDir, so the exact first live
-file/error cannot be recovered from its available stdout. No live bytes have been
-reclaimed by this repair, and the original receipt must remain intact.
+file/error cannot be recovered from its available stdout. Preserve the original
+receipt as recovery evidence.
 
 If collection-time provenance is unavailable, do not manufacture a version 3 receipt.
 An explicitly authorized recovery can restore the data first, then let the current

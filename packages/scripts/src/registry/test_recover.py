@@ -45,7 +45,14 @@ class RecoveryTest(unittest.TestCase):
 
     def test_restore_then_current_collection_and_purge_reclaims_payload(self):
         plan = self.prepare()
-        result = self.apply(plan)
+        original = recover.cleanup.signature
+
+        def remounted(path):
+            value = original(path)
+            return [value[0] + 1000, *value[1:]]
+
+        with patch.object(recover.cleanup, "signature", side_effect=remounted):
+            result = self.apply(plan)
         self.assertEqual(result["restoredBlobs"], 1)
         self.assertEqual(result["restoredTags"], 1)
         self.assertFalse(self.quarantine.exists())
