@@ -1,5 +1,4 @@
-import { DecisionsClient } from '../jev/decisions'
-import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
 import { makeReplayCheckpointStore } from './checkpoint-store.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
@@ -28,7 +27,7 @@ import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayExecutionRuntime } from './runtime'
-import { validateReplayDatabaseTargets } from '../backtest-command'
+import { validateReplayDatabaseTargets } from './database-targets'
 import { JevClient } from '../jev/client'
 import { nativeJevInference } from '../jev/native.test-support'
 
@@ -146,6 +145,7 @@ const main = Effect.scoped(
       // The restored broker commits at checkpoint time; the restarted process observes it after that instant.
       if (mode === 'recover') yield* advanceTo(initialMs + 1)
       const runtime = yield* makeReplayExecutionRuntime({
+        decisionLatencyStress: null,
         currentUtcInstant,
         config,
         strategy: fixtureRuntime,
@@ -193,13 +193,15 @@ const main = Effect.scoped(
         { flag: 'wx' },
       )
     }).pipe(
-      Effect.provideService(DecisionsClient, chartProviderFixture),
-      Effect.provideService(JevClient, {
-        evaluate: (request) =>
-          Clock.currentTimeMillis.pipe(
-            Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
-          ),
-      }),
+      Effect.provideService(
+        JevClient,
+        entryProviderFixture({
+          evaluate: (request) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
+            ),
+        }),
+      ),
       Effect.provide(Layer.mergeAll(stores, TestClock.layer())),
     )
   }),

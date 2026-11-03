@@ -86,8 +86,6 @@ spec:
               value: /var/run/ofz/native/preshared_key
             - name: OFZ_OIDC_ISSUER
               value: https://auth.proompteng.ai/realms/tengri
-            - name: OFZ_OIDC_CLIENT_ID
-              value: tengri-bff
             - name: OFZ_OIDC_CONNECT_IP
               value: 100.100.244.181
             - name: SPIFFE_ENDPOINT_SOCKET

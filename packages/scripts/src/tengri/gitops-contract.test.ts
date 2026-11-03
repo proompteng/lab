@@ -425,11 +425,11 @@ test('active deployments use the complete Ofz cutover contract', () => {
     const active = manifest(`argocd/applications/${app}/deployment.yaml`).toString()
     expect(active).toContain('OFZ_GRPC_ENDPOINT')
     expect(active).toContain('tengri-internal-request-key')
-    expect(active).toContain('ofz-database-ca')
+    if (app === 'tengri') expect(active).toContain('ofz-database-ca')
   }
 })
 
-test('the BFF cutover includes every required Ofz, identity and TLS database setting', () => {
+test('the web gateway uses Ofz for sign-in and carries no database access', () => {
   const deployment = cutoverManifest('proompteng', 'Deployment', 'proompteng')
   const pod = deployment.getIn(['spec', 'template', 'spec'])
   if (!isMap(pod)) throw new Error('BFF pod required')
@@ -438,30 +438,25 @@ test('the BFF cutover includes every required Ofz, identity and TLS database set
       expect.objectContaining({
         env: expect.arrayContaining([
           { name: 'OFZ_GRPC_ENDPOINT', value: 'ofz-api.ofz.svc.cluster.local:9443' },
-          { name: 'TENGRI_OIDC_ISSUER', value: 'https://auth.proompteng.ai/realms/tengri' },
-          { name: 'TENGRI_OIDC_CLIENT_SECRET_FILE', value: '/var/run/tengri/oidc/client-secret' },
-          {
-            name: 'TENGRI_DATABASE_DSN',
-            value: 'postgres://tengri_bff@ofz-db-rw.ofz.svc.cluster.local:5432/tengri_control',
-          },
-          { name: 'TENGRI_DATABASE_PASSWORD_FILE', value: '/var/run/tengri/database/password' },
-          { name: 'TENGRI_DATABASE_CA_FILE', value: '/var/run/tengri/database-ca/ca.crt' },
+          { name: 'PLATFORM_WEB_ORIGIN', value: 'https://proompteng.ai' },
+          { name: 'PLATFORM_OIDC_ISSUER', value: 'https://auth.proompteng.ai/realms/tengri' },
+          { name: 'PLATFORM_OIDC_CLIENT_ID', value: 'tengri-bff' },
+          { name: 'PLATFORM_OIDC_CLIENT_SECRET_FILE', value: '/var/run/tengri/oidc/client-secret' },
         ]),
-        volumeMounts: expect.arrayContaining([
-          { name: 'oidc', mountPath: '/var/run/tengri/oidc', readOnly: true },
-          { name: 'database', mountPath: '/var/run/tengri/database', readOnly: true },
-          { name: 'database-ca', mountPath: '/var/run/tengri/database-ca', readOnly: true },
-        ]),
+        volumeMounts: expect.arrayContaining([{ name: 'oidc', mountPath: '/var/run/tengri/oidc', readOnly: true }]),
       }),
     ],
     volumes: expect.arrayContaining([
       { name: 'oidc', secret: { secretName: 'tengri-oidc-client', defaultMode: 0o440 } },
-      { name: 'database', secret: { secretName: 'tengri-bff-db', defaultMode: 0o440 } },
-      { name: 'database-ca', secret: { secretName: 'ofz-database-ca', defaultMode: 0o440 } },
     ]),
   })
   const policies = cutoverManifest('proompteng', 'NetworkPolicy', 'proompteng-web').toJSON() as NetworkPolicy
-  for (const port of [9443, 5432, 8443]) {
+  const configuration = JSON.stringify(pod.toJSON())
+  expect(configuration).not.toContain('TENGRI_DATABASE_')
+  expect(configuration).not.toContain('tengri-bff-db')
+  expect(configuration).not.toContain('ofz-database-ca')
+  for (const port of [9443, 8443]) {
     expect(policies.spec?.egress?.some((rule) => rule.ports?.some((entry) => entry.port === port))).toBe(true)
   }
+  expect(policies.spec?.egress?.some((rule) => rule.ports?.some((entry) => entry.port === 5432))).toBe(false)
 })

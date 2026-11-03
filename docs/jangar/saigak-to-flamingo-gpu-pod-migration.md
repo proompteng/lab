@@ -26,7 +26,7 @@ http://flamingo.ide-newton.ts.net/v1
 The served completion model name is:
 
 ```text
-qwen36-flamingo
+qwen38-flamingo
 ```
 
 ## Embedding Contract
@@ -60,8 +60,8 @@ Configure the harness to use the OpenAI-compatible endpoint:
 ```text
 OPENAI_API_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 OPENAI_BASE_URL=http://flamingo.ide-newton.ts.net/v1
-OPENAI_COMPLETION_MODEL=qwen36-flamingo
-OPENAI_MODEL=qwen36-flamingo
+OPENAI_COMPLETION_MODEL=qwen38-flamingo
+OPENAI_MODEL=qwen38-flamingo
 OPENAI_API_KEY=flamingo-local
 ```
 
@@ -73,7 +73,7 @@ Smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/models
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen36-flamingo","messages":[{"role":"user","content":"Return only ready."}],"max_tokens":8,"temperature":0}'
+  -d '{"model":"qwen38-flamingo","messages":[{"role":"user","content":"Return only ready."}],"max_tokens":8,"temperature":0}'
 ```
 
 ## In-Cluster Consumers
@@ -82,7 +82,7 @@ Use the ClusterIP URL:
 
 ```text
 OPENAI_API_BASE_URL=http://flamingo.flamingo.svc.cluster.local/v1
-OPENAI_COMPLETION_MODEL=qwen36-flamingo
+OPENAI_COMPLETION_MODEL=qwen38-flamingo
 ```
 
 Keep embedding variables pointed at `saigak`.
@@ -99,7 +99,7 @@ Flamingo first and the Jangar gateway second as a separate hosted-model path:
 ```text
 OPENAI_API_BASE_URLS=http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1
 OPENAI_API_KEYS=;
-DEFAULT_MODELS=qwen36-flamingo
+DEFAULT_MODELS=qwen38-flamingo
 ENABLE_OLLAMA_API=false
 ```
 
@@ -114,7 +114,7 @@ kubectl -n jangar exec open-webui-0 -- printenv OPENAI_API_BASE_URLS DEFAULT_MOD
 ## Failure Handling
 
 This is a hard completion migration. Do not restore old Flamingo model aliases
-as normal desired state. If the Qwen3.6 endpoint fails:
+as normal desired state. If the Qwen3.8 endpoint fails:
 
 - fix the vLLM serving profile,
 - reduce concurrency before reducing context,
@@ -139,7 +139,7 @@ For Kubernetes consumers:
 
 ```bash
 kubectl -n <namespace> rollout status deploy/<deployment> --timeout=10m
-kubectl -n <namespace> logs deploy/<deployment> --tail=200 | rg -i 'flamingo|qwen36|error|tool'
+kubectl -n <namespace> logs deploy/<deployment> --tail=200 | rg -i 'flamingo|qwen38|error|tool'
 ```
 
 For host-side consumers:

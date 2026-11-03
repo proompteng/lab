@@ -1,3 +1,4 @@
+import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
 import { Data, Effect } from 'effect'
 
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
@@ -12,6 +13,7 @@ export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuil
   readonly failure: 'contract' | 'database' | 'market-data' | 'not-ready' | 'operational' | 'store'
   readonly message: string
   readonly readiness?: DecisionReadiness
+  readonly entryAbstention?: ProtectedEntryTarget
   readonly cause?: unknown
 }> {}
 

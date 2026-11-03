@@ -1,3 +1,4 @@
+import { executionDecisionRows } from '../../db/execution-decision-query'
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
@@ -252,12 +253,10 @@ export const readForwardPerformancePostgres = (
           SELECT snapshot.equity_micros::text AS starting_capital_micros
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
-          CROSS JOIN latest_reconciliation
-          CROSS JOIN first_cycle
+            AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
           WHERE snapshot.account_id = ${accountId}
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
             AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-            AND event.observed_at <= latest_reconciliation.reconciled_at
           ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
           LIMIT 1
         `.pipe(Effect.flatMap(decodeStartingCapital))
@@ -286,13 +285,11 @@ export const readForwardPerformancePostgres = (
               reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
-            CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
               AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), baseline_snapshot AS (
@@ -320,8 +317,8 @@ export const readForwardPerformancePostgres = (
               reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
               AND event.observed_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
@@ -475,34 +472,7 @@ export const readForwardPerformancePostgres = (
           )
           SELECT decision_rows.cycle_id, decision_rows.decision_hash, decision_rows.document, decision_rows.created_at
           FROM (
-            SELECT
-              cycle.cycle_id,
-              decision.decision_hash,
-              decision.document,
-              decision.created_at
-            FROM autonomous_cycles AS cycle
-            JOIN autonomous_cycle_shadow_decisions AS decision
-              ON decision.cycle_id = cycle.cycle_id
-              AND decision.decision_hash = cycle.decision_hash
-            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')
-            UNION ALL
-            SELECT
-              cycle.cycle_id,
-              closure.document #>> '{document,contentHash}' AS decision_hash,
-              closure.document -> 'document' AS document,
-              (closure.document ->> 'createdAt')::timestamptz AS created_at
-            FROM autonomous_cycles AS cycle
-            JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = cycle.cycle_id
-            WHERE closure.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
-            UNION ALL
-            SELECT
-              cycle.cycle_id,
-              replan.document #>> '{document,contentHash}' AS decision_hash,
-              replan.document -> 'document' AS document,
-              (replan.document ->> 'createdAt')::timestamptz AS created_at
-            FROM autonomous_cycles AS cycle
-            JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = cycle.cycle_id
-            WHERE replan.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
+            ${executionDecisionRows(sql)}
           ) AS decision_rows
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
           CROSS JOIN latest_reconciliation
@@ -650,12 +620,10 @@ export const readForwardPerformancePostgres = (
             SELECT event.observed_at
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
-            CROSS JOIN first_cycle
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
               AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           )

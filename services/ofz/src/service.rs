@@ -7,7 +7,6 @@ use crate::{
     native::Native,
     policy,
     proto::{self, Action, tengri_authorization_service_server::TengriAuthorizationService},
-    sessions::{self, Issuer},
     store::{self, Database, sql_error},
     transport,
 };
@@ -16,7 +15,6 @@ use crate::{
 pub struct Service {
     database: Database,
     native: Native,
-    issuer: Issuer,
     capacity: Arc<Semaphore>,
     #[cfg(test)]
     read_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
@@ -35,11 +33,10 @@ struct WorkspaceAuthority {
 }
 
 impl Service {
-    pub fn new(database: Database, native: Native, issuer: Issuer) -> Self {
+    pub fn new(database: Database, native: Native) -> Self {
         Self {
             database,
             native,
-            issuer,
             capacity: Arc::new(Semaphore::new(128)),
             #[cfg(test)]
             read_barrier: None,
@@ -573,48 +570,6 @@ impl TengriAuthorizationService for Service {
             commands::get(&self.database, &self.native, &peer, request.into_inner()).await?;
         Ok(Response::new(response))
     }
-    async fn establish_session(
-        &self,
-        request: Request<proto::EstablishSessionRequest>,
-    ) -> Result<Response<proto::EstablishSessionResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        let session = sessions::establish(
-            &self.database,
-            &self.native,
-            &self.issuer,
-            &peer,
-            request.into_inner(),
-        )
-        .await?;
-        Ok(Response::new(proto::EstablishSessionResponse {
-            session: Some(session),
-        }))
-    }
-    async fn inspect_session(
-        &self,
-        request: Request<proto::InspectSessionRequest>,
-    ) -> Result<Response<proto::InspectSessionResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        let session =
-            sessions::inspect(&self.database, &self.native, &peer, request.into_inner()).await?;
-        Ok(Response::new(proto::InspectSessionResponse {
-            session: Some(session),
-        }))
-    }
-    async fn revoke_session(
-        &self,
-        request: Request<proto::RevokeSessionRequest>,
-    ) -> Result<Response<proto::RevokeSessionResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        let receipt =
-            sessions::revoke(&self.database, &self.native, &peer, request.into_inner()).await?;
-        Ok(Response::new(proto::RevokeSessionResponse {
-            receipt: Some(receipt),
-        }))
-    }
     async fn get_policy_state(
         &self,
         request: Request<proto::GetPolicyStateRequest>,
@@ -691,7 +646,7 @@ impl TengriAuthorizationService for Service {
         } else {
             String::new()
         };
-        let entries: Vec<proto::AccessEntry> = rows
+        let mut entries: Vec<proto::AccessEntry> = rows
             .into_iter()
             .take(limit as usize)
             .map(|row| {
@@ -702,6 +657,7 @@ impl TengriAuthorizationService for Service {
                     actions: row.get(3),
                     expires_at_unix_ms: row.get::<_, i64>(4) as u64,
                     github_id: row.get(6),
+                    display_name: String::new(),
                     scope: row
                         .get::<_, Option<serde_json::Value>>(7)
                         .map(store::decode)
@@ -713,6 +669,15 @@ impl TengriAuthorizationService for Service {
                 })
             })
             .collect::<Result<_, Status>>()?;
+        let people: Vec<String> = entries
+            .iter()
+            .filter(|entry| !entry.github_id.is_empty())
+            .map(|entry| entry.subject_id.clone())
+            .collect();
+        let names: std::collections::HashMap<String, String> = client.query("SELECT DISTINCT ON (human_id) human_id,display_name FROM ofz.sessions WHERE human_id=ANY($1) AND display_name<>'' ORDER BY human_id,expires_at_ms DESC", &[&people]).await.map_err(sql_error)?.into_iter().map(|row| (row.get(0), row.get(1))).collect();
+        for entry in &mut entries {
+            entry.display_name = names.get(&entry.subject_id).cloned().unwrap_or_default();
+        }
         let subjects: Vec<String> = entries
             .iter()
             .filter(|entry| action == Action::PolicyRead || entry.role == "owner")
@@ -784,7 +749,7 @@ impl TengriAuthorizationService for Service {
             .get()
             .await
             .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-        let rows = client.query("SELECT sequence,created_at_ms,receipt FROM ofz.audit WHERE sequence>$1 ORDER BY sequence LIMIT $2", &[&cursor,&(limit+1)]).await.map_err(sql_error)?;
+        let rows = client.query("SELECT sequence,created_at_ms,receipt FROM ofz.audit WHERE ($1::bigint=0 OR sequence<$1) ORDER BY sequence DESC LIMIT $2", &[&cursor,&(limit+1)]).await.map_err(sql_error)?;
         let next = if rows.len() > limit as usize {
             rows[limit as usize - 1].get::<_, i64>(0).to_string()
         } else {

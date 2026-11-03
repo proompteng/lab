@@ -2,6 +2,11 @@ import { Schema } from 'effect'
 
 import { IsoDateSchema, Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema } from '../../schemas'
 import { CycleWaitReasonSchema, DecisionReadinessReason, DecisionReadinessSchema } from './readiness'
+import { JevPositionHoldSchema } from '../../jev/hold'
+import { JevEntryTargetSchema } from '../../jev/decision'
+import { EntryAblationTargetSchema } from '../../jev/entry-ablation'
+import { RepeatedMomentumTargetSchema } from '../../strategy/repeated-momentum/decision'
+import { AccountProtectionInputsSchema } from '../../jev/account-protection'
 
 export const AdmissionProtectionEvidenceSchema = Schema.Struct({
   authorityGenerationHash: Sha256Schema,
@@ -9,6 +14,7 @@ export const AdmissionProtectionEvidenceSchema = Schema.Struct({
   reconciliationId: Sha256Schema,
   tradingDate: IsoDateSchema,
   validUntil: UtcInstantSchema,
+  inputs: Schema.optionalKey(AccountProtectionInputsSchema),
 })
 
 export type AdmissionProtectionEvidence = typeof AdmissionProtectionEvidenceSchema.Type
@@ -27,6 +33,7 @@ export const JevObservationReferencesSchema = Schema.Struct({
 export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   Schema.Struct({
     result: Schema.Literal('SUCCESS'),
+    executionIssuedAt: Schema.optionalKey(UtcInstantSchema),
     observedAt: UtcInstantSchema,
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     outcome: Schema.Literals([
@@ -43,12 +50,36 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
       Schema.Literals(['ACTIVATED', 'BLOCKED', 'BOUND_DECISION', 'COMPLETED', 'NO_TRADE', 'WAITING']),
     ),
     waitReason: Schema.optionalKey(CycleWaitReasonSchema),
+    positionHold: Schema.optionalKey(JevPositionHoldSchema),
+    entryAbstention: Schema.optionalKey(
+      Schema.Union([JevEntryTargetSchema, EntryAblationTargetSchema, RepeatedMomentumTargetSchema]).check(
+        Schema.makeFilter((target) => target.selectedSymbols.length === 0, {
+          expected: 'a reproduced decision with no selected entries',
+        }),
+      ),
+    ),
     readiness: Schema.optionalKey(DecisionReadinessSchema),
     admissionProtection: Schema.optionalKey(AdmissionProtectionEvidenceSchema),
     nextWakeAt: Schema.optionalKey(UtcInstantSchema),
   }).check(
     Schema.makeFilter(
       (observation) => {
+        if (
+          observation.entryAbstention !== undefined &&
+          (observation.outcome !== 'RECOVERED' ||
+            observation.recoveryAction !== 'WAITING' ||
+            observation.readiness?.reason !== DecisionReadinessReason.NoEligibleCandidate ||
+            observation.entryAbstention.evidence.decidedAt > observation.observedAt)
+        )
+          return false
+        if (
+          observation.positionHold !== undefined &&
+          (observation.outcome !== 'RECOVERED' ||
+            observation.recoveryAction !== 'WAITING' ||
+            observation.waitReason !== 'JEV_POSITION_HELD' ||
+            observation.positionHold.evidence.observedAt > observation.observedAt)
+        )
+          return false
         if (observation.recoveryAction !== undefined && observation.outcome !== 'RECOVERED') return false
         if (observation.outcome === 'ADMISSION_WAITING')
           return (
@@ -70,6 +101,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   ),
   Schema.Struct({
     result: Schema.Literal('FAILURE'),
+    executionIssuedAt: Schema.optionalKey(UtcInstantSchema),
     observedAt: UtcInstantSchema,
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     operation: Schema.Literals([

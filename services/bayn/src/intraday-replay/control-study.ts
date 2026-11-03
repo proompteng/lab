@@ -1,6 +1,8 @@
-import { controlExitDefinition } from './control-portfolio'
+import type { InferenceRateCardSchema } from '../inference-costs'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
-import { makeJevEntryQuery } from '../jev/observation-query'
+import { makeJevEntryQuery, makeMomentumEntryQuery } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -24,7 +26,7 @@ import {
   type StrategyMarketSnapshot,
   type VerifiedStrategyMarketSnapshot,
 } from '../market-data/streaming/snapshot'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import type { Policy } from '../risk'
 import { IsoDateSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -32,7 +34,7 @@ import { BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { makeControlJev, type ControlJevBinding } from './control-jev'
 import { makeControlJevJournal } from './control-jev-journal'
-import { calculateReplayInferenceCosts, type ReplayInferenceCostModelSchema } from './inference-costs'
+import { calculateReplayInferenceCosts } from './inference-costs'
 import {
   applyControlOrder,
   controlCandidates,
@@ -250,12 +252,12 @@ export const runControlSession = (input: {
   readonly management: null | {
     readonly runId: string
     readonly binding: ControlJevBinding
-    readonly costs: typeof ReplayInferenceCostModelSchema.Type
+    readonly costs: typeof InferenceRateCardSchema.Type
   }
   readonly entry?: {
     readonly runId: string
     readonly binding: ControlJevBinding
-    readonly costs: typeof ReplayInferenceCostModelSchema.Type
+    readonly costs: typeof InferenceRateCardSchema.Type
   }
 }) =>
   Effect.gen(function* () {
@@ -543,7 +545,7 @@ export const runControlSession = (input: {
           const observedAt = utcInstantFromEpochMillis(atMs)
           const candidates =
             input.training === undefined ? controlCandidates(input.policy, protocol) : [input.training.candidateSymbol]
-          const query = makeJevEntryQuery({
+          const query = (input.policy === ControlPolicy.JevEntry ? makeJevEntryQuery : makeMomentumEntryQuery)({
             protocol,
             sessionDate,
             calendar: input.calendar,
@@ -899,6 +901,10 @@ export const runControlSession = (input: {
 export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
+    if (input.backtest.policy !== JevResearchPolicy.Candidate)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
+      )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
     if (prepared.brokerSessions.length === 0)
       return yield* Result.fail(
@@ -914,7 +920,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
         equityMarketProfile.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
-        controlExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
+        momentumExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
     )
@@ -969,7 +975,9 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry requires exactly one measured provider binding',
       })
-    const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
+    const risk = yield* Effect.fromResult(
+      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe),
+    )
     const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)

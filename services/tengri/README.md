@@ -1,5 +1,20 @@
 # Tengri control plane
 
+The controller exports process-local metrics without querying Kubernetes or PostgreSQL during a scrape. Successful
+readiness checks refresh guest and ticket inventory; their last-success timestamp and age identify stale gauges.
+Readiness still checks current Ofz authority, SQL access, and Kubernetes within the existing two-second deadline,
+with separate dependency error/timeout counters. Alloy discovers each controller Pod rather than combining independent
+counters behind a load-balanced Service.
+
+Boot/resume histograms measure successful CR creation or persisted resume intent through guest readiness, including
+reconciliation retries. They exclude BFF admission and are not a browser end-to-end SLO. Recovering a failed readiness
+probe is not another boot. Lifecycle identity is recorded with the running-intent CAS, so a failed resume cannot become
+a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
+The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
+or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
+Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
+
 Relay client installation is an authenticated guest-control operation. It uses the shared
 [Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
 installation acknowledgement before activation. The former dormant connector gate and contract are removed.
@@ -428,8 +443,11 @@ Codex is idle across all conversations. Active turns, pending starts/steering an
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
 unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
 activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
-is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
-each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+is serialized per workspace across clients in the same guest pool. Conflicts with other controller replicas and
+reconcilers use exponential backoff with jitter, capped at 100 ms, within a one-second retry budget. Each attempt
+reads current lifecycle state and must win its own CAS, so parallel browser module requests can recover from a busy
+replica while a sleep reservation still rejects control. Other workspaces remain independent; no policy decision or
+admission result is cached.
 Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
 reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
 admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
@@ -528,6 +546,11 @@ a newly signed attempt can use the same operation UUID. Accepted workflows use p
 records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
+
+Status reads retain their pending response within the existing fifteen-second recovery budget. A response still
+pending after five seconds emits a warning and continues under the same deadline; it does not start another durable
+query. Only returned transient errors trigger bounded retries with a freshly signed query. The two-second admission
+expiry and authorization checks remain unchanged.
 
 Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
 RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh

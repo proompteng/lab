@@ -2,7 +2,9 @@
 
 This active Kargo-managed application uses the central Ofz authority. The prepared overlay and legacy direct SpiceDB
 key, shared runtime credential and ConfigMap nonce state are removed. Two controllers run on separate hosts; only
-the fenced SQL leader reconciles slots. The namespace budget covers six slots, two controllers and one rolling surge.
+the fenced SQL leader reconciles slots. Rolling updates replace one controller at a time and keep one available,
+so required host anti-affinity does not require a third host with spare capacity. The namespace budget covers six slots
+and two controllers.
 
 The controller reads its dedicated `tengri_controller` database password, the shared BFF request key and a private
 32-byte Ed25519 guest signing seed. Supervisors use the separate `tengri_supervisor` role and receive only the public

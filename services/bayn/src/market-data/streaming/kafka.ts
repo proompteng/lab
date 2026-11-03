@@ -1,4 +1,5 @@
 import { MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
 import { CaptureDisposition } from './transport-evidence'
@@ -383,8 +384,12 @@ export const makeKafkaMarketProjection = (
             }),
           )
         const observedAtMs = yield* Clock.currentTimeMillis
-        const lowerTimestampMs =
-          diagnosticStartMs ?? Math.floor((observedAtMs - 2000) / 60_000) * 60_000 - 30 * 60_000 - 5000
+        const timestampForSource = (source: MarketSources[number]) =>
+          diagnosticStartMs ??
+          Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
+            marketHistoryMinutes[marketSourceKind(source)] * 60_000 -
+            5000
+        const lowerTimestampMs = Math.min(...universe.map(timestampForSource))
         const owners = new Map<string, string>()
         for (const source of universe) {
           const raw = [source.topics.bars, source.topics.quotes, source.topics.trades]
@@ -405,10 +410,31 @@ export const makeKafkaMarketProjection = (
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
           config.timestampPolicy === KafkaBootstrapTimestampPolicy.ProducerClock
-            ? yield* operation('bootstrap', () => transport.offsets(topics, BigInt(lowerTimestampMs)))
+            ? (yield* Effect.forEach(universe, (source) =>
+                operation('bootstrap', () =>
+                  transport.offsets(
+                    [...new Set(Object.values(source.topics).filter((topic) => topic !== undefined))],
+                    BigInt(timestampForSource(source)),
+                  ),
+                ),
+              )).flat()
             : starts
+        // Separate tick streams supply current prices, not chart history. Await new verified ticks instead of
+        // replaying millions of obsolete updates. Mixed crypto streams still contain required historical bars.
+        const currentTopics = new Set(
+          diagnosticStartMs === undefined
+            ? universe
+                .filter((source) => marketSourceKind(source) === MarketKind.Equity)
+                .flatMap((source) => [source.topics.quotes, source.topics.trades])
+            : [],
+        )
         const partitions = yield* Effect.try({
-          try: () => bootstrapKafkaPartitions(starts, ends, seek),
+          try: () =>
+            bootstrapKafkaPartitions(
+              starts,
+              ends,
+              seek.map((position) => (currentTopics.has(position.topic) ? { ...position, offset: '-1' } : position)),
+            ),
           catch: (cause) => failure('bootstrap', 'Invalid Kafka bootstrap bounds', cause),
         })
         bootstrap = {

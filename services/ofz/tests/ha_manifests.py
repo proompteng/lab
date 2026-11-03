@@ -49,6 +49,7 @@ def validate(targets):
     workloads = [
         ("tengri", "Deployment", "tengri"),
         ("proompteng", "Deployment", "proompteng"),
+        ("proompteng", "Deployment", "platform-admin"),
         ("keycloak", "StatefulSet", "keycloak"),
         ("ofz", "Deployment", "ofz-api"),
     ]
@@ -253,13 +254,13 @@ def validate(targets):
                     )
     ca_store = resource(targets, "ofz", "ClusterSecretStore", "ofz-database-ca")["spec"]
     require(
-        ca_store["conditions"] == [{"namespaces": ["tengri", "proompteng"]}]
+        ca_store["conditions"] == [{"namespaces": ["tengri"]}]
         and ca_store["provider"]["kubernetes"]["remoteNamespace"] == "ofz"
         and ca_store["provider"]["kubernetes"]["auth"]["serviceAccount"]
         == {"name": "ofz-public-ca-reader", "namespace": "ofz"},
         "ofz: database CA store must retain its exact reader and application namespace allowlist",
     )
-    for target in ["tengri", "proompteng"]:
+    for target in ["tengri"]:
         ca = resource(targets, target, "ExternalSecret", "ofz-database-ca")["spec"]
         require(
             ca.get("dataFrom") is None
@@ -352,18 +353,22 @@ def validate(targets):
             f"{target}: disruption budget must select the serving Pods",
         )
 
-    for target, role in [("tengri", "tengri_controller"), ("proompteng", "tengri_bff")]:
-        spec = resource(targets, target, "Deployment", target)["spec"]["template"][
-            "spec"
-        ]
-        app = container(targets, target, "Deployment", target)
+    for target, name, role in [
+        ("tengri", "tengri", "tengri_controller"),
+        ("proompteng", "proompteng", None),
+        ("proompteng", "platform-admin", None),
+    ]:
+        spec = resource(targets, target, "Deployment", name)["spec"]["template"]["spec"]
+        app = container(targets, target, "Deployment", name)
         env = values(app)
         require(
             env.get("OFZ_GRPC_ENDPOINT") == "ofz-api.ofz.svc.cluster.local:9443",
             f"{target}: central API required",
         )
         require(
-            role in env.get("TENGRI_DATABASE_DSN", ""),
+            role in env.get("TENGRI_DATABASE_DSN", "")
+            if role
+            else not any("DATABASE" in name for name in env),
             f"{target}: restricted database role required",
         )
         require(not app.get("envFrom"), f"{target}: unclassified credential injection")
@@ -378,12 +383,40 @@ def validate(targets):
         )
         volumes = {volume["name"]: volume for volume in spec["volumes"]}
         mounts = {mount["mountPath"]: mount for mount in app["volumeMounts"]}
-        expected = {
-            "/var/run/tengri/database": "tengri-controller-db"
-            if target == "tengri"
-            else "tengri-bff-db",
-            "/var/run/tengri/database-ca": "ofz-database-ca",
-        }
+        expected = (
+            {
+                "/var/run/tengri/database": "tengri-controller-db",
+                "/var/run/tengri/database-ca": "ofz-database-ca",
+            }
+            if role
+            else {}
+        )
+        if not role:
+            require(
+                not any("database" in path for path in mounts)
+                and not any(
+                    volume.get("secret", {}).get("secretName")
+                    in ["ofz-database-ca", "tengri-bff-db"]
+                    for volume in volumes.values()
+                ),
+                "proompteng: retired database mounts must remain absent",
+            )
+            require(
+                not any(
+                    item
+                    and item.get("kind") in ["Secret", "SealedSecret", "ExternalSecret"]
+                    and item["metadata"]["name"]
+                    in [
+                        "ofz-database-ca",
+                        "tengri-bff-db",
+                        "tengri-runtime",
+                        "tengri-spicedb-key",
+                        "tengri-bff",
+                    ]
+                    for item in targets["proompteng"]
+                ),
+                "proompteng: retired database secrets must remain absent",
+            )
         if target == "tengri":
             expected["/var/run/tengri/guest-signing"] = "tengri-guest-signing"
             require(
@@ -430,6 +463,7 @@ def validate(targets):
     for target, policy in [
         ("tengri", "tengri-control-plane"),
         ("proompteng", "proompteng-web"),
+        ("proompteng", "platform-admin"),
     ]:
         require(
             allows_database_or_api(
@@ -440,8 +474,9 @@ def validate(targets):
         require(
             allows_database_or_api(
                 targets, target, policy, 5432, {"cnpg.io/cluster": "ofz-db"}
-            ),
-            f"{target}: shared database egress is blocked",
+            )
+            == (target == "tengri"),
+            f"{target}/{policy}: database egress must match workload ownership",
         )
     require(
         allows_database_or_api(
@@ -864,9 +899,12 @@ def main():
         lambda data: resource(data, "tengri", "ExternalSecret", "ofz-database-ca")[
             "spec"
         ]["data"][0]["remoteRef"].update(property="ca.key"),
-        lambda data: resource(data, "proompteng", "ExternalSecret", "ofz-database-ca")[
+        lambda data: container(data, "proompteng", "Deployment", "proompteng")[
+            "env"
+        ].append({"name": "TENGRI_DATABASE_DSN", "value": "retired-database"}),
+        lambda data: resource(data, "proompteng", "Deployment", "platform-admin")[
             "spec"
-        ].update(dataFrom=[{"extract": {"key": "ofz-db-ca"}}]),
+        ].update(replicas=1),
         lambda data: resource(data, "ofz", "ClusterSecretStore", "ofz-database-ca")[
             "spec"
         ].update(conditions=[{"namespaceRegexes": [".*"]}]),

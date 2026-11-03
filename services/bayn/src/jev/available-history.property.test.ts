@@ -6,7 +6,7 @@ import fc from 'fast-check'
 
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { checkProperty } from '../testing/property-test-support'
-import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { jevStreamingFixture as streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { jevObservationForSnapshot, nativeJevBatchResult, nativeJevFixture } from './native.test-support'
 import { decideJevEntry } from './decision'
 import { JevBatchPlanVersion } from './batch'
@@ -37,7 +37,7 @@ test('property: supported atomic judgments control entry within the unchanged al
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   checkProperty(
@@ -74,7 +74,7 @@ const history: fc.Arbitrary<History> = fc.record({
 const sparseFixture = (input: History) => {
   const query = {
     ...base.query,
-    symbols: ['AAPL', 'AMZN', 'SPY'],
+    symbols: ['AAPL', 'AMZN'],
     candidateSymbols: ['AAPL', 'AMZN'],
   }
   const bars = base.archive.bars
@@ -118,11 +118,8 @@ test('property: sparse observed history admits actual completed bars and reprodu
       }
       const request = Result.getOrThrow(requestFor(snapshot, 'AAPL'))
       const state = JSON.parse(request.body).numericalState
-      const common = raw.bars.find(
-        (bar) =>
-          bar.symbol === 'AAPL' && raw.bars.some((other) => other.symbol === 'SPY' && other.eventAt === bar.eventAt),
-      )
-      expect(state.relativeSignals.referenceAt).toBe(common?.eventAt)
+      expect(state).not.toHaveProperty('relativeSignals')
+      expect(state.candidate.priceWindow.referenceAt).toBe(raw.bars.find((bar) => bar.symbol === 'AAPL')?.eventAt)
       const replay = Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))
       expect(replay.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
       expect(replay.bars).toEqual(snapshot.bars)
@@ -130,7 +127,7 @@ test('property: sparse observed history admits actual completed bars and reprodu
   )
 })
 
-test('property: historical coverage never substitutes for the latest completed candidate or benchmark minute', () => {
+test('property: historical coverage never substitutes for the latest completed candidate minute', () => {
   checkProperty(
     'jev-available-history-current-minute',
     fc.property(history, (input) => {
@@ -142,7 +139,7 @@ test('property: historical coverage never substitutes for the latest completed c
       const { snapshot } = streamingFixtureFromRaw(withoutLatest('AAPL'), query)
       expect(snapshot.manifest.candidateExclusions?.map((entry) => entry.symbol)).toEqual(['AAPL'])
       expect(Result.isFailure(requestFor(snapshot, 'AAPL'))).toBe(true)
-      expect(() => streamingFixtureFromRaw(withoutLatest('SPY'), query)).toThrow()
+      expect(Result.isSuccess(requestFor(snapshot, 'AMZN'))).toBe(true)
     }),
   )
 })

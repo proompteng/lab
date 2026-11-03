@@ -308,6 +308,8 @@ export const withObservedStage =
       readonly operation?: string
       readonly slowAfterMs?: number
       readonly recordCompletion?: boolean
+      /** Isolate diagnostic finalizer defects from the wrapped operation's exit. */
+      readonly diagnosticOnly?: boolean
       readonly attributes?: SpanAttributes
     } = {},
   ) =>
@@ -390,6 +392,7 @@ export const withObservedStage =
                 )
               }),
             ),
+            options.diagnosticOnly === true ? Effect.catchCause(() => Effect.void) : (effect) => effect,
           ),
         ),
         Effect.ensuring(Effect.sync(() => activeStages?.delete(stageId))),

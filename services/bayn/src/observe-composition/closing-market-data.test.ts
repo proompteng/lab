@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -252,17 +253,19 @@ const fixture = async (source = native) => {
               ),
             })),
           ),
+        complete: () => unused,
         finish: () => unused,
       }),
       Effect.provideService(JevEvaluationStore, {
         read: () => unused,
 
-        record: () => unused,
+        recordAll: () => unused,
         abandon: () => unused,
       }),
-      Effect.provideService(JevClient, { evaluate: () => unused }),
-      Effect.provideService(JevPositionStore, { read: () => unused }),
       Effect.provide(entryInferenceFixtureLayer),
+      Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => unused })),
+      Effect.provideService(JevPositionStore, { read: () => unused }),
+
       Effect.provide(TestClock.layer()),
     ),
   )

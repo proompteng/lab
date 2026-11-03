@@ -10,8 +10,12 @@ import {
   inferenceExpenseRateCard,
   type InferenceExpenseQuote,
 } from './inference-expense'
-import { entryEvaluationRequestFixture, entryCompletionFixture } from './jev/entry-inference.test-support'
-import { makeJevEvaluationReceipt, JevOutcome } from './jev/evidence'
+import {
+  entryEvaluationRequestFixture,
+  entryCompletionFixture,
+  makeConditionalEvaluationReceipt,
+} from './jev/conditional-entry.test-support'
+import { JevOutcome } from './jev/evidence'
 import { makeJevResolution, JevResolutionStatus } from './jev/resolution'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { runInferenceExpensePass } from './inference-expense-runtime'
@@ -158,9 +162,7 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
     const request = entryEvaluationRequestFixture()
     const completion = entryCompletionFixture(request)
     const receipt = Result.getOrThrow(
-      makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
-        requestId: request.requestId,
+      makeConditionalEvaluationReceipt(request, {
         startedAt: request.observedAt,
         completedAt: request.observedAt,
         outcome: { status: JevOutcome.Completed, completion },

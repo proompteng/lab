@@ -69,6 +69,7 @@ const eventIdentity = (event: Omit<MutationEvent, 'eventId'>) => ({
   ...(event.requestId === undefined ? {} : { requestId: event.requestId }),
   ...(event.responseStatus === undefined ? {} : { responseStatus: event.responseStatus }),
   ...(event.responseContentHash === undefined ? {} : { responseContentHash: event.responseContentHash }),
+  ...(event.routing === undefined ? {} : { routing: event.routing }),
   ...(event.denialReason === undefined ? {} : { denialReason: event.denialReason }),
   occurredAt: event.occurredAt,
 })
@@ -617,7 +618,7 @@ const isRecoveryEventType = (eventType: MutationEventType): boolean =>
   eventType === MutationEventType.RecoveryNotFound ||
   eventType === MutationEventType.RecoveryUnknown
 
-const allowsOutcomeEvent = (previous: MutationEventType, next: MutationEventType): boolean => {
+export const allowsOutcomeEvent = (previous: MutationEventType, next: MutationEventType): boolean => {
   switch (previous) {
     case MutationEventType.SubmitStarted:
       return (
@@ -642,11 +643,14 @@ const allowsOutcomeEvent = (previous: MutationEventType, next: MutationEventType
   }
 }
 
-const sameOutcome = (previous: MutationEvent, event: MutationEvent): boolean =>
+export const sameMutationOutcome = (previous: MutationEvent, event: MutationEvent): boolean =>
   previous.eventType === event.eventType &&
   previous.requestId === event.requestId &&
   previous.responseStatus === event.responseStatus &&
   previous.responseContentHash === event.responseContentHash &&
+  previous.routing?.startedAt === event.routing?.startedAt &&
+  previous.routing?.requestDispatchedAt === event.routing?.requestDispatchedAt &&
+  previous.routing?.completedAt === event.routing?.completedAt &&
   previous.denialReason === event.denialReason &&
   previous.brokerOrderId === event.brokerOrderId
 
@@ -776,6 +780,20 @@ export const decideMutationOutcome = (
   }
 
   const brokerOrderId = previous.brokerOrderId ?? input.brokerOrderId
+  if (
+    input.routing !== undefined &&
+    (input.routing.completedAt > input.occurredAt ||
+      ((previous.eventType === MutationEventType.SubmitStarted ||
+        previous.eventType === MutationEventType.CancelStarted) &&
+        input.routing.startedAt < previous.occurredAt))
+  )
+    return Result.fail(
+      storeError({
+        operation: storeOperation,
+        failure: 'invariant',
+        message: 'routing must follow mutation admission and precede its recorded outcome',
+      }),
+    )
   const eventResult = makeEventResult(storeOperation, {
     mutationId: previous.mutationId,
     intentId: input.intentId,
@@ -788,12 +806,13 @@ export const decideMutationOutcome = (
     ...(input.evidence?.requestId === undefined ? {} : { requestId: input.evidence.requestId }),
     ...(input.evidence?.status === undefined ? {} : { responseStatus: input.evidence.status }),
     ...(input.evidence?.contentHash === undefined ? {} : { responseContentHash: input.evidence.contentHash }),
+    ...(input.routing === undefined ? {} : { routing: input.routing }),
     ...(input.denialReason === undefined ? {} : { denialReason: input.denialReason }),
     occurredAt: input.occurredAt,
   })
   if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
   const event = eventResult.success
-  if (sameOutcome(previous, event)) {
+  if (sameMutationOutcome(previous, event)) {
     if (facts.replayIntent !== undefined && !matchesReplayIntent(facts.replayIntent, currentIntent)) {
       return Result.fail(
         storeError({
@@ -983,6 +1002,7 @@ export const decodeOutcomeInput = (
       occurredAt: input.occurredAt,
       ...(input.brokerOrderId === undefined ? {} : { brokerOrderId: input.brokerOrderId }),
       ...(evidence._tag === 'RetainCompleteEvidence' ? { evidence: evidence.evidence } : {}),
+      ...(input.evidence?.routing === undefined ? {} : { routing: input.evidence.routing }),
       ...(input.denialReason === undefined ? {} : { denialReason: input.denialReason }),
     }),
     (cause) => storeError({ operation: storeOperation, failure: 'decode', message: 'invalid mutation outcome', cause }),

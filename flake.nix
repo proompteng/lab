@@ -54,6 +54,8 @@
             exact.kustomize
             exact.kubeconform
             exact.kubectl
+            exact.talosctl
+            exact.omnictl
             pkgs.kubeseal
             pkgs.curl
             pkgs.coreutils
@@ -314,6 +316,10 @@
               repoRoot = ./.;
             };
             "torghut-hyperliquid-feed-image" = import ./nix/images/torghut-hyperliquid-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-webull-feed-image" = import ./nix/images/torghut-webull-feed.nix {
               inherit pkgs lib;
               repoRoot = ./.;
             };

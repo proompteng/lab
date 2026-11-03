@@ -10,7 +10,7 @@ import { canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
 
 import {
@@ -61,7 +61,9 @@ const order = (side: OrderSide, atMs = at, shares = 10n) => ({
 const flat = () => Result.getOrThrow(createControlPortfolio('100000000000'))
 
 test('fixed principal sizing retains one budget across different equity and includes adverse price and cash fees', async () => {
-  const policy = await Effect.runPromise(loadExecutionRiskPolicy('fixed-budget-test', equityMarketProfile.universe))
+  const policy = await Effect.runPromise(
+    Effect.fromResult(makeExecutionRiskPolicy('fixed-budget-test', equityMarketProfile.universe)),
+  )
   const quantities = []
   for (const cashMicros of ['100000000000', '200000000000', '50000000000']) {
     quantities.push(
@@ -142,7 +144,9 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
 )
 
 test('the explicit reserve experiment lowers late entry size while the legacy/default path is unchanged', async () => {
-  const policy = await Effect.runPromise(loadExecutionRiskPolicy('control-fixture', equityMarketProfile.universe))
+  const policy = await Effect.runPromise(
+    Effect.fromResult(makeExecutionRiskPolicy('control-fixture', equityMarketProfile.universe)),
+  )
   const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
   const input = {
     instruments: replayTestInstruments,
@@ -453,7 +457,9 @@ test('residual shock target starts at first partial fill and follows protective 
 })
 
 test('entry sizing obeys order and daily turnover bounds including the adverse limit and fees', async () => {
-  const risk = await Effect.runPromise(loadExecutionRiskPolicy('control-test', equityMarketProfile.universe))
+  const risk = await Effect.runPromise(
+    Effect.fromResult(makeExecutionRiskPolicy('control-test', equityMarketProfile.universe)),
+  )
   const size = (portfolio = flat(), policy = risk, targetWeight = 0.2) =>
     Result.getOrThrow(
       controlEntryQuantity({

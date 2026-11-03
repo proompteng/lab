@@ -2,5 +2,5 @@ import type { JevInstructions } from './instructions-contract'
 
 export const jevInstructions: JevInstructions = {
   entry:
-    'Use candidate, benchmark and relativeSignals in the shared state together with sourceEvidence and chartAssessment in these instructions. Chart assessments are model judgments about the same source bars, not independent facts. Proposed order prices are conditional terms, not observations or promised future prices. Answer only the individual setup, invalidation or obstruction question supplied here.',
+    'Use the named proposal evidence and completedSourceBars in state. calculatedFacts are exact comparisons computed by code from these source bars and proposal terms. They do not prove that the identified structure is meaningful. chartAssessment contains model judgments about these same source bars, not independent observations. Proposed order prices are conditional terms, not observed or promised future prices. Answer only the individual question supplied here.',
 }

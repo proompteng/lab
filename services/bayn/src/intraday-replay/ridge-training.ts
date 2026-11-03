@@ -1,3 +1,4 @@
+import { JevResearchPolicy } from '../jev/acceptance'
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Effect, Result, Schema } from 'effect'
@@ -8,7 +9,7 @@ import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1Result } from '../hash'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -59,6 +60,10 @@ const fail = (message: string, cause?: unknown) => new ControlStudyFailure({ mes
 export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(RidgeTrainingInputSchema, strictParseOptions)(raw)
+    if (input.backtest.policy !== JevResearchPolicy.Candidate)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
+      )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
     const dataCostMicros = prepared.input.allocatedDataCostPerSessionMicros
     if (dataCostMicros === null) return yield* Result.fail(fail('Net training labels require a priced data allocation'))
@@ -134,7 +139,9 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
 export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: BacktestSourceReceipt) =>
   Effect.gen(function* () {
     const { input, prepared, calendar, dataCostMicros } = yield* Effect.fromResult(prepareRidgeTraining(raw, receipt))
-    const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
+    const risk = yield* Effect.fromResult(
+      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe),
+    )
     const executionLabelDefinition = ridgeExecutionLabelDefinition(
       {
         protocol: prepared.protocol,

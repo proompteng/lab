@@ -19,6 +19,8 @@ import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 import { measurePositionEpisodes, PositionEpisodeEvidenceSchema, PositionEpisodeReason } from './position-episodes'
 import { EpisodeCostReason } from './position-outcomes'
+import { supportedAssessmentFixture } from '../system-assessment/fixtures.test-support'
+import { evaluateSystemAssessment } from '../system-assessment/assessment'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
@@ -1083,7 +1085,7 @@ describe('position episodes', () => {
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
@@ -1124,4 +1126,18 @@ describe('position episodes', () => {
       ),
     ).toBe(true)
   })
+})
+
+test('v6 exposes complete operating costs only for the attached registered assessment scope', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, assessment))
+  expect(report.operatingCostCoverage).toBe('COMPLETE')
+  expect(report.operatingCostScope).toEqual({
+    registrationHash: assessment.registrationHash,
+    sourceCutHash: assessment.sourceCutHash,
+    asOf: assessment.asOf,
+  })
+  expect(report.systemAssessment?.profitability.netEconomicPnlMicros).toBe('20000000000')
+  expect(Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [])).operatingCostScope).toBeNull()
 })

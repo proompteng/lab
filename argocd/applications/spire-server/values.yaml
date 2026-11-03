@@ -129,6 +129,21 @@ spire-server:
             - k8s:container-name:proompteng
           ttl: 2m
           fallback: false
+        platform-admin:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/platform-admin
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: platform-admin
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:platform-admin
+            - k8s:container-name:platform-admin
+          ttl: 2m
+          fallback: false
         relay:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/relay/sa/relay
@@ -219,6 +234,21 @@ spire-server:
               spiffe.io/spire-managed-identity: "true"
           workloadSelectorTemplates:
             - k8s:sa:proompteng
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        platform-admin-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/platform-admin
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: platform-admin
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:platform-admin
             - k8s:container-name:istio-proxy
           ttl: 2m
           fallback: false

@@ -14,7 +14,6 @@ import {
 } from './intraday-replay/control-study'
 import { prepareBacktest } from './intraday-replay/backtest'
 import { JevClient, JevClientLive } from './jev/client'
-import { DecisionsClient, DecisionsClientLive } from './jev/decisions'
 import { JevHttpClientLive } from './jev/http'
 import { makeReplayInferenceBudget } from './intraday-replay/inference-timing'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
@@ -125,7 +124,6 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       const providerContext = yield* Layer.build(
         Layer.mergeAll(
           JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs),
-          DecisionsClientLive(yield* Config.Redacted('BAYN_OPENAI_API_KEY'), prepared.protocol.inferenceValidityMs),
         ).pipe(Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')))),
       )
       management = {
@@ -134,7 +132,6 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
         providerClock,
         providers: {
           jev: Context.get(providerContext, JevClient),
-          chart: Context.get(providerContext, DecisionsClient),
         },
         budget: makeReplayInferenceBudget(prepared.input.inference.maximumCalls),
       }

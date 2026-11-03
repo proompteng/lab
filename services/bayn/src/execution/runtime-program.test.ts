@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
@@ -1548,8 +1549,10 @@ for (const phase of [
           measureDatabaseTime: (operation) => operation,
           providerClock,
           providers: {
-            jev: { evaluate: () => Effect.die('final authorization must not call Jev') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('final authorization must not call Jev') },
+              chartProviderFixture,
+            ),
           },
           advanceTo: (atMs) =>
             clockUnavailable

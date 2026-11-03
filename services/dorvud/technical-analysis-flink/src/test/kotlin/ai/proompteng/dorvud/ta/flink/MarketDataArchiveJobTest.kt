@@ -225,15 +225,46 @@ class MarketDataArchiveJobTest {
   }
 
   @Test
-  fun `rejects crossed quotes invalid trades and channel-topic mismatches`() {
-    assertFailsWith<IllegalArgumentException> {
-      decodeArchiveQuote(
-        quoteRecord(
-          "torghut.quotes.v1",
-          quoteEnvelope("sip", "real_time_consolidated", bidPrice = 101.0, askPrice = 100.0, symbol = "NVDA"),
-        ),
-        routes,
-      )
+  fun `retains withdrawn quote sides with their original source lineage`() {
+    listOf(279.67 to 0.0, 0.0 to 279.67, 0.0 to 0.0).forEach { (bid, ask) ->
+      val quote =
+        decodeArchiveQuote(
+          quoteRecord(
+            "torghut.quotes.v1",
+            quoteEnvelope(
+              "sip",
+              "real_time_consolidated",
+              bidPrice = bid,
+              askPrice = ask,
+              bidSize = if (bid == 0.0) 0.0 else 480.0,
+              askSize = if (ask == 0.0) 0.0 else 480.0,
+              symbol = "NVDA",
+            ),
+            partition = 4,
+            offset = 87886365,
+          ),
+          routes,
+        )
+      assertEquals(bid, quote.bidPrice)
+      assertEquals(ask, quote.askPrice)
+      assertEquals("torghut.quotes.v1", quote.sourceTopic)
+      assertEquals(4, quote.sourcePartition)
+      assertEquals(87886365, quote.sourceOffset)
+    }
+  }
+
+  @Test
+  fun `rejects negative or crossed quote prices invalid trades and channel-topic mismatches`() {
+    listOf(-1.0 to 100.0, 100.0 to -1.0, 101.0 to 100.0, 0.0 to 100.0, 100.0 to 0.0).forEach { (bid, ask) ->
+      assertFailsWith<IllegalArgumentException> {
+        decodeArchiveQuote(
+          quoteRecord(
+            "torghut.quotes.v1",
+            quoteEnvelope("sip", "real_time_consolidated", bidPrice = bid, askPrice = ask, symbol = "NVDA"),
+          ),
+          routes,
+        )
+      }
     }
     assertFailsWith<IllegalArgumentException> {
       decodeArchiveTrade(
@@ -253,6 +284,46 @@ class MarketDataArchiveJobTest {
         routes,
       )
     }
+  }
+
+  @Test
+  fun `quote recovery requires complete original records and binds the existing route`() {
+    val range = QuoteArchiveRecoveryRange("torghut.quotes.v1", 4, 87886364, 87886366)
+    val record =
+      quoteRecord(
+        range.topic,
+        quoteEnvelope("sip", "real_time_consolidated", bidPrice = 279.67, askPrice = 0.0, askSize = 0.0, symbol = "NVDA"),
+        partition = range.partition,
+        offset = range.firstOffset,
+      )
+    val records = listOf(record, record.copy(offset = range.firstOffset + 1))
+    val (manifest, quotes) = quoteArchiveRecoveryPlan(range, routes, records)
+    assertEquals(listOf(87886364L, 87886365L), manifest.records.map { it.offset })
+    assertEquals(records.map { it.offset }, quotes.map { it.sourceOffset })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askPrice })
+    assertEquals(listOf(0.0, 0.0), quotes.map { it.askSize })
+    assertEquals("sip", manifest.feed)
+    assertEquals(coreUniverse.symbolHash, manifest.universeSymbolHash)
+    val hash = quoteArchiveRecoveryHash(manifest)
+    assertEquals(hash, quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, records).first))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(universeId = "other-universe")))
+    assertTrue(hash != quoteArchiveRecoveryHash(manifest.copy(records = manifest.records.reversed())))
+    listOf(
+      records.dropLast(1),
+      records.reversed(),
+      listOf(record, record),
+      records.map { it.copy(partition = 5) },
+      records.map { it.copy(value = "{}") },
+    ).forEach { changed ->
+      assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, routes, changed) }
+    }
+    val changed = records.map { it.copy(value = it.value.replace("279.67", "279.68")) }
+    assertTrue(hash != quoteArchiveRecoveryHash(quoteArchiveRecoveryPlan(range, routes, changed).first))
+    assertFailsWith<IllegalArgumentException> { quoteArchiveRecoveryPlan(range, emptyMap(), records) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, -1, 0, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, -1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 1, 1) }
+    assertFailsWith<IllegalArgumentException> { QuoteArchiveRecoveryRange(range.topic, 4, 0, 10001) }
   }
 
   @Test
@@ -431,6 +502,8 @@ class MarketDataArchiveJobTest {
     symbol: String = "SPY",
     bidPrice: Double = 100.0,
     askPrice: Double = 100.1,
+    bidSize: Double = 20.0,
+    askSize: Double = 30.0,
   ): Envelope<QuotePayload> {
     val eventTime = Instant.parse("2026-07-21T14:00:00Z")
     return Envelope(
@@ -440,7 +513,7 @@ class MarketDataArchiveJobTest {
       channel = channel,
       symbol = symbol,
       seq = 2,
-      payload = QuotePayload(bp = bidPrice, bs = 20.0, ap = askPrice, `as` = 30.0, t = eventTime),
+      payload = QuotePayload(bp = bidPrice, bs = bidSize, ap = askPrice, `as` = askSize, t = eventTime),
       provider = "alpaca",
       marketSession = "regular",
       delayClass = delayClass,

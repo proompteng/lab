@@ -277,7 +277,13 @@ describe('durable broker observations', () => {
         const sql = (() =>
           Effect.sync(() => {
             queries += 1
-            return [{ state_hash: snapshotHash, snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)) }]
+            return [
+              {
+                state_hash: snapshotHash,
+                snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)),
+                observedAt: value.observedAt,
+              },
+            ]
           })) as unknown as PgClient.PgClient
         const store = makeBrokerObservationStore(
           sql,
@@ -290,6 +296,7 @@ describe('durable broker observations', () => {
               return Effect.succeed(Option.some(JSON.stringify(payload)))
             },
             put: () => Effect.die('read-only probe'),
+            putAll: () => Effect.die('read-only probe'),
             remove: () => Effect.die('read-only probe'),
           }),
         )

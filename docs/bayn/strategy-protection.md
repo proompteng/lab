@@ -1,7 +1,7 @@
 # Jev-selected trade plans and broker protection
 
 The replacement entry path uses OpenAI Decisions API chart judgments followed by proposal-specific Jev judgments,
-with code owning plan selection and execution. Protocol v24, entry input v3, handoff v2, entry state v22, batch v7, entry target v7, exit target v5,
+with code owning plan selection and execution. Protocol v25, entry input v4, handoff v3, entry state v22, batch v7, entry target v7, exit target v5,
 funded exit plan v4 and position-exit policy v5 define the current source contracts. Broker protection, sizing, costs,
 account risk and holding/session safeguards remain mandatory. Deployment and natural round-trip evidence remain separate.
 
@@ -9,16 +9,18 @@ account risk and holding/session safeguards remain mandatory. Deployment and nat
 
 The original verified numerical snapshot and deterministic candlestick image identify the same completed source bars.
 The volume histogram uses relative heights across those bars, so changing asset units does not change their
-proportions. Current entry input v3 binds that rendering contract and the conditional base questions. Original v1 and v2
+proportions. Current entry input v4 binds that rendering contract, execution quote and funded source choices. Original v1/v2/v3
 questions and images remain reproducible only for financial audit; they cannot authorize new inference or entries.
-OpenAI Decisions API judges support, resistance and consolidation and selects actual source-bar anchors. Presence judgments
-and anchor probabilities remain explicit, including refusals. Anchors alone do not establish that a structure is present.
-The base end is chosen from source bars that leave at least two base bars and a newer completed bar. Each eligible end
-has its own start question in the same request, with all earlier source bars and a no-base option. The question states
-the exact possible end without assuming that a consolidation exists. Code consumes only the start answer for the chosen
-end, preserving a no-match or refusal instead of combining unrelated anchors. Refused unused questions do not veto
-another supported setup. This follows the [conditional-question pattern](https://docs.typesafe.ai/patterns/fan-out);
-actual token usage, latency and costs remain measured evidence.
+OpenAI Decisions API judges support, resistance and consolidation and selects actual source-bar anchors. Code filters
+offered anchors with the exact complete-plan price and fee checks against the supplied current quote and bounded entry.
+The historical close cannot stand in for that quote. Every support or resistance choice includes a no-match answer,
+including when only one price is eligible. Eligibility does not establish observed structure. Presence judgments,
+anchor probabilities and refusals remain explicit, and the full chart retains nearer obstructions for Jev to evaluate.
+Base ends and their conditional starts identify only contiguous, funded intervals with at least two completed bars
+and a newer completed bar. Code consumes only the selected end's start answer. No-match and refusal remain valid;
+an unused branch cannot veto an independent supported setup. This follows the
+[conditional-question pattern](https://docs.typesafe.ai/patterns/fan-out); actual usage, latency and costs remain measured
+rather than assumed.
 
 Code derives at most two complete proposals. Support recovery places its stop one executable tick below the identified
 support and its target one tick before observed resistance. Base breakout requires the fresh bid above the identified

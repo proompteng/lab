@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::{auth::Principal, grpc::ControlPlane};
 
 // Query expiry limits admission; an authorized response may arrive later.
-const STATUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
 const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 
 async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
@@ -25,9 +25,19 @@ where
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
         let mut backoff = Duration::from_millis(100);
         loop {
-            match tokio::time::timeout(STATUS_RESPONSE_TIMEOUT, request()).await {
-                Ok(Ok(value)) => return Ok(value),
-                Ok(Err(error))
+            let response = request();
+            tokio::pin!(response);
+            let result =
+                match tokio::time::timeout(STATUS_RESPONSE_WARNING, response.as_mut()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        tracing::warn!(operation, "durable run read response remains pending");
+                        response.await
+                    }
+                };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(error)
                     if !matches!(
                         error.code(),
                         tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
@@ -35,8 +45,7 @@ where
                 {
                     return Err(error);
                 }
-                Ok(Err(_)) => {}
-                Err(_) => tracing::warn!(operation, "durable run read response timed out"),
+                Err(_) => {}
             }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(1));
@@ -332,6 +341,7 @@ pub(crate) async fn read(
     id: &str,
     digest: Option<String>,
 ) -> Result<Snapshot, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
     let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
     recover_status("status", || async {
         let query = Query {
@@ -355,13 +365,18 @@ pub(crate) async fn read(
 pub(crate) async fn active(
     service: &ControlPlane,
     principal: &Principal,
+    thread_id: &str,
 ) -> Result<Vec<Snapshot>, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
         let claims = active_claims(service, principal).await?;
         futures::future::try_join_all(
             claims
                 .iter()
                 .filter(|claim| claim.owner_hash == principal.owner_hash)
+                // Scope before reading snapshots: an unavailable conversation must not
+                // prevent observing another. A failed selected read still fails closed.
+                .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
                 .map(|claim| read(service, principal, &claim.run_id, None)),
         )
         .await

@@ -1,15 +1,71 @@
+import { defaultJevProtocolDocument, RetainedJevProtocolV36Schema } from '../jev/protocol'
+import {
+  chartInferenceFixture as retainedInference,
+  entryEvaluationRequestFixture as retainedRequest,
+} from '../jev/conditional-entry.test-support'
+import { makeRetainedConditionalChartDecisionsRequest } from '../jev/retained-conditional-chart-questions'
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { JevResearchPolicy } from '../jev/acceptance'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
-import { calculateReplayInferenceCosts } from './inference-costs'
+import { calculateReplayInferenceCosts, registeredReplayInferenceTariff } from './inference-costs'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import type { ReplayInferenceCall } from './inference-timing'
-import { entryEvaluationRequestFixture, chartInferenceFixture } from '../jev/entry-inference.test-support'
+import {
+  entryEvaluationRequestFixture,
+  chartInferenceFixture,
+  nativeChartInference,
+} from '../jev/entry-inference.test-support'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import { stageResponseIdentity } from '../jev/staged-checkpoint'
 
-const costs = {
+test('registered replay tariffs require Jev for current inference and retain historical rates for the whole window without overlapping or substituted rates', () => {
+  const card = { ...costs, rates: costs.rates.filter((rate) => rate.provider === 'typesafe') }
+  const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
+  expect(
+    Result.getOrThrow(
+      registeredReplayInferenceTariff(card, interval, JevResearchPolicy.Candidate, defaultJevProtocolDocument),
+    ),
+  ).toEqual(card)
+  expect(
+    Result.getOrThrow(
+      registeredReplayInferenceTariff(
+        { ...card, rates: [...card.rates].reverse() },
+        interval,
+        JevResearchPolicy.Candidate,
+        defaultJevProtocolDocument,
+      ),
+    ),
+  ).toEqual(card)
+  for (const changed of [
+    { ...card, rates: [] },
+    { ...card, rates: card.rates.slice(1) },
+    { ...card, rates: [...card.rates, ...card.rates] },
+    { ...card, rates: card.rates.map((rate) => ({ ...rate, effectiveUntil: interval.endAt })) },
+    { ...card, rates: card.rates.map((rate) => ({ ...rate, effectiveFrom: '2026-11-02T14:30:00.001Z' })) },
+    { ...card, rates: card.rates.map((rate) => ({ ...rate, model: 'different-model' })) },
+  ])
+    expect(
+      Result.isFailure(
+        registeredReplayInferenceTariff(changed, interval, JevResearchPolicy.Candidate, defaultJevProtocolDocument),
+      ),
+    ).toBe(true)
+  expect(
+    Result.isFailure(
+      registeredReplayInferenceTariff(
+        card,
+        { ...interval, endAt: interval.startAt },
+        JevResearchPolicy.Candidate,
+        defaultJevProtocolDocument,
+      ),
+    ),
+  ).toBe(true)
+})
+
+const costs = replayRateCardFixture({
   jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
   chart: {
     inputMicrosPerMillionTokens: '100000',
@@ -17,9 +73,106 @@ const costs = {
     cachedInputMicrosPerMillionTokens: '10000',
     cacheWriteInputMicrosPerMillionTokens: '125000',
   },
-}
+})
+test('registered replay tariffs retain adjacent periods with their own effective prices', () => {
+  const card = costs
+  const boundary = '2026-11-10T12:00:00.000Z'
+  const adjacent = {
+    ...card,
+    rates: card.rates.flatMap((rate) => [
+      { ...rate, effectiveUntil: boundary },
+      { ...rate, effectiveFrom: boundary, inputMicrosPerMillionTokens: '200000' },
+    ]),
+  }
+  expect(
+    Result.isSuccess(
+      registeredReplayInferenceTariff(
+        adjacent,
+        {
+          startAt: '2026-11-02T14:30:00.000Z',
+          endAt: '2026-11-27T21:00:00.000Z',
+        },
+        JevResearchPolicy.Candidate,
+        defaultJevProtocolDocument,
+      ),
+    ),
+  ).toBe(true)
+})
+test('controls bind only their own providers and an unexpected call remains an unresolved expense', () => {
+  const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
+  for (const policy of [JevResearchPolicy.Ablation, JevResearchPolicy.Momentum, JevResearchPolicy.Deployed]) {
+    const expected = {
+      ...costs,
+      rates: policy === JevResearchPolicy.Ablation ? costs.rates.filter((rate) => rate.provider === 'typesafe') : [],
+    }
+    const tariff = Result.getOrThrow(
+      registeredReplayInferenceTariff(expected, interval, policy, defaultJevProtocolDocument),
+    )
+    expect(tariff).toEqual(expected)
+    expect(calculateReplayInferenceCosts([], tariff)).toMatchObject({ knownCostMicros: '0', unresolvedCallCount: 0 })
+    expect(calculateReplayInferenceCosts([call(100)], tariff)).toMatchObject({
+      knownCostMicros: policy === JevResearchPolicy.Ablation ? '5' : '0',
+      unresolvedCallCount: policy === JevResearchPolicy.Ablation ? 0 : 1,
+      inputTokens: '100',
+      callCount: 1,
+    })
+  }
+  expect(
+    Result.isFailure(
+      registeredReplayInferenceTariff(
+        replayRateCardFixture({ jev: null, chart: null }),
+        interval,
+        JevResearchPolicy.Ablation,
+        defaultJevProtocolDocument,
+      ),
+    ),
+  ).toBe(true)
+})
+test('replay prices each metered call at its simulated start and treats gaps or overlaps as unknown', () => {
+  const boundary = '2026-11-10T12:00:00.000Z'
+  const periods = {
+    ...costs,
+    rates: costs.rates.flatMap((rate) => [
+      { ...rate, effectiveUntil: boundary },
+      { ...rate, effectiveFrom: boundary, inputMicrosPerMillionTokens: '200000' },
+    ]),
+  }
+  const calls = [
+    { ...call(1_000_000), simulatedStartedAt: '2026-11-10T11:59:59.999Z' },
+    { ...call(1_000_000), simulatedStartedAt: boundary },
+    { ...call(1_000_000), simulatedStartedAt: '2026-11-10T12:00:00.001Z' },
+  ]
+  expect(calculateReplayInferenceCosts(calls, periods)).toMatchObject({
+    knownCostMicros: '442000',
+    unresolvedCallCount: 0,
+  })
+  const gap = {
+    ...periods,
+    rates: periods.rates.map((rate) =>
+      rate.effectiveFrom === boundary ? { ...rate, effectiveFrom: '2026-11-10T12:00:00.001Z' } : rate,
+    ),
+  }
+  expect(calculateReplayInferenceCosts(calls, gap)).toMatchObject({
+    knownCostMicros: '242000',
+    unresolvedCallCount: 1,
+  })
+  expect(
+    calculateReplayInferenceCosts(calls, { ...periods, rates: [...periods.rates, ...periods.rates] }),
+  ).toMatchObject({
+    knownCostMicros: '0',
+    unresolvedCallCount: 3,
+  })
+  expect(
+    calculateReplayInferenceCosts(calls, {
+      ...periods,
+      rates: periods.rates.map((rate) => ({ ...rate, model: 'substituted-model' })),
+    }),
+  ).toMatchObject({ knownCostMicros: '0', unresolvedCallCount: 3 })
+})
 type JevCall = Extract<ReplayInferenceCall, { readonly stage: 'JEV' }>
-type ChartCall = Extract<ReplayInferenceCall, { readonly stage: 'CHART' }>
+type ChartCall = Extract<ReplayInferenceCall, { readonly schemaVersion: 'bayn.replay-inference-call.v4' }> & {
+  readonly stage: 'CHART'
+}
 const call = (inputTokens: number, outputTokens = 0): JevCall => {
   const prepared = Result.getOrThrow(
     prepareJevRequest({
@@ -74,7 +227,9 @@ test('inference cost uses exact declared tariffs and conservative per-call micro
   expect(
     calculateReplayInferenceCosts([call(1_000_000, 100)], {
       ...costs,
-      jev: { ...costs.jev, outputMicrosPerMillionTokens: '5000000' },
+      rates: costs.rates.map((rate) =>
+        rate.provider === 'typesafe' ? { ...rate, outputMicrosPerMillionTokens: '5000000' } : rate,
+      ),
     }).knownCostMicros,
   ).toBe('42500')
 })
@@ -149,11 +304,15 @@ test('retained HTTP failure usage is included while status failure remains unusa
 const chartCall = (): ChartCall => {
   const request = entryEvaluationRequestFixture()
   const prepared = Result.getOrThrow(
-    makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))),
+    makeInitialChartStageRequest({
+      chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+      protocol: request.request.protocol,
+      funding: request.request.funding,
+    }),
   )
   const inference = chartInferenceFixture(request.request, request.observedAt)
   return {
-    schemaVersion: 'bayn.replay-inference-call.v2',
+    schemaVersion: 'bayn.replay-inference-call.v4',
     stage: 'CHART',
     budgetMs: 10_000,
     request: prepared.request,
@@ -172,12 +331,67 @@ test('the same evaluation retains separate chart and Jev charges', () => {
     jevCallCount: 1,
     unresolvedCallCount: 0,
     inputTokens: '300',
+    knownCostMicros: '14',
+  })
+})
+
+test('selected base calls retain a distinct identity and the visual tariff without changing old summary bytes', () => {
+  const chart = chartCall()
+  if (chart.outcome.status !== 'RECEIVED') throw Error('Expected fixture chart response')
+  const request = entryEvaluationRequestFixture()
+  const prepared = Result.getOrThrow(
+    makeSelectedBaseStartStageRequest(
+      {
+        chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+        protocol: request.request.protocol,
+        funding: request.request.funding,
+      },
+      stageResponseIdentity(chart.outcome.inference),
+    ),
+  )
+  if (prepared.status !== 'PREPARED') throw Error('Expected fixture selected base request')
+  const base: Extract<ReplayInferenceCall, { readonly schemaVersion: 'bayn.replay-inference-call.v4' }> & {
+    readonly stage: 'BASE_START'
+  } = {
+    ...chart,
+    schemaVersion: 'bayn.replay-inference-call.v4',
+    stage: 'BASE_START',
+    request: prepared.request,
+    requestHash: prepared.requestHash,
+    outcome: { status: 'RECEIVED', inference: nativeChartInference(prepared.request, request.observedAt) },
+  }
+  expect(base.requestHash).not.toBe(chart.requestHash)
+  expect(calculateReplayInferenceCosts([chart, base, call(200)], costs)).toMatchObject({
+    callCount: 3,
+    chartCallCount: 1,
+    baseStartCallCount: 1,
+    jevCallCount: 1,
     knownCostMicros: '19',
+    unresolvedCallCount: 0,
+  })
+  expect(calculateReplayInferenceCosts([chart, call(200)], costs)).not.toHaveProperty('baseStartCallCount')
+  expect(calculateReplayInferenceCosts([{ ...base, outcome: { status: 'INTERRUPTED' } }], costs)).toMatchObject({
+    baseStartCallCount: 1,
+    knownCostMicros: '0',
+    unresolvedCallCount: 1,
   })
 })
 
 test('chart cache reads and writes are priced once within total input tokens', () => {
-  const chart = chartCall()
+  const request = retainedRequest()
+  const prepared = Result.getOrThrow(
+    makeRetainedConditionalChartDecisionsRequest(
+      Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+    ),
+  )
+  const chart: Extract<ReplayInferenceCall, { readonly stage: 'CHART' }> = {
+    ...chartCall(),
+    schemaVersion: 'bayn.replay-inference-call.v2',
+    stage: 'CHART',
+    request: prepared.request,
+    requestHash: prepared.requestHash,
+    outcome: { status: 'RECEIVED', inference: retainedInference(request.request, request.observedAt) },
+  }
   if (chart.outcome.status !== 'RECEIVED') throw Error('Fixture must receive a chart response')
   const response = {
     ...chart.outcome.inference.response,
@@ -188,7 +402,7 @@ test('chart cache reads and writes are priced once within total input tokens', (
       total_tokens: 100,
     },
   }
-  const cached: ChartCall = {
+  const cached: Extract<ReplayInferenceCall, { readonly stage: 'CHART' }> = {
     ...chart,
     outcome: {
       status: 'RECEIVED',
@@ -215,17 +429,17 @@ test('a metered rejected chart and interrupted Jev retain known chart costs and 
     ...chart,
     outcome: {
       status: 'FAILED',
-      category: 'RESPONSE',
+      failure: JevFailure.Response,
+      rejectedResponse: chart.outcome.inference.response,
       httpStatus: 200,
       responseHash: chart.outcome.inference.responseHash,
-      usage: chart.outcome.inference.response.usage,
     },
   }
   expect(
     calculateReplayInferenceCosts([failed, { ...call(200), outcome: { status: 'INTERRUPTED' } }], costs),
   ).toMatchObject({
     callCount: 2,
-    knownCostMicros: '10',
+    knownCostMicros: '5',
     unresolvedCallCount: 1,
   })
   if (failed.outcome.status !== 'FAILED') throw Error('Fixture must retain a failure')
@@ -235,4 +449,21 @@ test('a metered rejected chart and interrupted Jev retain known chart costs and 
     unresolvedCallCount: 1,
     knownCostMicros: '0',
   })
+})
+
+test('historical candidate and ablation tariffs retain their original provider schedule and bytes', () => {
+  const protocol = Schema.decodeUnknownSync(RetainedJevProtocolV36Schema)({
+    ...defaultJevProtocolDocument,
+    schemaVersion: 'bayn.jev.protocol.v36',
+    entrySignalPolicy: 'openai-decisions-then-jev',
+    entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
+  })
+  const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
+  for (const policy of [JevResearchPolicy.Candidate, JevResearchPolicy.Ablation]) {
+    const original = {
+      ...costs,
+      rates: costs.rates.filter((rate) => policy === JevResearchPolicy.Candidate || rate.provider === 'openai'),
+    }
+    expect(Result.getOrThrow(registeredReplayInferenceTariff(original, interval, policy, protocol))).toEqual(original)
+  }
 })

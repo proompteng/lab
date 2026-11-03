@@ -40,9 +40,41 @@ async fn main() -> anyhow::Result<()> {
                 token_file.clone(),
                 namespaces.clone(),
             )?)),
+            Connector::Http {
+                id,
+                endpoint,
+                ca_file,
+                authentication,
+                operations,
+            } => {
+                adapters.push(Box::new(relay::http::Http::new(
+                    id.clone(),
+                    endpoint,
+                    ca_file.as_deref(),
+                    authentication.clone(),
+                    operations.clone(),
+                )?));
+            }
+            Connector::Cli { id, operations } => {
+                adapters.push(Box::new(relay::cli::Cli::new(
+                    id.clone(),
+                    operations.clone(),
+                )?));
+            }
+            Connector::Mcp {
+                id,
+                transport,
+                operations,
+            } => {
+                adapters.push(Box::new(relay::mcp::Mcp::new(
+                    id.clone(),
+                    transport.clone(),
+                    operations.clone(),
+                )?));
+            }
         }
     }
-    let service = Service::new(enrollment.relay_clients, adapters, channel)?;
+    let service = Service::new(enrollment, adapters, channel)?;
     let tls = identity.server_config(service.peer_authorizer())?;
     let enrolled = service.clone();
     tokio::spawn(async move {

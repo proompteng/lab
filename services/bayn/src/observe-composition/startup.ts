@@ -1,4 +1,7 @@
 import { Effect, Result, Schema } from 'effect'
+import { entryAblationBehaviorHash, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
+import { jevBehaviorHash } from '../jev/protocol'
+import { makeRepeatedMomentumPolicy, repeatedMomentumBehaviorHash } from '../strategy/repeated-momentum/policy'
 import { BrokerEnvironment } from '../broker/identity'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -9,7 +12,12 @@ import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { loadActiveStrategyProtocol, strategyDefinition, type StrategyRuntime } from '../strategy'
+import {
+  loadActiveStrategyProtocol,
+  loadStrategyTradingProtocol,
+  strategyDefinition,
+  type StrategyRuntime,
+} from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -18,7 +26,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
-import { loadExecutionRiskPolicy } from './decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { validateMutationExecutionProgram } from './execution-cycle'
 import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
 
@@ -46,9 +54,13 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const parameterSchemaVersion = (definition.parameters as { readonly schemaVersion?: unknown }).schemaVersion
+  const parameterSchemaVersion = definition.parameters.schemaVersion
+  const ablation = parameterSchemaVersion === 'bayn.entry-ablation-policy.v1'
+  const momentum = parameterSchemaVersion === 'bayn.repeated-momentum-policy.v1'
   if (
     definition.name !== input.strategy.provenance.strategy.name ||
+    input.strategy.provenance.strategy.behaviorHash !==
+      (momentum ? repeatedMomentumBehaviorHash : ablation ? entryAblationBehaviorHash : jevBehaviorHash) ||
     parameterSchemaVersion !== input.strategy.provenance.strategy.parameterSchemaVersion ||
     parameterHash.success !== input.strategy.provenance.strategy.parameterHash
   ) {
@@ -60,7 +72,13 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash = loadActiveStrategyProtocol().pipe(Result.flatMap(canonicalHashV1Result))
+  const sourceProtocolHash = loadActiveStrategyProtocol().pipe(
+    Result.flatMap((protocol) =>
+      canonicalHashV1Result(
+        momentum ? makeRepeatedMomentumPolicy(protocol) : ablation ? makeEntryAblationPolicy(protocol) : protocol,
+      ),
+    ),
+  )
   if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
     return Result.fail(
       operationalError({
@@ -120,10 +138,11 @@ export const prepareObserveStartup = (
 
 export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
   Result.mapError(
-    Schema.decodeUnknownResult(
-      CycleExecutionModelSchema,
-      strictParseOptions,
-    )((strategyDefinition(strategy).parameters as { readonly executionModel?: unknown }).executionModel),
+    loadStrategyTradingProtocol(strategy).pipe(
+      Result.flatMap((protocol) =>
+        Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)(protocol.executionModel),
+      ),
+    ),
     (cause) =>
       operationalError({
         component: 'strategy',
@@ -141,15 +160,17 @@ export const loadStrategyExecutionRiskPolicy = (
 ) =>
   Effect.gen(function* () {
     yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
-    const symbols = strategyDefinition(strategy).parameters.universe
-    const retainedPolicy = yield* loadExecutionRiskPolicy(accountId, symbols)
+    const symbols = (yield* Effect.fromResult(loadStrategyTradingProtocol(strategy))).universe
+    const retainedPolicy = yield* Effect.fromResult(makeExecutionRiskPolicy(accountId, symbols))
     if (
       riskPolicyHash === undefined ||
       riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
     )
       return retainedPolicy
     if (brokerEnvironment === BrokerEnvironment.Sandbox) {
-      const paperPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox)
+      const paperPolicy = yield* Effect.fromResult(
+        makeExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox),
+      )
       if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
     }
     return yield* operationalError({

@@ -95,12 +95,25 @@ For host and client-volume counters and timestamped RBD mappings, use
 
 ## Scrub Catch-Up Posture
 
-Deep scrubs use `osd_scrub_chunk_max=5`, matching the unchanged five-object minimum, while retaining three concurrent
-scrubs per OSD. [Ceph's Tentacle reference](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#confval-osd_scrub_chunk_max)
-documents larger batches as a client-latency tradeoff; the default is fifteen objects. Verify all six effective
-configurations, compare database and Kafka latency, and require continued scrub progress as described below. This
-setting updates at runtime. If the smaller batch does not help, restore an explicit `15` through reviewed GitOps;
-removing the key alone does not establish that Ceph's persistent config store has reset.
+Deep scrubs use `osd_scrub_chunk_min=5` and `osd_scrub_chunk_max=5`, while retaining three concurrent
+scrubs per OSD. Keep both bounds explicit when restoring this baseline: removing a key alone does not establish that
+Ceph's persistent config store has reset. [Ceph's Tentacle reference](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#confval-osd_scrub_chunk_max)
+documents the chunk-size tradeoff between scrub throughput and client latency. These bounds update at runtime.
+
+Deep scrubs use `osd_deep_scrub_stride=4194304` (4 MiB), matching the common object size in the large pools.
+Ceph 20.2.4 [reads one stride and reschedules when more data remains](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/ReplicatedBackend.cc#L774-L806).
+The default 512 KiB stride splits a 4 MiB object across eight data reads; the larger stride reduces that overhead
+without increasing the number of objects held in a scrub batch. A larger individual read can delay clients, so
+compare native `scrub_replicated_read_bytes` and `scrub_replicated_read_cnt` deltas, per-PG progress and equal-duration
+client-latency windows. Reservation waits alone do not prove a stalled scan. Reject a throughput gain accompanied
+by worse WAL fsync, synchronous replication waits or application deadlines; restore an explicit
+`osd_deep_scrub_stride: "524288"` through reviewed GitOps if the change regresses. Removing the key does not prove
+Ceph's persistent store has reset. The stride updates at runtime; keep the OSD rollout annotation unchanged.
+
+For a reviewed latency trial, compare equal-duration windows of WAL fsync, synchronous replication waits, commit and
+inference-admission latency, deadline failures and scrub progress. Retain the three-reservation cap and durability
+settings. If the candidate does not demonstrate a useful improvement, restore both bounds to an explicit `5` through
+reviewed GitOps. A healthy rollout or an isolated lower mean does not establish recovery of application deadlines.
 
 The shared HDD cluster uses Ceph's built-in `high_client_ops` profile to protect application latency while
 continuing scrub catch-up. Scrubs can start at any hour: `osd_scrub_begin_hour=0` and `osd_scrub_end_hour=0`.
@@ -158,7 +171,8 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `osd_mclock_profile: "high_client_ops"` without custom scheduler overrides
 1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
 1. `osd_max_scrubs: "3"`
-1. `osd_scrub_chunk_max: "5"`
+1. `osd_scrub_chunk_min: "5"` and `osd_scrub_chunk_max: "5"`
+1. `osd_deep_scrub_stride: "4194304"` (4 MiB)
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
@@ -177,7 +191,7 @@ done. In particular, remove these if they were set for a maintenance window:
 1. `osd_recovery_sleep_hdd`
 1. boosted scrub settings such as `osd_scrub_priority`, `osd_requested_scrub_priority`,
    `osd_scrub_chunk_min`, `osd_scrub_chunk_max`,
-   `osd_deep_scrub_stride`, and `osd_scrub_load_threshold`
+   or `osd_scrub_load_threshold`; retain the committed chunk bounds and deep-scrub stride above
 1. boosted recovery scan/chunk settings such as `osd_backfill_scan_min`,
    `osd_backfill_scan_max`, and `osd_recovery_max_chunk`
 
@@ -266,9 +280,10 @@ Keep the committed `osd_max_scrubs=3` target during catch-up. A PG marked
 `scrubbing` may still be waiting for a replica reservation; check `scrub_schedule`
 and each OSD's `dump_scrub_reservations` before counting it as an active scan.
 Use the executable [runtime acceptance checks](galactic-storage-and-workload-recovery.md#scrub-progress-during-recovery)
-to verify both reservation limits on all six OSDs. If application latency regresses, reduce the limit to `1` through
-reviewed GitOps. Existing scrubs finish after a limit reduction. Compare application latency and scrub progress after
-their reservations drain; a lower configured limit alone does not prove recovery.
+to verify both reservation limits on all six OSDs. The operator explicitly retained the three-reservation cap during
+the October 26 alert investigation; latency regression does not authorize lowering it or disabling recovery-time
+scrubs. Diagnose the storage path and compare client latency with scrub progress. A configured chunk size alone does
+not prove application recovery.
 
 Reference:
 

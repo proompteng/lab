@@ -1,6 +1,7 @@
+import { JevBatchPlanVersion } from '../jev/batch'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { selectSupportedEntryProposal } from '../jev/entry-questions'
-import { momentumControlCandidates } from './momentum-control'
+import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
@@ -21,7 +22,7 @@ import {
   JevBatchPlanSchema,
   JevBatchResultSchema,
   JevCandidateResultStatus,
-  usableJevBatchInferences,
+  usableEntryBatchInferences,
 } from '../jev/batch'
 import { JevOutcome } from '../jev/evidence'
 import { JevObservationSchema } from '../jev/observation-contract'
@@ -120,7 +121,9 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         ? null
         : decideJevEntry({ ...batch, decidedAt })
     const usable =
-      batch.batchResult === null ? null : usableJevBatchInferences(plan, batch.batchResult, Date.parse(decidedAt))
+      batch.batchResult === null
+        ? null
+        : usableEntryBatchInferences(plan, batch.batchResult, Date.parse(decidedAt), JevBatchPlanVersion.V8)
     const inferences = usable !== null && Result.isSuccess(usable) ? usable.success : []
     const snapshot = observation.snapshot
     const signals = []
@@ -354,6 +357,7 @@ export const studyOrder = (input: {
   }).pipe(Result.mapError((cause) => new SignalStudyFailure({ message: 'Cannot simulate study IOC', cause })))
 
 export const studyEntryQuantity = (input: {
+  readonly feeAt: string
   readonly symbol: string
   readonly entryBudgetMicros: string
   readonly referencePrice: number
@@ -384,6 +388,7 @@ export const studyEntryQuantity = (input: {
         input.protocol.executionModel,
         BigInt(input.assumptions.feeMultiplierPpm),
         cryptoMaximumTakerFeeBps,
+        input.feeAt,
       )
       if (notionalMicros + fees.cashMicros <= budget) affordableShares = shares
       else maximumShares = shares - 1n
@@ -427,7 +432,11 @@ export const studyRoundTrip = (input: {
     const reference = input.entryDecisionQuote?.value.askPrice
     if (reference === undefined || reference <= 0)
       return finish({ status: 'UNRESOLVED', reason: 'missing-entry-pricing' })
-    const quantity = yield* studyEntryQuantity({ ...input, referencePrice: reference })
+    const quantity = yield* studyEntryQuantity({
+      feeAt: new Date(entryAtMs).toISOString(),
+      ...input,
+      referencePrice: reference,
+    })
     if (quantity === 0n) return finish({ status: 'NO_ENTRY_FILL', reason: 'budget-below-instrument-minimum' })
     const entry = yield* studyOrder({
       ...input,

@@ -50,10 +50,10 @@ describe('current Jev cycle contracts', () => {
   test('preserves the source-controlled execution policy identity', () => {
     expect(policy()).toEqual({
       schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
-      strategyExecutionModelHash: '7271c89c52ade40bfc7a94cf966216a12776cf4e392d9d480e9dd92221106f31',
+      strategyExecutionModelHash: '30e44edd4f5fb0765cf7124bba742caf4a75024324c387a4f6c013cd7137de23',
       warmupAfterOpenMs: 0,
       submissionCutoffBeforeCloseMs: 300000,
-      executionPolicyHash: 'bd3ec06f0a8d55a05c48844050fac614afdc7b0a4964ae2a9b84306fbc5d7e36',
+      executionPolicyHash: '7d6d0910417ce0c29230ae8828be13d22680b614810fdd6dedf81e26afd7b1dc',
     })
   })
 

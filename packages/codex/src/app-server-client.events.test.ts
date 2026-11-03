@@ -197,6 +197,31 @@ describe('CodexAppServerClient v2 notifications', () => {
     vi.useRealTimers()
   })
 
+  it('observes continuation notifications after the requested turn stream has closed', async () => {
+    const observed = vi.fn()
+    const { child, client } = setupClient({ onNotification: observed })
+    await respondToInitialize(child)
+    const started = client.runTurnStream('task')
+    await respondToThreadStart(child, 'thread-observed')
+    await respondToTurnStart(child, 'first-turn')
+    const { stream } = await started
+    writeLine(child, {
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-observed',
+        turn: { id: 'first-turn', rootTurnId: null, items: [], itemsView: 'full', status: 'completed', error: null },
+      },
+    })
+    await drainStream(stream)
+    const continuation = {
+      method: 'thread/tokenUsage/updated',
+      params: { threadId: 'thread-observed', turnId: 'next-turn', tokenUsage: { total: { totalTokens: 42 } } },
+    }
+    writeLine(child, continuation)
+    await vi.waitFor(() => expect(observed).toHaveBeenCalledWith(continuation))
+    client.stop()
+  })
+
   it('opts into experimental app-server APIs during initialize', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child, (request) => {
@@ -213,6 +238,52 @@ describe('CodexAppServerClient v2 notifications', () => {
       })
     })
     await client.ensureReady()
+    client.stop()
+  })
+
+  it('loads all persisted items for the requested continuation turn', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+    const firstRequest = nextRequest(child)
+    const result = client.getTurnItems('thread-1', 'continuation-2')
+    const first = await firstRequest
+    expect(first).toMatchObject({
+      method: 'thread/items/list',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'continuation-2',
+        cursor: null,
+        limit: 100,
+        sortDirection: 'asc',
+      },
+    })
+    const secondRequest = nextRequest(child)
+    writeLine(child, {
+      id: first.id,
+      result: {
+        data: [{ turnId: 'continuation-2', item: { type: 'agentMessage', id: 'message-1', text: 'first' } }],
+        nextCursor: 'page-2',
+        backwardsCursor: null,
+      },
+    })
+    const second = await secondRequest
+    expect(second).toMatchObject({
+      method: 'thread/items/list',
+      params: { turnId: 'continuation-2', cursor: 'page-2' },
+    })
+    writeLine(child, {
+      id: second.id,
+      result: {
+        data: [{ turnId: 'continuation-2', item: { type: 'agentMessage', id: 'message-2', text: 'last' } }],
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    })
+    expect(await result).toEqual([
+      { type: 'agentMessage', id: 'message-1', text: 'first' },
+      { type: 'agentMessage', id: 'message-2', text: 'last' },
+    ])
     client.stop()
   })
 
@@ -1207,6 +1278,38 @@ describe('CodexAppServerClient v2 notifications', () => {
         status: 'completed',
         revisedPrompt: 'astronaut cat',
         result: 'https://example.com/cat.png',
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'imageGeneration',
+          id: 'img-2',
+          status: 'completed',
+          revisedPrompt: null,
+          fileId: 'file-image-2',
+          savedPath: '/workspace/cat.png',
+          failure: null,
+          generationId: 'generation-2',
+        },
+      },
+    })
+    expect((await stream.next()).value).toEqual({
+      type: 'tool',
+      toolKind: 'imageGeneration',
+      id: 'img-2',
+      status: 'completed',
+      title: 'image generation',
+      detail: 'file-image-2',
+      data: {
+        status: 'completed',
+        revisedPrompt: null,
+        fileId: 'file-image-2',
+        savedPath: '/workspace/cat.png',
       },
     })
 

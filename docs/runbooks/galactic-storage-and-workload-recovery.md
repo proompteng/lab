@@ -225,14 +225,12 @@ Require all three checks to return `true` for each of the six running OSDs befor
 value fails the command. The monitor config store alone is insufficient.
 
 Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
-affected application latency before and after an authorized rollout. More scrub concurrency adds HDD contention;
-an active scrub alone does not prove that debt is shrinking. Lowering the limit lets existing scrubs finish; wait for their
-reservations to drain before comparing steady-state windows. Compare WAL fsync deltas, synchronous replication waits,
-and application deadline failures alongside scrub completion counts. Fewer concurrent scrubs alone do not prove that
-database latency or trading has recovered. If application latency regresses after the concurrency increase, reduce
-`osd_max_scrubs` to `"1"` through a reviewed GitOps change. If scrubs during recovery cause a regression,
-revert `osd_scrub_during_recovery` to `"false"` through GitOps. Existing scrubs finish, while recovery blocks new periodic
-scrubs. Keep scrub intervals and warnings enabled. See
+affected application latency before and after an authorized rollout. Keep `osd_max_scrubs=3`; the operator explicitly
+confirmed this cap during the October 26 alert investigation. Latency regression does not authorize reducing the cap
+or disabling recovery-time scrubs. Diagnose the demonstrated queueing, workload I/O and storage path while retaining
+the selected integrity-check settings. An active scrub alone does not prove that debt is shrinking. Compare WAL fsync
+deltas, synchronous replication waits and application deadline failures alongside scrub completion counts. A quiet
+interval alone does not prove that database latency or trading has recovered. Keep scrub intervals and warnings enabled. See
 [Ceph's scrub configuration](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#osd-max-scrubs).
 
 ## Phase 4: Repair An Exact RBD Filesystem

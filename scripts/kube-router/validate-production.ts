@@ -30,6 +30,7 @@ export const productionPaths = {
   buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
   grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
   proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
+  platformAdminPolicies: 'argocd/applications/proompteng/admin-network-policy.yaml',
   restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
   restateExamplePolicies: 'argocd/applications/restate-example/networkpolicy.yaml',
   cassandra311Policies: 'argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml',
@@ -61,7 +62,7 @@ export const productionPaths = {
 export const reviewedPolicySources = {
   buzz: ['buzzPolicies'],
   observability: ['grafanaRehearsalPolicies'],
-  proompteng: ['proomptengPolicies'],
+  proompteng: ['proomptengPolicies', 'platformAdminPolicies'],
   restate: ['restatePolicies'],
   'restate-example': ['restateExamplePolicies'],
   temporal: [

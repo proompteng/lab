@@ -22,7 +22,7 @@ pub struct Service {
 }
 impl Service {
     pub fn new(
-        clients: Vec<authz::RegisteredRelayClient>,
+        configuration: authz::GetPlatformConfigurationResponse,
         connectors: Vec<Box<dyn Connector>>,
         channel: Channel,
     ) -> Result<Self, Status> {
@@ -35,12 +35,13 @@ impl Service {
                 return Err(Status::invalid_argument("duplicate connector adapter"));
             }
         }
+        validate_providers(&adapters, &configuration)?;
         Ok(Self {
-            clients: crate::enrollment::Enrollment::new(clients),
+            clients: crate::enrollment::Enrollment::new(configuration.relay_clients),
             connectors: Arc::new(adapters),
             ofz: PlatformAuthorizationServiceClient::new(channel)
                 .max_encoding_message_size(131_072)
-                .max_decoding_message_size(131_072),
+                .max_decoding_message_size(1_048_576),
             capacity: Arc::new(Semaphore::new(64)),
         })
     }
@@ -59,7 +60,14 @@ impl Service {
         )
         .await;
         let clients = match outcome {
-            Ok(Ok(response)) => response.into_inner().relay_clients,
+            Ok(Ok(response)) => {
+                let configuration = response.into_inner();
+                if validate_providers(&self.connectors, &configuration).is_ok() {
+                    configuration.relay_clients
+                } else {
+                    Vec::new()
+                }
+            }
             _ => Vec::new(),
         };
         self.clients.replace(clients);
@@ -152,7 +160,7 @@ impl Service {
             .get(&payload.connector_id)
             .ok_or_else(|| Status::not_found("connector not registered"))?;
         let operation = connector
-            .operations()
+            .operations(None)
             .into_iter()
             .find(|operation| operation.name == payload.operation)
             .ok_or_else(|| Status::unimplemented("connector operation is not onboarded"))?;
@@ -295,12 +303,38 @@ impl Service {
         check.audit_receipt_id = decision.audit_receipt_id;
         self.outcome(&check, &check.audit_receipt_id, "started", 0, &[])
             .await?;
-        if let Err(error) = self.check(check.clone()).await {
-            self.outcome(&check, &check.audit_receipt_id, "failed", 0, &[])
-                .await?;
-            return Err(error);
+        let invocation: Result<_, crate::connector::Failure> = async {
+            let bearer = if let Some(provider) = connector.provider() {
+                let credential = self
+                    .ofz
+                    .clone()
+                    .resolve_provider_credential(request(authz::ResolveProviderCredentialRequest {
+                        profile_id: provider.profile.into(),
+                        connector_id: connector.id().into(),
+                        destination: provider.destination.into(),
+                        authorization: Some(check.clone()),
+                    }))
+                    .await
+                    .map_err(crate::connector::Failure::from)?
+                    .into_inner();
+                if credential.access_token.is_empty()
+                    || credential.access_token.len() > 16_384
+                    || credential.access_token.chars().any(char::is_control)
+                    || uuid::Uuid::parse_str(&credential.connection_id).is_err()
+                {
+                    return Err(Status::unavailable("invalid provider credential response").into());
+                }
+                Some(credential.access_token)
+            } else {
+                None
+            };
+            self.check(check.clone())
+                .await
+                .map_err(crate::connector::Failure::from)?;
+            connector.execute(&normalized, bearer.as_deref()).await
         }
-        let output = match connector.execute(&normalized).await {
+        .await;
+        let output = match invocation {
             Ok(output) => output,
             Err(error) => {
                 self.outcome(
@@ -354,6 +388,26 @@ impl Service {
         })
     }
 }
+fn validate_providers(
+    connectors: &BTreeMap<String, Box<dyn Connector>>,
+    configuration: &authz::GetPlatformConfigurationResponse,
+) -> Result<(), Status> {
+    for connector in connectors.values() {
+        if let Some(provider) = connector.provider()
+            && !configuration.provider_profiles.iter().any(|profile| {
+                profile.id == provider.profile
+                    && profile.connector_id == connector.id()
+                    && profile.destination == provider.destination
+            })
+        {
+            return Err(Status::failed_precondition(
+                "connector OAuth profile does not match its Ofz registration",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn parse_execution(body: &[u8]) -> Result<platform_client::ExecutionPayload, Status> {
     if body.len() > platform_client::MAX_EXECUTION_BODY_BYTES {
         return Err(Status::invalid_argument(
@@ -418,14 +472,29 @@ impl RelayService for Service {
         input: Request<relay::ListOperationsRequest>,
     ) -> Result<Response<relay::ListOperationsResponse>, Status> {
         let peer = tls::peer(&input)?;
-        self.client(&peer, &input.get_ref().client_service)?;
-        Ok(Response::new(relay::ListOperationsResponse {
-            operations: self
-                .connectors
-                .values()
-                .flat_map(|c| c.operations())
-                .collect(),
-        }))
+        let subject = input
+            .into_inner()
+            .subject
+            .ok_or_else(|| Status::unauthenticated("discovery subject required"))?;
+        self.client_subject(&peer, &subject, &subject.client_service, None)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("Relay is busy"))?;
+        let access = self
+            .ofz
+            .clone()
+            .discover_platform_access(request(authz::DiscoverPlatformAccessRequest {
+                subject: Some(subject),
+            }))
+            .await?
+            .into_inner();
+        let operations = self
+            .connectors
+            .values()
+            .flat_map(|connector| connector.operations(Some(&access.scopes)))
+            .collect();
+        Ok(Response::new(relay::ListOperationsResponse { operations }))
     }
     async fn execute(
         &self,
@@ -471,10 +540,14 @@ mod tests {
         let first = "spiffe://proompteng.ai/ns/example/sa/first";
         let second = "spiffe://proompteng.ai/ns/example/sa/second";
         let service = Service::new(
-            vec![authz::RegisteredRelayClient {
-                id: "example".into(),
-                identities: vec![first.into(), second.into()],
-            }],
+            authz::GetPlatformConfigurationResponse {
+                relay_clients: vec![authz::RegisteredRelayClient {
+                    id: "example".into(),
+                    identities: vec![first.into(), second.into()],
+                    display_name: "Example".into(),
+                }],
+                ..Default::default()
+            },
             Vec::new(),
             tonic::transport::Endpoint::from_static("http://localhost:1").connect_lazy(),
         )
@@ -495,6 +568,14 @@ mod tests {
             }),
             body: serde_json::to_vec(&payload).unwrap(),
         };
+        let mut discovery = request(relay::ListOperationsRequest {
+            subject: input.subject.clone(),
+        });
+        discovery.extensions_mut().insert(tls::Peer(first.into()));
+        assert_eq!(
+            service.list_operations(discovery).await.unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
         let lookup = relay::GetExecutionRequest {
             subject: input.subject.clone(),
             body: serde_json::to_vec(&platform_client::ExecutionLookup {

@@ -63,7 +63,9 @@ export function WorkspaceFileLinkProvider({ agentId, children }: { agentId: stri
       activePath: file.path,
     }))
   }, [])
-  const showChat = useCallback(() => setResources((current) => ({ ...current, activePath: null })), [])
+  const showChat = useCallback(() => {
+    setResources((current) => ({ ...current, activePath: null }))
+  }, [])
   const closeFile = (path: string) =>
     setResources((current) => ({
       tabs: current.tabs.filter((file) => file.path !== path),
@@ -154,6 +156,7 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
   const [focusedPath, setFocusedPath] = useState<string | null>(null)
   const id = useId()
   const activeFile = files.find((file) => file.path === activePath)
+  const chatSelected = !activeFile
   useEffect(() => {
     if (activePath)
       document.getElementById(`${id}-file-${files.findIndex((file) => file.path === activePath)}`)?.focus()
@@ -204,11 +207,11 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
             role="tab"
             id={`${id}-chat`}
             aria-controls={`${id}-chat-panel`}
-            aria-selected={!activeFile}
-            tabIndex={activeFile ? -1 : 0}
+            aria-selected={chatSelected}
+            tabIndex={chatSelected ? 0 : -1}
             type="button"
             onClick={showChat}
-            className={`min-w-0 border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'px-3 pr-8' : 'px-4'} ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+            className={`min-w-0 border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'px-3 pr-8' : 'px-4'} ${chatSelected ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
           >
             Chat
           </button>
@@ -266,8 +269,8 @@ export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
         role="tabpanel"
         id={`${id}-chat-panel`}
         aria-labelledby={`${id}-chat`}
-        hidden={Boolean(activeFile)}
-        className={activeFile ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}
+        hidden={!chatSelected}
+        className={chatSelected ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
       >
         {children}
       </div>

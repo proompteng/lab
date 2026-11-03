@@ -23,19 +23,40 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
       expiresAt: new Date(
         Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
       ).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
 
 describe('native Jev entry and position observations', () => {
+  test('repeated target verification rechecks changed source bytes and never trusts a claimed source identity', () => {
+    const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
+    const decode = Schema.decodeUnknownResult(JevEntryTargetSchema)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
+    expect(Result.getOrThrow(decode(structuredClone(target)))).toEqual(target)
+
+    const changed = structuredClone(target)
+    const originalHash = changed.evidence.batchPlan.observationHash
+    Object.assign(changed.evidence.observation.portfolio.brokerState.account, {
+      cashMicros: (BigInt(changed.evidence.observation.portfolio.brokerState.account.cashMicros) + 1n).toString(),
+    })
+    expect(changed.evidence.batchPlan.observationHash).toBe(originalHash)
+    expect(Result.isFailure(decode(changed))).toBe(true)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
+
+    Object.assign(changed, structuredClone(target))
+    Object.assign(changed.evidence, { decidedAt: changed.evidence.batchPlan.expiresAt })
+    expect(Result.isFailure(decode(changed))).toBe(true)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
+  })
+
   test('complete recorded responses determine one capped target and reproduce without a model', () => {
     const evidence = nativeJevDecisionEvidence()
     const target = Result.getOrThrow(decideJevEntry(evidence))
-    expect(target.selectedSymbols).toEqual(['AMD'])
-    expect(target.targetWeights['AMD']).toBeGreaterThan(0)
-    expect(target.targetWeights['AMD']).toBeLessThanOrEqual(0.2)
+    expect(target.selectedSymbols).toEqual(['AAPL'])
+    expect(target.targetWeights['AAPL']).toBeGreaterThan(0)
+    expect(target.targetWeights['AAPL']).toBeLessThanOrEqual(0.2)
     expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(
-      target.targetWeights['AMD'] ?? 0,
+      target.targetWeights['AAPL'] ?? 0,
     )
     expect(
       Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
@@ -46,10 +67,17 @@ describe('native Jev entry and position observations', () => {
       { decidedAt: evidence.observation.observedAt },
     ])
       expect(Result.isFailure(Schema.decodeUnknownResult(JevEntryTargetSchema)({ ...target, ...change }))).toBe(true)
-    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, false))).selectedSymbols).toEqual([])
-    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, true, 0.42))).selectedSymbols).toEqual(
-      [],
-    )
+    for (const [supportsEntry, probability] of [
+      [false, 0.9],
+      [true, 0.42],
+    ] as const) {
+      // Only the recorded judgments vary; keep the same verified source and request plan.
+      const changedJudgments = {
+        ...evidence,
+        batchResult: nativeJevBatchResult(evidence.batchPlan, evidence.decidedAt, () => supportsEntry, probability),
+      }
+      expect(Result.getOrThrow(decideJevEntry(changedJudgments)).selectedSymbols).toEqual([])
+    }
   })
 
   test.each([0.1, 0.42, 0.69])('unsupported or uncertain judgments at %s cannot authorize an entry', (probability) => {
@@ -80,7 +108,7 @@ describe('native Jev entry and position observations', () => {
           expiresAt: new Date(
             Date.parse(changed.payload.observedAt) + fixture.protocol.inferenceValidityMs,
           ).toISOString(),
-          planVersion: JevBatchPlanVersion.V7,
+          planVersion: JevBatchPlanVersion.V8,
         }),
       ),
     ).toBe(true)
@@ -112,7 +140,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(observed + 10_000).toISOString(),
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     const decidedAt = new Date(observed + 7_000).toISOString()
@@ -124,7 +152,7 @@ describe('native Jev entry and position observations', () => {
         decidedAt,
       }),
     )
-    expect(target.selectedSymbols).toEqual(['AMD'])
+    expect(target.selectedSymbols).toEqual(['AAPL'])
     const quoteEventAt = new Date(observed + 7_100).toISOString()
     const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
     expect(maximumAgeMs).toBe(10_000)
@@ -216,7 +244,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.numericalState).toMatchObject({
-        schemaVersion: 'bayn.jev-entry-state.v22',
+        schemaVersion: 'bayn.jev-entry-state.v23',
         task: { decisionPurpose: JevPurpose.Entry },
       })
     }
@@ -262,7 +290,7 @@ describe('native Jev entry and position observations', () => {
           expiresAt: new Date(
             Date.parse(payload.observedAt) + fixture.protocol.inferenceValidityMs + 1000,
           ).toISOString(),
-          planVersion: JevBatchPlanVersion.V7,
+          planVersion: JevBatchPlanVersion.V8,
         }),
       ),
     ).toBe(true)
@@ -318,7 +346,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: '2026-09-04T14:30:12.000Z',
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     expect(batch.candidates.find((entry) => entry.symbol === 'AAPL')?.status).toBe(JevCandidatePlanStatus.Requested)

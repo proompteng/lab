@@ -160,7 +160,19 @@ export class ReplayCheckpointFailure extends Data.TaggedError('ReplayCheckpointF
   readonly cause?: unknown
 }> {}
 const fail = (message: string) => Result.fail(new ReplayCheckpointFailure({ message }))
-export const replayBrokerConfigurationHash = (config: ReplayBrokerConfig) =>
+export type ReplayBrokerEvidenceConfig = Pick<
+  ReplayBrokerConfig,
+  | 'runId'
+  | 'sourceManifestHash'
+  | 'openingCashMicros'
+  | 'protocol'
+  | 'assumptions'
+  | 'fractionalTrading'
+  | 'assets'
+  | 'calendar'
+>
+
+export const replayBrokerConfigurationHash = (config: ReplayBrokerEvidenceConfig) =>
   canonicalHashV1Result({
     runId: config.runId,
     sourceManifestHash: config.sourceManifestHash,
@@ -191,7 +203,7 @@ export const replayQuantityAtFill = (state: ReplayBrokerState, order: ReplayOrde
 }
 
 /** Recompute exact economics and activities before any restored state can answer a production broker read. */
-export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrokerConfig) =>
+export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrokerEvidenceConfig) =>
   Result.gen(function* () {
     const decoded = yield* Schema.decodeUnknownResult(ReplayBrokerCheckpointSchema, strictParseOptions)(input)
     const { checkpointHash, ...material } = decoded
@@ -462,7 +474,11 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
     Result.mapError((cause) => new ReplayCheckpointFailure({ message: 'Broker checkpoint validation failed', cause })),
   )
 
-export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
+export const makeReplayBrokerCheckpoint = (
+  config: ReplayBrokerEvidenceConfig,
+  state: ReplayBrokerState,
+  observedAt: string,
+) =>
   Result.gen(function* () {
     const material = {
       schemaVersion: 'bayn.simulated-broker-checkpoint.v10' as const,

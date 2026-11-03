@@ -38,7 +38,6 @@ const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
-const hermesToolchainBuildWorkflow = readRepoFile('.github/workflows/hermes-toolchain-build-push.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const jangarPostDeployVerifyWorkflow = readRepoFile('.github/workflows/jangar-post-deploy-verify.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
@@ -49,7 +48,6 @@ const jangarReleaseMetadataScript = readRepoFile('packages/scripts/src/jangar/re
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
 const torghutBuildWorkflow = readRepoFile('.github/workflows/torghut-build-push.yaml')
-const torghutNotebookBuildWorkflow = readRepoFile('.github/workflows/torghut-notebook-build-push.yaml')
 const torghutTaBuildWorkflow = readRepoFile('.github/workflows/torghut-ta-build-push.yaml')
 const torghutWsBuildWorkflow = readRepoFile('.github/workflows/torghut-ws-build-push.yaml')
 const torghutHyperliquidFeedBuildWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
@@ -644,18 +642,17 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts create-index')
     expect(nixOciWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts assert')
-    expect(nixOciWorkflow).toContain('printf \'%s\\n\' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
     expect(nixOciWorkflow).not.toContain('Prime OCI helper closures')
     expect(nixOciWorkflow).not.toContain('Push build platform helper closures to Attic')
-    expect(nixOciWorkflow).toContain('Warm Nix image archive output in Attic')
-    expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
-    expect(nixOciWorkflow).toContain("ATTIC_PUSH_NO_CLOSURE: 'true'")
+    expect(nixOciWorkflow).toContain('Warm Nix build outputs in Attic')
+    expect(nixOciWorkflow).toContain('bash nix/cache-push.sh --build ".#${PACKAGE_ATTR}"')
+    expect(nixOciWorkflow).toContain("ATTIC_PUSH_BATCH_SIZE: '64'")
     expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 30m')
     expect(nixOciWorkflow).toContain(
-      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"',
+      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh --build ".#${PACKAGE_ATTR}"',
     )
     expect(nixOciWorkflow).toContain(
-      'Attic image output push failed for ${ARCH}; registry image push remains authoritative.',
+      'Attic build output push failed for ${ARCH}; registry image push remains authoritative.',
     )
     expect(nixOciWorkflow).not.toContain('cache_paths=("${helper_paths[@]}" "${image_paths[@]}")')
     expect(nixOciWorkflow).not.toContain('nix run .#cache-push')
@@ -665,21 +662,19 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('PLATFORM_DIGEST_AMD64: ${{ steps.oci.outputs.platform_digest_amd64 }}')
     expect(nixOciWorkflow).toContain('PLATFORM_DIGEST_ARM64: ${{ steps.oci.outputs.platform_digest_arm64 }}')
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
-    expect(nixOciWorkflow).toContain('fallback = true')
+    expect(nixOciWorkflow).toContain('fallback = false')
+    expect(nixOciWorkflow).not.toContain('fallback = true')
+    expect(nixOciWorkflow).toContain('download-attempts = 3')
     expect(nixOciWorkflow).toContain('stalled-download-timeout = 60')
     expect(nixOciWorkflow).not.toContain('image_build_timeout:')
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 45m')
-    expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}"')
-    expect(nixOciWorkflow).toContain('build-image-${ARCH}-cache-nixos-fallback')
-    expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \\')
-    expect(nixOciWorkflow).toContain('substituters = https://cache.nixos.org/')
-    expect(nixOciWorkflow).toContain('Nix image archive build retried without Attic')
+    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_TIMEOUT: 45m')
+    expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_TIMEOUT}"')
+    expect(nixOciWorkflow).not.toContain('build-image-${ARCH}-cache-nixos-fallback')
     expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
     expect(nixOciWorkflow).not.toContain('nix build --print-build-logs --no-link --print-out-paths "$@"')
     expect(nixOciWorkflow).not.toContain('helper_attrs=')
     expect(nixOciWorkflow).not.toContain('helper_paths')
     expect(nixOciWorkflow).not.toContain('No build-platform helper closure paths were captured.')
-    expect(nixOciWorkflow).toContain('No Nix image output paths were captured.')
     expect(nixOciWorkflow).not.toContain('No index helper closure paths were captured.')
     expect(nixOciWorkflow).toContain('Start checkout timer')
     expect(nixOciWorkflow).toContain('Record checkout timing')
@@ -731,8 +726,8 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Total timed seconds')
     expect(ciNixOciSummaryScript).toContain('Cache substitutions')
     expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm successes')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm failures')
+    expect(ciNixOciSummaryScript).toContain('Attic upload successes')
+    expect(ciNixOciSummaryScript).toContain('Attic upload failures')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
@@ -855,38 +850,6 @@ describe('native OCI build workflows', () => {
     expect(symphonyReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
   })
 
-  it('rebuilds Kargo-enrolled image builds when the shared OCI implementation changes', () => {
-    const migratedImageWorkflows = [
-      atticWorkflow,
-      arcRunnerBuildWorkflow,
-      oiratWorkflow,
-      bumbaWorkflow,
-      froussardWorkflow,
-      productNixWorkflow,
-      agentsBuildWorkflow,
-      headlampWorkflow,
-      hermesToolchainBuildWorkflow,
-      jangarBuildWorkflow,
-      signalPublisherBuildWorkflow,
-      symphonyBuildWorkflow,
-      torghutBuildWorkflow,
-      torghutNotebookBuildWorkflow,
-      torghutTaBuildWorkflow,
-      torghutWsBuildWorkflow,
-      torghutHyperliquidFeedBuildWorkflow,
-    ]
-
-    for (const workflow of migratedImageWorkflows) {
-      expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
-      expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
-      expect(workflow).toContain("- 'nix/oci-push.sh'")
-      if (workflow !== hermesToolchainBuildWorkflow && workflow !== productNixWorkflow) {
-        expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
-      }
-    }
-    expect(hermesToolchainBuildWorkflow).toContain("- '.github/actions/setup-nix-toolchain/**'")
-  })
-
   it('does not fan out service CI on image workflow-only changes', () => {
     for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
       expect(workflow).not.toContain("- '.github/workflows/")
@@ -953,7 +916,9 @@ describe('native OCI build workflows', () => {
         'nix/check-bun-dependency-closure.sh',
         '.github/workflows/nix-bun-dependency-closure.yml',
       ]) {
-        expect(triggers.split(`- '${input}'`)).toHaveLength(3)
+        expect(triggers.split(`- '${input}'`)).toHaveLength(
+          input.startsWith('.github/') || input === 'nix/check-bun-dependency-closure.sh' ? 2 : 3,
+        )
       }
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
       expect(workflow).toContain('needs: dependency-closure')
@@ -1072,7 +1037,7 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain("github.event_name == 'workflow_dispatch'")
     expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('name: Push platform image without Docker')
-    expect(nixOciWorkflow).toContain('name: Warm Nix image archive output in Attic')
+    expect(nixOciWorkflow).toContain('name: Warm Nix build outputs in Attic')
     expect(nixOciWorkflow).toContain('publish-index:')
     for (const workflow of [
       oiratWorkflow,
@@ -1165,7 +1130,7 @@ describe('native OCI build workflows', () => {
     expect(symphonyBuildWorkflow).toContain('publish_kargo_tag: true')
     expect(symphonyBuildWorkflow).not.toContain('release_artifact_name:')
     expect(symphonyBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(symphonyBuildWorkflow).toContain("- '.github/workflows/symphony-post-deploy-verify.yml'")
+    expect(symphonyBuildWorkflow).not.toContain("- '.github/workflows/symphony-post-deploy-verify.yml'")
     expect(symphonyBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(symphonyBuildWorkflow).not.toContain('docker/setup-buildx-action')
   })
@@ -1258,7 +1223,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
+    expect(jangarBuildWorkflow).not.toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
   })
@@ -1360,7 +1325,6 @@ describe('native OCI build workflows', () => {
     expect(agentsBuildWorkflow).toContain('CONTROL_PLANE_DIGEST: ${{ steps.control-plane-receipt.outputs.digest }}')
     expect(agentsBuildWorkflow).toContain('AGENTS_SHELL_DIGEST: ${{ steps.agents-shell-receipt.outputs.digest }}')
     expect(agentsBuildWorkflow).toContain('RUNNER_DIGEST: ${{ steps.runner-receipt.outputs.digest }}')
-    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/shared/oci.ts'")
 
     expect(flake).toContain('import ./nix/images/agents.nix')
     expect(agentsImageModule).toContain('import ./openai-codex-cli.nix')
@@ -1450,7 +1414,7 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
     expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
-    expect(productNixWorkflow.match(/- '\.github\/workflows\/nix-oci-build-common\.yml'/g)).toHaveLength(6)
+    expect(productNixWorkflow.match(/- '\.github\/workflows\/nix-oci-build-common\.yml'/g)).toBeNull()
     expect(flake).toContain('"olden-image"')
     expect(repoFileExists('nix/images/olden.nix')).toBe(true)
     expect(productNixWorkflow).not.toContain('image_name: olden')

@@ -4,34 +4,77 @@
     {
       "id": "ofz",
       "identities": ["spiffe://proompteng.ai/ns/ofz/sa/ofz-api"],
-      "roles": ["ofz.server"]
+      "roles": ["ofz.server"],
+      "display_name": "Ofz"
     },
     {
       "id": "tengri-web",
       "identities": ["spiffe://proompteng.ai/ns/proompteng/sa/proompteng"],
-      "roles": ["tengri.web", "platform.administration", "relay.client", "platform.human-session", "platform.client"],
-      "origins": ["https://proompteng.ai"],
+      "roles": ["tengri.web", "relay.client", "platform.client"],
+      "session_gateway": {
+        "oidc_client_id": "tengri-bff",
+        "origin": "https://proompteng.ai"
+      },
       "proof_audience": "https://proompteng.ai/api/platform/relay/agent",
       "binding": {
         "service": "tengri",
         "resourceKind": "tengri.workspace",
         "action": "tengri.delegations.manage"
-      }
+      },
+      "display_name": "Tengri"
+    },
+    {
+      "id": "platform-admin",
+      "identities": ["spiffe://proompteng.ai/ns/proompteng/sa/platform-admin"],
+      "roles": ["platform.administration", "platform.client"],
+      "session_gateway": {
+        "oidc_client_id": "platform-admin",
+        "origin": "https://admin.proompteng.ai"
+      },
+      "display_name": "Workspace administration"
     },
     {
       "id": "tengri",
       "identities": ["spiffe://proompteng.ai/ns/tengri/sa/tengri"],
-      "roles": ["tengri.controller"]
+      "roles": ["tengri.controller"],
+      "display_name": "Tengri runtime"
     },
     {
       "id": "relay",
       "identities": ["spiffe://proompteng.ai/ns/relay/sa/relay"],
-      "roles": ["relay.executor"]
+      "roles": ["relay.executor"],
+      "display_name": "Relay"
     },
     {
       "id": "opencode",
       "identities": ["spiffe://proompteng.ai/ns/opencode/sa/opencode"],
-      "roles": ["relay.client", "platform.client"]
+      "roles": ["relay.client", "platform.client"],
+      "display_name": "OpenCode"
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "e984074d-8b6d-5244-9fdb-59ff5d4a5836",
+      "name": "Proompteng",
+      "resources": [
+        {
+          "kind": "kubernetes.namespace",
+          "id": "galactic/f4b6e45e-cd1b-426d-acd3-41b50219182e",
+          "name": "ofz"
+        },
+        {
+          "kind": "kubernetes.namespace",
+          "id": "galactic/32d21018-eca9-4c2c-8502-aa5dd41320eb",
+          "name": "tengri"
+        },
+        {
+          "kind": "kubernetes.namespace",
+          "id": "galactic/f16c9bf3-6947-4438-8158-cef04834b558",
+          "name": "opencode"
+        }
+      ],
+      "initial_clients": ["tengri-web", "opencode"],
+      "import_platform_members": true
     }
   ]
 }

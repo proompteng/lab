@@ -54,9 +54,11 @@ import type { LedgerPlan } from '../ledger-plan'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { makeAccountingInterpreter } from './execution-store/accounting'
 import { makeBrokerEventInterpreter } from './execution-store/broker-events'
-import type { FeeActivity } from '../broker/alpaca/model'
+import { BrokerRead, type BrokerReadShape, type FeeActivity } from '../broker/alpaca/model'
+import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { persistStableSnapshot } from '../simulation-reconciliation/broker-persistence'
+import { ReconciliationClock, runOnce } from '../reconciler'
 import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
 import { verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
@@ -543,6 +545,160 @@ describePostgres('PostgreSQL execution persistence', () => {
             (SELECT count(*)::integer FROM position_snapshots) AS snapshots,
             (SELECT count(*)::integer FROM reconciliations) AS reconciliations`
         expect(counts).toEqual({ accounts: 1, snapshots: 1, reconciliations: 1 })
+      }),
+    )
+  })
+
+  test.each([
+    {
+      name: 'New York midnight',
+      before: '2026-10-27T03:59:53.760Z',
+      after: '2026-10-27T04:00:17.001Z',
+      firstCheckAt: '2026-10-27T04:00:17.001Z',
+      freshAt: '2026-10-27T04:00:17.001Z',
+      tradingDate: '2026-10-27',
+      freshReads: 1,
+      succeeds: true,
+    },
+    {
+      name: 'winter New York midnight',
+      before: '2026-11-02T04:59:53.760Z',
+      after: '2026-11-02T05:00:17.001Z',
+      firstCheckAt: '2026-11-02T05:00:17.001Z',
+      freshAt: '2026-11-02T05:00:17.001Z',
+      tradingDate: '2026-11-02',
+      freshReads: 1,
+      succeeds: true,
+    },
+    {
+      name: 'UTC midnight within one New York day',
+      before: '2026-10-27T23:59:53.760Z',
+      after: '2026-10-28T00:00:17.001Z',
+      firstCheckAt: '2026-10-28T00:00:17.001Z',
+      freshAt: '2026-10-28T00:00:17.001Z',
+      tradingDate: '2026-10-27',
+      freshReads: 0,
+      succeeds: true,
+    },
+    {
+      name: 'New York midnight during persistence',
+      before: '2026-10-27T03:59:53.760Z',
+      after: '2026-10-27T04:00:17.001Z',
+      firstCheckAt: '2026-10-27T03:59:59.000Z',
+      freshAt: '2026-10-27T04:00:17.001Z',
+      tradingDate: '2026-10-27',
+      freshReads: 1,
+      succeeds: true,
+    },
+    {
+      name: 'a fresh read that still contains the previous day',
+      before: '2026-10-27T03:59:53.760Z',
+      after: '2026-10-27T04:00:17.001Z',
+      firstCheckAt: '2026-10-27T04:00:17.001Z',
+      freshAt: '2026-10-27T03:59:53.760Z',
+      tradingDate: '2026-10-27',
+      freshReads: 1,
+      succeeds: false,
+    },
+  ])('preserves the daily risk boundary across $name', async (boundary) => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { before, after } = boundary
+        const snapshotAt = (at: string) => {
+          const { snapshot } = observedBrokerSnapshotFixture(accountId, at)
+          const evidence = (kind: string) => ({
+            ...snapshot.account.evidence,
+            requestId: `midnight-${kind}-${at}`,
+            contentHash: hash(`midnight-${kind}-${at}`),
+          })
+          return {
+            ...snapshot,
+            account: { ...snapshot.account, evidence: evidence('account') },
+            positions: { ...snapshot.positions, evidence: evidence('positions') },
+          }
+        }
+        const previous = snapshotAt(before)
+        const current = snapshotAt(boundary.freshAt)
+        const store = {
+          events: yield* BrokerEventStore,
+          accounting: yield* FillAccountingStore,
+          valuation: yield* ValuationStore,
+          reconciliation: yield* ReconciliationStore,
+          authorityRestriction: yield* AuthorityRestrictionStore,
+        }
+        const authority = yield* AuthorityGenerationStore
+        if (authority.readOrInitializeObserveAuthority === undefined || authority.readAuthorityState === undefined)
+          return yield* Effect.die(new Error('live authority persistence is incomplete'))
+        const initial = yield* authority.readOrInitializeObserveAuthority({
+          generationHash: hash('midnight-reconciliation-generation'),
+          maximum: Authority.Observe,
+        })
+        yield* persistStableSnapshot(store, previous, Effect.succeed(before))
+        const sql = yield* PgClient.PgClient
+        const retained = yield* sql`SELECT * FROM valuations WHERE as_of <= ${before}::timestamptz`
+        let freshAccountReads = 0
+        const unexpected = Effect.die(new Error('unexpected broker read during midnight reconciliation'))
+        const fresh: BrokerReadShape = {
+          account: Effect.sync(() => {
+            freshAccountReads += 1
+            return current.account
+          }),
+          positions: Effect.succeed(current.positions),
+          accountConfiguration: unexpected,
+          assetBySymbol: () => unexpected,
+          orders: () => Effect.succeed({ value: [], evidence: current.account.evidence }),
+          fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: current.account.evidence }),
+          feeActivities: () => Effect.succeed({ value: { items: [] }, evidence: current.account.evidence }),
+          orderById: () => unexpected,
+          orderByClientId: () => unexpected,
+          marketCalendar: () => unexpected,
+        }
+        const read: BrokerReadShape = {
+          ...fresh,
+          projection: {
+            snapshot: Effect.succeed(previous),
+            fresh,
+            invalidate: Effect.void,
+            submissionSnapshot: () => unexpected,
+            withMutation: (effect) => effect,
+          },
+        }
+        let clockReads = 0
+        const outcome = yield* runOnce.pipe(
+          Effect.provideService(BrokerRead, read),
+          Effect.provideService(
+            ReconciliationClock,
+            Effect.sync(() => (clockReads++ === 0 ? boundary.firstCheckAt : after)),
+          ),
+          Effect.exit,
+        )
+        expect(freshAccountReads).toBe(boundary.freshReads)
+        expect(yield* sql`SELECT * FROM valuations WHERE as_of <= ${before}::timestamptz`).toEqual(retained)
+        expect(journalControl.postCount).toBe(0)
+        if (!boundary.succeeds) {
+          expect(Exit.isFailure(outcome)).toBe(true)
+          if (Exit.isFailure(outcome))
+            expect(Cause.squash(outcome.cause)).toMatchObject({
+              _tag: 'ReconciliationError',
+              failure: { _tag: 'Snapshot', reason: 'TradingDayChanged' },
+            })
+          const held = yield* authority.readAuthorityState
+          expect(held.generationHash).toBe(initial.generationHash)
+          expect(held.kill).toBe(KillState.Active)
+          return
+        }
+        if (Exit.isFailure(outcome)) return yield* Effect.failCause(outcome.cause)
+        const result = outcome.value
+        expect(result.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        expect(result.brokerState.account.observedAt).toBe(boundary.freshReads === 0 ? before : after)
+        expect(result.riskContext).toMatchObject({
+          tradingDate: boundary.tradingDate,
+          dayStartEquityMicros: current.account.value.equityMicros,
+          peakEquityMicros: previous.account.value.equityMicros,
+          dailyTradedNotionalMicros: '0',
+          unknownMutationCount: 0,
+        })
+        expect(yield* authority.readAuthorityState).toEqual(initial)
       }),
     )
   })

@@ -158,8 +158,8 @@ const bindRecoveryFirstCycleDriver = (
         if (Option.isSome(observations)) {
           const store = observations.value
           observedContext = Context.add(observedContext, CandidateObservationStore, {
-            record: (observation) =>
-              observe(store.record(observation), () =>
+            record: (observation, policy) =>
+              observe(store.record(observation, policy), () =>
                 observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
               ),
             latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
@@ -175,6 +175,8 @@ const bindRecoveryFirstCycleDriver = (
             begin: (plan, observation) =>
               observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
+            complete: (plan, observation, result) =>
+              observe(store.complete(plan, observation, result), (batch) => batch.plan.observationHash),
           })
         } else complete = false
         const advanced = yield* Effect.provideContext(driver.advance, observedContext)
