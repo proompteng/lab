@@ -4,10 +4,8 @@ import ai.proompteng.dorvud.platform.KafkaAuth
 import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.Metrics
 import ai.proompteng.dorvud.platform.WEBULL_QUOTES_PATH
-import ai.proompteng.dorvud.platform.WebullCapture
 import ai.proompteng.dorvud.platform.WebullSource
 import ai.proompteng.dorvud.platform.buildProducer
-import ai.proompteng.dorvud.platform.encodeWebullCapture
 import ai.proompteng.dorvud.platform.inspectWebullCapture
 import ai.proompteng.dorvud.platform.webullCapture
 import io.ktor.http.ContentType
@@ -26,14 +24,12 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -42,17 +38,15 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import org.apache.kafka.clients.producer.ProducerRecord
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import java.util.concurrent.TimeUnit
 
 private fun required(
   env: Map<String, String>,
   key: String,
 ): String = env[key]?.takeIf { it.isNotBlank() } ?: error("$key is required")
 
-private fun logEvent(
+internal fun logEvent(
   event: String,
   fields: Map<String, String> = emptyMap(),
 ) {
@@ -145,22 +139,24 @@ private suspend fun runWebullFeed(
     val ingress = coroutineContext.job
     // Input cancellation must not cancel Kafka delivery of captures already accepted into the queue.
     val publisherOwner = Job()
-    val queue = Channel<WebullCapture>(16)
     val producer = buildProducer(kafka)
-
-    suspend fun enqueue(capture: WebullCapture) {
-      queue.send(capture)
-      progress.received.incrementAndGet()
-    }
+    val capturePublisher = WebullPublisher(topic, producer, progress)
 
     suspend fun control(
       operation: String,
       body: JsonObject,
     ) {
       if (operation == "gap") progress.gaps.incrementAndGet()
-      enqueue(webullCapture(WebullSource.Collector(operation), body.toString().toByteArray()))
+      capturePublisher.enqueue(webullCapture(WebullSource.Collector(operation), body.toString().toByteArray()))
     }
-    val api = WebullApi(credentials, capture = { source, bytes, receivedAt -> enqueue(webullCapture(source, bytes, receivedAt)) })
+    val api =
+      WebullApi(credentials, capture = {
+        source,
+        bytes,
+        receivedAt,
+        ->
+        capturePublisher.enqueue(webullCapture(source, bytes, receivedAt))
+      })
 
     suspend fun loadCatalog(): WebullCatalog {
       while (true) {
@@ -200,28 +196,7 @@ private suspend fun runWebullFeed(
           get("/metrics") { call.respondText((Metrics.registry as PrometheusMeterRegistry).scrape()) }
         }
       }.start(wait = false)
-    val publisher =
-      launch(publisherOwner) {
-        for (capture in queue) {
-          val parsed = runCatching { inspectWebullCapture(capture) }.getOrNull()
-          val encoded = encodeWebullCapture(capture)
-          val key = parsed?.observations?.firstOrNull()?.symbol ?: "control"
-          while (isActive) {
-            try {
-              runInterruptible(Dispatchers.IO) { producer.send(ProducerRecord(topic, key, encoded)).get(70, TimeUnit.SECONDS) }
-              progress.record(capture, parsed)
-              Metrics.registry.counter("webull_captures_total", "channel", parsed?.channel ?: "malformed").increment()
-              break
-            } catch (cancelled: CancellationException) {
-              throw cancelled
-            } catch (failure: Exception) {
-              progress.kafkaFailures.incrementAndGet()
-              logEvent("webull.kafka.retry", mapOf("errorClass" to failure.javaClass.simpleName, "captureId" to capture.captureId))
-              delay(5_000)
-            }
-          }
-        }
-      }
+    val publisher = launch(publisherOwner) { capturePublisher.publish() }
     publisher.invokeOnCompletion { failure ->
       if (failure != null && ingress.isActive) ingress.cancel("Webull publisher failed", failure)
     }
@@ -301,7 +276,7 @@ private suspend fun runWebullFeed(
             while (isActive) {
               val mqtt =
                 WebullMqtt(credentials, receive = { capture ->
-                  runBlocking { withTimeout(5_000) { enqueue(capture) } }
+                  runBlocking { withTimeout(5_000) { capturePublisher.enqueue(capture) } }
                 }, heartbeat = { progress.lastHeartbeatAt.set(System.currentTimeMillis()) })
               try {
                 mqtt.connect()
@@ -351,7 +326,7 @@ private suspend fun runWebullFeed(
               } finally {
                 progress.connected.remove(slot)
                 withContext(NonCancellable) {
-                  runCatching { mqtt.close(::enqueue) }.onFailure { failure ->
+                  runCatching { mqtt.close(capturePublisher::enqueue) }.onFailure { failure ->
                     logEvent(
                       "webull.mqtt.close.failure",
                       mapOf(
@@ -380,12 +355,12 @@ private suspend fun runWebullFeed(
       awaitCancellation()
     } finally {
       withContext(NonCancellable) {
-        withTimeoutOrNull(20_000) { drainWebullPublisher(ingress, queue, publisher) }
+        withTimeoutOrNull(20_000) { drainWebullPublisher(ingress, capturePublisher, publisher) }
           ?: logEvent(
             "webull.shutdown.gap",
             mapOf("unacknowledgedCaptures" to (progress.received.get() - progress.acknowledged.get()).toString()),
           )
-        queue.close()
+        capturePublisher.close()
         publisherOwner.cancel()
         publisher.cancelAndJoin()
         server.stop(500, 2_000)

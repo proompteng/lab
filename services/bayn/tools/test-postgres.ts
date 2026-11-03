@@ -33,6 +33,7 @@ const files = [
   'src/intraday-replay/clock.integration.test.ts',
   'src/inference-costs-postgres.integration.test.ts',
   'src/inference-expense-postgres.integration.test.ts',
+  'src/inference-expense-runtime.integration.test.ts',
   'src/research-inference/store.integration.test.ts',
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',

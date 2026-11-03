@@ -75,8 +75,12 @@ The HTTP signer follows the official Python SDK 3.0.4 HMAC-SHA256 implementation
 fixed independent vector and a real provider call. The older SHA1 prose example does not match the
 working backend protocol.
 
-Captures are bounded to 4 MiB, the shared queue to 16 captures, and Kafka records/fetches to 8 MiB.
-Backpressure blocks producers. An MQTT enqueue timeout retains the in-flight capture, disconnects,
+Captures are bounded to 4 MiB and Kafka records/fetches to 8 MiB. At most 17 accepted captures
+are retained across ingress and outstanding Kafka deliveries, matching the previous queue plus its
+one pending delivery. One sender submits records in ingress order; independent acknowledgments return
+capacity without waiting for another partition. Coverage advances only after Kafka acknowledges each
+capture. Backpressure blocks producers. The `webull_kafka_ack_seconds` timer records actual producer
+acknowledgment duration separately from downstream archive lag. An MQTT enqueue timeout retains the in-flight capture, disconnects,
 and transfers it to the publisher before reconnecting, even if normal backpressure lasts beyond five
 seconds. Only service shutdown imposes a drain deadline. Graceful shutdown stops inputs first and allows the independently
 owned publisher up to 20 seconds to drain accepted captures; an exhausted deadline logs a gap.
