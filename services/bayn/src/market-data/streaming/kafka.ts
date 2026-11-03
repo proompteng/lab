@@ -12,7 +12,9 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import {
+  Base,
   Consumer,
+  findErrorBy,
   MessagesStreamFallbackModes,
   MessagesStreamModes,
   stringDeserializers,
@@ -99,8 +101,11 @@ export interface KafkaProjectionTransport {
     positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
   ) => Promise<KafkaProjectionStream>
-  readonly close: () => Promise<void>
+  readonly close: () => Promise<KafkaProjectionClosed>
 }
+export type KafkaProjectionClosed =
+  | { readonly _tag: 'Closed' }
+  | { readonly _tag: 'ClosedAfterCoordinatorFailure'; readonly cause: unknown }
 export type KafkaProjectionTransportFactory = (
   config: KafkaMarketConfig,
   epoch: string,
@@ -167,13 +172,31 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     retries: 2,
     retryDelay: 250,
   })
-  let closePromise: Promise<void> | undefined
+  let closePromise: Promise<KafkaProjectionClosed> | undefined
   let active: MessagesStream<string, Buffer, string, string> | undefined
-  const close = (): Promise<void> => {
+  const close = (): Promise<KafkaProjectionClosed> => {
     if (closePromise === undefined) {
       active?.destroy()
-      closePromise = new Promise<void>((resolve, reject) => {
-        consumer.close(true, (error) => (error !== null && error !== undefined ? reject(error) : resolve()))
+      closePromise = new Promise<KafkaProjectionClosed>((resolve, reject) => {
+        consumer.close(true, (error) => {
+          if (error === null || error === undefined) {
+            resolve({ _tag: 'Closed' })
+            return
+          }
+          // The SDK returns before closing its connection pool when LeaveGroup fails.
+          // A lost coordinator acknowledgement cannot keep this offset-free reader alive.
+          Base.prototype.close.call(consumer).then(
+            () => {
+              if (
+                findErrorBy(error, 'apiId', 'COORDINATOR_NOT_AVAILABLE') !== null &&
+                findErrorBy(error, 'canRetry', false) === null
+              )
+                resolve({ _tag: 'ClosedAfterCoordinatorFailure', cause: error })
+              else reject(error)
+            },
+            (closeError) => reject(new AggregateError([error, closeError], 'Kafka consumer teardown failed')),
+          )
+        })
       })
     }
     return closePromise
@@ -367,6 +390,14 @@ export const makeKafkaMarketProjection = (
               try: () => resource.close(),
               catch: (cause) => failure('close', 'Kafka client close failed', cause),
             }).pipe(
+              Effect.tap((closed) =>
+                closed._tag === 'ClosedAfterCoordinatorFailure'
+                  ? Effect.logWarning('Kafka reader closed locally after coordinator acknowledgement failed', {
+                      epoch,
+                      failureCodes: safeKafkaFailureCodes(closed.cause),
+                    })
+                  : Effect.void,
+              ),
               Effect.tapError((cause) =>
                 Effect.sync(() => {
                   closeFailure = cause
