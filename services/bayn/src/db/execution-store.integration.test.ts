@@ -483,7 +483,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     )
   })
 
-  test('reconciles a stable broker cut in two durable transactions, including replay', async () => {
+  test('reconciles a stable broker cut in one durable transaction when no posting is needed, including replay', async () => {
     const commits: string[] = []
     const tracer = Tracer.make({
       span(options) {
@@ -537,7 +537,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           )
           expect(result.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
           expect(result.brokerState.positions).toEqual([])
-          expect(commits, `replay=${replay}`).toHaveLength(2)
+          expect(commits, `replay=${replay}`).toHaveLength(1)
         }
         const sql = yield* PgClient.PgClient
         const [counts] = yield* sql<{ accounts: number; snapshots: number; reconciliations: number }>`
@@ -699,58 +699,6 @@ describePostgres('PostgreSQL execution persistence', () => {
           unknownMutationCount: 0,
         })
         expect(yield* authority.readAuthorityState).toEqual(initial)
-      }),
-    )
-  })
-
-  test('commits broker facts and reconciliation once when no ledger posting is needed', async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationStore
-        const events = yield* BrokerEventStore
-        const valuations = yield* ValuationStore
-        const sql = yield* PgClient.PgClient
-        const result = yield* reconciliation.reconcile(
-          accountId,
-          Effect.gen(function* () {
-            const account = flatAccountEvent()
-            const accountReceipt = yield* events.ingest(account)
-            const positions = yield* events.ingestPositions(positionSnapshot(hash('no-posting-cut'), []))
-            const valuation = yield* valuations.value({
-              accountEventId: accountReceipt.eventId,
-              positionSnapshotId: positions.snapshotId,
-            })
-            return {
-              account: account.account,
-              cashReportingQuantumMicros: '1' as const,
-              positions: [],
-              positionsObservedAt: observedAt,
-              positionSnapshotId: positions.snapshotId,
-              accountEventId: accountReceipt.eventId,
-              orders: [],
-              ordersObservedAt: observedAt,
-              fills: [],
-              fees: [],
-              valuation,
-              reconciledAt: observedAt,
-            }
-          }),
-        )
-        expect(result.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
-        expect(journalControl.postCount).toBe(0)
-        const [transactions] = yield* sql<{ commit_groups: number }>`
-          SELECT count(DISTINCT transaction_id)::integer AS commit_groups FROM (
-            SELECT xmin::text AS transaction_id FROM account_snapshots
-              WHERE event_id=${result.snapshot.accountEventId}
-            UNION ALL
-            SELECT xmin::text FROM account_cash_reporting
-              WHERE account_event_id=${result.snapshot.accountEventId}
-            UNION ALL
-            SELECT xmin::text FROM reconciliations
-              WHERE reconciliation_id=${result.persisted.reconciliation.reconciliationId}
-          ) evidence
-        `
-        expect(transactions?.commit_groups).toBe(1)
       }),
     )
   })
