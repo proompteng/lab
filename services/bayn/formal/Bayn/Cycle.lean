@@ -41,6 +41,32 @@ def unusedEntryExpiry (cycle : CycleEvidence) : Int :=
 def expiredUnusedEntry (cycle : CycleEvidence) (now : Int) : Bool :=
   decide (cycle.snapshotId = none ∧ cycle.decisionHash = none ∧ unusedEntryExpiry cycle ≤ now)
 
+def expiredInferenceRetryAllowed (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) : Prop :=
+  expiredWaiting = true ∧ cycle.state = .active ∧ cycle.snapshotId = none ∧ cycle.decisionHash = none ∧
+  max cycle.createdAt cycle.submissionOpenAt ≤ now ∧ now < unusedEntryExpiry cycle
+
+instance (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) :
+    Decidable (expiredInferenceRetryAllowed expiredWaiting cycle now) := inferInstanceAs (Decidable (_ ∧ _))
+
+def expiredInferenceContinuation (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) : Option Nat :=
+  if expiredInferenceRetryAllowed expiredWaiting cycle now then some 1 else none
+
+theorem expired_inference_retry_requires_original_window (expiredWaiting : Bool) (cycle : CycleEvidence)
+    (now : Int) (delay : Nat) (retry : expiredInferenceContinuation expiredWaiting cycle now = some delay) :
+    expiredInferenceRetryAllowed expiredWaiting cycle now := by
+  unfold expiredInferenceContinuation at retry
+  split at retry
+  · assumption
+  · contradiction
+
+theorem expired_inference_cannot_retry_after_original_deadline (expiredWaiting : Bool) (cycle : CycleEvidence)
+    (now : Int) (expired : unusedEntryExpiry cycle ≤ now) :
+    expiredInferenceContinuation expiredWaiting cycle now = none := by
+  have unavailable : ¬expiredInferenceRetryAllowed expiredWaiting cycle now := by
+    rintro ⟨_, _, _, _, _, before⟩
+    omega
+  simp [expiredInferenceContinuation, unavailable]
+
 def cycleActivation (cycle : CycleEvidence) (now : Int) : String :=
   if cycle.state = .active then "Replay"
   else if !cycleTransitionAllowed cycle.state .active then "conflict"
@@ -204,6 +230,10 @@ theorem executed_completion_requires_financial_evidence (hash : String) (documen
 
 def reachableCycle : CycleEvidence :=
   ⟨⟨"cycle", "jev", "protocol", "qualification", "account"⟩, .active, 0, 1, 0, 100000, none, none⟩
+
+theorem expired_inference_retry_is_reachable :
+    expiredInferenceContinuation true reachableCycle 12548 = some 1 ∧
+    expiredInferenceContinuation true reachableCycle 60000 = none := by decide
 
 def reachableCycleDecision : CycleDecisionEvidence :=
   ⟨reachableCycle.identity, "decision", true, ⟨"snapshot", "content", 1⟩,

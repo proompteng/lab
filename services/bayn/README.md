@@ -451,6 +451,44 @@ controller handles without terminating its process. Reports retain typed operati
 exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
 error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
+## Webull research ingestion
+
+`bayn-webull-research` reads the normalized Webull archive and compares completed M1 bars with the current Alpaca
+IEX archive. It is a read-only research/scanner input. Reports remain `UNQUALIFIED`; the command has no broker,
+model, order or capital capability. It uses the existing `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME` and
+`BAYN_CLICKHOUSE_PASSWORD`. The existing `bayn` user needs SELECT on the projected
+`signal.webull_research_events_v1` view, which excludes native payload bytes.
+
+Build with `bun run --filter @proompteng/bayn build:research`, then run
+`bun run --filter @proompteng/bayn webull:research --input input.json --output new-report.json`.
+The production image also provides `bayn-webull-research`.
+
+```json
+{
+  "startAt": "2026-11-03T14:30:00.000Z",
+  "durationMinutes": 30,
+  "selection": { "kind": "symbols", "symbols": ["AAPL", "NVDA", "SPY"] }
+}
+```
+
+Use `"selection": { "kind": "catalog" }` for all symbols represented in captured requests. A five-minute catalog
+window fits a full supported sweep; narrow longer windows if any query exceeds 100,000 rows. The command fails on
+truncation, malformed rows, future windows or query timeout and refuses to overwrite output. Windows are minute-aligned,
+1–360 minutes, and bounded by collector receipt as well as completed bar time. The report hashes its content and
+retains exact decimal OHLCV, receipt/archive nanoseconds, payload hashes, UUIDs and Kafka coordinates. Recovery repeats
+collapse by provider/feed/symbol/minute/session, retaining the latest received revision and its observation count. Counts include repeated recovery responses or Kafka publications.
+
+Coverage keeps `EMPTY`, `EXCLUDED`, `OMITTED`, `REJECTED` and missing-request states explicit. Freshness is measured
+from bar start with a six-minute budget; an empty response does not establish a fresh bar. Gap captures remain in the
+report. The captured request catalog does not prove that every listed symbol is entitled or has traded. Existing raw
+rows written before normalization have empty normalized arrays until an explicit, provenance-preserving replay.
+
+Comparisons match symbol and UTC minute while retaining Webull Nasdaq Basic and Alpaca IEX labels, sessions and
+provenance. Webull decimal text stays exact; Alpaca's existing archive stores Float64, and the report states that
+precision difference. Price and volume differences can reflect venue coverage. Missing sides remain explicit.
+This is a current retained-archive research export with a collector-receipt cutoff; it cannot establish what Bayn
+could have read historically and cannot serve as a qualified backtest or live decision snapshot.
+
 ## Profitability goal
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
@@ -516,6 +554,11 @@ adds the `bayn:` namespace, bounded values and expiry, command cancellation and
 replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
+Initial acquisition retries a native `ECONNREFUSED` failure at most twice, one second
+apart, closing each failed acquisition before the next attempt. Authentication,
+TLS, configuration and timeout failures fail immediately. The retry boundary ends
+before the cache service is exposed, so it never replays a caller's command.
+
 Each command owns that connection through reconnect, its request, and cancellation;
 `SET` and its replica `WAIT` stay together. Observation publication pipelines its
 bounded pair of immutable payloads under one connection owner, then acknowledges
@@ -527,6 +570,11 @@ Replica acknowledgement uses 250 ms waits on the owned connection for the remain
 one-second command budget, without repeating `SET`. Missing acknowledgement at that
 deadline cancels the outstanding work and fails publication. A deadline after a
 negative acknowledgement retains that replication failure as its cause.
+
+The pinned Redis client patch gives each connection attempt a native TCP/TLS
+abort signal. Scope closure or command cancellation closes a socket that is still
+connecting, and a cancelled attempt can only tear down its own socket. A caller's
+abort signal remains active alongside this ownership signal.
 
 Publication-failure logs report only allowlisted dependency, operation, failure-category
 and cause-category fields. An operation deadline remains distinct from a previously
@@ -632,10 +680,17 @@ Observed cash-fee preparation uses that same indexed baseline reader before addi
 deltas. Its regression checks the executed PostgreSQL plans against a populated account history, including foreign
 accounts and account events without retained snapshots; this does not change fee bounds or ledger posting order.
 
-Reconciliation owns two writer-fenced transactions. The first recovers previously committed fee plans before
+Reconciliation first recovers previously committed fee plans under the writer fence before
 accounting new fills, then ingests the broker cut, retains its cash precision and prepares new fee plans together.
-The second posts those newly committed plans, verifies accounting and records reconciliation. Preparation must
-commit before its ledger posting; the operation rejects an ambient transaction that would erase this boundary.
+If recovery or fill accounting was required, ingestion cannot prove it performed no posting, or preparation creates
+pending settlement, accrual, activity or correction work, preparation commits independently before the second
+transaction posts and verifies it. Posted fee plans also require their exact acknowledgement before this work is
+complete. If no posting is required, verification and reconciliation share the preparation commit. Verification
+runs behind an owned savepoint: failures during verification, including query errors, defects and interruption,
+roll back its writes, commit the prepared broker facts, then surface the original failure. Cancellation after
+verification has completed still allows masked commit cleanup to finish and propagates interruption. A failed
+savepoint rollback or commit remains an error and cannot claim that preparation was retained. The operation rejects
+an ambient transaction that would erase these boundaries.
 Fee preparation rechecks the exact account, amount, time and precision binding without rewriting it. Failed
 preparation rolls back the new cut and its precision together; previously committed plans remain recoverable.
 Replay cannot change the retained precision or account binding, duplicate inventory debits or bypass writer fencing.
@@ -673,6 +728,17 @@ falling back to the idle interval. Every continuation rechecks existing evidence
 Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
 wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
 authority restriction.
+
+An expired Jev observation or completed batch reports `INFERENCE_EXPIRED`. While its cycle is active and unbound,
+and the original unused-entry lease remains open, the controller requests its minimum one-millisecond continuation
+instead of spending the ordinary poll interval idle. The next serialized pass reacquires current evidence and keeps
+the original cycle creation time, lease expiry, inference validity, risk checks, and authority. Expired receipts remain
+unusable. A consumed source window still waits for its next valid signal boundary. Missing, pending, failed, or
+inconsistent inference keeps the ordinary backoff. The same expiry classification applies when the source deadline
+passes during fresh reconciliation or pricing while the original lease is still open. A clock preceding the saved
+completion, missing reconciliation freshness, insufficient prospective quote coverage, or an expired admission
+keeps the ordinary backoff. Both inference readiness
+conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
 
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
 wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
@@ -802,8 +868,8 @@ without changing which exclusions can support a no-entry decision.
 An on-time, verified all-excluded batch reports `SNAPSHOT_UNAVAILABLE` for missing candidate evidence or
 `SNAPSHOT_STALE` for stale candidate pricing, with the affected symbols in its readiness message. It does not report
 an inference outage when no model request was made. The observation remains unusable: source exclusions do not become
-verified non-signals. Expired or inconsistent batch evidence retains `INFERENCE_UNAVAILABLE`; requested-candidate
-evaluation and all trading, freshness, and accounting checks are unchanged.
+verified non-signals. Expired batch evidence reports `INFERENCE_EXPIRED`; inconsistent batch evidence retains
+`INFERENCE_UNAVAILABLE`. Requested-candidate evaluation and all trading, freshness, and accounting checks are unchanged.
 
 Each model request commits its at-most-once claim before inference. Entry batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
 transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
@@ -967,7 +1033,7 @@ database's request receipts and resolutions, serializes competing recovery, and 
 Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
 If mandatory observation persistence consumes the original validity window before an unrecorded batch can start,
-admission returns typed expiry and observation evaluation waits with `INFERENCE_UNAVAILABLE`. It creates no plan,
+admission returns typed expiry and observation evaluation waits with `INFERENCE_EXPIRED`. It creates no plan,
 request claim, model call or decision. The retained observation still consumes its signal window, and protection
 checks remain first on every management pass. The admission span and JSON warning retain the batch and cycle IDs,
 original observation and expiry times, checked time and elapsed admission lag. Clock regression, corrupted evidence
