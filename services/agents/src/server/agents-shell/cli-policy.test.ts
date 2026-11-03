@@ -43,6 +43,23 @@ describe('read-only CLI inspection', () => {
     expect(() => requireReadOnlyKubectlArgs(args)).toThrow()
   })
 
+  it.each([
+    ['-n', 'rook-ceph', 'exec', 'deployment/rook-ceph-tools', '--', 'ceph', 'fsid'],
+    ['--namespace=rook-ceph', 'exec', 'pod/osd', '--', 'ceph', 'status'],
+    ['exec', '-n', 'rook-ceph', 'pod/osd', '--', 'true'],
+    ['--context', 'in-cluster', '-n', 'rook-ceph', 'delete', 'pod/osd'],
+    ['auth', 'reconcile', '-f', 'rbac.yaml'],
+  ])('identifies a tool-routing rejection for kubectl %j', (...args) => {
+    expect.assertions(3)
+    try {
+      requireReadOnlyKubectlArgs(args)
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'KUBECTL_REQUIRES_ADMIN' })
+      expect((error as Error).message).toContain('before execution')
+      expect((error as Error).message).toContain('rediscover kubectl_admin')
+    }
+  })
+
   it('preserves literal argument whitespace and empty argument values', () => {
     expect(normalizeCliArgs('git', ['grep', ' padded ', ''])).toEqual(['grep', ' padded ', ''])
   })

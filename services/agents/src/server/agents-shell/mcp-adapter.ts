@@ -127,6 +127,9 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
       structuredContent: {
         code: error.code,
         message: error.message,
+        ...(error.code === 'KUBECTL_REQUIRES_ADMIN'
+          ? { layer: 'tool-policy', requiredTool: 'kubectl_admin', executionStarted: false }
+          : {}),
         ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
       },
     }

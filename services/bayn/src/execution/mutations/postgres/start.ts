@@ -42,40 +42,8 @@ export const makeMutationStartPostgres = (
   fence: WriterFenceService,
   events: MutationEventPostgres,
 ): MutationStartPostgres => {
-  const readAuthorityBinding = (operation: MutationOperation, closeOnly = false) =>
-    sql<{
-      effective: string
-      generation_hash: string
-      generation_account_id: string | null
-      generation_maximum: string | null
-      kill_state: string
-      maximum: string
-    }>`
-      SELECT
-        authority.maximum,
-        authority.effective,
-        authority.kill_state,
-        authority.generation_hash,
-        generation.maximum AS generation_maximum,
-        generation.account_id AS generation_account_id
-      FROM authority_state AS authority
-      LEFT JOIN authority_generations AS generation
-        ON generation.generation_hash = authority.generation_hash
-      WHERE authority.singleton
-      FOR UPDATE OF authority
-    `.pipe(
-      Effect.flatMap((rows) =>
-        fromDecision(() =>
-          Result.flatMap(decodeAuthoritySnapshot(operation, rows), (authority) =>
-            decideMutationAuthority(operation, authority, closeOnly),
-          ),
-        ),
-      ),
-    )
-
-  const requireNoOtherUnresolved = (intentId: string) =>
-    sql<{ unresolved: boolean }>`
-      SELECT EXISTS (
+  const otherUnresolved = (intentId: string) => sql`
+      EXISTS (
         SELECT 1
         FROM (
           SELECT DISTINCT ON (events.mutation_id)
@@ -104,9 +72,55 @@ export const makeMutationStartPostgres = (
               AND latest.event_type = 'RECOVERY_FOUND'
             )
           )
-      ) AS unresolved
+      )
+    `
+
+  const readAuthorityBinding = (operation: MutationOperation, closeOnly = false, admissionIntentId?: string) =>
+    sql<{
+      effective: string
+      generation_hash: string
+      generation_account_id: string | null
+      generation_maximum: string | null
+      kill_state: string
+      maximum: string
+      unresolved: boolean
+    }>`
+      SELECT
+        authority.maximum,
+        authority.effective,
+        authority.kill_state,
+        authority.generation_hash,
+        generation.maximum AS generation_maximum,
+        generation.account_id AS generation_account_id,
+        ${admissionIntentId === undefined ? sql`false` : otherUnresolved(admissionIntentId)} AS unresolved
+      FROM authority_state AS authority
+      LEFT JOIN authority_generations AS generation
+        ON generation.generation_hash = authority.generation_hash
+      WHERE authority.singleton
+      FOR UPDATE OF authority
     `.pipe(
-      Effect.flatMap((rows) => fromDecision(() => Result.flatMap(decodeUnresolved(rows), decideMutationContainment))),
+      Effect.flatMap((rows) =>
+        fromDecision(() =>
+          Result.flatMap(
+            decodeAuthoritySnapshot(
+              operation,
+              rows.map(({ unresolved: _unresolved, ...authority }) => authority),
+            ),
+            (authority) => decideMutationAuthority(operation, authority, closeOnly),
+          ),
+        ).pipe(
+          Effect.tap(() =>
+            admissionIntentId === undefined
+              ? Effect.void
+              : fromDecision(() =>
+                  Result.flatMap(
+                    decodeUnresolved(rows.map(({ unresolved }) => ({ unresolved }))),
+                    decideMutationContainment,
+                  ),
+                ),
+          ),
+        ),
+      ),
     )
 
   const readIntent = (operation: MutationOperation, intentId: string) =>
@@ -165,8 +179,13 @@ export const makeMutationStartPostgres = (
       const replay = yield* fromDecision(() => decideMutationStartReplay(operation, input, existing))
       if (replay._tag === 'ReplayMutation') return replay.receipt
 
-      const authority = yield* readAuthorityBinding(operation, input.closeOnly === true)
-      if (operation === MutationOperation.Submit) yield* requireNoOtherUnresolved(input.intentId)
+      // The writer lease already excludes other mutation writers. Read containment in the authority-lock query
+      // instead of paying another roundtrip inside the approval lifetime; both decisions retain their validation.
+      const authority = yield* readAuthorityBinding(
+        operation,
+        input.closeOnly === true,
+        operation === MutationOperation.Submit ? input.intentId : undefined,
+      )
       const intent = yield* readIntent(operation, input.intentId)
       const submitted =
         operation === MutationOperation.Cancel
