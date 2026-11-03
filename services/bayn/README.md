@@ -517,7 +517,10 @@ replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
 Each command owns that connection through reconnect, its request, and cancellation;
-`SET` and its replica `WAIT` stay together. Queued commands retain the one-second
+`SET` and its replica `WAIT` stay together. Observation publication pipelines its
+bounded pair of immutable payloads under one connection owner, then acknowledges
+both writes with one replication barrier before publishing their database references.
+Neither write is replayed after a failure or cancellation. Queued commands retain the one-second
 deadline, and interrupting a queued caller does not close an active caller's socket.
 Reconnect happens on the next command rather than in a competing background retry.
 Replica acknowledgement uses 250 ms waits on the owned connection for the remaining
@@ -1329,19 +1332,25 @@ than returning a partial session. Keep evidence, rate cards, and report outputs 
 endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
 
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
-most 64 resolved requests for its bound account, freezes the original request/receipt/resolution hashes and tariff
-in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current claims produce
-separate `CHART` and `JEV` quotes, with batches of at most 64 quotes per write. Their transfer identities include the
+most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
+in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
+requests retain separate `CHART`, `BASE_START`, and `JEV` stage quotes, including explicit skips and unsuccessful calls,
+with batches of at most 64 quotes per write. Their transfer identities include the
 provider stage; retained single-provider Jev expenses keep their original identities. That ledger's unit is
 **USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
 units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
 estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
 
-Migration 150 stores the request wire version as a generated column derived from its immutable payload. Expense
-discovery groups historical quote coverage using that metadata, then materializes at most 64 pending request IDs.
-It loads full payloads only for that batch, avoiding repeated per-request quote probes and historical chart payload
-reads. The selected pending batch still loads and verifies the original
-request, handoff, receipt and resolution. Late receipts remain discoverable and existing quote identities do not change.
+Migration 173 backfills pending work once from the retained request and quote metadata. Inserts of resolutions,
+receipts, handoffs, claims, terminals, and skips enqueue the affected request in the same PostgreSQL transaction.
+Discovery examines this queue instead of rescanning historical requests on every pass. Only the selected batch
+loads the original request, handoff, receipt, resolution, and stage evidence for verification. Coverage counts distinct
+provider stages so multiple retained quote versions cannot hide an unquoted stage.
+
+Freezing quotes retires a queue item only when its current source is fully covered. Cleanup compares the observed
+sequence revision, preserving a concurrent late receipt; deletion and re-enqueue cannot reuse a revision. A crash
+between freezing and cleanup leaves recoverable work. Historical quotes, tariffs, verification timestamps, financial
+transfers, and source evidence keep their original identities and bytes.
 
 This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
 $0.042 per million input tokens and zero output charge, verified at `https://docs.typesafe.ai/models` on
