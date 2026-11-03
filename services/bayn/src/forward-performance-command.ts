@@ -2,6 +2,8 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
 import { loadForwardPerformanceConfig } from './forward-performance/config'
+import { decodeConfiguredCapitalActivation } from './composition/capital-activation'
+import { JevResearchPolicy } from './jev/acceptance'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
@@ -167,6 +169,36 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
             return yield* new SystemAssessmentError({
               message: 'Prospective registration must use the configured runtime deadlines and strategy protocol',
             })
+          const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+          if (
+            candidate === undefined ||
+            candidate.sourceRevision !== config.build.sourceRevision ||
+            `sha256:${candidate.imageDigest}` !== config.build.imageDigest
+          )
+            return yield* new SystemAssessmentError({
+              message: 'Prospective registration must bind the current physical worker build',
+            })
+          if (config.capitalActivationRequestJson !== undefined) {
+            const configured = yield* Effect.fromResult(
+              decodeConfiguredCapitalActivation(
+                config.capitalActivationRequestJson,
+                config.researchCapitalBuildLineageJson,
+              ),
+            ).pipe(Effect.mapError((message) => new SystemAssessmentError({ message })))
+            const expected =
+              configured.buildLineage === null
+                ? undefined
+                : { request: configured.request, buildLineage: configured.buildLineage }
+            if (
+              (candidate.capitalAuthorization === undefined) !== (expected === undefined) ||
+              (expected !== undefined &&
+                (yield* Effect.fromResult(canonicalHashV1Result(candidate.capitalAuthorization))) !==
+                  (yield* Effect.fromResult(canonicalHashV1Result(expected))))
+            )
+              return yield* new SystemAssessmentError({
+                message: 'Prospective registration must preserve the configured reviewed capital lineage',
+              })
+          }
           return yield* registerSystemQualification(registration, packet.verifiedSources)
         }
         const input = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(packet.payload)

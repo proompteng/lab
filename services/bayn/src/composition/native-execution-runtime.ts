@@ -18,6 +18,7 @@ import {
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlan } from '../app'
+import type { ExecutionBuild } from '../build'
 import {
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
@@ -119,6 +120,7 @@ export const executionControllerConfig = (
 
 const bindRecoveryFirstCycleDriver = (
   driver: RecoveryFirstCycleDriver,
+  executionBuild: ExecutionBuild,
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
@@ -184,6 +186,7 @@ const bindRecoveryFirstCycleDriver = (
           ...advanced,
           observation: {
             ...advanced.observation,
+            executionBuild,
             jevObservationReferences: { hashes: [...hashes].sort(), complete },
           },
         }
@@ -193,9 +196,9 @@ const bindRecoveryFirstCycleDriver = (
   )
 
 export const captureRecoveryFirstCycleDriver =
-  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverOwner =>
+  (slot: RecoveryFirstCycleDriverSlot, executionBuild: ExecutionBuild): RecoveryFirstCycleDriverOwner =>
   (driver) =>
-    bindRecoveryFirstCycleDriver(driver).pipe(
+    bindRecoveryFirstCycleDriver(driver, executionBuild).pipe(
       Effect.flatMap((bound) =>
         Ref.set(slot.state, { _tag: 'Ready', driver: bound }).pipe(
           Effect.andThen(Deferred.succeed(slot.ready, undefined)),
@@ -476,7 +479,11 @@ const logEffect = (
 
 const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
-    ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
+    ownCycleDriver: captureRecoveryFirstCycleDriver(slot, {
+      sourceRevision: plan.config.build.sourceRevision,
+      imageRepository: plan.config.build.imageRepository,
+      imageDigest: plan.config.build.imageDigest,
+    }),
   }).pipe(
     Effect.flatMap(({ runtime }) => prepareAutonomousApplication(runtime)),
     Effect.flatMap(({ cycleFiber }) =>

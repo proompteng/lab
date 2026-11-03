@@ -1,5 +1,10 @@
 import { Result, Schema } from 'effect'
 import {
+  ResearchCapitalActivationRequestSchema,
+  ResearchCapitalBuildLineageSchema,
+  researchCapitalBuildLineageIsCurrent,
+} from '../execution/configuration'
+import {
   makeRepeatedMomentumPolicy,
   repeatedMomentumStrategyIdentity,
   repeatedMomentumPromptsHash,
@@ -71,6 +76,12 @@ export const PolicyDefinitionSchema = Schema.Struct({
   policy: Schema.Enum(JevResearchPolicy),
   accountBindingHash: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
+  capitalAuthorization: Schema.optionalKey(
+    Schema.Struct({
+      request: ResearchCapitalActivationRequestSchema,
+      buildLineage: ResearchCapitalBuildLineageSchema,
+    }),
+  ),
   riskPolicyHash: Sha256Schema,
   riskPolicy: PolicySchema,
   sourceRevision: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
@@ -231,6 +242,26 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     const tariffFloor = yield* jevAcceptanceInferenceRateFloor(version)
     const riskCeilings = jevAcceptanceExecutionRiskLimits(version)
     for (const policy of registration.policies) {
+      if (policy.capitalAuthorization !== undefined) {
+        const { request, buildLineage } = policy.capitalAuthorization
+        const binding = researchCapitalBuildLineageIsCurrent(buildLineage, request, {
+          sourceRevision: policy.sourceRevision,
+          imageRepository: buildLineage.activation.imageRepository,
+          imageDigest: `sha256:${policy.imageDigest}`,
+        })
+        if (
+          Result.isFailure(binding) ||
+          buildLineage.activation.imageRepository !== request.activation.imageRepository ||
+          request.broker.accountId !== policy.riskPolicy.accountId ||
+          request.riskPolicyHash !== policy.riskPolicyHash ||
+          request.strategy.behaviorHash !== policy.strategyHash ||
+          request.strategy.parameterHash !== policy.parametersHash ||
+          request.strategy.protocolHash !== policy.protocolHash
+        )
+          return yield* invalid(
+            'Registered physical build must retain its original mandate, strategy and risk identity',
+          )
+      }
       if (
         policy.riskPolicyHash !== (yield* canonicalHashV1Result(policy.riskPolicy)) ||
         policy.accountBindingHash !==
