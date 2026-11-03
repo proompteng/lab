@@ -315,6 +315,52 @@ measurements do not qualify cross-host replication, S3-plus-SQL capture capacity
 `bayn-db` retains its existing storage layout. The canary Job, policy, script ConfigMap and two isolated claims are
 removed from desired state after archival; production database volumes and backup/replication settings are preserved.
 
+### November 2026 financial WAL migration
+
+On November 3 a financial COMMIT took 40.333 seconds. The retained PostgreSQL 18 metrics sampled an active query
+waiting on `SyncRep` at age 36.665 seconds, with substantial WAL fsync time on both peers and no CPU throttling.
+Batch receipt persistence crossed the unchanged ten-second inference validity and thirty-second native pass budget.
+The earlier disposable comparison only tested two layouts on the same Ceph HDD pool; it did not test local NVMe
+or synchronous cross-host acknowledgement. Its results remain retained and do not establish this migration's benefit.
+
+`bayn-db` now declares separate 32Gi WAL volumes on `local-path-bayn-wal`. The existing PGDATA volumes, their UIDs,
+database identity, financial history, Barman object store and backup retention remain in place. The WAL allocation
+provides headroom above the configured 4GB checkpoint WAL target; it is not a trading, qualification or retention
+quota. Local-path does not enforce a filesystem quota or support online claim expansion. Monitor actual filesystem
+capacity and archiving; an archive outage can retain more WAL than the checkpoint target.
+
+The new class uses the verified local NVMe mounts on Altra and Turin, with one explicit path on each host and retained
+volumes. PostgreSQL's required `ANY 1` synchronous durability replaces the deprecated min/max replica configuration:
+commits require the other host's durable acknowledgement even when a replica is unavailable. Keep two instances,
+hard host anti-affinity, the 100G placement, `synchronous_commit=on`, fsync and full-page writes. Do not reduce Ceph
+scrubbing, disable synchronous commit or extend application deadlines to hide slow storage.
+The independent native-arrival archive adopts the same required synchronous durability while retaining its existing
+Ceph PGDATA/WAL layout, identities and backup configuration.
+
+Rollout order:
+
+1. Merge and sync the reviewed [local-path configuration](../local-path/README.md). Verify the class and the
+   provisioner's loaded configuration before enabling this Bayn revision.
+2. Retain the current financial/capital readback, both PGDATA PVC/PV identities, replication position and backup/WAL
+   archiving evidence. Require both existing instances healthy and caught up before starting the operator rollout.
+3. Deliver the Bayn revision through its normal reviewed image, Kargo and Argo path. CloudNativePG 1.30.1 migrates
+   WAL during its managed instance rollout and switchover; do not delete or recreate existing PGDATA volumes.
+   With two instances and required synchronous durability, writes can pause while the standby restarts. Retain those
+   operational failures; the maintenance interval cannot become successful service by changing its deadlines.
+4. Verify both WAL claims use the retained class, their node affinity matches the expected host and `pg_wal` resolves
+   to the dedicated volume. Verify both peers, exact synchronous settings, current archiving, unchanged PGDATA and
+   financial/capital readback. Then verify actual native equity inputs, durable timely decisions, exact reconciliation
+   and complete accounting at the deployed source. Report measured commit latency independently of reliability.
+
+Adding `walStorage` is one-way for an existing CloudNativePG cluster. Never revert it out of desired state, remove
+the retained WAL files, or rebind a failed host's local volume elsewhere. Application code recovery must preserve
+this storage configuration. A lost device requires the normal verified standby reconstruction/failover procedure;
+retain surviving financial data and stop administrative changes if replication or accounting cannot be established.
+Class readiness, an operator rollout and lower latency do not establish the prospective 99.9% result.
+See [CloudNativePG storage](https://cloudnative-pg.io/docs/1.30/storage/#volume-for-wal), its
+[existing-cluster WAL migration tests](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/tests/e2e/pg_wal_volume_test.go),
+and [required synchronous durability](https://cloudnative-pg.io/docs/1.30/replication/#data-durability-and-synchronous-replication).
+
 Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
 defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
 quorum loss and recovery churn. The larger replication heartbeat window prevents that additional churn; it does

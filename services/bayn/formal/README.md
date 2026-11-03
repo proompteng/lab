@@ -259,6 +259,16 @@ The native controller regression retains the captured late-commit work durations
 the ordinary idle delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
 These proofs do not guarantee storage or provider latency; a retried response still has to pass the existing checks.
 
+`pending_inputs_retry_retains_original_admission` maps the query-bound `SNAPSHOT_UNAVAILABLE` continuation in the
+same function. It bounds each recheck by one second, the ordinary cadence and the remaining original admission;
+`pending_inputs_cannot_retry_after_original_deadline` excludes an expired lease. Another 3,360 executable comparisons
+cover the query marker, states, bindings, clocks and two ordinary cadences. A missing query does not accelerate an
+unclassified outage. The post-pass projection health check still replaces this hint with the source failure's backoff.
+Pending inputs remain operationally incomplete; neither waiting nor a timely recheck establishes a valid decision.
+The recovery driver publishes the absolute wake instant with the delay. Its composition regression exercises the
+real driver; native controller tests retain that instant across persistence work and projected replay, so durable
+publication cannot restart the source wait from a later clock.
+
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
 modes, risk blocks, and attached versus explicitly supplied completion evidence. The full document-equivalence predicate

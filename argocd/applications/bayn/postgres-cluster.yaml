@@ -15,8 +15,6 @@ spec:
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
-  minSyncReplicas: 1
-  maxSyncReplicas: 1
   managed:
     roles:
       - name: bayn_research
@@ -56,6 +54,10 @@ spec:
     storageClass: rook-ceph-block
     size: 100Gi
     resizeInUseVolumes: true
+  walStorage:
+    storageClass: local-path-bayn-wal
+    size: 32Gi
+    resizeInUseVolumes: false
   bootstrap:
     initdb:
       database: bayn
@@ -63,6 +65,10 @@ spec:
       encoding: UTF8
       dataChecksums: true
   postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
     parameters:
       jit: "off"
       shared_buffers: 512MB
