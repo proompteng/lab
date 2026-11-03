@@ -334,6 +334,8 @@ volumes. PostgreSQL's required `ANY 1` synchronous durability replaces the depre
 commits require the other host's durable acknowledgement even when a replica is unavailable. Keep two instances,
 hard host anti-affinity, the 100G placement, `synchronous_commit=on`, fsync and full-page writes. Do not reduce Ceph
 scrubbing, disable synchronous commit or extend application deadlines to hide slow storage.
+The independent native-arrival archive adopts the same required synchronous durability while retaining its existing
+Ceph PGDATA/WAL layout, identities and backup configuration.
 
 Rollout order:
 
