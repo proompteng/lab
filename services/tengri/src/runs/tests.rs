@@ -131,7 +131,7 @@ async fn status_reads_accept_delayed_authorized_responses() {
                         })
                         .unwrap()
                     };
-                    tokio::time::sleep(Duration::from_millis(2200)).await;
+                    tokio::time::sleep(Duration::from_secs(6)).await;
                     ([("x-restate-id", "inv_delayed-read")], axum::Json(value))
                 }
             }
@@ -490,6 +490,25 @@ async fn recovering_status_read_child() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn read_recovery_keeps_a_pending_response_within_its_total_budget() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let attempts = AtomicUsize::new(0);
+    let started = tokio::time::Instant::now();
+    let result = recover_status("status", || {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        async {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            Ok("confirmed")
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(result, "confirmed");
+    assert_eq!(started.elapsed(), Duration::from_secs(6));
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn read_recovery_stops_at_its_total_budget_and_does_not_retry_invalid_responses() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let attempts = AtomicUsize::new(0);
@@ -502,7 +521,7 @@ async fn read_recovery_stops_at_its_total_budget_and_does_not_retry_invalid_resp
     .unwrap_err();
     assert_eq!(error.code(), tonic::Code::Unavailable);
     assert_eq!(started.elapsed(), STATUS_RECOVERY_TIMEOUT);
-    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 
     let response = http::Response::builder()
         .status(200)

@@ -15,6 +15,7 @@ on:
       - 'argocd/applications/relay/**'
       - 'nix/packages/relay.nix'
       - 'nix/images/relay.nix'
+      - 'nix/images/agentrun-tools.nix'
   push:
     branches: [main]
     paths:
@@ -63,6 +64,14 @@ jobs:
           cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
           cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
           cargo test --manifest-path services/relay/Cargo.toml --locked -p platform-client
+      - uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned native platform fixture tools
+        run: |
+          set -euo pipefail
+          tools="$(nix build --no-link --print-out-paths .#ofz-fixture-tools)"
+          echo "${tools}/bin" >> "$GITHUB_PATH"
       - name: Qualify native policy package
         run: bash services/ofz/qualify-platform.sh
       - name: Execute both platform clients through Ofz and Relay

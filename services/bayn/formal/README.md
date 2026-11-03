@@ -357,7 +357,10 @@ unpriced stage. Conformance invokes
 the actual quote constructors and coverage validator for completed, failed, abandoned, undispatched and late requests,
 retained gap quotes, duplicate coverage and multiple parent requests. The undispatched cases count as zero only with
 positive evidence that those stages were not dispatched; a missing charge remains unknown. Actual PostgreSQL/TigerBeetle tests separately verify late Jev
-posting after a committed chart charge and recovery from partial postings without duplicate transfers.
+posting after a committed chart charge and recovery from partial postings without duplicate transfers. Migration 173's pending-source
+queue is operational metadata: real PostgreSQL tests cover historical backfill, transactional rollback, re-enqueue,
+and a late receipt committing while covered-source deletion waits on its row lock. These transaction tests, rather
+than the pure coverage theorem, establish the queue's concurrency behavior.
 
 Candidate and ablation cases also retain claim-only crashes, terminal receipts before handoff, abandonment and late
 visual-stage usage, rejected responses with charges, and completed provider chains. An unresolved Jev stage has no frozen
