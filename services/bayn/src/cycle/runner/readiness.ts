@@ -39,6 +39,7 @@ export const DecisionReadinessSchema = Schema.Struct({
     Schema.Struct({
       rangeStartAt: UtcInstantSchema,
       rangeEndAt: UtcInstantSchema,
+      previousWindowEndAt: Schema.optionalKey(UtcInstantSchema),
       symbols: Schema.Array(Schema.NonEmptyString),
     }),
   ),
