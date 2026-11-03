@@ -1,4 +1,15 @@
-# Exception tracking
+# Bayn deployment
+
+## Current trading scope
+
+Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before
+transmission even when the retained v37 mandate, account and fee approvals would otherwise permit them. Existing
+crypto positions retain their normal risk-reducing sells, protection, reconciliation and recovery. Equity calendar
+failures never fall back to crypto. Outside the entitled equity data hours, the controller reports the closed window.
+
+This restriction ships through the normal immutable main image and Kargo/Argo path. It does not replace the account,
+change the risk limits, reset financial history or revoke PAPER capital. The deployed `/v1/status` response reports
+`tradingScope.entryMarkets: ["EQUITY"]`; retained crypto cycles report recovery-only or closed entry scope.
 
 ## Jev-only inference
 
