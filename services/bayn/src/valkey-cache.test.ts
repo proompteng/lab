@@ -33,6 +33,7 @@ const transportFixture = async (
   const outerDeadline = ['replica-timeout', 'unreplicated', 'first-wait-timeout', 'set-timeout'].includes(mode)
   let response = mode
   const received = Promise.withResolvers<void>()
+  const secondWriteReceived = Promise.withResolvers<void>()
   let closed = Promise.withResolvers<void>()
   let closes = 0
   let writes = 0
@@ -73,7 +74,7 @@ const transportFixture = async (
           if (response === 'disconnect') socket.end()
         } else if (args[0]?.toUpperCase() === 'SET') {
           writes++
-          received.resolve()
+          if (writes === 2) secondWriteReceived.resolve()
           values.set(args[1] ?? '', args[2] ?? '')
           if (response === 'error' || (response === 'partial-write-error' && writes === 2))
             socket.write('-WRONGTYPE fixture\r\n')
@@ -113,6 +114,7 @@ const transportFixture = async (
   if (address === null || typeof address === 'string') throw new Error('Expected a TCP test listener')
   return {
     received: received.promise,
+    secondWriteReceived: secondWriteReceived.promise,
     closed: () => closed.promise,
     closes: () => closes,
     writes: () => writes,
@@ -269,7 +271,7 @@ describe('required native Effect Valkey binding', () => {
               { key: 'bayn:state', value: 'state', ttlMs: 60_000 },
             ])
             .pipe(Effect.forkChild({ startImmediately: true }))
-          yield* Effect.promise(() => fixture.received)
+          yield* Effect.promise(() => fixture.secondWriteReceived)
           expect(fixture.writes()).toBe(2)
           yield* Fiber.interrupt(fiber)
         }),
