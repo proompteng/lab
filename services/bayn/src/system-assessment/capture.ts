@@ -1,6 +1,9 @@
 import { executionDecisionRows } from '../db/execution-decision-query'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
+import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/configuration'
+import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 
 import { canonicalHashV1Result } from '../hash'
 import { readForwardPerformanceInput } from '../forward-performance/program'
@@ -102,8 +105,6 @@ export const readRegisteredFinancialIdentity = (definition: SystemRegistration['
     if (
       row.identity.environment !== BrokerEnvironment.Sandbox ||
       row.riskPolicyHash !== definition.riskPolicyHash ||
-      row.sourceRevision !== definition.sourceRevision ||
-      row.imageDigest.replace(/^sha256:/, '') !== definition.imageDigest ||
       row.strategyHash !== definition.strategyHash ||
       row.parametersHash !== definition.parametersHash ||
       row.protocolHash !== definition.protocolHash ||
@@ -113,6 +114,43 @@ export const readRegisteredFinancialIdentity = (definition: SystemRegistration['
         message:
           'Financial capture account, environment, risk policy or generation provenance differs from registration',
       })
+    const authoredBuildMatches =
+      row.sourceRevision === definition.sourceRevision &&
+      row.imageDigest.replace(/^sha256:/, '') === definition.imageDigest
+    const binding = definition.capitalAuthorization
+    if (!authoredBuildMatches && binding === undefined)
+      return yield* new SystemAssessmentError({
+        message: 'Different execution build requires registered capital lineage',
+      })
+    if (binding !== undefined) {
+      const generation = yield* makeObserveAuthorityInterpreter(
+        sql,
+        makeAuthorityPostgres(sql),
+        row.identity,
+      ).readResearchAuthorityGeneration(definition.authorityGenerationHash)
+      if (generation === undefined)
+        return yield* new SystemAssessmentError({ message: 'Capture capital generation is missing' })
+      if (
+        (yield* Effect.fromResult(canonicalHashV1Result(generation))) !==
+        (yield* Effect.fromResult(canonicalHashV1Result(binding.generation)))
+      )
+        return yield* new SystemAssessmentError({
+          message: 'Registered capital generation differs from durable history',
+        })
+      yield* Effect.fromResult(
+        researchCapitalGenerationIsBoundToBuildLineage(
+          binding.buildLineage,
+          binding.request,
+          {
+            sourceRevision: definition.sourceRevision,
+            imageRepository: binding.buildLineage.activation.imageRepository,
+            imageDigest: `sha256:${definition.imageDigest}`,
+          },
+          generation.previousGenerationHash,
+          generation,
+        ),
+      ).pipe(Effect.mapError((message) => new SystemAssessmentError({ message })))
+    }
     return row.identity
   })
 
@@ -524,6 +562,11 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             ),
           )
           const sourceMaterial = {
+            captureBuild: {
+              sourceRevision: config.build.sourceRevision,
+              imageRepository: config.build.imageRepository,
+              imageDigest: config.build.imageDigest,
+            },
             runtimeConfiguration,
             accounts,
             decisions,

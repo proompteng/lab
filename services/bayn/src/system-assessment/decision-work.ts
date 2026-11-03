@@ -121,6 +121,17 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
   return undefined
 }
 
+export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: SystemRegistration) => {
+  const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  const build = pass.observation.executionBuild
+  return (
+    candidate !== undefined &&
+    build !== undefined &&
+    build.sourceRevision === candidate.sourceRevision &&
+    build.imageDigest === `sha256:${candidate.imageDigest}`
+  )
+}
+
 const registeredControllerOwns = (
   pass: ControllerPassEvidence,
   registration: SystemRegistration,
@@ -153,6 +164,7 @@ const registeredControllerOwns = (
     })
     return (
       candidate !== undefined &&
+      controllerBuildMatchesRegistration(pass, registration) &&
       pass.planHash === registration.obligations.configuration.controllerPlanHash &&
       pass.controllerKey === identity.identityHash &&
       candidate.accountBindingHash === accountHash &&

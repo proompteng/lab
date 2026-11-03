@@ -9,6 +9,7 @@ import { SystemAssessmentError } from './economics'
 
 import { CapturedTradingFactsSchema } from './session'
 import type { SystemRegistration } from './policy'
+import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/configuration'
 import type { SystemSourceCut } from './source-cut'
 import { IsoDateSchema, Sha256Schema } from '../schemas'
 import { cashSettlementMatches } from './cash-settlements'
@@ -102,11 +103,39 @@ export const captureForwardFinancialEvidence = (
       return yield* Result.fail(
         new SystemAssessmentError({ message: 'Forward evidence belongs to a different registered account' }),
       )
+    const authorization = definition.capitalAuthorization
+    if (authorization !== undefined) {
+      const { request, buildLineage, generation } = authorization
+      const bound = researchCapitalGenerationIsBoundToBuildLineage(
+        buildLineage,
+        request,
+        {
+          sourceRevision: definition.sourceRevision,
+          imageRepository: buildLineage.activation.imageRepository,
+          imageDigest: `sha256:${definition.imageDigest}`,
+        },
+        generation.previousGenerationHash,
+        generation,
+      )
+      if (Result.isFailure(bound) || generation.generationHash !== definition.authorityGenerationHash)
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Forward authorization lineage differs from registration' }),
+        )
+    }
     if (
       forward.durableExecutionBindings.some(
         (binding) =>
-          binding.sourceRevision !== definition.sourceRevision ||
-          binding.imageDigest.replace(/^sha256:/, '') !== definition.imageDigest ||
+          binding.sourceRevision !==
+            (authorization?.generation.activationSourceRevision ?? definition.sourceRevision) ||
+          binding.imageDigest.replace(/^sha256:/, '') !==
+            (authorization?.generation.activationImageDigest.replace(/^sha256:/, '') ?? definition.imageDigest) ||
+          (authorization !== undefined &&
+            (binding.imageRepository !== authorization.generation.activationImageRepository ||
+              binding.qualificationRunId !== authorization.generation.grant.planHash)) ||
+          binding.accountId !== forward.account.accountId ||
+          binding.accountReferenceHash !== forward.account.accountReferenceHash ||
+          binding.provider !== forward.account.provider ||
+          binding.environment !== forward.account.environment ||
           binding.strategyBehaviorHash !== definition.strategyHash ||
           binding.strategyParameterHash !== definition.parametersHash ||
           binding.strategyProtocolHash !== definition.protocolHash,
