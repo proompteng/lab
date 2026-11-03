@@ -166,11 +166,15 @@ class Collection:
             elif HOLD in annotations or OWNER in annotations:
                 raise RuntimeError("Argo hold ownership changed; leave it intact")
 
-    def run(self, plan_path, references_path):
+    def run(self, plan_path, references_path, *, restoring=False):
         app = self.get("argocd", "application", "registry")
         deployment = self.get("registry", "deployment", "registry")
         pvc = self.get("registry", "pvc", "registry-data")
         prepared = json.loads(plan_path.read_text())
+        if restoring and (
+            prepared.get("version") != 1 or prepared.get("operation") != "restore"
+        ):
+            raise ValueError("Expected a restoration-only recovery plan")
         if (
             prepared["pvcUid"] != pvc["metadata"]["uid"]
             or prepared["pv"] != pvc["spec"]["volumeName"]
@@ -256,11 +260,15 @@ class Collection:
                 ],
                 timeout=70,
             )
-            for source, destination in [
+            inputs = [
                 (Path(__file__).with_name("cleanup.py"), "cleanup.py"),
                 (plan_path, "plan.json"),
-                (references_path, "references.json"),
-            ]:
+            ]
+            if restoring:
+                inputs.append((Path(__file__).with_name("recover.py"), "recover.py"))
+            else:
+                inputs.append((references_path, "references.json"))
+            for source, destination in inputs:
                 self.command(
                     [
                         "-n",
@@ -368,6 +376,32 @@ class Collection:
                 raise TimeoutError(
                     "No collection budget remains after read-only rollout"
                 )
+            arguments = (
+                [
+                    "/dev/shm/recover.py",
+                    "--plan",
+                    "/dev/shm/plan.json",
+                    "--seconds",
+                    str(remaining - 10),
+                ]
+                if restoring
+                else [
+                    "/dev/shm/cleanup.py",
+                    "collect",
+                    "--plan",
+                    "/dev/shm/plan.json",
+                    "--references",
+                    "/dev/shm/references.json",
+                    "--workers",
+                    "32",
+                    "--seconds",
+                    str(remaining - 10),
+                    "--max-blobs",
+                    str(self.max_blobs),
+                    "--quarantine-id",
+                    self.name,
+                ]
+            )
             try:
                 result = subprocess.run(
                     self.kubectl
@@ -380,21 +414,8 @@ class Collection:
                         "collector",
                         "--",
                         "python3",
-                        "/dev/shm/cleanup.py",
-                        "collect",
-                        "--plan",
-                        "/dev/shm/plan.json",
-                        "--references",
-                        "/dev/shm/references.json",
-                        "--workers",
-                        "32",
-                        "--seconds",
-                        str(remaining - 10),
-                        "--max-blobs",
-                        str(self.max_blobs),
-                        "--quarantine-id",
-                        self.name,
-                    ],
+                    ]
+                    + arguments,
                     text=True,
                     check=False,
                     capture_output=True,
@@ -432,6 +453,10 @@ class Collection:
                     raise error from timeout_error
                 raise
         if timeout_error is not None:
+            if restoring:
+                raise TimeoutError(
+                    "Restoration interrupted; uploads restored; resume the same plan"
+                ) from timeout_error
             from prepare import CONTAINER, maintenance_pod
 
             pod = maintenance_pod(self)["metadata"]["name"]
