@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { QualificationRuntimeSchema } from './configuration'
+import { MarketKind } from '../instruments'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import { validateOperationalRegistration } from './operational-period'
 import { registeredSchedule } from './schedule'
@@ -14,7 +16,7 @@ test('operational reporting needs one real native policy, retained incidents and
     { ...registration, retainedIncidentSources: [] },
     {
       ...registration,
-      calendar: { ...registration.calendar, tradingMarkets: registration.calendar.tradingMarkets.slice(0, 1) },
+      calendar: { ...registration.calendar, tradingMarkets: ['EQUITY', 'CRYPTO'] },
     },
     {
       ...registration,
@@ -60,4 +62,20 @@ test('native reporting rejects omitted time and overlapping cuts', () => {
       ),
     ).toBe(true)
   }
+})
+
+test('new operational periods bind actual equity-only scope while retained financial runtime material remains decodable', () => {
+  const registration = operationalRegistrationFixture()
+  expect(registration.calendar.tradingMarkets).toEqual([MarketKind.Equity])
+  expect(registration.obligations.configuration.entryMarkets).toEqual([MarketKind.Equity])
+  const { entryMarkets: _scope, ...historical } = registration.obligations.configuration
+  expect(Schema.decodeUnknownSync(QualificationRuntimeSchema)(historical)).toEqual(historical)
+  expect(
+    Result.isFailure(
+      validateOperationalRegistration({
+        ...registration,
+        obligations: { ...registration.obligations, configuration: historical },
+      }),
+    ),
+  ).toBe(true)
 })

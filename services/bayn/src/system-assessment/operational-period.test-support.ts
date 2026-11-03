@@ -10,6 +10,8 @@ import { registrationFixture, testHash } from './fixtures.test-support'
 import { operationalReliabilityPolicy, type OperationalRegistration } from './operational-period'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
+import { currentEntryMarkets } from '../execution/trading-scope'
+import { qualificationDeadlines } from './configuration'
 
 export const operationalRegistrationFixture = (): OperationalRegistration => {
   const base = registrationFixture()
@@ -67,6 +69,7 @@ export const operationalRegistrationFixture = (): OperationalRegistration => {
     authoredActivation: request.activation,
     activation: request.activation,
   }
+  const configuration = { ...base.obligations.configuration, entryMarkets: currentEntryMarkets }
   const registration: OperationalRegistration = {
     schemaVersion: 'bayn.operational-registration.v1',
     program: 'BAYN_OPERATIONAL_RELIABILITY',
@@ -79,7 +82,7 @@ export const operationalRegistrationFixture = (): OperationalRegistration => {
     calendar: {
       referenceMarket: 'NATIVE_POLICY',
       operatingHours: 'NATIVE',
-      tradingMarkets: base.calendar.tradingMarkets,
+      tradingMarkets: currentEntryMarkets,
       sourceHash: testHash('complete native reporting scope'),
       sessions: [
         { sessionDate: '2026-11-04', openAt: '2026-11-04T00:00:00.000Z', closeAt: '2026-11-04T00:02:00.000Z' },
@@ -92,7 +95,7 @@ export const operationalRegistrationFixture = (): OperationalRegistration => {
         capitalAuthorization: { request, buildLineage, generation },
       },
     ],
-    obligations: base.obligations,
+    obligations: { ...base.obligations, configuration, ...Result.getOrThrow(qualificationDeadlines(configuration)) },
   }
   const schedule = Result.getOrThrow(registeredSchedule(registration))
   return {

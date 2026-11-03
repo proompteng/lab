@@ -67,12 +67,17 @@ export const validateOperationalRegistration = (input: unknown) =>
     for (const key of Object.keys(deadlines) as (keyof typeof deadlines)[])
       if (registration.obligations[key] !== deadlines[key])
         return yield* invalid('Operational deadlines must match the original runtime configuration')
-    const markets = runtime.protocol.marketProfiles.map((profile) => profile.market)
+    const markets = runtime.entryMarkets
+    if (
+      markets === undefined ||
+      markets.some((market) => !runtime.protocol.marketProfiles.some((profile) => profile.market === market))
+    )
+      return yield* invalid('Operational reporting requires the actual entry scope within the authorized protocol')
     if (
       markets.length !== registration.calendar.tradingMarkets.length ||
       markets.some((market) => !registration.calendar.tradingMarkets.includes(market))
     )
-      return yield* invalid('Operational reporting must retain every native market')
+      return yield* invalid('Operational reporting must match the compiled runtime entry scope')
     let previousClose: string | undefined
     let previousDate = ''
     for (const session of registration.calendar.sessions) {

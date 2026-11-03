@@ -34,7 +34,8 @@ are evaluated separately by the combined assessment and have no error budget.
 
 Operational reporting uses `bayn.operational-registration.v1` in the `BAYN_OPERATIONAL_RELIABILITY` program. It binds
 one existing native PAPER policy, its sealed capital generation and physical execution build, the unchanged runtime
-deadlines, the complete native market scope, and a prospective contiguous reporting period. The registration retains
+deadlines, the compiled runtime entry scope, and a prospective contiguous reporting period.
+The current scope is equities only; retaining the mixed-market capital protocol does not re-enable crypto entries. The registration retains
 the earlier incident evidence. Its attempt chain is append-only; a later period cannot erase an earlier failure.
 There is no research control, bootstrap, profit quota, minimum session count, or trade quota in this operating claim.
 
