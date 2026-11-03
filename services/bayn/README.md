@@ -517,7 +517,10 @@ replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
 Each command owns that connection through reconnect, its request, and cancellation;
-`SET` and its replica `WAIT` stay together. Queued commands retain the one-second
+`SET` and its replica `WAIT` stay together. Observation publication pipelines its
+bounded pair of immutable payloads under one connection owner, then acknowledges
+both writes with one replication barrier before publishing their database references.
+Neither write is replayed after a failure or cancellation. Queued commands retain the one-second
 deadline, and interrupting a queued caller does not close an active caller's socket.
 Reconnect happens on the next command rather than in a competing background retry.
 Replica acknowledgement uses 250 ms waits on the owned connection for the remaining
