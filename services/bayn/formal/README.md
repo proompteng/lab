@@ -265,6 +265,9 @@ same function. It bounds each recheck by one second, the ordinary cadence and th
 cover the query marker, states, bindings, clocks and two ordinary cadences. A missing query does not accelerate an
 unclassified outage. The post-pass projection health check still replaces this hint with the source failure's backoff.
 Pending inputs remain operationally incomplete; neither waiting nor a timely recheck establishes a valid decision.
+The recovery driver publishes the absolute wake instant with the delay. Its composition regression exercises the
+real driver; native controller tests retain that instant across persistence work and projected replay, so durable
+publication cannot restart the source wait from a later clock.
 
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision

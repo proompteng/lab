@@ -680,7 +680,13 @@ const makeRecoveryFirstCycleDriverEffect = (
                 nextWakeAt: new Date(Date.parse(observedAt) + delay).toISOString(),
               }
             }
-            return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
+            return continuation === undefined
+              ? advanced
+              : {
+                  ...advanced,
+                  nextDelayMs: continuation,
+                  nextWakeAt: new Date(Date.parse(observedAt) + continuation).toISOString(),
+                }
           }),
         )
       }),

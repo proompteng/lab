@@ -5167,6 +5167,11 @@ describe('OBSERVE runtime composition', () => {
                   return yield* new CycleDecisionBuildError({
                     failure: 'not-ready',
                     message: 'prepared entry verified',
+                    readiness: {
+                      reason: DecisionReadinessReason.SignalWindowObserved,
+                      message: 'Awaiting the next source window',
+                      availableAt: new Date(Date.parse(evaluatedAt) + 7_000).toISOString(),
+                    },
                   })
                 }),
               'mutation autonomous cycle loop',
@@ -5202,6 +5207,10 @@ describe('OBSERVE runtime composition', () => {
       expect(document?.dispatchable).toBe(true)
       expect(document?.targetPlan.status).toBe(TargetPlanStatus.Planned)
       expect(pricingReads).toBe(1)
+      if (cadenceMs === 30_000) {
+        expect(result.nextDelayMs).toBe(7_000)
+        expect(result.nextWakeAt).toBe(new Date(Date.parse(evaluatedAt) + 7_000).toISOString())
+      }
     },
   )
 
