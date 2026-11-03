@@ -1395,9 +1395,12 @@ process.exit(result.status ?? 1)
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
+    const runner = new AgentsShellRunner(config)
+    const runProcess = vi.spyOn(runner, 'runProcess')
     const { client, server, clientTransport, serverTransport } = await connectServer(
       config,
       makeAuth(['agents-shell.read', 'agents-shell.write']),
+      runner,
     )
 
     try {
@@ -1410,22 +1413,36 @@ process.exit(result.status ?? 1)
         'get\npods\n-n\nagents\n-o\nwide\n',
       )
 
+      const args = ['-n', 'rook-ceph', 'exec', 'deployment/rook-ceph-tools', '--', 'ceph', 'fsid']
       const blocked = await client.callTool({
         name: 'kubectl',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args },
       })
       expect(blocked.isError).toBe(true)
       const blockedContent = blocked.content as Array<{ type: string; text?: string }>
       expect(blockedContent[0]?.text ?? '').toContain('use kubectl_admin')
+      expect(blocked.structuredContent).toMatchObject({
+        code: 'KUBECTL_REQUIRES_ADMIN',
+        layer: 'tool-policy',
+        requiredTool: 'kubectl_admin',
+        executionStarted: false,
+      })
+      expect(runProcess).toHaveBeenCalledTimes(1)
+      expect(blocked._meta?.['mcp/www_authenticate']).toBeUndefined()
+
+      const catalog = await client.listTools()
+      expect(catalog.tools.find((tool) => tool.name === 'kubectl')?.description).toContain('kubectl_admin')
+      expect(catalog.tools.find((tool) => tool.name === 'kubectl_admin')?.description).toContain(
+        'read-only diagnostics',
+      )
 
       const admin = await client.callTool({
         name: 'kubectl_admin',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args },
       })
       expect(admin.isError).not.toBe(true)
-      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
-        'exec\npod/example\n--\necho\nok\n',
-      )
+      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(`${args.join('\n')}\n`)
+      expect(runProcess).toHaveBeenCalledTimes(2)
     } finally {
       await clientTransport.close()
       await serverTransport.close()
