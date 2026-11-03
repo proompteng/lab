@@ -1212,15 +1212,29 @@ data:
                 {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
-            expr: ceph_health_status{job="ceph-storage"} == 1
+            expr: |
+              (ceph_health_status{job="ceph-storage"} == 1)
+              unless on (job, instance)
+              (
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name=~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+                unless on (job, instance)
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name!~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+              )
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
               team: platform
             annotations:
               summary: Ceph cluster reports HEALTH_WARN
-              description: Ceph has reported HEALTH_WARN continuously for 10 minutes.
+              description: >-
+                Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable.
+                Active checks: {{ range query (printf "ceph_health_detail{job=%q,instance=%q} > 0" $labels.job $labels.instance) | sortByLabel "name" }}{{ .Labels.name }}; {{ else }}detail unavailable; {{ end }}Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthError
             expr: ceph_health_status{job="ceph-storage"} >= 2
@@ -1264,6 +1278,7 @@ data:
           - alert: CephOsdQueueWaitHigh
             expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1275,6 +1290,7 @@ data:
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1286,6 +1302,7 @@ data:
           - alert: CephOsdCommitLatencyCritical
             expr: ceph_storage:osd_commit_latency_ms:max > 150
             for: 5m
+            keep_firing_for: 10m
             labels:
               severity: critical
               service: ceph-storage
@@ -1304,6 +1321,7 @@ data:
                 }
               ) > 0
             for: 30m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage

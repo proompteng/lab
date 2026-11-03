@@ -75,8 +75,12 @@ The HTTP signer follows the official Python SDK 3.0.4 HMAC-SHA256 implementation
 fixed independent vector and a real provider call. The older SHA1 prose example does not match the
 working backend protocol.
 
-Captures are bounded to 4 MiB, the shared queue to 16 captures, and Kafka records/fetches to 8 MiB.
-Backpressure blocks producers. An MQTT enqueue timeout retains the in-flight capture, disconnects,
+Captures are bounded to 4 MiB and Kafka records/fetches to 8 MiB. At most 17 accepted captures
+are retained across ingress and outstanding Kafka deliveries, matching the previous queue plus its
+one pending delivery. One sender submits records in ingress order; independent acknowledgments return
+capacity without waiting for another partition. Coverage advances only after Kafka acknowledges each
+capture. Backpressure blocks producers. The `webull_kafka_ack_seconds` timer records actual producer
+acknowledgment duration separately from downstream archive lag. An MQTT enqueue timeout retains the in-flight capture, disconnects,
 and transfers it to the publisher before reconnecting, even if normal backpressure lasts beyond five
 seconds. Only service shutdown imposes a drain deadline. Graceful shutdown stops inputs first and allows the independently
 owned publisher up to 20 seconds to drain accepted captures; an exhausted deadline logs a gap.
@@ -155,3 +159,12 @@ Runtime acceptance also requires the deployed revision/digest, a controlled rest
 new session/subscription receipts, and archive replay readback. Local tests or admitted subscriptions
 alone do not establish production acceptance. A closed market can leave active-market verification
 pending after infrastructure deployment.
+
+## Normalized research bars
+
+The existing Flink archive additionally indexes validated completed M1 bars in
+`signal.webull_market_events_v1.minute_bars`, preserving native decimal strings and `PRE`/`RTH`/`ATH` sessions.
+`bar_requests` retains per-requested-symbol `OBSERVED`, `EMPTY`, `EXCLUDED`, `OMITTED` and `REJECTED` states.
+Raw envelopes and source coordinates remain the archive identity; recovery repeats are collapsed at research read time.
+Existing rows are not rewritten by adding these indexes; retained rejected captures require explicit replay through
+the corrected archive decoder with their original envelope and Kafka coordinates.

@@ -1,14 +1,15 @@
-#!/usr/bin/env python3
 """Quarantine a prepared batch with a four-minute freeze ceiling and restore writes."""
 
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import signal
 import subprocess
 import time
 import uuid
+from pathlib import Path
+
+from cleanup import validate_receipt
 
 PYTHON_IMAGE = "python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72"
 HOLD = "argocd.argoproj.io/skip-reconcile"
@@ -26,7 +27,11 @@ class Collection:
 
     def command(self, args, timeout=60):
         result = subprocess.run(
-            self.kubectl + args, text=True, capture_output=True, timeout=timeout
+            self.kubectl + args,
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
         )
         if result.returncode:
             raise RuntimeError(f"kubectl {args[:5]} failed: {result.stderr[-2000:]}")
@@ -391,6 +396,7 @@ class Collection:
                         self.name,
                     ],
                     text=True,
+                    check=False,
                     capture_output=True,
                     timeout=remaining,
                 )
@@ -405,7 +411,10 @@ class Collection:
             else:
                 plan_path.with_suffix(".collection.log").write_text(result.stderr)
                 if result.returncode:
-                    raise RuntimeError("Collection failed: " + result.stderr[-2000:])
+                    raise RuntimeError(
+                        f"Collection failed (exit {result.returncode}): "
+                        + result.stderr[-2000:]
+                    )
                 collection_result = json.loads(result.stdout)
         finally:
             try:
@@ -446,15 +455,17 @@ class Collection:
             )
             if receipt is None:
                 raise timeout_error
-            if (
-                not isinstance(receipt, dict)
-                or receipt.get("version") != 2
-                or not isinstance(receipt.get("blobs"), list)
-                or not isinstance(receipt.get("tags"), list)
-            ):
+            try:
+                validate_receipt(
+                    receipt,
+                    self.name,
+                    pvc["metadata"]["uid"],
+                    pvc["spec"]["volumeName"],
+                )
+            except (ValueError, KeyError, TypeError) as error:
                 raise ValueError(
                     "Invalid quarantine receipt; refuse partial collection"
-                ) from timeout_error
+                ) from error
             return {"quarantineId": self.name, "collectionTimedOut": True}
         return collection_result
 

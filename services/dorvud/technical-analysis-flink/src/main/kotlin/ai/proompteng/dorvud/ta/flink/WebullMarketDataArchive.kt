@@ -1,10 +1,14 @@
 package ai.proompteng.dorvud.ta.flink
 
+import ai.proompteng.dorvud.platform.WEBULL_BARS_PATH
+import ai.proompteng.dorvud.platform.WebullBarRequest
+import ai.proompteng.dorvud.platform.WebullBarRequestState
 import ai.proompteng.dorvud.platform.WebullSource
 import ai.proompteng.dorvud.platform.decodeWebullCapture
 import ai.proompteng.dorvud.platform.inspectWebullCapture
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
 import org.apache.flink.api.common.functions.MapFunction
 import org.apache.flink.api.common.typeinfo.TypeInformation
@@ -28,6 +32,8 @@ internal data class ArchivedWebullMarketData(
   val validationStatus: String,
   val validationError: String,
   val capture: String,
+  val minuteBarsJson: String,
+  val barRequestsJson: String,
 ) : Serializable
 
 internal fun decodeArchivedWebullMarketData(
@@ -44,6 +50,16 @@ internal fun decodeArchivedWebullMarketData(
       is WebullSource.Http -> source.endpoint
       is WebullSource.Collector -> source.operation
     }
+  val requests =
+    parsed?.barRequests ?: when (val source = capture.source) {
+      is WebullSource.Http ->
+        if (source.endpoint == WEBULL_BARS_PATH) {
+          source.requestedSymbols.map { WebullBarRequest(it, WebullBarRequestState.REJECTED, 0, 0) }
+        } else {
+          emptyList()
+        }
+      else -> emptyList()
+    }
   return ArchivedWebullMarketData(
     capture.captureId,
     parsed?.channel ?: sourceChannel,
@@ -57,6 +73,26 @@ internal fun decodeArchivedWebullMarketData(
     if (parsed == null) "REJECTED" else "VALID",
     inspected.exceptionOrNull()?.javaClass?.simpleName ?: "",
     record.value,
+    JsonArray(
+      parsed?.minuteBars.orEmpty().map { bar ->
+        buildJsonArray {
+          add(JsonPrimitive(bar.symbol))
+          add(JsonPrimitive(bar.startMillis))
+          add(JsonPrimitive(bar.session.name))
+          listOf(bar.open, bar.high, bar.low, bar.close, bar.volume).forEach { add(JsonPrimitive(it)) }
+        }
+      },
+    ).toString(),
+    JsonArray(
+      requests.map { request ->
+        buildJsonArray {
+          add(JsonPrimitive(request.symbol))
+          add(JsonPrimitive(request.state.name))
+          add(JsonPrimitive(request.observations))
+          add(JsonPrimitive(request.excluded))
+        }
+      },
+    ).toString(),
   )
 }
 
@@ -105,9 +141,11 @@ internal fun webullMarketDataInsertSql(): String =
   INSERT INTO signal.webull_market_events_v1 (
     provider, feed, capture_id, channel, received_at,
     source_topic, source_partition, source_offset, payload_sha256,
-    symbols, source_times, validation_status, validation_error, capture
+    symbols, source_times, validation_status, validation_error, capture, minute_bars, bar_requests
   ) VALUES ('webull', 'nasdaq_basic', ?, ?, parseDateTime64BestEffort(?, 9, 'UTC'), ?, ?, ?, ?,
-    JSONExtract(?, 'Array(String)'), JSONExtract(?, 'Array(String)'), ?, ?, ?)
+    JSONExtract(?, 'Array(String)'), JSONExtract(?, 'Array(String)'), ?, ?, ?,
+    JSONExtract(?, 'Array(Tuple(String, Int64, String, String, String, String, String, String))'),
+    JSONExtract(?, 'Array(Tuple(String, String, UInt32, UInt32))'))
   """.trimIndent()
 
 internal fun webullMarketDataStatement(): JdbcStatementBuilder<ArchivedWebullMarketData> =
@@ -124,4 +162,6 @@ internal fun webullMarketDataStatement(): JdbcStatementBuilder<ArchivedWebullMar
     prepared.setString(10, event.validationStatus)
     prepared.setString(11, event.validationError)
     prepared.setString(12, event.capture)
+    prepared.setString(13, event.minuteBarsJson)
+    prepared.setString(14, event.barRequestsJson)
   }
