@@ -207,6 +207,12 @@ seeded samples against the production functions. These proofs do not establish f
 portfolio stress result. Native controller and PostgreSQL tests separately check original command retention, replay
 after ambiguous commit, and capture of work that completes after its original window.
 
+The model also maps `controllerBuildBound` to `controllerBuildMatchesRegistration` in
+`src/system-assessment/decision-work.ts`. A registered activation repository must match the worker repository,
+independently of source and digest equality. Retained registrations without a repository commitment keep their
+source/digest comparison. Executable conformance covers both registration forms, missing builds and foreign
+source, digest or repository claims. These checks do not prove receipt authenticity or grant capital authority.
+
 The same model maps `fullBatchDuration` to `fullBatchClockDuration` in `src/system-assessment/full-batch-latency.ts`.
 Its theorems prove that completion bounds inference and every retained stage, duration is nonnegative, an additional
 stage cannot shorten the measured batch, invalid or empty stage clocks stay unknown, and a complete example is

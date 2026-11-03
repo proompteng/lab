@@ -166,31 +166,41 @@ import { emptySourceCutFixture } from './source-cut.test-support'
 import { decisionAdmissionWitnesses } from './decision-admissions'
 import { equityTafRate } from '../strategy/execution-model/fees'
 import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strategy/intraday-market'
+import { registrationBuildFixture } from './registration-build.test-support'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
-  test('physical execution build matching rejects missing and foreign source or image claims', () => {
-    const registration = registrationFixture()
-    const candidate = registration.policies.find((p) => p.policy === 'JEV')
+  test('physical execution build matching binds registered source, digest and repository claims', () => {
+    const { base, registered, buildLineage } = registrationBuildFixture()
+    const candidate = registered.policies.find((p) => p.policy === 'JEV')
     if (candidate === undefined) throw new Error('Missing candidate')
-    const cases = [true, false].flatMap((registered) =>
-      [undefined, candidate.sourceRevision, 'f'.repeat(40)].flatMap((source) =>
-        [undefined, `sha256:${candidate.imageDigest}`, `sha256:${'f'.repeat(64)}`].map((digest) => ({
-          registered,
-          source,
-          digest,
-        })),
+    const cases = [base, registered].flatMap((registration) =>
+      [true, false].flatMap((hasCandidate) =>
+        [undefined, candidate.sourceRevision, 'f'.repeat(40)].flatMap((source) =>
+          [undefined, `sha256:${candidate.imageDigest}`, `sha256:${'f'.repeat(64)}`].flatMap((digest) =>
+            [buildLineage.activation.imageRepository, 'registry.example.test/foreign/bayn'].map((repository) => ({
+              registration,
+              hasCandidate,
+              source,
+              digest,
+              repository,
+            })),
+          ),
+        ),
       ),
     )
     expect(
       model(
         cases.map((c) => ({
           operation: 'controllerBuildBound',
-          registeredSource: c.registered ? candidate.sourceRevision : null,
-          registeredDigest: c.registered ? `sha256:${candidate.imageDigest}` : null,
+          registeredSource: c.hasCandidate ? candidate.sourceRevision : null,
+          registeredDigest: c.hasCandidate ? `sha256:${candidate.imageDigest}` : null,
+          registeredRepository:
+            c.hasCandidate && c.registration === registered ? buildLineage.activation.imageRepository : null,
           workerSource: c.source !== undefined && c.digest !== undefined ? c.source : null,
           workerDigest: c.source !== undefined && c.digest !== undefined ? c.digest : null,
+          workerRepository: c.source !== undefined && c.digest !== undefined ? c.repository : null,
         })),
       ),
     ).toEqual(
@@ -202,23 +212,26 @@ formal('pinned Lean executable conformance', () => {
             epoch: 1,
             sequence: 1,
             receiptHash: 'c'.repeat(64),
-            completedAt: registration.registeredAt,
+            completedAt: c.registration.registeredAt,
             observation: {
               result: 'SUCCESS',
               outcome: 'WINDOW_CLOSED',
-              observedAt: registration.registeredAt,
+              observedAt: c.registration.registeredAt,
               ...(c.source !== undefined && c.digest !== undefined
                 ? {
                     executionBuild: {
                       sourceRevision: c.source,
-                      imageRepository: 'registry.example.test/lab/bayn',
+                      imageRepository: c.repository,
                       imageDigest: c.digest,
                     },
                   }
                 : {}),
             },
           },
-          { ...registration, policies: registration.policies.filter((p) => c.registered || p.policy !== 'JEV') },
+          {
+            ...c.registration,
+            policies: c.registration.policies.filter((p) => c.hasCandidate || p.policy !== 'JEV'),
+          },
         ),
       ),
     )

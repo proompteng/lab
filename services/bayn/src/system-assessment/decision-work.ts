@@ -128,7 +128,9 @@ export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence,
     candidate !== undefined &&
     build !== undefined &&
     build.sourceRevision === candidate.sourceRevision &&
-    build.imageDigest === `sha256:${candidate.imageDigest}`
+    build.imageDigest === `sha256:${candidate.imageDigest}` &&
+    (candidate.capitalAuthorization === undefined ||
+      build.imageRepository === candidate.capitalAuthorization.buildLineage.activation.imageRepository)
   )
 }
 

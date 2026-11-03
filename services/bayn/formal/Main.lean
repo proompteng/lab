@@ -607,7 +607,9 @@ def evaluate (json : Json) : Except String Json := do
   | "controllerBuildBound" =>
     return toJson (controllerBuildBound (← json.getObjValAs? (Option String) "registeredSource")
       (← json.getObjValAs? (Option String) "registeredDigest")
-      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest"))
+      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest")
+      (← json.getObjValAs? (Option String) "registeredRepository")
+      (← json.getObjValAs? (Option String) "workerRepository"))
   | "expiredInferenceContinuation" =>
     return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))

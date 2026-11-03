@@ -747,8 +747,10 @@ Execution receipts bind the physical worker source revision, image repository an
 capital-authorizing build. Compatible releases preserve the original generation and mandate. The prospective
 registration binds the existing approved request and build lineage to its physical build. Financial capture verifies
 that saved binding when the reporting worker is later upgraded, preserving late-fee evidence. An unknown or different
-worker build cannot establish correctly completed controller work or supported reporting provenance. Historical
-receipts remain readable and retain their original contents.
+worker build cannot establish correctly completed controller work or supported reporting provenance. Repository
+identity must also match whenever the registration carries an activation lineage; matching source and digest alone
+cannot substitute a different repository. Historical registrations without that lineage retain their source/digest
+comparison, and receipts remain readable with their original contents.
 
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
 wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
