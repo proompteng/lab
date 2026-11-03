@@ -166,5 +166,7 @@ The existing Flink archive additionally indexes validated completed M1 bars in
 `signal.webull_market_events_v1.minute_bars`, preserving native decimal strings and `PRE`/`RTH`/`ATH` sessions.
 `bar_requests` retains per-requested-symbol `OBSERVED`, `EMPTY`, `EXCLUDED`, `OMITTED` and `REJECTED` states.
 Raw envelopes and source coordinates remain the archive identity; recovery repeats are collapsed at research read time.
+The projected `signal.webull_research_events_v1` view excludes raw payload bytes. Bayn's
+[`bayn-webull-research`](../../bayn/README.md#webull-research-ingestion) command reads it without changing trading inputs.
 Existing rows are not rewritten by adding these indexes; retained rejected captures require explicit replay through
 the corrected archive decoder with their original envelope and Kafka coordinates.
