@@ -24,7 +24,7 @@ export const makeWebullResearchQueries = (sql: ClickhouseClient.ClickhouseClient
           AND (empty(${symbols}) OR symbol IN ${symbols})
       ), canonical AS (
         SELECT provider, feed, symbol, bar_start_ms, session,
-          argMax(observation, revision) AS latest, count() AS recovery_observations
+          argMax(observation, revision) AS latest, count() AS capture_observations
         FROM observations GROUP BY provider, feed, symbol, bar_start_ms, session
       )
       SELECT provider, feed, symbol, toString(bar_start_ms) AS bar_start_ms, session,
@@ -33,7 +33,7 @@ export const makeWebullResearchQueries = (sql: ClickhouseClient.ClickhouseClient
         toString(toUnixTimestamp64Nano(latest.7)) AS archived_ns,
         latest.8 AS capture_id, latest.9 AS source_topic, latest.10 AS source_partition,
         toString(latest.11) AS source_offset, latest.12 AS payload_sha256,
-        toString(recovery_observations) AS recovery_observations
+        toString(capture_observations) AS capture_observations
       FROM canonical ORDER BY toInt64(bar_start_ms), symbol, session LIMIT ${limit}`,
     requests: sql`
       WITH latest_requests AS (

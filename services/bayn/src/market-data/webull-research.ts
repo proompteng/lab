@@ -113,7 +113,7 @@ export const WebullResearchBarSchema = Schema.Struct({
   archived_ns: UnsignedMicrosSchema,
   capture_id: Schema.String.check(Schema.isUUID()),
   payload_sha256: Sha256Schema,
-  recovery_observations: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
+  capture_observations: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
 })
 export type WebullResearchBar = typeof WebullResearchBarSchema.Type
 export const WebullResearchRequestSchema = Schema.Struct({
@@ -260,7 +260,9 @@ export const makeWebullResearchReport = (input: WebullResearchInput, rows: Webul
       symbols: symbols.length,
       completedBars: rows.bars.length,
       freshSymbols: coverage.filter((row) => row.fresh).length,
-      recoveryRepeats: rows.bars.reduce((total, bar) => total + BigInt(bar.recovery_observations) - 1n, 0n).toString(),
+      repeatedBarObservations: rows.bars
+        .reduce((total, bar) => total + BigInt(bar.capture_observations) - 1n, 0n)
+        .toString(),
       gapEvents: rows.gaps.length,
       matchedMinutes: comparison.filter((row) => row.webull !== null && row.alpaca !== null).length,
       differingMinutes: comparison.filter((row) => row.status === FeedComparisonState.Different).length,

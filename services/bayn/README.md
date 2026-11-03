@@ -476,7 +476,7 @@ window fits a full supported sweep; narrow longer windows if any query exceeds 1
 truncation, malformed rows, future windows or query timeout and refuses to overwrite output. Windows are minute-aligned,
 1–360 minutes, and bounded by collector receipt as well as completed bar time. The report hashes its content and
 retains exact decimal OHLCV, receipt/archive nanoseconds, payload hashes, UUIDs and Kafka coordinates. Recovery repeats
-collapse by provider/feed/symbol/minute/session, retaining the latest received revision and its observation count.
+collapse by provider/feed/symbol/minute/session, retaining the latest received revision and its observation count. Counts include repeated recovery responses or Kafka publications.
 
 Coverage keeps `EMPTY`, `EXCLUDED`, `OMITTED`, `REJECTED` and missing-request states explicit. Freshness is measured
 from bar start with a six-minute budget; an empty response does not establish a fresh bar. Gap captures remain in the

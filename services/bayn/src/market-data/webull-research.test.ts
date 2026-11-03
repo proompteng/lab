@@ -41,7 +41,7 @@ const barWire = {
   source_topic: 'dorvud.webull.raw.v1',
   source_partition: 1,
   source_offset: '9007199254740993',
-  recovery_observations: '2',
+  capture_observations: '2',
 }
 const requestWire = {
   provider: 'webull',
@@ -99,7 +99,7 @@ test('research preserves native precision and provenance, keeps request states a
   expect(report.bars[0]?.open).toBe('1.123456789123456789')
   expect(report.bars[0]?.received_ns).toBe('1793610241123456789')
   expect(report.bars[0]?.source_offset).toBe('9007199254740993')
-  expect(report.summary.recoveryRepeats).toBe('1')
+  expect(report.summary.repeatedBarObservations).toBe('1')
   expect(report.coverage.map((row) => row.requestState)).toEqual(['OBSERVED', 'EMPTY', 'EXCLUDED', 'OMITTED'])
   expect(report.comparison[0]?.differingFields).toEqual(['open', 'close', 'volume'])
   expect(report.issues).toContain('Latest requests include provider omissions or rejected payloads')
