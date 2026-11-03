@@ -16,6 +16,7 @@ import {
 } from 'effect'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 import { withObservedStage } from './telemetry'
+import { withValkeyStartupRetry } from './valkey-startup'
 
 const reads = Metric.counter('bayn_valkey_reads_total', { incremental: true })
 const failures = Metric.counter('bayn_valkey_failures_total', { incremental: true })
@@ -290,7 +291,9 @@ const clientOptions = Effect.gen(function* () {
   } satisfies ValkeyClientOptions
 })
 
-export const ValkeyRedisLive = Layer.unwrap(Effect.map(clientOptions, NodeRedis.layer)).pipe(
+export const ValkeyRedisLive = Layer.unwrap(
+  Effect.map(clientOptions, (options) => NodeRedis.layer(options).pipe(withValkeyStartupRetry)),
+).pipe(
   Layer.provide(NodeServices.layer),
   Layer.catch((cause) =>
     Layer.effect(
