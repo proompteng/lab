@@ -80,3 +80,11 @@ restoring uploads and Argo reconciliation. The committed maintenance container h
 a read-only CAS mount and a writable quarantine subpath. It prepares plans and
 frees quarantined blocks online without a separate RWO attachment. Preserve the claim and verify protected images, a
 completed push, a full pull and reclaimed capacity.
+
+Quarantine receipts use version 3: claim UID/PV and batch inode bind persisted file
+identities across Pod/volume remounts. Purge ignores only the mount-local device
+number and verifies inode, size, mtime and content; prepare/collect checks remain
+strict. Partial metadata purges and terminal receipt cleanup resume safely. Version 2
+batches require the explicit [verified recovery gate](../../../docs/registry/manual-garbage-collection.md#version-2-recovery-gate),
+not automatic rebaselining. Failure stderr is bounded and included in the scheduled
+Job log even if Pod replacement prevents removing its temporary script.
