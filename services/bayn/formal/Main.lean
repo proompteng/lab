@@ -607,6 +607,10 @@ def evaluate (json : Json) : Except String Json := do
   | "expiredInferenceContinuation" =>
     return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
+  | "pendingMarketInputsContinuation" =>
+    return toJson (pendingMarketInputsContinuation (← json.getObjValAs? Bool "pending")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
+      (← json.getObjValAs? Nat "normalDelay"))
   | "cycleDecisionBinding" =>
     return toJson (cycleDecisionBinding (← readCycleEvidence (← json.getObjVal? "cycle"))
       (← readCycleDecision (← json.getObjVal? "document")) (← readInteger json "now")

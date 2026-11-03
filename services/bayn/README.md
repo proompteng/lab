@@ -737,7 +737,10 @@ unusable. A consumed source window still waits for its next valid signal boundar
 inconsistent inference keeps the ordinary backoff. The same expiry classification applies when the source deadline
 passes during fresh reconciliation or pricing while the original lease is still open. A clock preceding the saved
 completion, missing reconciliation freshness, insufficient prospective quote coverage, or an expired admission
-keeps the ordinary backoff. Both inference readiness
+keeps the ordinary backoff. After a durable observation, a missing input cut for a strictly later window retries
+within one second, bounded by the controller cadence and the original unused-entry expiry. Initial missing inputs and same-window retries
+retain the ordinary cadence. The readiness receipt retains the earlier window from this cycle's observation store.
+Both inference readiness
 conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
 
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller

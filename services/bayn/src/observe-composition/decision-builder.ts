@@ -32,7 +32,7 @@ import {
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
-import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
+import { Clock, Context, Data, Duration, Effect, Option, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import { BrokerRead, type MarketCalendarQuery } from '../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
@@ -848,17 +848,28 @@ const classifyIntradayEntrySnapshotFailure = (
   observedAt: string,
   submissionCutoffAt: string,
   query: IntradaySnapshotQuery,
-): OperationalError | ObserveDecisionAwaitingSignal => {
-  const snapshotFailure = cause.cause
-  return isIntradaySnapshotPending(snapshotFailure)
-    ? new ObserveDecisionAwaitingSignal({
-        message: snapshotFailure.message,
-        readiness: { ...snapshotReadiness(snapshotFailure), snapshotQuery: snapshotQueryReadiness(query) },
-        observedAt,
-        submissionCutoffAt,
-      })
-    : cause
-}
+  cycleId: string,
+) =>
+  Effect.gen(function* () {
+    const snapshotFailure = cause.cause
+    if (!isIntradaySnapshotPending(snapshotFailure)) return cause
+    const previous = yield* (yield* CandidateObservationStore).latestJevWindowEnd({
+      cycleId,
+      purpose: JevPurpose.Entry,
+    })
+    return new ObserveDecisionAwaitingSignal({
+      message: snapshotFailure.message,
+      readiness: {
+        ...snapshotReadiness(snapshotFailure),
+        snapshotQuery: {
+          ...snapshotQueryReadiness(query),
+          ...(Option.isSome(previous) ? { previousWindowEndAt: previous.value } : {}),
+        },
+      },
+      observedAt,
+      submissionCutoffAt,
+    })
+  })
 
 const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
@@ -901,13 +912,14 @@ const compileObserveStrategyDecision = <R>(
       portfolio,
     }
     const loadSnapshot = Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
-      Effect.mapError((cause) =>
+      Effect.catch((cause) =>
         classifyIntradayEntrySnapshotFailure(
           cause,
           initialFacts.evaluatedAt,
           input.cycle.window.submissionCutoffAt,
           query,
-        ),
+          input.cycle.identity.cycleId,
+        ).pipe(Effect.flatMap(Effect.fail)),
       ),
     )
     const { snapshot, decision } = yield* Effect.gen(function* () {
@@ -999,13 +1011,14 @@ const compileObserveStrategyDecision = <R>(
       pricingQuery === undefined
         ? snapshot
         : yield* loadIntradaySnapshot(marketData, pricingQuery).pipe(
-            Effect.mapError((cause) =>
+            Effect.catch((cause) =>
               classifyIntradayEntrySnapshotFailure(
                 cause,
                 pricingAt,
                 input.cycle.window.submissionCutoffAt,
                 pricingQuery,
-              ),
+                input.cycle.identity.cycleId,
+              ).pipe(Effect.flatMap(Effect.fail)),
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
