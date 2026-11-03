@@ -703,6 +703,58 @@ describePostgres('PostgreSQL execution persistence', () => {
     )
   })
 
+  test('commits broker facts and reconciliation once when no ledger posting is needed', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const reconciliation = yield* ReconciliationStore
+        const events = yield* BrokerEventStore
+        const valuations = yield* ValuationStore
+        const sql = yield* PgClient.PgClient
+        const result = yield* reconciliation.reconcile(
+          accountId,
+          Effect.gen(function* () {
+            const account = flatAccountEvent()
+            const accountReceipt = yield* events.ingest(account)
+            const positions = yield* events.ingestPositions(positionSnapshot(hash('no-posting-cut'), []))
+            const valuation = yield* valuations.value({
+              accountEventId: accountReceipt.eventId,
+              positionSnapshotId: positions.snapshotId,
+            })
+            return {
+              account: account.account,
+              cashReportingQuantumMicros: '1' as const,
+              positions: [],
+              positionsObservedAt: observedAt,
+              positionSnapshotId: positions.snapshotId,
+              accountEventId: accountReceipt.eventId,
+              orders: [],
+              ordersObservedAt: observedAt,
+              fills: [],
+              fees: [],
+              valuation,
+              reconciledAt: observedAt,
+            }
+          }),
+        )
+        expect(result.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        expect(journalControl.postCount).toBe(0)
+        const [transactions] = yield* sql<{ commit_groups: number }>`
+          SELECT count(DISTINCT transaction_id)::integer AS commit_groups FROM (
+            SELECT xmin::text AS transaction_id FROM account_snapshots
+              WHERE event_id=${result.snapshot.accountEventId}
+            UNION ALL
+            SELECT xmin::text FROM account_cash_reporting
+              WHERE account_event_id=${result.snapshot.accountEventId}
+            UNION ALL
+            SELECT xmin::text FROM reconciliations
+              WHERE reconciliation_id=${result.persisted.reconciliation.reconciliationId}
+          ) evidence
+        `
+        expect(transactions?.commit_groups).toBe(1)
+      }),
+    )
+  })
+
   test('commits fee preparation with its source cut before posting and recovers it before replaying ingestion', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
