@@ -115,6 +115,40 @@ test('retries expired inference within the original unused entry deadline instea
     ).toBeUndefined()
 })
 
+const pendingInputs = () => ({
+  ...waiting(DecisionReadinessReason.SnapshotUnavailable),
+  readiness: {
+    reason: DecisionReadinessReason.SnapshotUnavailable,
+    message: 'No candidate has complete raw data and a matching rolling feature',
+    snapshotQuery: {
+      rangeStartAt: native.query.rangeStartAt,
+      rangeEndAt: native.query.rangeEndAt,
+      symbols: native.query.symbols ?? native.query.universe,
+    },
+  },
+})
+
+test('rechecks pending snapshot inputs before the captured remaining admission expires', () => {
+  // The retained 16:24 cycle had 22,829 ms left when its next feature cut was unavailable.
+  const checkedAt = instant(37_171)
+  const result = pendingInputs()
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, checkedAt)).toBe(1_000)
+  expect(Date.parse(checkedAt) + 30_000).toBeGreaterThan(unusedEntryExpiresAt(cycle))
+  expect(decisionReadinessContinuationDelayMs(result, 500, checkedAt)).toBe(500)
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(59_900))).toBe(100)
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(60_000))).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(-1))).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, 'invalid')).toBeUndefined()
+  for (const state of [CycleState.Pending, CycleState.NoTrade, CycleState.Completed, CycleState.Blocked])
+    expect(
+      decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, state } }, 30_000, checkedAt),
+    ).toBeUndefined()
+  for (const bindings of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
+    expect(
+      decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, bindings } }, 30_000, checkedAt),
+    ).toBeUndefined()
+})
+
 test('the captured late-commit retry pattern finishes before the unchanged entry expiry', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {

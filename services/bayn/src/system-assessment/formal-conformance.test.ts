@@ -1717,6 +1717,47 @@ formal('pinned Lean executable conformance', () => {
         })),
       ),
     ).toEqual(continuations)
+    const pendingInputCases = lifecycleCases.flatMap((c) =>
+      [true, false].flatMap((pending) => [500, 30_000].map((normalDelay) => ({ ...c, pending, normalDelay }))),
+    )
+    expect(
+      model(
+        pendingInputCases.map((c) => ({
+          operation: 'pendingMarketInputsContinuation',
+          pending: c.pending,
+          cycle: encodeCycle(c.cycle),
+          now: String(c.now),
+          normalDelay: c.normalDelay,
+        })),
+      ),
+    ).toEqual(
+      pendingInputCases.map(
+        (c) =>
+          decisionReadinessContinuationDelayMs(
+            {
+              outcome: 'RECOVERED',
+              action: 'WAITING',
+              cycle: c.cycle,
+              observedAt: instant(c.now),
+              readiness: {
+                reason: DecisionReadinessReason.SnapshotUnavailable,
+                message: 'Awaiting raw inputs and their matching feature',
+                ...(c.pending
+                  ? {
+                      snapshotQuery: {
+                        rangeStartAt: instant(c.now - 60_000),
+                        rangeEndAt: instant(c.now),
+                        symbols: ['AAPL'],
+                      },
+                    }
+                  : {}),
+              },
+            },
+            c.normalDelay,
+            instant(c.now),
+          ) ?? null,
+      ),
+    )
     const observing: ObserveShadowDecisionDocument = {
       schemaVersion: 'bayn.observe-shadow-decision.v2',
       mode: legacyObserveAuthorityToken,

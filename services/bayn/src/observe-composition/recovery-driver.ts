@@ -393,22 +393,28 @@ export const executionEvidenceContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
-/** Retry expired inference promptly while the original admission remains usable; source failures retain their cadence. */
+/** Recheck usable entry admissions without sleeping through late inputs; projection failures retain their backoff. */
 export const decisionReadinessContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
 ): number | undefined => {
   if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.readiness === undefined) return undefined
-  if (result.readiness.reason === DecisionReadinessReason.InferenceExpired) {
+  const pendingSnapshot =
+    result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
+    result.readiness.snapshotQuery !== undefined
+  if (result.readiness.reason === DecisionReadinessReason.InferenceExpired || pendingSnapshot) {
     const now = Date.parse(observedAt)
     const cycle = result.cycle
+    const expiresAt = unusedEntryExpiresAt(cycle)
     return cycle.state === CycleState.Active &&
       cycle.bindings.snapshotId === undefined &&
       cycle.bindings.decisionHash === undefined &&
       now >= Math.max(Date.parse(cycle.createdAt), Date.parse(cycle.window.submissionOpenAt)) &&
-      now < unusedEntryExpiresAt(cycle)
-      ? 1
+      now < expiresAt
+      ? pendingSnapshot
+        ? Math.min(1_000, normalDelayMs, expiresAt - now)
+        : 1
       : undefined
   }
   if (
