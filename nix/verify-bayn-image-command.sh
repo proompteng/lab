@@ -80,6 +80,8 @@ frozen_control_command="$(resolve_image_entry /app/services/bayn/dist/frozen-con
 frozen_control_receipt="$(resolve_image_entry /app/services/bayn/dist/frozen-control-compiler.json)"
 research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
+controller_command="$(resolve_image_entry /app/services/bayn/dist/index.js)"
+valkey_command="$(resolve_image_entry /app/services/bayn/dist/valkey-command.js)"
 image_node="$(resolve_image_entry /bin/node)"
 streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
@@ -105,4 +107,16 @@ test -f "${execution_server}"
 test -x "${image_node}"
 test -f "${streaming_diagnostics}"
 
+# Redis is bundled into these entrypoints. Inspect the archive contents so an
+# unchanged fixed-output dependency hash cannot silently package the old client.
+for bundle in "${controller_command}" "${execution_server}" "${valkey_command}"; do
+  if ! grep -Fq 'this.#connectController?.abort()' "${bundle}" ||
+    ! grep -Fq 'this.#connectWithSignal(retries, controller.signal)' "${bundle}" ||
+    ! grep -Fq 'AbortSignal.any([withDefaults.signal, signal])' "${bundle}"; then
+    echo "Bayn image bundle is missing native Redis connection cancellation: ${bundle##*/}" >&2
+    exit 1
+  fi
+done
+
 printf 'Bayn image command files verified in archive.\n'
+printf 'Bayn image native Redis cancellation verified in controller, execution server, and Valkey command.\n'
