@@ -38,7 +38,13 @@ import {
   readSystemDecisionAdmissions,
 } from './capture'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
-import { OrderStatus } from '../execution/contracts'
+import { OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import {
+  makeResearchCapitalActivationRequest,
+  makeResearchCapitalPlanHash,
+  researchCapitalGrantProof,
+} from '../execution/configuration'
+import { config } from '../testing/runtime-fixtures'
 import { bracketEvidenceFixture } from './bracket-evidence.test-support'
 import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
 import { makePostgresMutationStore } from '../execution/mutations/program'
@@ -735,7 +741,8 @@ postgres('PostgreSQL prospective system qualification', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        for (const [index, definition] of definitions.entries()) {
+        for (const [index, baseDefinition] of definitions.entries()) {
+          let definition = baseDefinition
           const identity = yield* Effect.fromResult(
             makeBrokerIdentity({
               schemaVersion: 'bayn.broker-identity.v2',
@@ -744,6 +751,54 @@ postgres('PostgreSQL prospective system qualification', () => {
               accountId: `captured-financial-${definition.policy}`,
             }),
           )
+          const previous = testHash({ previous: definition.policy })
+          const reconciliation = {
+            ...nativeJevFixture(JevPurpose.Entry, undefined, identity.accountId).portfolio.brokerState.reconciliation,
+            reconciliationId: testHash({ financialReconciliation: identity.accountId }),
+          }
+          const mandateMaterial = {
+            activation: {
+              sourceRevision: definition.sourceRevision,
+              imageRepository: 'registry.example.test/lab/bayn',
+              imageDigest: `sha256:${definition.imageDigest}`,
+            },
+            strategy: {
+              name: 'jev',
+              behaviorHash: definition.strategyHash,
+              parameterHash: definition.parametersHash,
+              parameterSchemaVersion: defaultJevProtocolDocument.schemaVersion,
+              protocolHash: definition.protocolHash,
+            },
+            broker: {
+              environment: identity.environment,
+              accountId: identity.accountId,
+              identityHash: identity.identityHash,
+            },
+            riskPolicyHash: definition.riskPolicyHash,
+            limits: { maxOpenOrders: 0, maxPositions: 0 },
+          } as const
+          const planHash = Result.getOrThrow(
+            makeResearchCapitalPlanHash({ schemaVersion: 'bayn.research-execution-plan.v1', ...mandateMaterial }),
+          )
+          const request = Result.getOrThrow(
+            makeResearchCapitalActivationRequest({
+              schemaVersion: 'bayn.research-execution-mandate.v1',
+              grant: { _tag: 'Research', planHash },
+              ...mandateMaterial,
+            }),
+          )
+          const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(request)
+          const generation = Result.getOrThrow(
+            makeResearchCapitalGrantGenerationResult({
+              ...proof,
+              schemaVersion: 'bayn.paper-authority-generation.v3',
+              maximum: Authority.Execution,
+              previousGenerationHash: previous,
+              reconciliationId: reconciliation.reconciliationId,
+              reconciliationContentHash: reconciliation.contentHash,
+            }),
+          )
+          definition = { ...definition, authorityGenerationHash: generation.generationHash }
           const registered = {
             ...definition,
             accountBindingHash: testHash({
@@ -752,13 +807,8 @@ postgres('PostgreSQL prospective system qualification', () => {
             }),
           }
           expect(yield* readRegisteredFinancialIdentity(registered)).toBeNull()
-          const previous = testHash({ previous: definition.policy })
           yield* sql`INSERT INTO authority_generations(generation_hash, schema_version, maximum, authority_version, activated_at)
           VALUES (${previous}, 'bayn.authority-generation-history.v1', 'OBSERVE', ${index * 2 + 1}, clock_timestamp())`
-          const reconciliation = {
-            ...nativeJevFixture(JevPurpose.Entry, undefined, identity.accountId).portfolio.brokerState.reconciliation,
-            reconciliationId: testHash({ financialReconciliation: identity.accountId }),
-          }
           yield* sql`INSERT INTO reconciliations
           (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
           VALUES (${reconciliation.reconciliationId}, ${reconciliation.schemaVersion}, ${identity.accountId},
@@ -776,9 +826,59 @@ postgres('PostgreSQL prospective system qualification', () => {
             ${identity.environment}, ${definition.riskPolicyHash}, clock_timestamp(),
             ${definition.sourceRevision}, 'registry.example.test/lab/bayn', ${`sha256:${definition.imageDigest}`},
             'jev', ${definition.strategyHash}, ${definition.parametersHash}, ${defaultJevProtocolDocument.schemaVersion},
-            ${definition.protocolHash}, ${testHash('proof')}, ${reconciliation.reconciliationId},
-            ${reconciliation.contentHash}, ${testHash('research')})`
+            ${definition.protocolHash}, ${planHash}, ${reconciliation.reconciliationId},
+            ${reconciliation.contentHash}, ${planHash})`
           expect(yield* readRegisteredFinancialIdentity(registered)).toEqual(identity)
+          if (definition.policy === JevResearchPolicy.Candidate) {
+            const build = {
+              ...config.build,
+              sourceRevision: 'c'.repeat(40),
+              imageRepository: request.activation.imageRepository,
+              imageDigest: `sha256:${testHash('current physical worker')}`,
+            }
+            const current = {
+              ...registered,
+              sourceRevision: build.sourceRevision,
+              imageDigest: build.imageDigest.slice(7),
+            }
+            const lineage = {
+              schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
+              requestHash: request.requestHash,
+              authoredActivation: request.activation,
+              activation: {
+                sourceRevision: build.sourceRevision,
+                imageRepository: build.imageRepository,
+                imageDigest: build.imageDigest,
+              },
+            }
+            const authorized = { ...current, capitalAuthorization: { request, buildLineage: lineage, generation } }
+            expect(yield* readRegisteredFinancialIdentity(authorized)).toEqual(identity)
+            for (const invalid of [
+              current,
+              { ...authorized, sourceRevision: 'd'.repeat(40) },
+              {
+                ...authorized,
+                capitalAuthorization: {
+                  request,
+                  generation,
+                  buildLineage: { ...lineage, requestHash: testHash('wrong mandate') },
+                },
+              },
+              {
+                ...authorized,
+                capitalAuthorization: {
+                  request,
+                  generation,
+                  buildLineage: {
+                    ...lineage,
+                    activation: { ...lineage.activation, imageRepository: 'registry.example.test/foreign/bayn' },
+                  },
+                },
+              },
+            ])
+              expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(invalid)))).toBe(true)
+            expect(yield* readRegisteredFinancialIdentity(registered)).toEqual(identity)
+          }
           for (const changed of [
             { ...registered, accountBindingHash: testHash('other account') },
             { ...registered, riskPolicyHash: testHash('other risk policy') },
@@ -1098,8 +1198,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             )
             const definition = registered.registration.policies.find((p) => p.policy === selectedPolicy)
             if (definition === undefined) throw new Error('Missing selected policy')
-            yield* Effect.sleep('2 millis')
-            const asOf = new Date().toISOString()
+            const asOf = yield* databaseNow
             const cut = yield* persistSystemSourceCut({
               schemaVersion: 'bayn.system-source-cut.v4',
               protectionIntents: [],
@@ -1219,9 +1318,14 @@ postgres('PostgreSQL prospective system qualification', () => {
             { count: 0 },
           ])
           const at = new Date().toISOString()
+          const executionBuild = {
+            sourceRevision: config.build.sourceRevision,
+            imageRepository: config.build.imageRepository,
+            imageDigest: config.build.imageDigest,
+          }
           yield* sql`UPDATE execution_controller_status SET next_sequence = 1, last_sequence = 0, last_outcome = 'Waiting',
             last_receipt_hash = ${sha256('receipt')}, completed_at = ${at},
-            last_pass = jsonb_build_object('result', 'SUCCESS', 'outcome', 'WINDOW_CLOSED', 'observedAt', ${at}::text)
+            last_pass = jsonb_build_object('result', 'SUCCESS', 'outcome', 'WINDOW_CLOSED', 'observedAt', ${at}::text, 'executionBuild', ${JSON.stringify(executionBuild)}::jsonb)
             WHERE controller_key = ${controllerKey}`
           for (let epoch = 3; epoch < 23; epoch++)
             yield* sql`UPDATE execution_controller_status SET epoch = ${epoch} WHERE controller_key = ${controllerKey}`
@@ -1234,6 +1338,7 @@ postgres('PostgreSQL prospective system qualification', () => {
           const retained = yield* readSystemControllerPasses(controllerKey, planHash, at, at, at)
           expect(retained).toHaveLength(2)
           expect(new Set(retained.map((pass) => pass.receiptHash)).size).toBe(1)
+          expect(retained.map((pass) => pass.observation.executionBuild)).toEqual([executionBuild, executionBuild])
           expect(
             new Set(
               retained.map((pass) => (pass.observation.result === 'SUCCESS' ? pass.observation.outcome : 'FAILURE')),

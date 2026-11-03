@@ -1,5 +1,7 @@
 import { Schema } from 'effect'
 
+import { ExecutionBuildSchema } from '../../build'
+
 import { IsoDateSchema, Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema } from '../../schemas'
 import { CycleWaitReasonSchema, DecisionReadinessReason, DecisionReadinessSchema } from './readiness'
 import { JevPositionHoldSchema } from '../../jev/hold'
@@ -34,6 +36,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   Schema.Struct({
     result: Schema.Literal('SUCCESS'),
     executionIssuedAt: Schema.optionalKey(UtcInstantSchema),
+    executionBuild: Schema.optionalKey(ExecutionBuildSchema),
     observedAt: UtcInstantSchema,
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     outcome: Schema.Literals([
@@ -102,6 +105,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   Schema.Struct({
     result: Schema.Literal('FAILURE'),
     executionIssuedAt: Schema.optionalKey(UtcInstantSchema),
+    executionBuild: Schema.optionalKey(ExecutionBuildSchema),
     observedAt: UtcInstantSchema,
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     operation: Schema.Literals([

@@ -743,6 +743,13 @@ retain the ordinary cadence. The readiness receipt retains the earlier window fr
 Both inference readiness
 conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
 
+Execution receipts bind the physical worker source revision, image repository and digest independently of the
+capital-authorizing build. Compatible releases preserve the original generation and mandate. The prospective
+registration binds the existing approved request and build lineage to its physical build. Financial capture verifies
+that saved binding when the reporting worker is later upgraded, preserving late-fee evidence. An unknown or different
+worker build cannot establish correctly completed controller work or supported reporting provenance. Historical
+receipts remain readable and retain their original contents.
+
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
 wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
 existing continuation qualifies. Elapsed, missing or invalid timestamps, other readiness reasons and failed passes
