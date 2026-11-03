@@ -296,6 +296,7 @@ describe('durable broker observations', () => {
               return Effect.succeed(Option.some(JSON.stringify(payload)))
             },
             put: () => Effect.die('read-only probe'),
+            putAll: () => Effect.die('read-only probe'),
             remove: () => Effect.die('read-only probe'),
           }),
         )
