@@ -264,7 +264,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             Effect.fail(
               new JevAwaitingEvidence({
                 message: 'The committed Jev observation expired before batch admission',
-                readiness: DecisionReadinessReason.InferenceUnavailable,
+                readiness: DecisionReadinessReason.InferenceExpired,
               }),
             ),
           ),
@@ -304,15 +304,19 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             ? DecisionReadinessReason.SnapshotUnavailable
             : DecisionReadinessReason.SnapshotStale,
         })
+      const reason =
+        availability === null
+          ? JevAvailabilityReason.NotCommitted
+          : Result.isFailure(availability) && availability.failure._tag === 'JevEvidenceError'
+            ? (availability.failure.availabilityReason ?? JevAvailabilityReason.InvalidEvidence)
+            : JevAvailabilityReason.InvalidEvidence
       return yield* new JevAwaitingEvidence({
-        message: jevAvailabilityMessage(
-          availability === null
-            ? JevAvailabilityReason.NotCommitted
-            : Result.isFailure(availability) && availability.failure._tag === 'JevEvidenceError'
-              ? (availability.failure.availabilityReason ?? JevAvailabilityReason.InvalidEvidence)
-              : JevAvailabilityReason.InvalidEvidence,
-        ),
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        message: jevAvailabilityMessage(reason),
+        readiness:
+          reason === JevAvailabilityReason.OutsideValidityWindow &&
+          Date.parse(decidedAt) >= Date.parse(saved.plan.expiresAt)
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     }
     return {

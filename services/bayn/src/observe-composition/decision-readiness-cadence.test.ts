@@ -4,6 +4,7 @@ import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { CycleState, AutonomousCycleSchema } from '../cycle/model'
+import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { type CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { advanceExecutionOnce } from '../execution/advance'
@@ -18,7 +19,7 @@ import { nativeJevFixture } from '../jev/native.test-support'
 import { currentUtcInstant } from '../time'
 import { decisionReadinessContinuationDelayMs } from './recovery-driver'
 
-const native = nativeJevFixture()
+const native = nativeJevFixture(undefined, '2026-09-04T14:56:54.802Z')
 const observedAt = native.query.observedAt
 const observedMs = Date.parse(observedAt)
 const instant = (offset: number) => new Date(observedMs + offset).toISOString()
@@ -92,10 +93,93 @@ test('rejects missing or invalid timing and boundaries outside the entry session
 test.each(
   Object.values(DecisionReadinessReason).filter(
     (reason) =>
-      reason !== DecisionReadinessReason.LookbackWarmup && reason !== DecisionReadinessReason.SignalWindowObserved,
+      reason !== DecisionReadinessReason.LookbackWarmup &&
+      reason !== DecisionReadinessReason.SignalWindowObserved &&
+      reason !== DecisionReadinessReason.InferenceExpired,
   ),
 )('preserves the ordinary retry cadence for %s, even with a timestamp', (reason) => {
   expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, observedAt)).toBeUndefined()
+})
+
+test('retries expired inference within the original unused entry deadline instead of the ordinary poll', () => {
+  const result = waiting(DecisionReadinessReason.InferenceExpired)
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, observedAt)).toBe(1)
+  const expiresAt = unusedEntryExpiresAt(cycle)
+  for (const at of [expiresAt, expiresAt + 1])
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, new Date(at).toISOString())).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(-1))).toBeUndefined()
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, 'invalid')).toBeUndefined()
+  for (const bound of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
+    expect(
+      decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, bindings: bound } }, 30_000, observedAt),
+    ).toBeUndefined()
+})
+
+test('the captured late-commit retry pattern finishes before the unchanged entry expiry', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const firstCompletedMs = observedMs + 12_548
+      yield* TestClock.setTime(firstCompletedMs)
+      const result = waiting(DecisionReadinessReason.InferenceExpired)
+      const delay = decisionReadinessContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
+      expect(delay).toBe(1)
+      if (delay === undefined) return yield* Effect.die('Expired inference requires a continuation')
+      const command = {
+        controllerKey: 'a'.repeat(64),
+        epoch: 1,
+        sequence: 0,
+        issuedAt: instant(0),
+        sourceRevision: 'd'.repeat(40),
+      }
+      const outcome = yield* advanceExecutionOnce(command, {
+        advance: Effect.succeed({
+          result,
+          nextDelayMs: delay,
+          observation: {
+            result: 'SUCCESS',
+            outcome: 'RECOVERED',
+            recoveryAction: 'WAITING',
+            observedAt: instant(12_548),
+            readiness: result.readiness,
+          } as const,
+        }),
+        nextDelayMs: 30_000,
+      })
+      const activated = Result.getOrThrow(
+        decideExecutionControllerActivation(null, {
+          schemaVersion: 'bayn.execution-controller-activation.v1',
+          controllerKey: command.controllerKey,
+          epoch: 1,
+          firstSequence: 0,
+          planHash: 'b'.repeat(64),
+          sourceRevision: command.sourceRevision,
+        }),
+      ).state
+      const completed = Result.getOrThrow(
+        completeExecutionControllerTick(
+          activated,
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+          {
+            completedAt: instant(12_548),
+            outcome: {
+              _tag: ExecutionControllerOutcome.Waiting,
+              receiptHash: outcome.receiptHash,
+              nextDelayMs: outcome.nextDelayMs,
+            },
+          },
+          command.sourceRevision,
+        ),
+      )
+      const restarted = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(completed))))
+      expect(restarted.nextDueAt).toBe(instant(12_549))
+      const remainingWorkMs = 8_781 + 6_475 + 3_535
+      const normalCompletion = instant(12_548 + 30_000 + remainingWorkMs)
+      yield* TestClock.adjust(outcome.nextDelayMs + remainingWorkMs)
+      expect(hasExpiredUnusedEntryAdmission(cycle, normalCompletion)).toBe(true)
+      expect(hasExpiredUnusedEntryAdmission(cycle, yield* currentUtcInstant)).toBe(false)
+      expect(unusedEntryExpiresAt(cycle)).toBe(observedMs + 60_000)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
 })
 
 test('does not accelerate non-readiness waits, terminal results or closed windows', () => {
