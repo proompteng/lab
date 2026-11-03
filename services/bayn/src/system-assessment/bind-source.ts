@@ -19,7 +19,13 @@ import type { VerifiedEntryTiming } from './entry-timing'
 import type { VerifiedLatencyStress } from './latency-report'
 import { executionOrderPlans } from './execution-plans'
 import { bindExecutionEvidence } from './execution-evidence'
-import { accountProtectionWork, decisionDocumentWork, entryAbstentionWork, positionHoldWork } from './decision-work'
+import {
+  accountProtectionWork,
+  controllerBuildMatchesRegistration,
+  decisionDocumentWork,
+  entryAbstentionWork,
+  positionHoldWork,
+} from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { registeredAllocationMicros } from './policy'
 import { assessSession } from './session'
@@ -307,6 +313,9 @@ export const bindSystemSourceCut = (
     const protectionIds = new Set(cut.protectionIntents.map((row) => row.intentId))
     const decisions = data.realism.decisions.filter((row) => !protectionIds.has(row.decisionId))
     const unsupportedAssumptions = [...data.realism.unsupportedAssumptions]
+    for (const pass of cut.controllerPasses)
+      if (!controllerBuildMatchesRegistration(pass, data.registration))
+        unsupportedAssumptions.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
     for (const stress of latencyStress.filter((receipt) => receipt.executionReceiptHash === null))
       unsupportedAssumptions.push(
         `${stress.image === null ? 'MISSING_REPLAY_IMAGE_MEMBERSHIP' : 'UNAUTHENTICATED_REPLAY_RUNNER'}:${stress.reportHash}`,

@@ -76,7 +76,11 @@ import {
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { SubmissionDenialReason } from '../execution/submission-denial'
-import { holdCompletionSupported, sourceFitsRegisteredSession } from './decision-work'
+import {
+  controllerBuildMatchesRegistration,
+  holdCompletionSupported,
+  sourceFitsRegisteredSession,
+} from './decision-work'
 import { calendarFixture } from './fixtures.test-support'
 import { continuousMarketHours } from '../market-hours'
 import { registeredSchedule } from './schedule'
@@ -166,6 +170,60 @@ import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strat
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('physical execution build matching rejects missing and foreign source or image claims', () => {
+    const registration = registrationFixture()
+    const candidate = registration.policies.find((p) => p.policy === 'JEV')
+    if (candidate === undefined) throw new Error('Missing candidate')
+    const cases = [true, false].flatMap((registered) =>
+      [undefined, candidate.sourceRevision, 'f'.repeat(40)].flatMap((source) =>
+        [undefined, `sha256:${candidate.imageDigest}`, `sha256:${'f'.repeat(64)}`].map((digest) => ({
+          registered,
+          source,
+          digest,
+        })),
+      ),
+    )
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'controllerBuildBound',
+          registeredSource: c.registered ? candidate.sourceRevision : null,
+          registeredDigest: c.registered ? `sha256:${candidate.imageDigest}` : null,
+          workerSource: c.source !== undefined && c.digest !== undefined ? c.source : null,
+          workerDigest: c.source !== undefined && c.digest !== undefined ? c.digest : null,
+        })),
+      ),
+    ).toEqual(
+      cases.map((c) =>
+        controllerBuildMatchesRegistration(
+          {
+            controllerKey: 'a'.repeat(64),
+            planHash: 'b'.repeat(64),
+            epoch: 1,
+            sequence: 1,
+            receiptHash: 'c'.repeat(64),
+            completedAt: registration.registeredAt,
+            observation: {
+              result: 'SUCCESS',
+              outcome: 'WINDOW_CLOSED',
+              observedAt: registration.registeredAt,
+              ...(c.source !== undefined && c.digest !== undefined
+                ? {
+                    executionBuild: {
+                      sourceRevision: c.source,
+                      imageRepository: 'registry.example.test/lab/bayn',
+                      imageDigest: c.digest,
+                    },
+                  }
+                : {}),
+            },
+          },
+          { ...registration, policies: registration.policies.filter((p) => c.registered || p.policy !== 'JEV') },
+        ),
+      ),
+    )
+  })
+
   test('dated fees and retained rates agree with Lean at every effective boundary', () => {
     const cases = [
       { at: '2026-06-30', day: '20260630', retained: false },

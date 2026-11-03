@@ -604,6 +604,10 @@ def evaluate (json : Json) : Except String Json := do
       ("activation", toJson (cycleActivation cycle now)),
       ("completion", toJson (cycleCompletion cycle (← json.getObjValAs? Bool "completed") now))
     ]
+  | "controllerBuildBound" =>
+    return toJson (controllerBuildBound (← json.getObjValAs? (Option String) "registeredSource")
+      (← json.getObjValAs? (Option String) "registeredDigest")
+      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest"))
   | "expiredInferenceContinuation" =>
     return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
