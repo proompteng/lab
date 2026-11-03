@@ -83,6 +83,10 @@ required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+An unavailable coordinator can reject `LeaveGroup` before the SDK closes its sockets. The transport always closes
+the underlying pool after a failed group shutdown. A coordinator-only failure retains its diagnostic and uses the
+existing bounded reconnect schedule once local teardown succeeds. Authentication and other shutdown failures retain
+the fatal-close cooldown. Every replacement still rebuilds and verifies its own complete history before entry reads.
 Invalidation belongs to its consumer epoch. A delayed callback from a closed consumer cannot invalidate its replacement;
 an invalidation without a cause still revokes reads and triggers the same bounded rebuild. Readiness requires both
 completed bootstrap and no retained failure. Measurements report bootstrap completion and read availability separately,
