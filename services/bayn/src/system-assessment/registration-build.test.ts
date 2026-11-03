@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
+import { Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import { researchCapitalGrantProof } from '../execution/configuration'
+
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { makeResearchCapitalActivationRequest, makeResearchCapitalPlanHash } from '../execution/configuration'
 import { registrationFixture, withRegistrationCommitments } from './fixtures.test-support'
@@ -45,6 +48,17 @@ test('a prospective physical build retains the exact original mandate through it
       ...material,
     }),
   )
+  const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(request)
+  const generation = Result.getOrThrow(
+    makeResearchCapitalGrantGenerationResult({
+      ...proof,
+      schemaVersion: 'bayn.paper-authority-generation.v3',
+      maximum: Authority.Execution,
+      previousGenerationHash: '1'.repeat(64),
+      reconciliationId: '2'.repeat(64),
+      reconciliationContentHash: '3'.repeat(64),
+    }),
+  )
   const buildLineage = {
     schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
     requestHash: request.requestHash,
@@ -58,7 +72,13 @@ test('a prospective physical build retains the exact original mandate through it
   const registered = withRegistrationCommitments({
     ...base,
     policies: base.policies.map((p) =>
-      p.policy === 'JEV' ? { ...p, capitalAuthorization: { request, buildLineage } } : p,
+      p.policy === 'JEV'
+        ? {
+            ...p,
+            authorityGenerationHash: generation.generationHash,
+            capitalAuthorization: { request, buildLineage, generation },
+          }
+        : p,
     ),
   })
   expect(Result.isSuccess(validateSystemRegistration(registered))).toBe(true)
@@ -75,7 +95,13 @@ test('a prospective physical build retains the exact original mandate through it
     const invalid = withRegistrationCommitments({
       ...base,
       policies: base.policies.map((p) =>
-        p.policy === 'JEV' ? { ...p, capitalAuthorization: { request, buildLineage: changed } } : p,
+        p.policy === 'JEV'
+          ? {
+              ...p,
+              authorityGenerationHash: generation.generationHash,
+              capitalAuthorization: { request, buildLineage: changed, generation },
+            }
+          : p,
       ),
     })
     expect(Result.isFailure(validateSystemRegistration(invalid))).toBe(true)

@@ -851,19 +851,24 @@ postgres('PostgreSQL prospective system qualification', () => {
                 imageDigest: build.imageDigest,
               },
             }
-            const authorized = { ...current, capitalAuthorization: { request, buildLineage: lineage } }
+            const authorized = { ...current, capitalAuthorization: { request, buildLineage: lineage, generation } }
             expect(yield* readRegisteredFinancialIdentity(authorized)).toEqual(identity)
             for (const invalid of [
               current,
               { ...authorized, sourceRevision: 'd'.repeat(40) },
               {
                 ...authorized,
-                capitalAuthorization: { request, buildLineage: { ...lineage, requestHash: testHash('wrong mandate') } },
+                capitalAuthorization: {
+                  request,
+                  generation,
+                  buildLineage: { ...lineage, requestHash: testHash('wrong mandate') },
+                },
               },
               {
                 ...authorized,
                 capitalAuthorization: {
                   request,
+                  generation,
                   buildLineage: {
                     ...lineage,
                     activation: { ...lineage.activation, imageRepository: 'registry.example.test/foreign/bayn' },

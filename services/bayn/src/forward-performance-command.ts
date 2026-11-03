@@ -18,7 +18,7 @@ import {
   assessAndPersistSystem,
   readSystemRegistration,
 } from './system-assessment/postgres'
-import { captureSystemSourceCut } from './system-assessment/capture'
+import { captureSystemSourceCut, readRegisteredFinancialIdentity } from './system-assessment/capture'
 import { qualificationRuntime } from './system-assessment/configuration'
 import { validateSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
@@ -192,13 +192,28 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
             if (
               (candidate.capitalAuthorization === undefined) !== (expected === undefined) ||
               (expected !== undefined &&
-                (yield* Effect.fromResult(canonicalHashV1Result(candidate.capitalAuthorization))) !==
-                  (yield* Effect.fromResult(canonicalHashV1Result(expected))))
+                (yield* Effect.fromResult(
+                  canonicalHashV1Result(
+                    candidate.capitalAuthorization === undefined
+                      ? undefined
+                      : {
+                          request: candidate.capitalAuthorization.request,
+                          buildLineage: candidate.capitalAuthorization.buildLineage,
+                        },
+                  ),
+                )) !== (yield* Effect.fromResult(canonicalHashV1Result(expected))))
             )
               return yield* new SystemAssessmentError({
                 message: 'Prospective registration must preserve the configured reviewed capital lineage',
               })
           }
+          if (
+            candidate.capitalAuthorization !== undefined &&
+            (yield* readRegisteredFinancialIdentity(candidate)) === null
+          )
+            return yield* new SystemAssessmentError({
+              message: 'Registration requires its existing durable capital generation',
+            })
           return yield* registerSystemQualification(registration, packet.verifiedSources)
         }
         const input = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(packet.payload)

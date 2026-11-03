@@ -117,12 +117,12 @@ export const readRegisteredFinancialIdentity = (definition: SystemRegistration['
     const authoredBuildMatches =
       row.sourceRevision === definition.sourceRevision &&
       row.imageDigest.replace(/^sha256:/, '') === definition.imageDigest
-    if (!authoredBuildMatches) {
-      const binding = definition.capitalAuthorization
-      if (binding === undefined)
-        return yield* new SystemAssessmentError({
-          message: 'Different execution build requires registered capital lineage',
-        })
+    const binding = definition.capitalAuthorization
+    if (!authoredBuildMatches && binding === undefined)
+      return yield* new SystemAssessmentError({
+        message: 'Different execution build requires registered capital lineage',
+      })
+    if (binding !== undefined) {
       const generation = yield* makeObserveAuthorityInterpreter(
         sql,
         makeAuthorityPostgres(sql),
@@ -130,6 +130,13 @@ export const readRegisteredFinancialIdentity = (definition: SystemRegistration['
       ).readResearchAuthorityGeneration(definition.authorityGenerationHash)
       if (generation === undefined)
         return yield* new SystemAssessmentError({ message: 'Capture capital generation is missing' })
+      if (
+        (yield* Effect.fromResult(canonicalHashV1Result(generation))) !==
+        (yield* Effect.fromResult(canonicalHashV1Result(binding.generation)))
+      )
+        return yield* new SystemAssessmentError({
+          message: 'Registered capital generation differs from durable history',
+        })
       yield* Effect.fromResult(
         researchCapitalGenerationIsBoundToBuildLineage(
           binding.buildLineage,

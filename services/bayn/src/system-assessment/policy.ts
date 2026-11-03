@@ -1,8 +1,9 @@
 import { Result, Schema } from 'effect'
+import { ResearchCapitalGrantGenerationSchema } from '../execution/contracts'
 import {
   ResearchCapitalActivationRequestSchema,
   ResearchCapitalBuildLineageSchema,
-  researchCapitalBuildLineageIsCurrent,
+  researchCapitalGenerationIsBoundToBuildLineage,
 } from '../execution/configuration'
 import {
   makeRepeatedMomentumPolicy,
@@ -80,6 +81,7 @@ export const PolicyDefinitionSchema = Schema.Struct({
     Schema.Struct({
       request: ResearchCapitalActivationRequestSchema,
       buildLineage: ResearchCapitalBuildLineageSchema,
+      generation: ResearchCapitalGrantGenerationSchema,
     }),
   ),
   riskPolicyHash: Sha256Schema,
@@ -243,14 +245,21 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     const riskCeilings = jevAcceptanceExecutionRiskLimits(version)
     for (const policy of registration.policies) {
       if (policy.capitalAuthorization !== undefined) {
-        const { request, buildLineage } = policy.capitalAuthorization
-        const binding = researchCapitalBuildLineageIsCurrent(buildLineage, request, {
-          sourceRevision: policy.sourceRevision,
-          imageRepository: buildLineage.activation.imageRepository,
-          imageDigest: `sha256:${policy.imageDigest}`,
-        })
+        const { request, buildLineage, generation } = policy.capitalAuthorization
+        const binding = researchCapitalGenerationIsBoundToBuildLineage(
+          buildLineage,
+          request,
+          {
+            sourceRevision: policy.sourceRevision,
+            imageRepository: buildLineage.activation.imageRepository,
+            imageDigest: `sha256:${policy.imageDigest}`,
+          },
+          generation.previousGenerationHash,
+          generation,
+        )
         if (
           Result.isFailure(binding) ||
+          generation.generationHash !== policy.authorityGenerationHash ||
           buildLineage.activation.imageRepository !== request.activation.imageRepository ||
           request.broker.accountId !== policy.riskPolicy.accountId ||
           request.riskPolicyHash !== policy.riskPolicyHash ||
