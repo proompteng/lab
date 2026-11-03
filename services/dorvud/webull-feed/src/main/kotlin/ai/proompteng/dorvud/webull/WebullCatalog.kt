@@ -13,6 +13,8 @@ import kotlinx.serialization.json.put
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
+internal const val MAX_WEBULL_BAR_SYMBOLS = 20
+
 data class WebullInstrument(
   val symbol: String,
   val instrumentId: String,
@@ -90,7 +92,9 @@ suspend fun WebullApi.completedBars(
   symbols: List<String>,
   cutoff: Instant,
 ): JsonObject {
-  require(symbols.isNotEmpty() && symbols.size <= 100 && symbols.distinct().size == symbols.size) { "invalid Webull bar batch" }
+  require(symbols.isNotEmpty() && symbols.size <= MAX_WEBULL_BAR_SYMBOLS && symbols.distinct().size == symbols.size) {
+    "invalid Webull bar batch"
+  }
   require(cutoff == cutoff.truncatedTo(ChronoUnit.MINUTES)) { "Webull cutoff must be a completed-minute boundary" }
   return request(
     WEBULL_BARS_PATH,

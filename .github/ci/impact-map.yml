@@ -237,6 +237,7 @@ targets:
       - nix/images/agents.nix
       - nix/images/bun-workspace-service.nix
       - nix/images/openai-codex-cli.nix
+      - nix/images/agentrun-tools.nix
       - nix/packages.nix
       - packages/agent-contracts/**
       - packages/codex/**

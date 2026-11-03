@@ -492,6 +492,7 @@ const expected = {
       'charts/agents/crds',
       'nix/images/agents.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
       'charts/agents',
     ],
