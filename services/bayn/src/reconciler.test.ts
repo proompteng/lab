@@ -1184,6 +1184,8 @@ describe('execution reconciliation loop', () => {
     expect(control.writes - firstPassWrites).toBe(4)
     expect(control.reconciliations).toHaveLength(2)
     expect(control.reconciliations[1].fills).toEqual(control.reconciliations[0].fills)
+    expect(control.reconciliations[0]).toHaveProperty('ledgerPostingRequired', true)
+    expect(control.reconciliations[1]).toHaveProperty('ledgerPostingRequired', false)
   })
 
   test('does not reconcile or reuse a completed fill when its accounting verification fails', async () => {
