@@ -881,6 +881,11 @@ def evaluate (json : Json) : Except String Json := do
     let scheduled ← readNatural json "scheduled"
     return toJson (if scheduled = 0 ∨ good > scheduled then "UNDETERMINED"
       else if reliabilityPass good scheduled then "MEETS_TARGET" else "MISSES_TARGET")
+  | "currentTradingScope" =>
+    let market ← json.getObjValAs? String "market"
+    let sell ← json.getObjValAs? Bool "sell"
+    return Json.mkObj [("entryAllowed", toJson (currentEntryMarketAllowed market)),
+      ("submissionAllowed", toJson (currentSubmissionMarketAllowed market sell))]
   | "binaryEdge" =>
     let gain ← readNatural json "gainMicros"
     let loss ← readNatural json "lossMicros"
