@@ -4664,6 +4664,7 @@ describe('OBSERVE runtime composition', () => {
       readonly initialAgeMs?: number
       readonly pricingAskIncrease?: number
       readonly pricingReadDelayMs?: number
+      readonly pricingSnapshotDelayMs?: number
       readonly brokerMaximumAgeMs?: number
       readonly admissionRemainingMs?: number
       readonly cycleCreatedAt?: string
@@ -4749,6 +4750,8 @@ describe('OBSERVE runtime composition', () => {
                 events.push(query.purpose === IntradaySnapshotPurpose.EntryPricing ? 'pricing' : 'signal')
                 snapshotRequests.push({ ...query, archiveWatermarks: [] })
                 const snapshot = yield* fixture.input.intradayMarketData.loadSnapshot(query)
+                if (query.purpose === IntradaySnapshotPurpose.EntryPricing)
+                  yield* TestClock.adjust(options.pricingSnapshotDelayMs ?? 0)
                 if (query.purpose !== IntradaySnapshotPurpose.EntryPricing || options.pricingAskIncrease === undefined)
                   return snapshot
                 const increase = options.pricingAskIncrease
@@ -4949,12 +4952,46 @@ describe('OBSERVE runtime composition', () => {
       inferenceMs: 7_000,
       refreshMs: 3_000,
       brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'refresh passes the existing model deadline',
+      inferenceMs: 7_000,
+      refreshMs: 3_001,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'refresh exhausts the original admission with still-current inference',
+      inferenceMs: 1_000,
+      refreshMs: 4_000,
+      admissionRemainingMs: 5_000,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'refresh exhausts both source and admission deadlines',
+      inferenceMs: 7_000,
+      refreshMs: 3_000,
+      admissionRemainingMs: 10_000,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'refresh exhausts both source and broker-risk headroom',
+      inferenceMs: 7_000,
+      refreshMs: 1_000,
+      refreshedAgeMs: 18_999,
+      pricingReadDelayMs: 2_000,
+      brokerMaximumAgeMs: 30_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
     },
     {
       name: 'refresh commit consumes the remaining broker-risk headroom',
       refreshedAgeMs: 19_000,
       refreshMs: 1_000,
       brokerMaximumAgeMs: 30_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
     },
   ])('Jev waits before selecting a quote when $name', async (options) => {
     const result = await buildEntryWithHeadroom(options)
@@ -4962,11 +4999,69 @@ describe('OBSERVE runtime composition', () => {
     if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
     expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
       _tag: 'ObserveDecisionAwaitingSignal',
-      readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+      readiness: { reason: options.readiness },
     })
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests).toHaveLength(1)
     expect(result.events).not.toContain('pricing')
+  })
+
+  test.each([
+    {
+      name: 'source expiry',
+      pricingSnapshotDelayMs: 9_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'past source expiry',
+      pricingSnapshotDelayMs: 9_001,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'admission expiry with still-current inference',
+      pricingSnapshotDelayMs: 4_000,
+      admissionRemainingMs: 5_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'source and admission expiry',
+      pricingSnapshotDelayMs: 9_000,
+      admissionRemainingMs: 10_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+  ])('Jev preserves the retry classification after pricing reaches $name', async (options) => {
+    const result = await buildEntryWithHeadroom({
+      ...options,
+      initialAgeMs: 0,
+      inferenceMs: 1_000,
+      brokerMaximumAgeMs: 300_000,
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: options.readiness },
+    })
+    expect(result.refreshes).toBe(0)
+    expect(result.snapshotRequests).toHaveLength(2)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+  })
+
+  test('Jev retains broker backoff when source expiry and broker headroom coincide after pricing', async () => {
+    const result = await buildEntryWithHeadroom({
+      initialAgeMs: 10_000,
+      inferenceMs: 1_000,
+      pricingSnapshotDelayMs: 9_000,
+      brokerMaximumAgeMs: 30_000,
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+    })
+    expect(result.refreshes).toBe(0)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
   })
 
   test('Jev rechecks cached headroom at the pricing clock before selecting a quote', async () => {

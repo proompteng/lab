@@ -250,6 +250,15 @@ before the cutoff and bound to the exact account, strategy, protocol, qualificat
 Completion requires a nondecreasing observation time, a bound decision and one matching durable document. Executed
 completion additionally requires a planned result, no risk block and financial completion evidence.
 
+`expired_inference_retry_requires_original_window` maps the expired-readiness branch of
+`decisionReadinessContinuationDelayMs` in `src/observe-composition/recovery-driver.ts`. A minimum-delay retry requires
+an active, unbound cycle inside its original unused-entry window; `expired_inference_cannot_retry_after_original_deadline`
+rejects a retry at or after that deadline. The reachable example admits a fresh retry and rejects the exact expiry.
+Another 1,680 executable comparisons cover waiting classification, cycle state, bindings, open time, and expiry.
+The native controller regression retains the captured late-commit work durations through scheduling and restart:
+the ordinary idle delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
+These proofs do not guarantee storage or provider latency; a retried response still has to pass the existing checks.
+
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
 modes, risk blocks, and attached versus explicitly supplied completion evidence. The full document-equivalence predicate
