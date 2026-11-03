@@ -143,6 +143,14 @@ const receiptCriteriaExpression = (
 }
 
 const expected = {
+  'torghut-webull-feed': {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('torghut-webull-feed')],
+    apps: ['torghut-webull-feed'],
+    includePaths: [],
+  },
   ofz: {
     creationCriteria: 'image-revision',
     requiresBuildReceipt: true,
@@ -484,6 +492,7 @@ const expected = {
       'charts/agents/crds',
       'nix/images/agents.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
       'charts/agents',
     ],

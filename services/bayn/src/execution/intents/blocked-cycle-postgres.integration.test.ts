@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
-import type { Statement } from 'effect/sql/Statement'
+import { CurrentTransformer, type Statement } from 'effect/sql/Statement'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
@@ -1752,32 +1752,35 @@ const settleUntouchedExpiry = Effect.gen(function* () {
   )
 })
 
-const reserveExpiryIntent = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const fence = yield* WriterFence
-  return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
-    MutationOperation.Submit,
-    expiryFixture.intentIds[0],
-    Result.getOrThrow(
-      canonicalHashV1Result(
-        Result.getOrThrow(
-          orderRequestBody({
-            clientOrderId: 'b1_' + 'A'.repeat(43),
-            symbol: 'AAPL',
-            side: OrderSide.Buy,
-            orderType: OrderType.Limit,
-            timeInForce: TimeInForce.Day,
-            quantityAtoms: '1000000000',
-            notionalLimitMicros: '100000000',
-            limitPriceMicros: '100000000',
-          }),
+const reserveExpiryIntentFor = (intentId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const fence = yield* WriterFence
+    return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
+      MutationOperation.Submit,
+      intentId,
+      Result.getOrThrow(
+        canonicalHashV1Result(
+          Result.getOrThrow(
+            orderRequestBody({
+              clientOrderId: 'b1_' + 'A'.repeat(43),
+              symbol: 'AAPL',
+              side: OrderSide.Buy,
+              orderType: OrderType.Limit,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: '1000000000',
+              notionalLimitMicros: '100000000',
+              limitPriceMicros: '100000000',
+            }),
+          ),
         ),
       ),
-    ),
-    1_000,
-    expiryFixture.reservedAt,
-  )
-})
+      1_000,
+      expiryFixture.reservedAt,
+    )
+  })
+
+const reserveExpiryIntent = reserveExpiryIntentFor(expiryFixture.intentIds[0])
 
 const readExpiryState = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -1810,6 +1813,116 @@ describePostgres('PostgreSQL untouched approval expiry safety', () => {
   afterAll(async () => {
     await owner?.dispose()
     await contender?.dispose()
+  })
+
+  test('commits submission admission with six SQL statements and preserves the exact stored request', async () => {
+    let statements = 0
+    let commits = 0
+    const receipt = await owner.runPromise(
+      Effect.gen(function* () {
+        const fence = yield* WriterFence
+        const countedFence: WriterFenceService = {
+          check: fence.check,
+          transaction: (effect) =>
+            fence.transaction(effect).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  commits += 1
+                }),
+              ),
+            ),
+        }
+        return yield* reserveExpiryIntent.pipe(
+          Effect.provideService(WriterFence, countedFence),
+          Effect.provideService(CurrentTransformer, (statement) =>
+            Effect.sync(() => {
+              statements += 1
+              return statement
+            }),
+          ),
+        )
+      }),
+    )
+    expect(receipt.started).toBe(true)
+    // Counts actual adapter statements; the writer lease's BEGIN/check/COMMIT protocol is separate and unchanged.
+    expect(statements).toBe(6)
+    expect(commits).toBe(1)
+    const durable = await contender.runPromise(readExpiryState)
+    expect(durable.intents[0]).toMatchObject({ state: 'IO_STARTED', state_version: 2 })
+    expect(durable.mutationRows).toHaveLength(1)
+    expect(durable.mutationRows[0]).toMatchObject({
+      event_id: receipt.event.eventId,
+      request_hash: receipt.event.requestHash,
+      request_body: {
+        client_order_id: 'b1_' + 'A'.repeat(43),
+        symbol: 'AAPL',
+        side: 'buy',
+        type: 'limit',
+        time_in_force: 'day',
+        qty: '1',
+        limit_price: '100',
+      },
+    })
+    statements = 0
+    const replay = await contender.runPromise(
+      reserveExpiryIntent.pipe(
+        Effect.provideService(CurrentTransformer, (statement) =>
+          Effect.sync(() => {
+            statements += 1
+            return statement
+          }),
+        ),
+      ),
+    )
+    expect(replay).toEqual({ event: receipt.event, started: false })
+    expect(statements).toBe(1)
+    expect(await contender.runPromise(readExpiryState)).toEqual(durable)
+  })
+
+  test('retains containment for a different intent after the first admission commits', async () => {
+    await owner.runPromise(reserveExpiryIntent)
+    const before = await owner.runPromise(readExpiryState)
+    const blocked = await contender.runPromise(reserveExpiryIntentFor(expiryFixture.intentIds[1]).pipe(Effect.result))
+    expect(blocked).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'MutationStoreError',
+        failure: 'invariant',
+        message: 'another broker mutation has an unresolved outcome',
+      },
+    })
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
+  })
+
+  test('rejects expired approval at the database clock without committing a start', async () => {
+    await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE risk_decisions SET expires_at = ${expiryFixture.reservedAt}`
+      }),
+    )
+    const before = await owner.runPromise(readExpiryState)
+    expect(Result.isFailure(await owner.runPromise(reserveExpiryIntent.pipe(Effect.result)))).toBe(true)
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
+  })
+
+  test('rejects ambient transactions so the durable start cannot be deferred past broker routing', async () => {
+    const before = await owner.runPromise(readExpiryState)
+    const result = await owner.runPromise(
+      Effect.gen(function* () {
+        const fence = yield* WriterFence
+        return yield* fence.transaction(reserveExpiryIntent).pipe(Effect.result)
+      }),
+    )
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'MutationStoreError',
+        failure: 'invariant',
+        message: 'mutation admission must commit independently before broker routing',
+      },
+    })
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
   })
 
   test('atomically retains a decoded denial reason and rejects conflicting database replay', async () => {

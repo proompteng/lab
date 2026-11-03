@@ -1033,6 +1033,23 @@ data:
                 rate(ceph_bluestore_kv_sync_lat_sum{job="ceph-exporter"}[5m]) /
                 (rate(ceph_bluestore_kv_sync_lat_count{job="ceph-exporter"}[5m]) > 0)
               )
+          # Bytes include replica work, not unique logical scrub coverage.
+          - record: ceph_storage:bluefs_sst_write_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_bytes_written_sst{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluefs_wal_write_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_bytes_written_wal{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluefs_read_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_bluefs_read_bytes{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_osd_scrub_replicated_read_bytes{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:osd_scrub_blocked_ops_per_second:rate5m
+            expr: max by (node, ceph_daemon) (rate(ceph_osd_scrub_replicated_io_blocked{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]))
+          - record: ceph_storage:bluestore_throttle_seconds:mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                rate(ceph_bluestore_txc_throttle_lat_sum{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) /
+                (rate(ceph_bluestore_txc_throttle_lat_count{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) > 0)
+              )
           - record: ceph_storage:host_disk_busy_ratio:rate5m
             expr: max by (node, device) (rate(node_disk_io_time_seconds_total{job="node-storage"}[5m]))
           - record: ceph_storage:host_disk_queue_depth:mean5m
@@ -1195,15 +1212,29 @@ data:
                 {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
-            expr: ceph_health_status{job="ceph-storage"} == 1
+            expr: |
+              (ceph_health_status{job="ceph-storage"} == 1)
+              unless on (job, instance)
+              (
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name=~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+                unless on (job, instance)
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name!~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+              )
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
               team: platform
             annotations:
               summary: Ceph cluster reports HEALTH_WARN
-              description: Ceph has reported HEALTH_WARN continuously for 10 minutes.
+              description: >-
+                Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable.
+                Active checks: {{ range query (printf "ceph_health_detail{job=%q,instance=%q} > 0" $labels.job $labels.instance) | sortByLabel "name" }}{{ .Labels.name }}; {{ else }}detail unavailable; {{ end }}Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthError
             expr: ceph_health_status{job="ceph-storage"} >= 2
@@ -1247,6 +1278,7 @@ data:
           - alert: CephOsdQueueWaitHigh
             expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1258,6 +1290,7 @@ data:
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1269,6 +1302,7 @@ data:
           - alert: CephOsdCommitLatencyCritical
             expr: ceph_storage:osd_commit_latency_ms:max > 150
             for: 5m
+            keep_firing_for: 10m
             labels:
               severity: critical
               service: ceph-storage
@@ -1287,6 +1321,7 @@ data:
                 }
               ) > 0
             for: 30m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
