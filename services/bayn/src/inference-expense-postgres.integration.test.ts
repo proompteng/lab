@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { NodeServices } from '@effect/platform-node'
-import { ConfigProvider, Context, Effect, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { ConfigProvider, Context, Deferred, Effect, Fiber, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { SqlClient, Statement } from 'effect/sql'
 import { canonicalHashV1Result } from './hash'
 
@@ -9,6 +9,7 @@ import requestMigration from '../migrations/0076_jev_evaluation_evidence'
 import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
 import expenseMigration from '../migrations/0091_inference_expense_quotes'
 import inferenceRequestVersion from '../migrations/0150_inference_request_version'
+import expenseSourceQueue from '../migrations/0173_inference_expense_source_queue'
 import { inferenceExpenseBatchSize, makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
@@ -37,7 +38,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
       throw new Error('Inference expense tests require an isolated local _test database')
     url.searchParams.set('options', `-c search_path=${schema}`)
     runtime = ManagedRuntime.make(
-      PgClient.layer({ url: Redacted.make(url.toString()), transformJson: false, maxConnections: 2 }),
+      PgClient.layer({ url: Redacted.make(url.toString()), transformJson: false, maxConnections: 3 }),
     )
   })
   const resetDatabase = async (withRequestVersion = true) => {
@@ -68,6 +69,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         yield* sql`CREATE TABLE jev_staged_dispatch_claims (request_id text NOT NULL, stage text NOT NULL, claim_hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
         yield* sql`CREATE TABLE jev_staged_terminal_receipts (request_id text NOT NULL, stage text NOT NULL, terminal_hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
         yield* sql`CREATE TABLE jev_staged_skip_receipts (request_id text NOT NULL, stage text NOT NULL, skip_hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        if (withRequestVersion) yield* expenseSourceQueue
       }),
     )
   }
@@ -111,7 +113,8 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         yield* persistSource(missing)
         yield* persistSource(other)
         const store = makeInferenceExpenseStore(sql, pending.accountId, '1970-01-01')
-        yield* store.freeze([frozenQuote])
+        yield* sql`INSERT INTO inference_expense_quotes(quote_hash,account_id,session_date,payload)
+          VALUES(${frozenQuote.quoteHash},${frozen.accountId},${frozen.sessionDate}::date,${sql.json(frozenQuote)})`
         const evidence = () => sql`SELECT request_id, payload::text AS payload_bytes,
           payload->>'schemaVersion' AS wire_version FROM jev_evaluation_requests ORDER BY request_id COLLATE "C"`
         const before = yield* evidence()
@@ -130,6 +133,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
           Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ request_id: Schema.String })))),
         )
         yield* inferenceRequestVersion
+        yield* expenseSourceQueue
         expect(yield* evidence()).toEqual(before)
         expect(
           yield* sql`SELECT request_id FROM jev_evaluation_requests
@@ -327,6 +331,84 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         yield* store.freeze([late])
         expect((yield* store.pending)[0]?.line.estimatedCostPicoUsd).toBe('42000')
         expect(yield* store.session(source.sessionDate)).toHaveLength(2)
+      }),
+    )
+  })
+
+  test('does not lose a late receipt while retiring an older frozen source revision', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const source = expenseSourceFixture({ missing: true })
+        const quote = yield* persistSource(source)
+        const store = makeInferenceExpenseStore(sql, source.accountId, '1970-01-01')
+        const written = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const writer = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* persistSource(expenseSourceFixture({ abandoned: true }))
+              yield* Deferred.succeed(written, undefined)
+              yield* Deferred.await(release)
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(written)
+        const freezer = yield* store.freeze([quote]).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Effect.gen(function* () {
+          while (true) {
+            const blocked = yield* sql`SELECT 1 FROM pg_stat_activity
+              WHERE datname=current_database() AND wait_event_type='Lock'
+                AND query LIKE '%DELETE FROM inference_expense_source_pending%'
+                AND pid<>pg_backend_pid()`
+            if (blocked.length > 0) break
+            yield* Effect.sleep('5 millis')
+          }
+        }).pipe(Effect.timeout('5 seconds'), Effect.ensuring(Deferred.succeed(release, undefined)))
+        yield* Fiber.join(writer)
+        yield* Fiber.join(freezer)
+        expect(
+          yield* sql`SELECT 1 FROM inference_expense_source_pending WHERE request_id=${source.requestId}`,
+        ).toHaveLength(1)
+        const discovered = yield* store.newSources
+        expect(discovered).toHaveLength(1)
+        const late = discovered[0]
+        if (late === undefined) return yield* Effect.die('Late receipt was lost')
+        yield* store.freeze([Result.getOrThrow(makeInferenceExpenseQuote(late, expenseRateFixture))])
+        expect(yield* store.newSources).toEqual([])
+        expect(yield* store.session(source.sessionDate)).toHaveLength(2)
+      }),
+    )
+  })
+
+  test('rolls source work back with its evidence and re-enqueues after a prior retirement', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const source = expenseSourceFixture({ missing: true })
+        const quote = yield* persistSource(source)
+        const store = makeInferenceExpenseStore(sql, source.accountId, '1970-01-01')
+        const before =
+          yield* sql`SELECT revision::text AS revision FROM inference_expense_source_pending WHERE request_id=${source.requestId}`
+        const rolledBack = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* persistSource(expenseSourceFixture({ abandoned: true }))
+              return yield* Effect.fail('rollback fixture')
+            }),
+          )
+          .pipe(Effect.result)
+        expect(Result.isFailure(rolledBack)).toBe(true)
+        expect(
+          yield* sql`SELECT revision::text AS revision FROM inference_expense_source_pending WHERE request_id=${source.requestId}`,
+        ).toEqual(before)
+        yield* store.freeze([quote])
+        expect(yield* sql`SELECT 1 FROM inference_expense_source_pending`).toEqual([])
+        yield* persistSource(expenseSourceFixture({ abandoned: true }))
+        const after =
+          yield* sql`SELECT revision::text AS revision FROM inference_expense_source_pending WHERE request_id=${source.requestId}`
+        expect(after).not.toEqual(before)
+        expect(yield* store.newSources).toHaveLength(1)
       }),
     )
   })
