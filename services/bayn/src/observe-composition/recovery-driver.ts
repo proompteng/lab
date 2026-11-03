@@ -400,9 +400,11 @@ export const decisionReadinessContinuationDelayMs = (
   observedAt: string,
 ): number | undefined => {
   if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.readiness === undefined) return undefined
+  const query = result.readiness.snapshotQuery
   const pendingSnapshot =
     result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
-    result.readiness.snapshotQuery !== undefined
+    query?.previousWindowEndAt !== undefined &&
+    Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt)
   if (result.readiness.reason === DecisionReadinessReason.InferenceExpired || pendingSnapshot) {
     const now = Date.parse(observedAt)
     const cycle = result.cycle

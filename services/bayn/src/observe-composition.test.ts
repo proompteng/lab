@@ -28,7 +28,7 @@ import { JevClient } from './jev/client'
 import { EntryInferenceJournal } from './jev/entry-inference'
 import { buildObserveCycleDecision } from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy } from './execution/risk-policy'
-import { JevPositionStore } from './jev/portfolio'
+import { JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
@@ -5359,80 +5359,100 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
-  test('waits without inference when every native Jev candidate lacks usable evidence', async () => {
-    const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
-    let inferenceBatches = 0
-    const exit = await Effect.runPromiseExit(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt))
-        return yield* buildMutationShadowCycleDecision({
-          authorityGenerationHash: generationHash,
-          cycle,
-          executionModel: fixtureProtocol.executionModel,
-          policy,
-          strategy: fixtureRuntime,
-          reconcile: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-          intradayMarketData: {
-            check: Effect.void,
-            verifyReference: fixtureStreamingReference,
-            loadSnapshot: (query) =>
-              Effect.suspend(() => {
-                const raw = makeIntradayMomentumTestSnapshot(
-                  fixtureProtocol,
-                  { ...query, archiveWatermarks: [] },
-                  {},
-                  10,
-                )
-                const { cut } = streamingFixtureFromRaw(raw, query)
-                return Effect.fromResult(
-                  constructStreamingSnapshot(
-                    {
-                      ...cut,
-                      projection: {
-                        ...cut.projection,
-                        quoteHistory: new Map([...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY')),
-                        tradeHistory: new Map([...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY')),
+  test.each([undefined, '2026-09-04T16:44:00.000Z'])(
+    'missing native inputs retain the earlier observed window (%s) without inference',
+    async (previousWindowEndAt) => {
+      const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
+      let inferenceBatches = 0
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            strategy: fixtureRuntime,
+            reconcile: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            intradayMarketData: {
+              check: Effect.void,
+              verifyReference: fixtureStreamingReference,
+              loadSnapshot: (query) =>
+                Effect.suspend(() => {
+                  const raw = makeIntradayMomentumTestSnapshot(
+                    fixtureProtocol,
+                    { ...query, archiveWatermarks: [] },
+                    {},
+                    10,
+                  )
+                  const { cut } = streamingFixtureFromRaw(raw, query)
+                  return Effect.fromResult(
+                    constructStreamingSnapshot(
+                      {
+                        ...cut,
+                        projection: {
+                          ...cut.projection,
+                          quoteHistory: new Map(
+                            [...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY'),
+                          ),
+                          tradeHistory: new Map(
+                            [...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY'),
+                          ),
+                        },
                       },
-                    },
-                    query,
-                  ),
-                ).pipe(
-                  Effect.mapError((cause) =>
-                    operationalError({
-                      component: 'market-data',
-                      operation: 'snapshot',
-                      message: 'Streaming snapshot is unavailable',
-                      cause,
-                    }),
-                  ),
-                )
-              }),
-          },
-        })
-      }).pipe(
-        (program) =>
-          provideDecisionServices(
-            program.pipe(
-              Effect.provideService(JevBatchStore, {
-                read: () => Effect.die('no batch should be read'),
-                pending: () => Effect.succeed([]),
-                begin: () =>
-                  Effect.sync(() => {
-                    inferenceBatches += 1
-                  }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
-                complete: () => Effect.die('no batch should be finished'),
-                finish: () => Effect.die('no batch should be finished'),
-              }),
+                      query,
+                    ),
+                  ).pipe(
+                    Effect.mapError((cause) =>
+                      operationalError({
+                        component: 'market-data',
+                        operation: 'snapshot',
+                        message: 'Streaming snapshot is unavailable',
+                        cause,
+                      }),
+                    ),
+                  )
+                }),
+            },
+          }).pipe(Effect.result)
+        }).pipe(
+          (program) =>
+            provideDecisionServices(
+              program.pipe(
+                Effect.provideService(CandidateObservationStore, {
+                  latestJevWindowEnd: (input) => {
+                    expect(input).toEqual({ cycleId: cycle.identity.cycleId, purpose: JevPurpose.Entry })
+                    return Effect.succeed(Option.fromUndefinedOr(previousWindowEndAt))
+                  },
+                  record: () => Effect.die('Missing data cannot create an observation'),
+                }),
+                Effect.provideService(JevBatchStore, {
+                  read: () => Effect.die('no batch should be read'),
+                  pending: () => Effect.succeed([]),
+                  begin: () =>
+                    Effect.sync(() => {
+                      inferenceBatches += 1
+                    }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
+                  complete: () => Effect.die('no batch should be finished'),
+                  finish: () => Effect.die('no batch should be finished'),
+                }),
+              ),
+              calendarRead([]),
             ),
-            calendarRead([]),
-          ),
-        Effect.provide(TestClock.layer()),
-      ),
-    )
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('ObserveDecisionAwaitingSignal')
-    expect(inferenceBatches).toBe(0)
-  })
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe('ObserveDecisionAwaitingSignal')
+        if (result.failure._tag === 'ObserveDecisionAwaitingSignal') {
+          expect(result.failure.readiness?.reason).toBe(DecisionReadinessReason.SnapshotUnavailable)
+          expect(result.failure.readiness?.snapshotQuery?.previousWindowEndAt).toBe(previousWindowEndAt)
+        }
+      }
+      expect(inferenceBatches).toBe(0)
+    },
+  )
 
   test('a previously observed Jev entry window reports when fresh evidence becomes eligible', async () => {
     const fixture = await executionLifecycleFixture()

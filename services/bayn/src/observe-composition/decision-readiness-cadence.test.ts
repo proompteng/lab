@@ -115,7 +115,7 @@ test('retries expired inference within the original unused entry deadline instea
     ).toBeUndefined()
 })
 
-const pendingInputs = () => ({
+const pendingInputs = (previousWindowEndAt?: string) => ({
   ...waiting(DecisionReadinessReason.SnapshotUnavailable),
   readiness: {
     reason: DecisionReadinessReason.SnapshotUnavailable,
@@ -124,14 +124,23 @@ const pendingInputs = () => ({
       rangeStartAt: native.query.rangeStartAt,
       rangeEndAt: native.query.rangeEndAt,
       symbols: native.query.symbols ?? native.query.universe,
+      ...(previousWindowEndAt === undefined ? {} : { previousWindowEndAt }),
     },
   },
 })
 
+test.each([undefined, native.query.rangeEndAt, instant(60_000), 'invalid'])(
+  'initial or already consumed missing inputs keep the ordinary cadence (%s)',
+  (previousWindowEndAt) => {
+    const result = pendingInputs(previousWindowEndAt)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(37_171))).toBeUndefined()
+  },
+)
+
 test('rechecks pending snapshot inputs before the captured remaining admission expires', () => {
   // The retained 16:24 cycle had 22,829 ms left when its next feature cut was unavailable.
   const checkedAt = instant(37_171)
-  const result = pendingInputs()
+  const result = pendingInputs(instant(-60_000))
   expect(decisionReadinessContinuationDelayMs(result, 30_000, checkedAt)).toBe(1_000)
   expect(Date.parse(checkedAt) + 30_000).toBeGreaterThan(unusedEntryExpiresAt(cycle))
   expect(decisionReadinessContinuationDelayMs(result, 500, checkedAt)).toBe(500)

@@ -1742,15 +1742,12 @@ formal('pinned Lean executable conformance', () => {
               readiness: {
                 reason: DecisionReadinessReason.SnapshotUnavailable,
                 message: 'Awaiting raw inputs and their matching feature',
-                ...(c.pending
-                  ? {
-                      snapshotQuery: {
-                        rangeStartAt: instant(c.now - 60_000),
-                        rangeEndAt: instant(c.now),
-                        symbols: ['AAPL'],
-                      },
-                    }
-                  : {}),
+                snapshotQuery: {
+                  rangeStartAt: instant(c.now - 60_000),
+                  rangeEndAt: instant(c.now),
+                  symbols: ['AAPL'],
+                  ...(c.pending ? { previousWindowEndAt: instant(c.now - 60_000) } : {}),
+                },
               },
             },
             c.normalDelay,
