@@ -570,6 +570,7 @@ test.each([
   [DecisionReadinessReason.AccountProtection, 'BLOCKED', false],
   [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
   [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
+  [DecisionReadinessReason.InferenceExpired, 'EVALUATION_UNAVAILABLE', false],
 ] as const)(
   'continuous admission immediately reports %s evidence without an equity warmup',
   (reason, condition, ready) => {
