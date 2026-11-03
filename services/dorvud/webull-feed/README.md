@@ -159,3 +159,12 @@ Runtime acceptance also requires the deployed revision/digest, a controlled rest
 new session/subscription receipts, and archive replay readback. Local tests or admitted subscriptions
 alone do not establish production acceptance. A closed market can leave active-market verification
 pending after infrastructure deployment.
+
+## Normalized research bars
+
+The existing Flink archive additionally indexes validated completed M1 bars in
+`signal.webull_market_events_v1.minute_bars`, preserving native decimal strings and `PRE`/`RTH`/`ATH` sessions.
+`bar_requests` retains per-requested-symbol `OBSERVED`, `EMPTY`, `EXCLUDED`, `OMITTED` and `REJECTED` states.
+Raw envelopes and source coordinates remain the archive identity; recovery repeats are collapsed at research read time.
+Existing rows are not rewritten by adding these indexes; retained rejected captures require explicit replay through
+the corrected archive decoder with their original envelope and Kafka coordinates.
