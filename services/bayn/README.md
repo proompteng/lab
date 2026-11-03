@@ -517,7 +517,10 @@ replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
 Each command owns that connection through reconnect, its request, and cancellation;
-`SET` and its replica `WAIT` stay together. Queued commands retain the one-second
+`SET` and its replica `WAIT` stay together. Observation publication pipelines its
+bounded pair of immutable payloads under one connection owner, then acknowledges
+both writes with one replication barrier before publishing their database references.
+Neither write is replayed after a failure or cancellation. Queued commands retain the one-second
 deadline, and interrupting a queued caller does not close an active caller's socket.
 Reconnect happens on the next command rather than in a competing background retry.
 Replica acknowledgement uses 250 ms waits on the owned connection for the remaining
@@ -1337,6 +1340,16 @@ provider stage; retained single-provider Jev expenses keep their original identi
 **USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
 units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
 estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
+
+Each account's expense pass has one nonblocking PostgreSQL advisory owner across execution-server replicas.
+Research expense projection uses a separate owner and continues independently. Each pass owns one physical
+PostgreSQL connection with the normal TLS and query, socket and connection deadlines. Its statements commit
+normally before ledger I/O; closing the connection releases ownership on completion, failure or interruption,
+including a lost lock-acquisition response. Other replicas retry on the existing 30-second cadence. Ownership
+avoids duplicate scans and quote contention; frozen evidence and deterministic ledger IDs still enforce correctness.
+During ledger I/O, a same-session keepalive runs at half the configured PostgreSQL statement/connect budget to
+preserve ownership through the unchanged socket inactivity deadline. A keepalive failure interrupts the pass.
+Retained server versions that predate this ownership protocol remain uncoordinated until their normal retirement.
 
 Migration 173 backfills pending work once from the retained request and quote metadata. Inserts of resolutions,
 receipts, handoffs, claims, terminals, and skips enqueue the affected request in the same PostgreSQL transaction.
