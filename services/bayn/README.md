@@ -516,6 +516,11 @@ adds the `bayn:` namespace, bounded values and expiry, command cancellation and
 replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
+Initial acquisition retries a native `ECONNREFUSED` failure at most twice, one second
+apart, closing each failed acquisition before the next attempt. Authentication,
+TLS, configuration and timeout failures fail immediately. The retry boundary ends
+before the cache service is exposed, so it never replays a caller's command.
+
 Each command owns that connection through reconnect, its request, and cancellation;
 `SET` and its replica `WAIT` stay together. Observation publication pipelines its
 bounded pair of immutable payloads under one connection owner, then acknowledges
@@ -527,6 +532,11 @@ Replica acknowledgement uses 250 ms waits on the owned connection for the remain
 one-second command budget, without repeating `SET`. Missing acknowledgement at that
 deadline cancels the outstanding work and fails publication. A deadline after a
 negative acknowledgement retains that replication failure as its cause.
+
+The pinned Redis client patch gives each connection attempt a native TCP/TLS
+abort signal. Scope closure or command cancellation closes a socket that is still
+connecting, and a cancelled attempt can only tear down its own socket. A caller's
+abort signal remains active alongside this ownership signal.
 
 Publication-failure logs report only allowlisted dependency, operation, failure-category
 and cause-category fields. An operation deadline remains distinct from a previously
