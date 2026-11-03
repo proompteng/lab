@@ -15,9 +15,34 @@ data class WebullObservation(
   val sourceTime: String,
 )
 
+enum class WebullTradingSession { PRE, RTH, ATH }
+
+enum class WebullBarRequestState { OBSERVED, EMPTY, EXCLUDED, OMITTED, REJECTED }
+
+data class WebullMinuteBar(
+  val symbol: String,
+  val startMillis: Long,
+  val session: WebullTradingSession,
+  val open: String,
+  val high: String,
+  val low: String,
+  val close: String,
+  val volume: String,
+)
+
+data class WebullBarRequest(
+  val symbol: String,
+  val state: WebullBarRequestState,
+  val observations: Int,
+  val excluded: Int,
+)
+
 data class WebullPayload(
   val channel: String,
   val observations: List<WebullObservation>,
+  val outOfWindowBars: Int = 0,
+  val minuteBars: List<WebullMinuteBar> = emptyList(),
+  val barRequests: List<WebullBarRequest> = emptyList(),
 )
 
 private fun protobufFields(bytes: ByteArray): Map<Int, List<ByteArray>> {
@@ -78,9 +103,10 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
         val basic = protobufFields(payload[1]?.singleOrNull() ?: error("missing Webull basic record"))
         val observedSymbol = symbol(basic.text(1))
         basic.text(2).also { require(it.isNotBlank()) { "missing Webull instrument id" } }
-        val sourceTime = if (source.topic == "tick") payload.text(2) else basic.text(3)
+        val sourceTime = basic.text(3)
         require(sourceTime.isNotBlank()) { "missing Webull provider timestamp" }
         if (source.topic == "tick") {
+          require(payload.text(2).isNotBlank()) { "missing Webull trade clock" }
           decimal(payload.text(3), positive = true)
           decimal(payload.text(4), positive = true)
         } else {
@@ -111,7 +137,17 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
           val start = Instant.ofEpochMilli(request.text("start_time").toLong())
           val end = Instant.ofEpochMilli(request.text("end_time").toLong()).plusMillis(1)
           require(start < end && end <= Instant.parse(capture.receivedAt)) { "unfinished Webull bar request" }
+          val sessions =
+            request
+              .text("trading_sessions")
+              .split(',')
+              .map(WebullTradingSession::valueOf)
+              .toSet()
+          require(sessions.isNotEmpty()) { "missing Webull requested sessions" }
           val groups = body["result"] as? JsonArray ?: error("missing Webull bar groups")
+          var outOfWindowBars = 0
+          val minuteBars = mutableListOf<WebullMinuteBar>()
+          val requests = mutableMapOf<String, WebullBarRequest>()
           val observations =
             groups.flatMap { group ->
               val item = group.jsonObject
@@ -119,23 +155,61 @@ fun inspectWebullCapture(capture: WebullCapture): WebullPayload {
               require(observedSymbol in source.requestedSymbols) { "unexpected Webull bar symbol" }
               require(item.text("delay_minutes") == "0") { "Webull bars do not have the real-time entitlement" }
               val bars = item["result"] as? JsonArray ?: error("missing Webull bars")
-              bars.map { raw ->
-                val bar = raw.jsonObject
-                for (price in listOf("open", "high", "low", "close")) decimal(bar.text(price), positive = true)
-                decimal(bar.text("volume"))
-                val low = bar.text("low").toBigDecimal()
-                val high = bar.text("high").toBigDecimal()
-                require(low <= high && bar.text("open").toBigDecimal() in low..high && bar.text("close").toBigDecimal() in low..high) {
-                  "inconsistent Webull OHLC"
+              var excluded = 0
+              val observed =
+                bars.mapNotNull { raw ->
+                  val bar = raw.jsonObject
+                  for (price in listOf("open", "high", "low", "close")) decimal(bar.text(price), positive = true)
+                  decimal(bar.text("volume"))
+                  val low = bar.text("low").toBigDecimal()
+                  val high = bar.text("high").toBigDecimal()
+                  require(low <= high && bar.text("open").toBigDecimal() in low..high && bar.text("close").toBigDecimal() in low..high) {
+                    "inconsistent Webull OHLC"
+                  }
+                  val time = webullProviderInstant(bar.text("time")) ?: error("invalid Webull bar timestamp")
+                  require(time.epochSecond % 60 == 0L && time.nano == 0) { "Webull M1 bar is not aligned to a minute" }
+                  if (time < start || time.plusSeconds(60) > end) {
+                    outOfWindowBars++
+                    excluded++
+                    null
+                  } else {
+                    val session = WebullTradingSession.valueOf(bar.text("trading_session"))
+                    require(session in sessions) { "unexpected Webull trading session" }
+                    minuteBars +=
+                      WebullMinuteBar(
+                        observedSymbol,
+                        time.toEpochMilli(),
+                        session,
+                        bar.text("open"),
+                        bar.text("high"),
+                        bar.text("low"),
+                        bar.text("close"),
+                        bar.text("volume"),
+                      )
+                    WebullObservation(observedSymbol, bar.text("time"))
+                  }
                 }
-                val time = webullProviderInstant(bar.text("time")) ?: error("invalid Webull bar timestamp")
-                require(time >= start && time.plusSeconds(60) <= end && time.epochSecond % 60 == 0L && time.nano == 0) {
-                  "Webull bar is outside the completed request window"
-                }
-                WebullObservation(observedSymbol, bar.text("time"))
+              require(observed.map { webullProviderInstant(it.sourceTime) }.distinct().size == observed.size) {
+                "duplicate Webull minute within one response group"
               }
+              val state =
+                when {
+                  observed.isNotEmpty() -> WebullBarRequestState.OBSERVED
+                  excluded > 0 -> WebullBarRequestState.EXCLUDED
+                  else -> WebullBarRequestState.EMPTY
+                }
+              require(requests.put(observedSymbol, WebullBarRequest(observedSymbol, state, observed.size, excluded)) == null) {
+                "duplicate Webull response group"
+              }
+              observed
             }
-          WebullPayload("bars", observations)
+          WebullPayload(
+            "bars",
+            observations,
+            outOfWindowBars,
+            minuteBars,
+            source.requestedSymbols.map { requests[it] ?: WebullBarRequest(it, WebullBarRequestState.OMITTED, 0, 0) },
+          )
         }
         else -> error("unsupported Webull payload endpoint")
       }

@@ -115,7 +115,8 @@ const polls = await Effect.runPromise(
   ).pipe(
     Effect.provideService(ValkeyCache, {
       ...valkeyFixture().cache,
-      put: () => (currentFailure === undefined ? Effect.die('missing failure fixture') : Effect.fail(currentFailure)),
+      putAll: () =>
+        currentFailure === undefined ? Effect.die('missing failure fixture') : Effect.fail(currentFailure),
     }),
     Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
     Effect.provide(TestClock.layer()),

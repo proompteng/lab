@@ -194,7 +194,7 @@ describePostgres('Durable per-account broker observations', () => {
         yield* advanceToTicket(ticket)
         const failed = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
           ...cacheFixture.cache,
-          put: () => Effect.fail(new ValkeyCacheError({ operation: 'put', message: 'replica unavailable' })),
+          putAll: () => Effect.fail(new ValkeyCacheError({ operation: 'put', message: 'replica unavailable' })),
         })
         expect(Result.isFailure(yield* failed.publish(ticket, snapshot(ticket), 0).pipe(Effect.result))).toBe(true)
         const rows =
