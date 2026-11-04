@@ -5,6 +5,11 @@ protection, reconciliation and recovery; crypto entry discovery and broker buys 
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Background broker polling makes one complete before/after history scan per durable ticket. Changed history or
+unsettled fill evidence rejects that cut and waits for the existing quota budget before acquiring a new ticket.
+It does not repeat full history reads under a pre-mutation ticket that cannot publish. Complete history, exact fill
+coverage, mutation and broker-event fences, freshness, deadlines and quota accounting remain unchanged.
+
 New cycles discovered during an open, unexpired submission window acquire their authority slot and activate in one
 PostgreSQL transaction under the existing writer fence. This removes an immediate second WAL commit. A failed
 activation rolls back acquisition; retries read the committed cycle. Recovery and decision binding continue to enforce
