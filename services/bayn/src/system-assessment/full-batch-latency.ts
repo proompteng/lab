@@ -11,7 +11,7 @@ import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { measureControllerLatency, nearestRank95 } from './controller-latency'
 import { sourceFitsRegisteredSession } from './decision-work'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import type { SystemSourceCut } from './source-cut'
 
 const submissionResolved = (event: MutationEvent) =>
@@ -43,7 +43,7 @@ export const fullBatchClockDuration = (clock: {
 
 /** Offline conservative timing bounds. A measured duration is not a successful service outcome or stress profit. */
 export const measureFullBatchLatency = (
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   cut: SystemSourceCut,
   identity: BrokerIdentity,
 ) =>

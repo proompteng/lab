@@ -11,6 +11,7 @@ export enum DecisionReadinessReason {
   AccountProtection = 'ACCOUNT_PROTECTION',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
+  InferenceExpired = 'INFERENCE_EXPIRED',
   LookbackWarmup = 'LOOKBACK_WARMUP',
   SnapshotUnavailable = 'SNAPSHOT_UNAVAILABLE',
   SnapshotCoverage = 'SNAPSHOT_COVERAGE',
@@ -38,6 +39,7 @@ export const DecisionReadinessSchema = Schema.Struct({
     Schema.Struct({
       rangeStartAt: UtcInstantSchema,
       rangeEndAt: UtcInstantSchema,
+      previousWindowEndAt: Schema.optionalKey(UtcInstantSchema),
       symbols: Schema.Array(Schema.NonEmptyString),
     }),
   ),

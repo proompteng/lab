@@ -64,6 +64,9 @@ export const retainAutonomousCyclePassObservation = (
     observedAt:
       observation.result.outcome === 'ADMISSION_WAITING' ? observation.result.observedAt : observation.observedAt,
     outcome: observation.result.outcome,
+    ...(observation.result.outcome === 'WINDOW_CLOSED' && observation.result.closedEntryWindow !== undefined
+      ? { closedEntryWindow: observation.result.closedEntryWindow }
+      : {}),
     ...(observation.result.outcome === 'ADMISSION_WAITING'
       ? { readiness: observation.result.readiness, admissionProtection: observation.result.admissionProtection }
       : {}),

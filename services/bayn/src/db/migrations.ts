@@ -1,3 +1,5 @@
+import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
+import operationalPeriod from '../../migrations/0174_operational_period'
 import inferenceExpenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import jevOnlyInference from '../../migrations/0172_jev_only_inference'
 import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
@@ -175,6 +177,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '175_operational_controller_evidence': operationalControllerEvidence,
   '164_focused_entry_evidence': focusedEntryEvidence,
   '165_observed_resistance': observedResistance,
   '166_candidate_entry_evidence': candidateEntryEvidence,
@@ -183,6 +186,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '170_research_qualification': researchQualification,
   '171_dated_execution_fees': datedExecutionFees,
   '172_jev_only_inference': jevOnlyInference,
+  '174_operational_period': operationalPeriod,
   '173_inference_expense_source_queue': inferenceExpenseSourceQueue,
   '167_chart_structure_before_funding': chartStructureBeforeFunding,
   '163_jev_observation_window_index': jevObservationWindowIndex,

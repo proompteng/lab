@@ -566,53 +566,51 @@ test('an unused entry expiry reports rearming during the market rotation cooldow
 })
 
 test.each([
-  [null, 'AWAITING_DECISION', true],
-  [DecisionReadinessReason.AccountProtection, 'BLOCKED', false],
-  [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
-  [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
-] as const)(
-  'continuous admission immediately reports %s evidence without an equity warmup',
-  (reason, condition, ready) => {
-    const state = sessionState('2026-10-01T13:30:00.000Z')
-    const current = state.cycle.current
-    if (current === null) throw new Error('fixture cycle missing')
-    const continuous: RuntimeState = {
-      ...state,
-      cycle: {
-        ...state.cycle,
-        current: {
-          ...current,
-          executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
-          createdAt: current.submissionOpenAt,
-          updatedAt: current.submissionOpenAt,
-          submissionCutoffAt: '2026-10-01T13:31:00.000Z',
-          executionCloseAt: '2026-10-01T13:49:00.000Z',
-        },
+  null,
+  DecisionReadinessReason.AccountProtection,
+  DecisionReadinessReason.SnapshotUnavailable,
+  DecisionReadinessReason.InferenceUnavailable,
+  DecisionReadinessReason.InferenceExpired,
+] as const)('retained crypto cycles expose recovery-only scope for %s evidence', (reason) => {
+  const state = sessionState('2026-10-01T13:30:00.000Z')
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  const continuous: RuntimeState = {
+    ...state,
+    cycle: {
+      ...state.cycle,
+      current: {
+        ...current,
+        executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
+        createdAt: current.submissionOpenAt,
+        updatedAt: current.submissionOpenAt,
+        submissionCutoffAt: '2026-10-01T13:31:00.000Z',
+        executionCloseAt: '2026-10-01T13:49:00.000Z',
       },
-      autonomousCycleLoop: {
-        ...state.autonomousCycleLoop,
-        lastPass:
-          reason === null
-            ? null
-            : {
-                result: 'SUCCESS',
-                outcome: 'RECOVERED',
-                recoveryAction: 'WAITING',
-                observedAt: state.health.checkedAt ?? '',
-                readiness: { reason, message: 'fixture unavailable' },
-              },
-      },
-    }
-    expect(statusFacts(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
-      executionSession: {
-        condition,
-        ready,
-        firstObservationAt: current.submissionOpenAt,
-        decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
-      },
-    })
-  },
-)
+    },
+    autonomousCycleLoop: {
+      ...state.autonomousCycleLoop,
+      lastPass:
+        reason === null
+          ? null
+          : {
+              result: 'SUCCESS',
+              outcome: 'RECOVERED',
+              recoveryAction: 'WAITING',
+              observedAt: state.health.checkedAt ?? '',
+              readiness: { reason, message: 'fixture unavailable' },
+            },
+    },
+  }
+  expect(statusFacts(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: {
+      condition: 'RECOVERY_ONLY',
+      ready: false,
+      firstObservationAt: current.submissionOpenAt,
+      decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
+    },
+  })
+})
 
 test('account protection takes precedence over equity first-minute warmup', () => {
   const state = sessionState('2026-10-01T13:30:10.000Z')
