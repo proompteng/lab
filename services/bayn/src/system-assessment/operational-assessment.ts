@@ -10,7 +10,7 @@ import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
 import { bindOperationalObligations } from './operational-obligations'
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
-import { measureReliability, ReliabilityStatus } from './reliability'
+import { measureReliability, ObligationOutcome, ReliabilityStatus } from './reliability'
 import type { SystemSourceCut } from './source-cut'
 import { SystemSourceCutSchema } from './source-cut'
 import { BrokerIdentitySchema } from '../broker/identity'
@@ -63,12 +63,22 @@ export const makeOperationalSafetyAudit = (input: unknown) =>
     ),
   )
 
-export const OperationalAssessmentInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.operational-assessment-input.v1'),
+const operationalAssessmentInputFields = {
   registration: OperationalRegistrationSchema,
   sourceCutHash: Sha256Schema,
   safety: Schema.Struct({ ...OperationalSafetyMaterialSchema.fields, sourceHash: Sha256Schema }),
+}
+export const OperationalAssessmentInputSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.operational-assessment-input.v2'),
+  ...operationalAssessmentInputFields,
 })
+export const StoredOperationalAssessmentInputSchema = Schema.Union([
+  OperationalAssessmentInputSchema,
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.operational-assessment-input.v1'),
+    ...operationalAssessmentInputFields,
+  }),
+])
 
 export const operationalAssessmentVerdict = (
   reliability: ReliabilityStatus,
@@ -88,13 +98,35 @@ export const evaluateOperationalAssessment = (
   cut: SystemSourceCut,
   verifiedSources: ReadonlySet<string>,
 ) =>
+  Schema.decodeUnknownResult(
+    OperationalAssessmentInputSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
+    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, cut, verifiedSources)),
+  )
+
+/** Reproduce immutable receipts under their original input contract; admission only accepts the current version. */
+export const verifyStoredOperationalAssessment = (
+  input: unknown,
+  cut: SystemSourceCut,
+  verifiedSources: ReadonlySet<string>,
+) =>
+  Schema.decodeUnknownResult(
+    StoredOperationalAssessmentInputSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
+    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, cut, verifiedSources)),
+  )
+
+const evaluateDecodedOperationalAssessment = (
+  data: typeof StoredOperationalAssessmentInputSchema.Type,
+  cut: SystemSourceCut,
+  verifiedSources: ReadonlySet<string>,
+) =>
   Result.gen(function* () {
-    const data = yield* Schema.decodeUnknownResult(
-      OperationalAssessmentInputSchema,
-      strictParseOptions,
-    )(input).pipe(
-      Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
-    )
+    const current = data.schemaVersion === 'bayn.operational-assessment-input.v2'
     const { registration, registrationHash } = yield* validateOperationalRegistration(data.registration)
     if (
       cut.registrationHash !== registrationHash ||
@@ -106,9 +138,6 @@ export const evaluateOperationalAssessment = (
         new SystemAssessmentError({ message: 'Operational source cut differs from its registration' }),
       )
     const missing: string[] = []
-    for (const pass of cut.controllerPasses)
-      if (!controllerBuildMatchesRegistration(pass, registration))
-        missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
     for (const source of [
       registration.calendar.sourceHash,
       ...registration.retainedIncidentSources,
@@ -149,6 +178,25 @@ export const evaluateOperationalAssessment = (
       registration,
       data.sourceCutHash,
     )
+    if (current) {
+      const completions = new Map(bound.reliability.completions.map((row) => [row.obligationId, row]))
+      let requiredThroughAt = lastClose ?? cut.asOf
+      for (const obligation of bound.reliability.schedule) {
+        const completion = completions.get(obligation.obligationId)
+        const resolvedAt =
+          completion?.outcome === ObligationOutcome.Correct && completion.completedAt <= obligation.deadlineAt
+            ? completion.completedAt
+            : obligation.deadlineAt
+        if (resolvedAt > requiredThroughAt) requiredThroughAt = resolvedAt
+      }
+      for (const pass of cut.controllerPasses) {
+        // Capture retains deadline tails. A known later tick cannot invalidate work already durably completed.
+        const issuedAt = pass.observation.executionIssuedAt
+        if (issuedAt !== undefined && issuedAt > requiredThroughAt) continue
+        if (!controllerBuildMatchesRegistration(pass, registration))
+          missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
+      }
+    }
     const coverage = Schema.decodeUnknownResult(MutationCoverageSchema)(cut.sourceMaterial)
     const coverageAccount = Result.isSuccess(coverage)
       ? coverage.success.accounts.find((account) => account.policy === JevResearchPolicy.Candidate)
@@ -181,6 +229,7 @@ export const evaluateOperationalAssessment = (
     )
     return {
       schemaVersion: 'bayn.operational-assessment.v1' as const,
+      ...(current ? { evaluationPolicy: 'bayn.operational-build-binding.v1' as const } : {}),
       registrationHash,
       sourceCutHash: data.sourceCutHash,
       asOf: cut.asOf,

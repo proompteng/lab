@@ -267,9 +267,16 @@ the operational evaluator; its input contains the saved registration, source-cut
 safety audit. Counters and successful-event totals are derived from the committed evidence rather than supplied by
 the packet. Operational registration requires verified calendar/scope and retained incident artifacts and the
 existing durable authorized generation. Registration and reporting do not change trading authority or risk limits.
-Every retained controller pass must also match the registered physical worker build. A missing or mismatched build
-adds `UNBOUND_CONTROLLER_BUILD` and prevents operational certification, even when independent decision documents
-complete scheduled obligations. Retained source documents and measured obligation counters are not discarded or rewritten.
+Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
+`evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
+reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
+Those historical results do not establish a certificate under the current build-binding rule.
+
+Retained controller passes must match the registered physical worker build through the reporting period and any
+remaining original obligation deadlines. A missing or mismatched build adds `UNBOUND_CONTROLLER_BUILD` and prevents
+operational certification, even when independent decision documents complete scheduled obligations. A pass known to
+start after that period and all required work has completed cannot invalidate the finished claim; an absent start
+clock remains fail-closed. Retained source documents and measured obligation counters are not discarded or rewritten.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

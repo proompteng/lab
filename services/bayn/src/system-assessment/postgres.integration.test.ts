@@ -1,10 +1,15 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { operationalRegistrationFixture } from './operational-period.test-support'
-import { makeOperationalSafetyAudit } from './operational-assessment'
+import { makeOperationalSafetyAudit, verifyStoredOperationalAssessment } from './operational-assessment'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
-import { registerOperationalPeriod, readAssessmentRegistration, assessAndPersistOperational } from './postgres'
+import {
+  registerOperationalPeriod,
+  readAssessmentRegistration,
+  assessAndPersistOperational,
+  readPersistedOperationalAssessment,
+} from './postgres'
 import { historicalRegistrationFixture } from './historical-registration.test-support'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
@@ -265,7 +270,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     sources.add(safety.sourceHash)
     sources.add(safety.auditEvidenceHash)
     const input = {
-      schemaVersion: 'bayn.operational-assessment-input.v1',
+      schemaVersion: 'bayn.operational-assessment-input.v2',
       registration: prospective,
       sourceCutHash: savedCut.sourceCutHash,
       safety,
@@ -273,6 +278,34 @@ postgres('PostgreSQL prospective system qualification', () => {
     const result = await runtime.runPromise(asApplication(assessAndPersistOperational(input, sources)))
     expect(result.verdict).toBe('INCONCLUSIVE')
     expect(result.economicQualification).toBe('NOT_ASSESSED')
+    expect(result.evaluationPolicy).toBe('bayn.operational-build-binding.v1')
+    const legacyInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    const legacy = {
+      ...Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, savedCut.cut, sources)),
+      verifiedSourceHashes: [...sources].sort(),
+    }
+    const legacyHash = testHash(legacy)
+    const legacyText = Result.getOrThrow(canonicalJsonV1Result(legacy))
+    const legacyInputText = Result.getOrThrow(canonicalJsonV1Result(legacyInput))
+    // Seed the immutable row as the old application wrote it; current admission must not accept its contract.
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
+            (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+            VALUES (${legacyHash}, ${legacy.registrationHash}, ${legacy.sourceCutHash}, ${legacy.asOf},
+              ${legacy.verdict}, ${legacyInputText}, ${legacyText})`
+        }),
+      ),
+    )
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(legacyHash))).toEqual({
+      ...legacy,
+      assessmentHash: legacyHash,
+    })
+    expect(legacyHash).not.toBe(result.assessmentHash)
+    expect(
+      Exit.isFailure(await runtime.runPromiseExit(asApplication(assessAndPersistOperational(legacyInput, sources)))),
+    ).toBe(true)
     for (const action of [
       'UPDATE operational_assessment_receipts SET verdict=verdict',
       'DELETE FROM operational_assessment_receipts',

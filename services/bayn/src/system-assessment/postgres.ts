@@ -7,7 +7,12 @@ import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
 import { validateSystemRegistration, verifyStoredSystemRegistration, type ScheduledEvaluation } from './policy'
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
-import { evaluateOperationalAssessment, OperationalAssessmentInputSchema } from './operational-assessment'
+import {
+  evaluateOperationalAssessment,
+  OperationalAssessmentInputSchema,
+  StoredOperationalAssessmentInputSchema,
+  verifyStoredOperationalAssessment,
+} from './operational-assessment'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { readSystemSourceCut } from './source-cut'
 import { bindSystemSourceCut } from './bind-source'
@@ -189,7 +194,7 @@ export const readPersistedOperationalAssessment = (hash: string) =>
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(
         Schema.Struct({
-          input: OperationalAssessmentInputSchema,
+          input: StoredOperationalAssessmentInputSchema,
           verifiedSourceHashes: Schema.Array(Sha256Schema),
         }),
       ),
@@ -202,7 +207,7 @@ export const readPersistedOperationalAssessment = (hash: string) =>
       return yield* new SystemAssessmentError({ message: 'Operational assessment receipt does not exist' })
     const cut = yield* readSystemSourceCut(row.input.sourceCutHash)
     const assessment = yield* Effect.fromResult(
-      evaluateOperationalAssessment(row.input, cut, new Set(row.verifiedSourceHashes)),
+      verifyStoredOperationalAssessment(row.input, cut, new Set(row.verifiedSourceHashes)),
     )
     yield* readAssessmentRegistration(assessment.registrationHash)
     const material = { ...assessment, verifiedSourceHashes: row.verifiedSourceHashes }
