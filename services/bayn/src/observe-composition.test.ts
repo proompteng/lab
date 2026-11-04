@@ -28,7 +28,7 @@ import { JevClient } from './jev/client'
 import { EntryInferenceJournal } from './jev/entry-inference'
 import { buildObserveCycleDecision } from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy } from './execution/risk-policy'
-import { JevPositionStore } from './jev/portfolio'
+import { JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
@@ -4664,6 +4664,7 @@ describe('OBSERVE runtime composition', () => {
       readonly initialAgeMs?: number
       readonly pricingAskIncrease?: number
       readonly pricingReadDelayMs?: number
+      readonly pricingSnapshotDelayMs?: number
       readonly brokerMaximumAgeMs?: number
       readonly admissionRemainingMs?: number
       readonly cycleCreatedAt?: string
@@ -4749,6 +4750,8 @@ describe('OBSERVE runtime composition', () => {
                 events.push(query.purpose === IntradaySnapshotPurpose.EntryPricing ? 'pricing' : 'signal')
                 snapshotRequests.push({ ...query, archiveWatermarks: [] })
                 const snapshot = yield* fixture.input.intradayMarketData.loadSnapshot(query)
+                if (query.purpose === IntradaySnapshotPurpose.EntryPricing)
+                  yield* TestClock.adjust(options.pricingSnapshotDelayMs ?? 0)
                 if (query.purpose !== IntradaySnapshotPurpose.EntryPricing || options.pricingAskIncrease === undefined)
                   return snapshot
                 const increase = options.pricingAskIncrease
@@ -4949,12 +4952,46 @@ describe('OBSERVE runtime composition', () => {
       inferenceMs: 7_000,
       refreshMs: 3_000,
       brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'refresh passes the existing model deadline',
+      inferenceMs: 7_000,
+      refreshMs: 3_001,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'refresh exhausts the original admission with still-current inference',
+      inferenceMs: 1_000,
+      refreshMs: 4_000,
+      admissionRemainingMs: 5_000,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'refresh exhausts both source and admission deadlines',
+      inferenceMs: 7_000,
+      refreshMs: 3_000,
+      admissionRemainingMs: 10_000,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'refresh exhausts both source and broker-risk headroom',
+      inferenceMs: 7_000,
+      refreshMs: 1_000,
+      refreshedAgeMs: 18_999,
+      pricingReadDelayMs: 2_000,
+      brokerMaximumAgeMs: 30_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
     },
     {
       name: 'refresh commit consumes the remaining broker-risk headroom',
       refreshedAgeMs: 19_000,
       refreshMs: 1_000,
       brokerMaximumAgeMs: 30_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
     },
   ])('Jev waits before selecting a quote when $name', async (options) => {
     const result = await buildEntryWithHeadroom(options)
@@ -4962,11 +4999,69 @@ describe('OBSERVE runtime composition', () => {
     if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
     expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
       _tag: 'ObserveDecisionAwaitingSignal',
-      readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+      readiness: { reason: options.readiness },
     })
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests).toHaveLength(1)
     expect(result.events).not.toContain('pricing')
+  })
+
+  test.each([
+    {
+      name: 'source expiry',
+      pricingSnapshotDelayMs: 9_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'past source expiry',
+      pricingSnapshotDelayMs: 9_001,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'admission expiry with still-current inference',
+      pricingSnapshotDelayMs: 4_000,
+      admissionRemainingMs: 5_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'source and admission expiry',
+      pricingSnapshotDelayMs: 9_000,
+      admissionRemainingMs: 10_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+  ])('Jev preserves the retry classification after pricing reaches $name', async (options) => {
+    const result = await buildEntryWithHeadroom({
+      ...options,
+      initialAgeMs: 0,
+      inferenceMs: 1_000,
+      brokerMaximumAgeMs: 300_000,
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: options.readiness },
+    })
+    expect(result.refreshes).toBe(0)
+    expect(result.snapshotRequests).toHaveLength(2)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+  })
+
+  test('Jev retains broker backoff when source expiry and broker headroom coincide after pricing', async () => {
+    const result = await buildEntryWithHeadroom({
+      initialAgeMs: 10_000,
+      inferenceMs: 1_000,
+      pricingSnapshotDelayMs: 9_000,
+      brokerMaximumAgeMs: 30_000,
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+    })
+    expect(result.refreshes).toBe(0)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
   })
 
   test('Jev rechecks cached headroom at the pricing clock before selecting a quote', async () => {
@@ -5072,6 +5167,11 @@ describe('OBSERVE runtime composition', () => {
                   return yield* new CycleDecisionBuildError({
                     failure: 'not-ready',
                     message: 'prepared entry verified',
+                    readiness: {
+                      reason: DecisionReadinessReason.SignalWindowObserved,
+                      message: 'Awaiting the next source window',
+                      availableAt: new Date(Date.parse(evaluatedAt) + 7_000).toISOString(),
+                    },
                   })
                 }),
               'mutation autonomous cycle loop',
@@ -5107,6 +5207,10 @@ describe('OBSERVE runtime composition', () => {
       expect(document?.dispatchable).toBe(true)
       expect(document?.targetPlan.status).toBe(TargetPlanStatus.Planned)
       expect(pricingReads).toBe(1)
+      if (cadenceMs === 30_000) {
+        expect(result.nextDelayMs).toBe(7_000)
+        expect(result.nextWakeAt).toBe(new Date(Date.parse(evaluatedAt) + 7_000).toISOString())
+      }
     },
   )
 
@@ -5255,80 +5359,100 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
-  test('waits without inference when every native Jev candidate lacks usable evidence', async () => {
-    const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
-    let inferenceBatches = 0
-    const exit = await Effect.runPromiseExit(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt))
-        return yield* buildMutationShadowCycleDecision({
-          authorityGenerationHash: generationHash,
-          cycle,
-          executionModel: fixtureProtocol.executionModel,
-          policy,
-          strategy: fixtureRuntime,
-          reconcile: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-          intradayMarketData: {
-            check: Effect.void,
-            verifyReference: fixtureStreamingReference,
-            loadSnapshot: (query) =>
-              Effect.suspend(() => {
-                const raw = makeIntradayMomentumTestSnapshot(
-                  fixtureProtocol,
-                  { ...query, archiveWatermarks: [] },
-                  {},
-                  10,
-                )
-                const { cut } = streamingFixtureFromRaw(raw, query)
-                return Effect.fromResult(
-                  constructStreamingSnapshot(
-                    {
-                      ...cut,
-                      projection: {
-                        ...cut.projection,
-                        quoteHistory: new Map([...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY')),
-                        tradeHistory: new Map([...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY')),
+  test.each([undefined, '2026-09-04T16:44:00.000Z'])(
+    'missing native inputs retain the earlier observed window (%s) without inference',
+    async (previousWindowEndAt) => {
+      const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
+      let inferenceBatches = 0
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            strategy: fixtureRuntime,
+            reconcile: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            intradayMarketData: {
+              check: Effect.void,
+              verifyReference: fixtureStreamingReference,
+              loadSnapshot: (query) =>
+                Effect.suspend(() => {
+                  const raw = makeIntradayMomentumTestSnapshot(
+                    fixtureProtocol,
+                    { ...query, archiveWatermarks: [] },
+                    {},
+                    10,
+                  )
+                  const { cut } = streamingFixtureFromRaw(raw, query)
+                  return Effect.fromResult(
+                    constructStreamingSnapshot(
+                      {
+                        ...cut,
+                        projection: {
+                          ...cut.projection,
+                          quoteHistory: new Map(
+                            [...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY'),
+                          ),
+                          tradeHistory: new Map(
+                            [...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY'),
+                          ),
+                        },
                       },
-                    },
-                    query,
-                  ),
-                ).pipe(
-                  Effect.mapError((cause) =>
-                    operationalError({
-                      component: 'market-data',
-                      operation: 'snapshot',
-                      message: 'Streaming snapshot is unavailable',
-                      cause,
-                    }),
-                  ),
-                )
-              }),
-          },
-        })
-      }).pipe(
-        (program) =>
-          provideDecisionServices(
-            program.pipe(
-              Effect.provideService(JevBatchStore, {
-                read: () => Effect.die('no batch should be read'),
-                pending: () => Effect.succeed([]),
-                begin: () =>
-                  Effect.sync(() => {
-                    inferenceBatches += 1
-                  }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
-                complete: () => Effect.die('no batch should be finished'),
-                finish: () => Effect.die('no batch should be finished'),
-              }),
+                      query,
+                    ),
+                  ).pipe(
+                    Effect.mapError((cause) =>
+                      operationalError({
+                        component: 'market-data',
+                        operation: 'snapshot',
+                        message: 'Streaming snapshot is unavailable',
+                        cause,
+                      }),
+                    ),
+                  )
+                }),
+            },
+          }).pipe(Effect.result)
+        }).pipe(
+          (program) =>
+            provideDecisionServices(
+              program.pipe(
+                Effect.provideService(CandidateObservationStore, {
+                  latestJevWindowEnd: (input) => {
+                    expect(input).toEqual({ cycleId: cycle.identity.cycleId, purpose: JevPurpose.Entry })
+                    return Effect.succeed(Option.fromUndefinedOr(previousWindowEndAt))
+                  },
+                  record: () => Effect.die('Missing data cannot create an observation'),
+                }),
+                Effect.provideService(JevBatchStore, {
+                  read: () => Effect.die('no batch should be read'),
+                  pending: () => Effect.succeed([]),
+                  begin: () =>
+                    Effect.sync(() => {
+                      inferenceBatches += 1
+                    }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
+                  complete: () => Effect.die('no batch should be finished'),
+                  finish: () => Effect.die('no batch should be finished'),
+                }),
+              ),
+              calendarRead([]),
             ),
-            calendarRead([]),
-          ),
-        Effect.provide(TestClock.layer()),
-      ),
-    )
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('ObserveDecisionAwaitingSignal')
-    expect(inferenceBatches).toBe(0)
-  })
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe('ObserveDecisionAwaitingSignal')
+        if (result.failure._tag === 'ObserveDecisionAwaitingSignal') {
+          expect(result.failure.readiness?.reason).toBe(DecisionReadinessReason.SnapshotUnavailable)
+          expect(result.failure.readiness?.snapshotQuery?.previousWindowEndAt).toBe(previousWindowEndAt)
+        }
+      }
+      expect(inferenceBatches).toBe(0)
+    },
+  )
 
   test('a previously observed Jev entry window reports when fresh evidence becomes eligible', async () => {
     const fixture = await executionLifecycleFixture()

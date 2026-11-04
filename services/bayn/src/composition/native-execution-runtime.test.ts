@@ -40,12 +40,12 @@ import { CandidateObservationStore, type CandidateObservation } from '../observe
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
+import { executionControllerPlanHash } from '../execution/controller'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
-  executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionProjectionRuntime,
   makePublishedExecutionCycleDriverLive,
@@ -59,6 +59,12 @@ import {
   type RecoveryFirstCycleDriverSlot,
   type RecoveryFirstCycleDriverSlotState,
 } from './native-execution-runtime'
+
+const executionBuild = {
+  sourceRevision: 'a'.repeat(40),
+  imageRepository: 'registry.example.test/lab/bayn',
+  imageDigest: `sha256:${'1'.repeat(64)}`,
+}
 
 const hash = (character: string): string => character.repeat(64)
 const sourceRevision = 'a'.repeat(40)
@@ -285,10 +291,10 @@ describe('native execution runtime', () => {
             state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
             ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
           }
-          yield* captureRecoveryFirstCycleDriver(slot)(currentDriver).pipe(
-            Effect.provideContext(context),
-            Effect.forkScoped,
-          )
+          yield* captureRecoveryFirstCycleDriver(
+            slot,
+            executionBuild,
+          )(currentDriver).pipe(Effect.provideContext(context), Effect.forkScoped)
           yield* Deferred.await(slot.ready)
           const bound = yield* readRecoveryFirstCycleDriverSlot(slot)
           return [yield* bound.advance, yield* bound.advance]
@@ -297,10 +303,12 @@ describe('native execution runtime', () => {
     )
     expect(results[0]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
     })
     expect(results[1]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [], complete: true },
     })
     expect(retainedPolicies).toEqual([momentum, undefined])
@@ -333,7 +341,10 @@ describe('native execution runtime', () => {
               state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
               ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
             }
-            yield* captureRecoveryFirstCycleDriver(slot)({
+            yield* captureRecoveryFirstCycleDriver(
+              slot,
+              executionBuild,
+            )({
               ...driver,
               advance: Effect.gen(function* () {
                 if (retainEarlier)
@@ -387,7 +398,10 @@ describe('native execution runtime', () => {
               state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
               ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
             }
-            yield* captureRecoveryFirstCycleDriver(slot)({
+            yield* captureRecoveryFirstCycleDriver(
+              slot,
+              executionBuild,
+            )({
               ...driver,
               advance: Effect.gen(function* () {
                 const store = yield* CandidateObservationStore
@@ -414,6 +428,7 @@ describe('native execution runtime', () => {
       expect(result.nextDelayMs).toBe(1_000)
       expect(result.observation).toEqual({
         ...windowClosedObservation,
+        executionBuild,
         jevObservationReferences: {
           hashes:
             mode === 'overflow'
@@ -636,9 +651,10 @@ describe('native execution runtime', () => {
       }),
     }
     const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(capturedDriver).pipe(
-        Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>),
-      ),
+      captureRecoveryFirstCycleDriver(
+        slot,
+        executionBuild,
+      )(capturedDriver).pipe(Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>)),
     )
 
     await Effect.runPromise(Deferred.await(slot.ready))
@@ -673,7 +689,11 @@ describe('native execution runtime', () => {
             Effect.sync(() => {
               released += 1
             }),
-        ).pipe(Effect.andThen(captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context))))
+        ).pipe(
+          Effect.andThen(
+            captureRecoveryFirstCycleDriver(slot, executionBuild)(driver).pipe(Effect.provideContext(context)),
+          ),
+        )
       }),
       Layer.succeed(
         ExecutionControllerStatusStore,
@@ -1524,7 +1544,7 @@ describe('native execution runtime', () => {
     )
     const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context)),
+      captureRecoveryFirstCycleDriver(slot, executionBuild)(driver).pipe(Effect.provideContext(context)),
     )
 
     await Effect.runPromise(Deferred.await(slot.ready))

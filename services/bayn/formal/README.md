@@ -200,6 +200,12 @@ The production constructor also supports a local generation without a persisted 
 that path rather than asserting persisted validation always occurs. Grant issuance, hash authenticity, persisted
 admission and risk limits remain separate boundaries.
 
+`Reliability.lean` also maps to `operational-assessment.ts` and the native branch of `schedule.ts`. Operational success
+requires `MEETS_TARGET`, complete evidence and safety audit, and zero safety violations. Native deadlines retain
+their full original window even when it crosses the reporting boundary. The executable conformance checks exercise
+all gate combinations and the actual generated schedule. Source completeness and receipt authenticity remain
+separate evidence requirements; the theorem does not establish measured production reliability.
+
 `ControllerTiming.lean` maps to `src/system-assessment/controller-latency.ts`. It proves nonnegative ordered durations,
 that later durable visibility cannot improve the reported latency, rejection of invalid clocks, a valid empirical
 p95 rank for every nonempty sample, and an unknown empty sample. Executable conformance covers clock boundaries and
@@ -249,6 +255,25 @@ unused entry. Replaying activation preserves an active cycle; a new decision bin
 before the cutoff and bound to the exact account, strategy, protocol, qualification and selected snapshot identities.
 Completion requires a nondecreasing observation time, a bound decision and one matching durable document. Executed
 completion additionally requires a planned result, no risk block and financial completion evidence.
+
+`expired_inference_retry_requires_original_window` maps the expired-readiness branch of
+`decisionReadinessContinuationDelayMs` in `src/observe-composition/recovery-driver.ts`. A minimum-delay retry requires
+an active, unbound cycle inside its original unused-entry window; `expired_inference_cannot_retry_after_original_deadline`
+rejects a retry at or after that deadline. The reachable example admits a fresh retry and rejects the exact expiry.
+Another 1,680 executable comparisons cover waiting classification, cycle state, bindings, open time, and expiry.
+The native controller regression retains the captured late-commit work durations through scheduling and restart:
+the ordinary idle delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
+These proofs do not guarantee storage or provider latency; a retried response still has to pass the existing checks.
+
+`pending_inputs_retry_retains_original_admission` maps the query-bound `SNAPSHOT_UNAVAILABLE` continuation in the
+same function. It bounds each recheck by one second, the ordinary cadence and the remaining original admission;
+`pending_inputs_cannot_retry_after_original_deadline` excludes an expired lease. Another 3,360 executable comparisons
+cover the query marker, states, bindings, clocks and two ordinary cadences. A missing query does not accelerate an
+unclassified outage. The post-pass projection health check still replaces this hint with the source failure's backoff.
+Pending inputs remain operationally incomplete; neither waiting nor a timely recheck establishes a valid decision.
+The recovery driver publishes the absolute wake instant with the delay. Its composition regression exercises the
+real driver; native controller tests retain that instant across persistence work and projected replay, so durable
+publication cannot restart the source wait from a later clock.
 
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
@@ -487,3 +512,14 @@ matched controls or native prospective evidence collection are complete.
 Statistical bounds remain conditional on the registered sampling and market assumptions. Hashes establish content
 identity; source capture and provenance checks must establish which actual evidence the model receives. Neither a
 successful build nor independent kernel acceptance grants capital authority or establishes profitability.
+
+`TradingScope.lean` maps to `src/execution/trading-scope.ts`, enforced by the physical broker mutation guard.
+It proves crypto entries and crypto buys fail the current market scope while equity orders retain scope eligibility.
+Crypto sells still require every existing capital, ownership and risk check; scope eligibility is not execution authority.
+Executable conformance covers both markets and sides, and broker regressions verify zero crypto-buy transmissions.
+
+### Evidenced closed windows
+
+`Bayn/Reliability.lean` proves that closed-window timing requires causal calendar arrival and completion. Eligible entry work cannot be classified as a closed window. `decision-work.ts` reproduces the registered day's calendar, native execution policy, physical controller build and account/generation before using that timing predicate. `closed-entry-window.test.ts` verifies that omitted, late, future, foreign and substituted evidence cannot supply successful work. The actual discovery regression retains the original admission clock across a delayed calendar read.
+
+`reconciliation_batching_keeps_each_original_deadline` maps to `obligation-witnesses.ts`. Its conformance cases and native obligation regression retain fixed denominators and show that late observations leave expired checks missed.

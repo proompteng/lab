@@ -160,6 +160,7 @@ describe('ARC Nix runner toolchain', () => {
     ])
     expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
       'local-path',
+      'local-path-bayn-wal',
       'local-path-ci-amd64',
       'local-path-ryzen',
       'local-path-turin-nvme-intel',

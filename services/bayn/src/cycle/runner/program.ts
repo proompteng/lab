@@ -1,5 +1,5 @@
 import { isChartEntryTarget } from '../../strategy/runtime-decision'
-import { continuousMarketHours, type MarketHours } from '../../market-hours'
+import type { MarketHours } from '../../market-hours'
 import { canonicalHashV1Result } from '../../hash'
 import { Cause, Effect, Option, pipe, Schema } from 'effect'
 
@@ -26,6 +26,7 @@ import {
 } from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
+import { ClosedEntryWindowSchema } from './pass-observation'
 
 const hashCalendar = (hours: MarketHours) =>
   Effect.fromResult(canonicalHashV1Result(hours)).pipe(
@@ -81,67 +82,61 @@ export const discoverAutonomousCyclePass = <R>(
           }),
         ),
       )
-    let hours: MarketHours = continuousMarketHours
-    let hoursReadHash = yield* hashCalendar(continuousMarketHours)
-    // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
-    if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
-      const broker = yield* BrokerRead
-      const calendar = yield* broker.marketCalendar(query).pipe(
-        Effect.timeoutOrElse({
-          duration: 5_000,
-          orElse: () =>
-            Effect.fail(
-              new BrokerReadError({
-                operation: 'market-calendar',
-                kind: BrokerReadErrorKind.Timeout,
-                retryable: true,
-                message: 'Equity calendar discovery exceeded its five-second read budget',
-              }),
-            ),
+    const broker = yield* BrokerRead
+    const calendar = yield* broker.marketCalendar(query).pipe(
+      Effect.timeoutOrElse({
+        duration: 5_000,
+        orElse: () =>
+          Effect.fail(
+            new BrokerReadError({
+              operation: 'market-calendar',
+              kind: BrokerReadErrorKind.Timeout,
+              retryable: true,
+              message: 'Equity calendar discovery exceeded its five-second read budget',
+            }),
+          ),
+      }),
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'market-calendar',
+          failure: 'calendar-read',
+          message: 'authoritative equity calendar read failed',
+          cause,
         }),
-        Effect.catchTag('BrokerReadError', (cause) =>
-          cause.operation === 'market-calendar' &&
-          cause.retryable &&
-          [
-            BrokerReadErrorKind.Timeout,
-            BrokerReadErrorKind.Transport,
-            BrokerReadErrorKind.RateLimited,
-            BrokerReadErrorKind.Server,
-          ].includes(cause.kind)
-            ? Effect.logWarning(
-                'Equity discovery excluded unavailable calendar; continuous discovery remains eligible',
-              ).pipe(Effect.annotateLogs({ operation: cause.operation, kind: cause.kind }), Effect.as(null))
-            : Effect.fail(cause),
-        ),
-        Effect.mapError((cause) =>
-          runnerError({
-            operation: 'market-calendar',
-            failure: 'calendar-read',
-            message: 'authoritative equity calendar read failed',
-            cause,
-          }),
-        ),
-      )
-      const session =
-        calendar === null
-          ? undefined
-          : selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
-      if (
-        calendar !== null &&
-        session !== undefined &&
-        firstIntradayObservationAtMs(session, candidate.executionPolicy) <= Date.parse(observedAt)
-      ) {
-        hours = calendar.value
-        hoursReadHash = calendar.evidence.contentHash
-      }
-    }
+      ),
+    )
+    const hours = calendar.value
+    const hoursReadHash = calendar.evidence.contentHash
     const executionSession = selectIntradayExecutionSession(hours, candidate.executionPolicy, observedAt)
-    if (executionSession === undefined) {
-      return yield* runnerError({
-        operation: 'select-session',
-        failure: 'calendar-unavailable',
-        message: 'broker calendar has no session whose intraday entry cutoff remains open',
-      })
+    if (
+      executionSession === undefined ||
+      firstIntradayObservationAtMs(executionSession, candidate.executionPolicy) > Date.parse(observedAt)
+    ) {
+      const { requestId, status, contentHash, observedAt: availableAt } = calendar.evidence
+      return {
+        outcome: 'WINDOW_CLOSED',
+        observedAt,
+        closedEntryWindow: yield* Schema.decodeUnknownEffect(ClosedEntryWindowSchema)({
+          schemaVersion: 'bayn.closed-entry-window.v1',
+          accountId: context.accountId,
+          authorityGenerationHash: context.authorityGenerationHash ?? null,
+          strategyProtocolHash: context.strategyProtocolHash,
+          evaluatedAt: observedAt,
+          decidedAt: yield* currentUtcInstant,
+          executionPolicy: context.executionPolicy,
+          calendar: hours,
+          calendarRead: { requestId, status, contentHash, observedAt: availableAt },
+        }).pipe(
+          Effect.mapError((cause) =>
+            runnerError({
+              operation: 'build-cycle',
+              failure: 'contract',
+              message: 'closed equity window evidence is malformed',
+              cause,
+            }),
+          ),
+        ),
+      } as const
     }
     const firstAttemptDraft = yield* Effect.fromResult(
       makeIntradayCycleDraft(candidate, hours, executionSession, 1),

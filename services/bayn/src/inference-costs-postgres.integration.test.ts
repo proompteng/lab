@@ -271,20 +271,34 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     expect(result.evidence.requests).toHaveLength(2)
   })
 
-  test('fails instead of silently truncating a large session', async () => {
+  test('captures every request and quote in a large owned cost session', async () => {
+    const sources = Array.from({ length: 10_001 }, (_, index) => retainedSource(index, 1))
+    const quotes = sources.map((source) => Result.getOrThrow(makeInferenceExpenseQuote(source, expenseRateFixture)))
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
-        yield* sql`INSERT INTO jev_evaluation_requests
-          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash}, '{}'::jsonb
-          FROM generate_series(1, 10001) AS n`
-        return yield* Effect.result(readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01'))
+        yield* insertSources(sql, sources, true)
+        yield* sql`INSERT INTO inference_expense_quotes
+          SELECT * FROM jsonb_to_recordset(${sql.json(
+            quotes.map((quote) => ({
+              quote_hash: quote.quoteHash,
+              account_id: 'fixture-account',
+              session_date: quote.sessionDate,
+              payload: quote,
+              verified_at: '1970-01-01T00:01:00Z',
+            })),
+          )}) AS row(quote_hash text,account_id text,session_date date,payload jsonb,verified_at timestamptz)`
+        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
       }),
     )
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) expect(result.failure.message).toContain('complete-report limit')
-  })
+    expect(result.evidence.requests).toHaveLength(sources.length)
+    expect(result.quotes).toHaveLength(quotes.length)
+    const requests = new Set(result.evidence.requests.map((row) => row.requestId))
+    expect(sources.every((source) => requests.has(source.requestId))).toBe(true)
+    const capturedQuotes = new Set(result.quotes.map((row) => row.quote.quoteHash))
+    expect(quotes.every((quote) => capturedQuotes.has(quote.quoteHash))).toBe(true)
+  }, 30_000)
 
   test('keeps one cursor snapshot across concurrent writes in a read-committed writer transaction', async () => {
     const parsed = new URL(testUrl)

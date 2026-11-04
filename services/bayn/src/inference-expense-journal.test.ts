@@ -46,11 +46,11 @@ const expectFailure = async <A, E>(operation: Effect.Effect<A, E>, message: stri
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain(message)
 }
-const memoryLedger = () => {
+const memoryLedger = (initialTimestamp = 0n) => {
   const accounts = new Map<bigint, LedgerAccountRecord>()
   const transfers = new Map<bigint, LedgerTransferRecord>()
   const history = new Map<bigint, LedgerAccountBalance[]>()
-  let timestamp = 0n
+  let timestamp = initialTimestamp
   let loseAck = false
   const match = (record: LedgerAccountRecord | LedgerTransferRecord, filter: LedgerQueryFilter) =>
     record.ledger === filter.ledger &&
@@ -84,7 +84,9 @@ const memoryLedger = () => {
           for (const id of [debit.id, credit.id]) {
             const updated = accounts.get(id)
             if (updated === undefined) throw new Error('synthetic account is absent')
-            history.set(id, [...(history.get(id) ?? []), { ...updated, timestamp }])
+            const balances = history.get(id) ?? []
+            balances.push({ ...updated, timestamp })
+            history.set(id, balances)
           }
         }
         return {
@@ -158,6 +160,29 @@ const memoryLedger = () => {
 }
 
 describe('inference expense TigerBeetle posting and reconciliation', () => {
+  test('reconciles a complete native expense prefix beyond ten thousand quotes', async () => {
+    const quotes = Array.from({ length: 10_001 }, (_, index) =>
+      Result.getOrThrow(
+        makeInferenceExpenseQuote(
+          expenseSourceFixture({ observedAt: new Date(index).toISOString() }),
+          expenseRateFixture,
+        ),
+      ),
+    )
+    const expected = Result.getOrThrow(buildInferenceExpensePlan(quotes))
+    const ledger = memoryLedger(59_000_000_000n)
+    await Effect.runPromise(postInferenceExpenses(ledger.client, expected))
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(ledger.client, snapshot(quotes), Effect.succeed(rows(quotes))),
+    )
+    expect(report.exactLedgerPrefix).toBe(true)
+    expect(report.verifiedSessionTransferCount).toBe(quotes.length)
+    expect(report.transferCount).toBe(quotes.length)
+    expect(report.knownEstimatedCostPicoUsd).toBe(
+      expected.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString(),
+    )
+  }, 30_000)
+
   test('reconciles both provider stages as separate expenses for the same entry request', async () => {
     const request = entryEvaluationRequestFixture()
     const completion = entryCompletionFixture(request)
@@ -318,9 +343,23 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       })
       await expectFailure(
         readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
-        oversized ? 'oversized page' : 'not ordered',
+        oversized ? 'requested page size' : 'strictly increasing timestamps',
       )
     }
+  })
+
+  test('rejects a native transfer beyond the pinned ledger head', async () => {
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, plan))
+    const original = [...ledger.transfers.values()][0]
+    if (original === undefined) throw new Error('synthetic transfer is absent')
+    Object.assign(ledger.native, {
+      queryTransfers: async () => [{ ...original, timestamp: original.timestamp + 1n }],
+    })
+    await expectFailure(
+      readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
+      'after its pinned timestamp',
+    )
   })
 
   test('recovers a committed transfer with a lost acknowledgement before marking the quote verified', async () => {
