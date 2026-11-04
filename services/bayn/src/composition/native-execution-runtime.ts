@@ -266,11 +266,13 @@ const retainedProjectedPass = (
 ): RetainedAutonomousCyclePassObservation | undefined => {
   const completion = state.lastCompletion
   if (
+    !state.active ||
     completion === undefined ||
     stored === null ||
     !executionControllerStatusHasCompletion(stored) ||
     stored.controllerKey !== controllerKey ||
     stored.planHash !== state.planHash ||
+    stored.epoch !== state.epoch ||
     stored.lastSequence !== completion.sequence ||
     stored.lastOutcome !== completion.outcome ||
     stored.lastReceiptHash !== completion.receiptHash ||

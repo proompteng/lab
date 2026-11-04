@@ -82,6 +82,10 @@ New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native 
 one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
 archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
 identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+Controller pass capture uses active completion projections. Deactivation preserves the last completion summary while
+advancing the controller epoch; it does not perform that pass again. Its inactive projection cannot reattribute the
+earlier receipt to the new epoch. The original completion and every raw projection remain retained, and conflicting
+active evidence still fails capture.
 The archive is persisted before the manifest, and PostgreSQL rejects missing references, repeated native identities,
 and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
 retry verifies and reuses their exact contents rather than replacing evidence.

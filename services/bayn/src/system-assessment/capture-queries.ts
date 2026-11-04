@@ -100,6 +100,7 @@ export const systemControllerPassQuery = (
           status->'last_pass' AS observation
         FROM execution_controller_observations
         WHERE controller_key = ${controllerKey} AND status->>'plan_hash' = ${planHash}
+          AND status->>'active' = 'true'
           AND status->>'last_receipt_hash' IS NOT NULL AND jsonb_typeof(status->'last_pass') = 'object'
           AND (status->>'completed_at')::timestamptz <= ${asOf}::timestamptz
           AND ((status->>'completed_at')::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz
