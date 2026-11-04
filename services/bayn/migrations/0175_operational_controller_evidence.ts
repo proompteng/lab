@@ -34,6 +34,9 @@ export default Effect.gen(function* () {
     IF pg_trigger_depth() = 0 THEN
       RAISE EXCEPTION 'durable evidence requires a controller observation trigger' USING ERRCODE='55000';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM system_pending_evidence WHERE source_at <= observed_at) THEN
+      RETURN;
+    END IF;
     FOR registration IN SELECT * FROM system_qualification_registrations
       WHERE first_open_at <= observed_at AND last_close_at >= observed_at - interval '1 day'
         AND payload_text::jsonb #>> '{obligations,configuration,controllerPlanHash}' = s_plan LOOP
