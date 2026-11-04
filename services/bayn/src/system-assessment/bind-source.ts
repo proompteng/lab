@@ -21,7 +21,7 @@ import { earliestDurableWitnesses } from './obligation-witnesses'
 import { registeredAllocationMicros } from './policy'
 import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { bindOperationalObligations } from './operational-obligations'
 
 export const bindSystemSourceCut = (
@@ -44,7 +44,11 @@ export const bindSystemSourceCut = (
       return yield* fail('Assessment must use its immutable registration and source cut exactly')
     const candidate = data.registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
     if (candidate === undefined) return yield* fail('Registered candidate is missing')
-    const admissions = yield* decisionAdmissionWitnesses(cut, candidate.authorityGenerationHash)
+    const admissions = yield* decisionAdmissionWitnesses(
+      cut,
+      candidate.authorityGenerationHash,
+      indexDecisionAdmissionMutations(cut.mutations),
+    )
     const witnessedCut = { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const definitionHash = yield* canonicalHashV1Result(candidate)
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
