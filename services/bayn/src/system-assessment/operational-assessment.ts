@@ -7,7 +7,8 @@ import { SystemAssessmentInputSchema, completeSafetyAudit } from './assessment'
 import { decisionAdmissionWitnesses } from './decision-admissions'
 import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
-import { bindOperationalObligations } from './operational-obligations'
+import { bindOperationalObligations, bindOperationalWork } from './operational-obligations'
+import { isVerifiedOperationalSourceCut, type VerifiedOperationalSourceCut } from './operational-source-cut'
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
 import { measureReliability, ReliabilityStatus } from './reliability'
 import type { SystemSourceCut } from './source-cut'
@@ -84,10 +85,11 @@ export const operationalAssessmentVerdict = (
 /** Reproduce counters from committed witnesses; callers cannot submit successful-event totals. */
 export const evaluateOperationalAssessment = (
   input: unknown,
-  cut: SystemSourceCut,
+  evidence: SystemSourceCut | VerifiedOperationalSourceCut,
   verifiedSources: ReadonlySet<string>,
 ) =>
   Result.gen(function* () {
+    const cut = isVerifiedOperationalSourceCut(evidence) ? evidence.cut : evidence
     const data = yield* Schema.decodeUnknownResult(
       OperationalAssessmentInputSchema,
       strictParseOptions,
@@ -139,12 +141,13 @@ export const evaluateOperationalAssessment = (
       )
     )
       missing.push('INCOMPLETE_FILL_ACCOUNTING')
-    const admissions = yield* decisionAdmissionWitnesses(cut, registration.policies[0].authorityGenerationHash)
-    const bound = yield* bindOperationalObligations(
-      { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] },
-      registration,
-      data.sourceCutHash,
-    )
+    const admissions = isVerifiedOperationalSourceCut(evidence)
+      ? evidence.admissions
+      : yield* decisionAdmissionWitnesses(evidence, registration.policies[0].authorityGenerationHash)
+    const durableObservations = [...cut.durableObservations, ...admissions.witnesses]
+    const bound = isVerifiedOperationalSourceCut(evidence)
+      ? yield* bindOperationalWork({ ...cut, durableObservations }, registration, data.sourceCutHash, evidence.work)
+      : yield* bindOperationalObligations({ ...evidence, durableObservations }, registration, data.sourceCutHash)
     const coverage = Schema.decodeUnknownResult(MutationCoverageSchema)(cut.sourceMaterial)
     const coverageAccount = Result.isSuccess(coverage)
       ? coverage.success.accounts.find((account) => account.policy === JevResearchPolicy.Candidate)

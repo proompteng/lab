@@ -1,4 +1,4 @@
-import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture'
+import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture-queries'
 import { decisionAdmissionWitnesses } from '../system-assessment/decision-admissions'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'

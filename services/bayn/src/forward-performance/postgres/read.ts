@@ -2,6 +2,7 @@ import { executionDecisionRows } from '../../db/execution-decision-query'
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
+import { openSnapshotRows } from '../../db/snapshot-rows'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
 import { readStoredFeeAccruals } from '../../db/fee-accruals'
@@ -14,17 +15,18 @@ import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
+  ForwardPerformanceExecutionEvidence,
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from '../model'
 
 import {
   ForwardPerformancePostgresError,
+  CycleDecisionRow,
   ReconciliationRow,
   type ForwardPerformancePostgresEvidence,
   decodeCashYieldSnapshots,
   decodeCount,
-  decodeCycleDecisions,
   decodeCycles,
   decodeDurableExecutions,
   decodeExecutionFills,
@@ -461,7 +463,9 @@ export const readForwardPerformancePostgres = (
         const ledgerReceipts = yield* Effect.forEach(ledgerReceiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
-        const cycleDecisionRows = yield* sql<Record<string, unknown>>`
+        const consumeDecisionRows = yield* openSnapshotRows(
+          sql,
+          sql`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
             FROM reconciliations AS reconciliation
@@ -481,7 +485,8 @@ export const readForwardPerformancePostgres = (
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
           ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
-        `.pipe(Effect.flatMap(decodeCycleDecisions))
+        `,
+        )
         const marketVolumeBindingRows = yield* readForwardPerformanceMarketVolumeBindings(
           sql,
           accountId,
@@ -918,13 +923,24 @@ export const readForwardPerformancePostgres = (
             occurredAt: row.occurred_at.toISOString(),
           }),
         )
-        const { verifiedRows, unverifiedDecisionHashes } = verifyPerformanceDecisions(cycleDecisionRows)
-        const executionEvidence = executionEvidenceFromRows(
-          verifiedRows,
-          executionIntentRows,
-          executionOrderRows,
-          executionFillRows,
+        const unverified = new Set<string>()
+        const executionEvidence: ForwardPerformanceExecutionEvidence[] = []
+        yield* consumeDecisionRows((input) =>
+          Effect.gen(function* () {
+            const row = yield* Schema.decodeUnknownEffect(CycleDecisionRow, strictParseOptions)(input)
+            const verified = verifyPerformanceDecisions([row])
+            for (const hash of verified.unverifiedDecisionHashes) unverified.add(hash)
+            executionEvidence.push(
+              ...executionEvidenceFromRows(
+                verified.verifiedRows,
+                executionIntentRows,
+                executionOrderRows,
+                executionFillRows,
+              ),
+            )
+          }),
         )
+        const unverifiedDecisionHashes = [...unverified].sort()
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,

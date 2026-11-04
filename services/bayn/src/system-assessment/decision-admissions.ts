@@ -13,7 +13,10 @@ export const decisionPersistenceAssumptions = [
 ] as const
 
 /** A committed admission followed by routing supplies an upper bound, not an invented commit timestamp. */
-export const decisionAdmissionWitnesses = (cut: SystemSourceCut, generationHash: string) =>
+export const decisionAdmissionWitnesses = (
+  cut: Pick<SystemSourceCut, 'decisions' | 'protectionIntents' | 'mutations' | 'decisionAdmissions' | 'asOf'>,
+  generationHash: string,
+) =>
   Result.gen(function* () {
     const plans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
     const sources = new Set<string>()
