@@ -15,6 +15,7 @@ import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { qualificationDeadlines } from './configuration'
+import { executionControllerPlanHash } from '../execution/controller'
 
 export const operationalRegistrationFixture = (): OperationalRegistration => {
   const base = registrationFixture()
@@ -85,7 +86,11 @@ export const operationalRegistrationFixture = (): OperationalRegistration => {
     authoredActivation: request.activation,
     activation: request.activation,
   }
-  const configuration = { ...base.obligations.configuration, entryMarkets: currentEntryMarkets }
+  const configuration = {
+    ...base.obligations.configuration,
+    controllerPlanHash: executionControllerPlanHash,
+    entryMarkets: currentEntryMarkets,
+  }
   const calendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',
