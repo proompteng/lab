@@ -1,8 +1,14 @@
 # Bayn
 
-Bayn is a single-writer execution service for equities and continuous USD crypto markets. Restate schedules one account-keyed controller, pure TypeScript
+Bayn is a single-writer execution service with equity-only entries. Existing crypto positions retain risk-reducing exits,
+protection, reconciliation and recovery; crypto entry discovery and broker buys are disabled. Restate schedules one account-keyed controller, pure TypeScript
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
+
+Background broker polling makes one complete before/after history scan per durable ticket. Changed history or
+unsettled fill evidence rejects that cut and waits for the existing quota budget before acquiring a new ticket.
+It does not repeat full history reads under a pre-mutation ticket that cannot publish. Complete history, exact fill
+coverage, mutation and broker-event fences, freshness, deadlines and quota accounting remain unchanged.
 
 New cycles discovered during an open, unexpired submission window acquire their authority slot and activate in one
 PostgreSQL transaction under the existing writer fence. This removes an immediate second WAL commit. A failed
@@ -15,10 +21,13 @@ A rejected intent rolls back its decision binding. Broker submission starts afte
 the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
 mutation during persistence cannot change the approved intent identities or protection.
 
-Cycle discovery bounds the equity-calendar read to five seconds. Temporary transport, timeout, rate-limit and server
-failures exclude equity discovery for that attempt while continuous crypto discovery uses its own calendar. Fatal
-authentication, identity and malformed-response failures still stop discovery. The pass and inference deadlines remain
-unchanged, and later equity attempts require a successful authoritative calendar read.
+Cycle discovery bounds the authoritative equity-calendar read to the original five seconds. An unavailable calendar
+remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
+discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
+crypto buys before final authorization or transmission. Retained crypto sells still require normal capital, ownership,
+funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v37 and its original
+capital mandate, parameters, monetary limits, financial records and loss history remain bound to the deployment.
+Historical crypto codecs, replay evidence and shared market data remain available for accounting and position recovery.
 
 A system-restricted, previously traded generation can enter settlement after an idle failure when every account
 mutation is resolved, all intents are terminal, no cycle remains active and a trusted position observation after the
@@ -750,7 +759,8 @@ that saved binding when the reporting worker is later upgraded, preserving late-
 worker build cannot establish correctly completed controller work or supported reporting provenance. Repository
 identity must also match whenever the registration carries an activation lineage; matching source and digest alone
 cannot substitute a different repository. Historical registrations without that lineage retain their source/digest
-comparison, and receipts remain readable with their original contents.
+comparison. Retained operational v1 receipt replay keeps its frozen source/digest matcher even when a repository
+commitment is present; current operational v2 claims enforce that commitment. Receipts retain their original contents.
 
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
 wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the

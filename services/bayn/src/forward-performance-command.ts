@@ -1,3 +1,4 @@
+import { readRegisteredFinancialIdentity } from './system-assessment/capital-identity'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
@@ -17,8 +18,12 @@ import {
   registerSystemQualification,
   assessAndPersistSystem,
   readSystemRegistration,
+  registerOperationalPeriod,
+  assessAndPersistOperational,
 } from './system-assessment/postgres'
-import { captureSystemSourceCut, readRegisteredFinancialIdentity } from './system-assessment/capture'
+import { OperationalRegistrationSchema, validateOperationalRegistration } from './system-assessment/operational-period'
+import { OperationalAssessmentInputSchema } from './system-assessment/operational-assessment'
+import { captureSystemSourceCut } from './system-assessment/capture'
 import { qualificationRuntime } from './system-assessment/configuration'
 import { validateSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
@@ -160,7 +165,9 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
         if (command._tag === 'SystemHistory')
           return yield* initializeQualificationHistory(packet.payload, packet.verifiedSources)
         if (command._tag === 'SystemRegister') {
-          const { registration } = yield* Effect.fromResult(validateSystemRegistration(packet.payload))
+          const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
+            ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
+            : yield* Effect.fromResult(validateSystemRegistration(packet.payload))
           const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
           if (
             (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
@@ -214,8 +221,12 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
             return yield* new SystemAssessmentError({
               message: 'Registration requires its existing durable capital generation',
             })
-          return yield* registerSystemQualification(registration, packet.verifiedSources)
+          return registration.program === 'BAYN_OPERATIONAL_RELIABILITY'
+            ? yield* registerOperationalPeriod(registration, packet.verifiedSources)
+            : yield* registerSystemQualification(registration, packet.verifiedSources)
         }
+        if (Schema.is(OperationalAssessmentInputSchema)(packet.payload))
+          return yield* assessAndPersistOperational(packet.payload, packet.verifiedSources)
         const input = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(packet.payload)
         yield* readSystemRegistration(yield* Effect.fromResult(canonicalHashV1Result(input.registration)))
         const images = yield* verifyLatencyStressImages(

@@ -8,7 +8,7 @@ import type { ForwardPerformanceEvidenceInput } from '../forward-performance/mod
 import { SystemAssessmentError } from './economics'
 
 import { CapturedTradingFactsSchema } from './session'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/configuration'
 import type { SystemSourceCut } from './source-cut'
 import { IsoDateSchema, Sha256Schema } from '../schemas'
@@ -49,7 +49,7 @@ export const CapturedFinancialEvidenceSchema = Schema.Struct({
 })
 
 export const registeredFinancialAccounts = (
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   captured: readonly (typeof CapturedFinancialEvidenceSchema.Type)[],
 ) =>
   Result.gen(function* () {
@@ -83,7 +83,7 @@ export type DecisionSessionBinding = { readonly decisionHash: string; readonly s
 
 /** Only financial facts read and independently checked by the existing PostgreSQL/TigerBeetle reader replace packet amounts. */
 export const captureForwardFinancialEvidence = (
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   policy: JevResearchPolicy,
   forward: ForwardPerformanceEvidenceInput,
   execution: {

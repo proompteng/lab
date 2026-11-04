@@ -7,16 +7,26 @@ import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pa
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
 import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
-import { jevProtocolIdentityMatches, type ExecutionDecisionDocument } from '../shadow-decision-contract'
+import {
+  isSnapshotExecutionMarketDataBinding,
+  jevProtocolIdentityMatches,
+  type ExecutionDecisionDocument,
+} from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { JevProtocolSchema, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
-import { isContinuousMarket, marketHoursAreCanonical } from '../market-hours'
+import { exchangeSessions, isContinuousMarket, marketHoursAreCanonical } from '../market-hours'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { decideAccountProtection } from '../jev/account-protection'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
+import {
+  firstIntradayObservationAtMs,
+  marketCalendarQueryFromSession,
+  selectIntradayExecutionSession,
+} from '../cycle/runner/calendar-decisions'
 
 export const ControllerPassEvidenceSchema = Schema.Struct({
   controllerKey: Sha256Schema,
@@ -31,13 +41,16 @@ export type ControllerPassEvidence = typeof ControllerPassEvidenceSchema.Type
 
 export const sourceFitsRegisteredSession = (
   manifest: Readonly<Record<string, unknown>>,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   observedAt: string,
 ) => {
   const profile = registration.obligations.configuration.protocol.marketProfiles.find(
     (profile) => profile.feed === manifest['feed'],
   )
-  const registered = registration.calendar.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
+  const native = registration.calendar.operatingHours === 'NATIVE'
+  const registered = registration.calendar.sessions.find((s) =>
+    native ? s.openAt <= observedAt && observedAt < s.closeAt : s.sessionDate === manifest['sessionDate'],
+  )
   if (
     profile === undefined ||
     !registration.calendar.tradingMarkets.includes(profile.market) ||
@@ -52,11 +65,24 @@ export const sourceFitsRegisteredSession = (
   if (Result.isFailure(hours) || !marketHoursAreCanonical(hours.success)) return false
   if (isContinuousMarket(hours.success)) return profile.market === MarketKind.Crypto
   if (profile.market !== MarketKind.Equity) return false
+  if (native)
+    return exchangeSessions(hours.success).some(
+      (session) =>
+        session.date === manifest['sessionDate'] && session.openAt <= observedAt && observedAt < session.closeAt,
+    )
   const calendar = qualificationCalendar(manifest['calendar'])
   if (Result.isFailure(calendar)) return false
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
 }
+
+export const decisionMarketScopeSupported = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) =>
+  [document.bindings.decisionMarketData, document.bindings.executionMarketData].every(
+    (binding) =>
+      binding === undefined ||
+      !isSnapshotExecutionMarketDataBinding(binding) ||
+      sourceFitsRegisteredSession(binding, registration, binding.observedAt),
+  )
 
 const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) => {
   const { observation } = strategy.evidence
@@ -86,7 +112,7 @@ const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) 
   }
 }
 
-export const decisionDocumentWork = (document: ExecutionDecisionDocument, registration: SystemRegistration) => {
+export const decisionDocumentWork = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) => {
   const strategy = document.strategyDecision
   if (isProtectedEntryTarget(strategy)) {
     const work = entryDecisionWork(strategy, document.createdAt)
@@ -121,7 +147,7 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
   return undefined
 }
 
-export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: SystemRegistration) => {
+export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: ScheduledEvaluation) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
   const build = pass.observation.executionBuild
   return (
@@ -134,12 +160,30 @@ export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence,
   )
 }
 
+export type ControllerBuildBindingPolicy = 'CURRENT' | 'RETAINED_OPERATIONAL_V1'
+
+/** Frozen receipt reproduction only. New claims use controllerBuildMatchesRegistration. */
+const retainedOperationalV1ControllerBuildMatches = (
+  pass: ControllerPassEvidence,
+  registration: ScheduledEvaluation,
+) => {
+  const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  const build = pass.observation.executionBuild
+  return (
+    candidate !== undefined &&
+    build !== undefined &&
+    build.sourceRevision === candidate.sourceRevision &&
+    build.imageDigest === `sha256:${candidate.imageDigest}`
+  )
+}
+
 const registeredControllerOwns = (
   pass: ControllerPassEvidence,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   accountId: string,
   generationHash: string,
   protocol: JevProtocolMaterial,
+  buildBinding: ControllerBuildBindingPolicy,
 ) =>
   Result.gen(function* () {
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -166,7 +210,9 @@ const registeredControllerOwns = (
     })
     return (
       candidate !== undefined &&
-      controllerBuildMatchesRegistration(pass, registration) &&
+      (buildBinding === 'RETAINED_OPERATIONAL_V1'
+        ? retainedOperationalV1ControllerBuildMatches(pass, registration)
+        : controllerBuildMatchesRegistration(pass, registration)) &&
       pass.planHash === registration.obligations.configuration.controllerPlanHash &&
       pass.controllerKey === identity.identityHash &&
       candidate.accountBindingHash === accountHash &&
@@ -179,10 +225,95 @@ const registeredControllerOwns = (
     )
   })
 
+export const closedEntryWindowTimingSupported = (clock: {
+  readonly issued: number
+  readonly evaluated: number
+  readonly available: number
+  readonly decided: number
+  readonly observed: number
+  readonly completed: number
+  readonly witnessed: number
+  readonly entryEligible: boolean
+}) =>
+  !clock.entryEligible &&
+  clock.issued <= clock.evaluated &&
+  clock.evaluated <= clock.decided &&
+  clock.available <= clock.decided &&
+  clock.decided <= clock.observed &&
+  clock.observed <= clock.completed &&
+  clock.completed <= clock.witnessed
+
+/** Reproduce an idle discovery result; a bare closed/healthy tick cannot supply decision evidence. */
+export const closedEntryWindowWork = (
+  pass: ControllerPassEvidence,
+  registration: ScheduledEvaluation,
+  witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
+) =>
+  Result.gen(function* () {
+    const observation = pass.observation
+    if (
+      registration.calendar.operatingHours !== 'NATIVE' ||
+      observation.result !== 'SUCCESS' ||
+      observation.outcome !== 'WINDOW_CLOSED' ||
+      observation.closedEntryWindow === undefined
+    )
+      return undefined
+    const evidence = observation.closedEntryWindow
+    const runtime = registration.obligations.configuration
+    const policy = yield* makeCycleExecutionPolicyFromModel(runtime.protocol.executionModel)
+    const query = yield* marketCalendarQueryFromSession(evidence.evaluatedAt.slice(0, 10))
+    const session = selectIntradayExecutionSession(evidence.calendar, evidence.executionPolicy, evidence.evaluatedAt)
+    const lockedCalendar = registration.calendar.marketCalendar
+    const sessionDate = evidence.evaluatedAt.slice(0, 10)
+    const actualSession = evidence.calendar.providerSessions.find((s) => s.date === sessionDate) ?? null
+    const lockedSession = lockedCalendar.providerSessions.find((s) => s.date === sessionDate) ?? null
+    const entryEligible =
+      session !== undefined &&
+      firstIntradayObservationAtMs(session, evidence.executionPolicy) <= Date.parse(evidence.evaluatedAt)
+    return {
+      sourceAt: evidence.evaluatedAt,
+      correct:
+        evidence.authorityGenerationHash !== null &&
+        observation.executionIssuedAt !== undefined &&
+        runtime.entryMarkets?.length === 1 &&
+        runtime.entryMarkets[0] === MarketKind.Equity &&
+        evidence.strategyProtocolHash ===
+          registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)?.protocolHash &&
+        evidence.executionPolicy.executionPolicyHash === policy.executionPolicyHash &&
+        (yield* canonicalHashV1Result(evidence.calendar.requestedRange)) === (yield* canonicalHashV1Result(query)) &&
+        (yield* canonicalHashV1Result(actualSession)) === (yield* canonicalHashV1Result(lockedSession)) &&
+        marketHoursAreCanonical(evidence.calendar) &&
+        evidence.calendarRead.status === 200 &&
+        (yield* registeredControllerOwns(
+          pass,
+          registration,
+          evidence.accountId,
+          evidence.authorityGenerationHash,
+          runtime.protocol,
+          buildBinding,
+        )) &&
+        registration.calendar.sessions.some(
+          (s) => s.openAt <= evidence.evaluatedAt && evidence.evaluatedAt < s.closeAt,
+        ) &&
+        closedEntryWindowTimingSupported({
+          issued: Date.parse(observation.executionIssuedAt),
+          evaluated: Date.parse(evidence.evaluatedAt),
+          available: Date.parse(evidence.calendarRead.observedAt),
+          decided: Date.parse(evidence.decidedAt),
+          observed: Date.parse(observation.observedAt),
+          completed: Date.parse(pass.completedAt),
+          witnessed: Date.parse(witnessedAt),
+          entryEligible,
+        }),
+    }
+  })
+
 export const entryAbstentionWork = (
   pass: ControllerPassEvidence,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -203,6 +334,7 @@ export const entryAbstentionWork = (
           source.portfolio.brokerState.account.accountId,
           source.authorityGenerationHash,
           source.protocol,
+          buildBinding,
         )) &&
         holdCompletionSupported({
           observedAt: evidence.decidedAt,
@@ -228,8 +360,9 @@ export const holdCompletionSupported = (evidence: {
 
 export const accountProtectionWork = (
   pass: ControllerPassEvidence,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -254,6 +387,7 @@ export const accountProtectionWork = (
           inputs.policy.accountId,
           protection.authorityGenerationHash,
           registration.obligations.configuration.protocol,
+          buildBinding,
         )) &&
         registration.calendar.sessions.some((s) => s.openAt <= inputs.observedAt && inputs.observedAt < s.closeAt) &&
         inputs.observedAt === observation.observedAt &&
@@ -270,9 +404,10 @@ export const accountProtectionWork = (
 /** A successful controller tick is insufficient: reproduce the retained strategy conclusion and its owner. */
 export const positionHoldWork = (
   pass: ControllerPassEvidence,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   decisions: readonly { readonly sessionDate: string; readonly document: ExecutionDecisionDocument }[],
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -290,6 +425,7 @@ export const positionHoldWork = (
         accountId,
         evidence.authorityGenerationHash,
         evidence.protocol,
+        buildBinding,
       )) &&
       entry.document.bindings.authorityGenerationHash === evidence.authorityGenerationHash &&
       entry.document.bindings.accountId === accountId &&

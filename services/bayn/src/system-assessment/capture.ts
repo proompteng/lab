@@ -1,14 +1,19 @@
-import { executionDecisionRows } from '../db/execution-decision-query'
+import {
+  readSystemCashObservations,
+  readSystemBatchEvidence,
+  readSystemMutationEvidence,
+  readSystemControllerPasses,
+  readSystemDurableObservations,
+  readSystemDecisionAdmissions,
+  systemDecisionQuery,
+} from './capture-queries'
+import { readRegisteredFinancialIdentity } from './capital-identity'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
-import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/configuration'
-import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
-import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 
 import { canonicalHashV1Result } from '../hash'
 import { readForwardPerformanceInput } from '../forward-performance/program'
 import type { ForwardPerformanceConfig } from '../forward-performance/config'
-import { generationScope } from '../forward-performance/postgres/scope'
 import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { verifyInferenceExpenseCoverage } from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
@@ -16,274 +21,33 @@ import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
-import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
-import { Sha256Schema, SignedMicrosSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
-import { readSystemRegistration } from './postgres'
+import { UtcInstantSchema } from '../schemas'
+import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
 import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { qualificationRuntime } from './configuration'
-import { BrokerEnvironment, BrokerIdentitySchema } from '../broker/identity'
-import { registeredMarkIntervalMs, type SystemRegistration } from './policy'
+import { BrokerEnvironment } from '../broker/identity'
+import { registeredMarkIntervalMs } from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
-import { sourceFitsRegisteredSession } from './decision-work'
+import { decisionMarketScopeSupported } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
 import { executableBid, readValuationQuotes } from './valuation-quotes'
 import { captureExecutionOrders, captureExecutionFills } from './execution-evidence'
 import { readSystemExecutionOrders, readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
 import { executionOrderPlans } from './execution-plans'
-
-export const readSystemCashObservations = (
-  accountId: string,
-  scope: {
-    readonly accountBindingHash: string
-    readonly openAt: string
-    readonly closeAt: string
-    readonly asOf: string
-  },
-) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(
-      Schema.Array(
-        Schema.Struct({
-          accountBindingHash: Sha256Schema,
-          sourceHash: Sha256Schema,
-          at: UtcInstantSchema,
-          availableAt: UtcInstantSchema,
-          cashMicros: SignedMicrosSchema,
-        }),
-      ),
-    )(
-      yield* sql`
-    SELECT ${scope.accountBindingHash}::text AS "accountBindingHash", event.content_hash AS "sourceHash",
-      to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at,
-      to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "availableAt",
-      snapshot.cash_micros::text AS "cashMicros"
-    FROM account_snapshots AS snapshot JOIN broker_events AS event USING (event_id)
-    WHERE snapshot.account_id = ${accountId}
-      AND event.occurred_at BETWEEN ${scope.openAt}::timestamptz AND ${scope.closeAt}::timestamptz
-      AND event.observed_at <= ${scope.asOf}::timestamptz
-    ORDER BY event.occurred_at, event.source_sequence`,
-    )
-  })
-
-export const readRegisteredFinancialIdentity = (definition: SystemRegistration['policies'][number]) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    const rows = yield* Schema.decodeUnknownEffect(
-      Schema.Array(
-        Schema.Struct({
-          identity: BrokerIdentitySchema,
-          riskPolicyHash: Sha256Schema,
-          sourceRevision: StrictNonEmptyStringSchema,
-          imageDigest: StrictNonEmptyStringSchema,
-          strategyHash: Sha256Schema,
-          parametersHash: Sha256Schema,
-          protocolHash: Sha256Schema,
-        }),
-      ),
-    )(
-      yield* sql`SELECT risk_policy_hash AS "riskPolicyHash",
-        activation_source_revision AS "sourceRevision", activation_image_digest AS "imageDigest",
-        strategy_behavior_hash AS "strategyHash", strategy_parameter_hash AS "parametersHash",
-        strategy_protocol_hash AS "protocolHash", jsonb_build_object(
-        'schemaVersion', broker_identity_schema_version, 'provider', broker_provider,
-        'environment', broker_environment, 'accountId', account_id, 'identityHash', broker_identity_hash
-      ) AS identity FROM authority_generations WHERE generation_hash = ${definition.authorityGenerationHash}`,
-    )
-    const row = rows[0]
-    if (row === undefined) return null
-    const accountBindingHash = yield* Effect.fromResult(
-      canonicalHashV1Result({
-        schemaVersion: 'bayn.inference-cost-account.v1',
-        accountId: row.identity.accountId,
-      }),
-    )
-    if (
-      row.identity.environment !== BrokerEnvironment.Sandbox ||
-      row.riskPolicyHash !== definition.riskPolicyHash ||
-      row.strategyHash !== definition.strategyHash ||
-      row.parametersHash !== definition.parametersHash ||
-      row.protocolHash !== definition.protocolHash ||
-      accountBindingHash !== definition.accountBindingHash
-    )
-      return yield* new SystemAssessmentError({
-        message:
-          'Financial capture account, environment, risk policy or generation provenance differs from registration',
-      })
-    const authoredBuildMatches =
-      row.sourceRevision === definition.sourceRevision &&
-      row.imageDigest.replace(/^sha256:/, '') === definition.imageDigest
-    const binding = definition.capitalAuthorization
-    if (!authoredBuildMatches && binding === undefined)
-      return yield* new SystemAssessmentError({
-        message: 'Different execution build requires registered capital lineage',
-      })
-    if (binding !== undefined) {
-      const generation = yield* makeObserveAuthorityInterpreter(
-        sql,
-        makeAuthorityPostgres(sql),
-        row.identity,
-      ).readResearchAuthorityGeneration(definition.authorityGenerationHash)
-      if (generation === undefined)
-        return yield* new SystemAssessmentError({ message: 'Capture capital generation is missing' })
-      if (
-        (yield* Effect.fromResult(canonicalHashV1Result(generation))) !==
-        (yield* Effect.fromResult(canonicalHashV1Result(binding.generation)))
-      )
-        return yield* new SystemAssessmentError({
-          message: 'Registered capital generation differs from durable history',
-        })
-      yield* Effect.fromResult(
-        researchCapitalGenerationIsBoundToBuildLineage(
-          binding.buildLineage,
-          binding.request,
-          {
-            sourceRevision: definition.sourceRevision,
-            imageRepository: binding.buildLineage.activation.imageRepository,
-            imageDigest: `sha256:${definition.imageDigest}`,
-          },
-          generation.previousGenerationHash,
-          generation,
-        ),
-      ).pipe(Effect.mapError((message) => new SystemAssessmentError({ message })))
-    }
-    return row.identity
-  })
-
-export const readSystemBatchEvidence = (accountId: string, generationHash: string, openAt: string, closeAt: string) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.batches)(
-      yield* sql`
-      SELECT plan.payload AS plan, observation.payload AS observation, result.payload AS result
-      FROM jev_batch_plans AS plan JOIN autonomous_cycles AS cycle USING (cycle_id)
-      LEFT JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
-      LEFT JOIN jev_batch_results AS result USING (batch_id)
-      WHERE cycle.account_id = ${accountId} AND plan.authority_generation_hash = ${generationHash}
-        AND plan.payload->>'observedAt' >= ${openAt}
-        AND plan.payload->>'observedAt' < ${closeAt}
-      ORDER BY plan.payload->>'observedAt', plan.batch_id`,
-    )
-  })
-
-export const readSystemMutationEvidence = (accountId: string, generationHash: string, from: string) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.mutations)(
-      yield* sql`
-        SELECT intent.authority_generation_hash AS "authorityGenerationHash", intent.decision_hash AS "strategyDecisionHash", jsonb_strip_nulls(jsonb_build_object(
-          'schemaVersion', event.schema_version, 'eventId', event.event_id, 'mutationId', event.mutation_id,
-          'intentId', event.intent_id, 'sequence', event.sequence::integer, 'operation', event.operation,
-          'eventType', event.event_type, 'requestHash', event.request_hash, 'consistencyDelayMs', event.consistency_delay_ms,
-          'brokerOrderId', event.broker_order_id, 'requestId', event.request_id, 'responseStatus', event.response_status,
-          'responseContentHash', event.response_content_hash, 'denialReason', event.denial_reason,
-          'occurredAt', to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
-          || CASE WHEN event.routing IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('routing', event.routing) END AS event
-        FROM mutation_events AS event JOIN intents AS intent USING (intent_id)
-        WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
-          AND event.occurred_at >= ${from}::timestamptz
-        ORDER BY event.mutation_id, event.sequence`,
-    )
-  })
-
-export const readSystemControllerPasses = (
-  controllerKey: string,
-  planHash: string | null,
-  openAt: string,
-  closeAt: string,
-  asOf: string,
-) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.controllerPasses)(
-      yield* sql`
-        SELECT DISTINCT status->>'controller_key' AS "controllerKey",
-          status->>'plan_hash' AS "planHash", (status->>'epoch')::double precision AS epoch,
-          (status->>'last_sequence')::double precision AS sequence, status->>'last_receipt_hash' AS "receiptHash",
-          to_char((status->>'completed_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "completedAt",
-          status->'last_pass' AS observation
-        FROM execution_controller_observations
-        WHERE controller_key = ${controllerKey} AND status->>'plan_hash' = ${planHash}
-          AND status->>'last_receipt_hash' IS NOT NULL AND jsonb_typeof(status->'last_pass') = 'object'
-          AND (status->>'completed_at')::timestamptz <= ${asOf}::timestamptz
-          AND ((status->>'completed_at')::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz
-            OR (status #>> '{last_pass,executionIssuedAt}')::timestamptz BETWEEN ${openAt}::timestamptz AND ${closeAt}::timestamptz)
-        ORDER BY "receiptHash", epoch, sequence, "completedAt"`,
-    )
-  })
-
-export const readSystemDurableObservations = (registrationHash: string) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.durableObservations)(
-      yield* sql`
-    SELECT kind, source_hash AS "sourceHash", correct,
-      to_char(source_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "sourceAt",
-      to_char((date_trunc('milliseconds', witnessed_at) +
-        CASE WHEN witnessed_at > date_trunc('milliseconds', witnessed_at) THEN interval '1 millisecond'
-          ELSE interval '0' END) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "witnessedAt"
-    FROM system_durable_observations WHERE registration_hash = ${registrationHash}
-    ORDER BY witnessed_at, kind, source_hash`,
-    )
-  })
-
-export const readSystemDecisionAdmissions = ({
-  accountId,
-  generationHash,
-  openAt,
-  firstSession,
-  lastSession,
-  asOf,
-}: {
-  readonly accountId: string
-  readonly generationHash: string
-  readonly openAt: string
-  readonly firstSession: string
-  readonly lastSession: string
-  readonly asOf: string
-}) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    const rows = yield* Schema.decodeUnknownEffect(
-      Schema.Array(
-        Schema.Struct({
-          eventId: Sha256Schema,
-          decisionId: Sha256Schema,
-          observedAt: UtcInstantSchema,
-        }),
-      ),
-    )(
-      yield* sql`
-      SELECT receipt.event_id AS "eventId", receipt.decision_id AS "decisionId",
-        to_char((date_trunc('milliseconds', receipt.observed_at) +
-          CASE WHEN receipt.observed_at > date_trunc('milliseconds', receipt.observed_at)
-            THEN interval '1 millisecond' ELSE interval '0' END) AT TIME ZONE 'UTC',
-          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
-      FROM execution_decision_admissions receipt JOIN mutation_events event USING(event_id)
-        JOIN intents intent USING(intent_id)
-        JOIN autonomous_cycles cycle ON cycle.cycle_id = intent.cycle_id
-      WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
-        AND cycle.execution_session_date BETWEEN ${firstSession}::date AND ${lastSession}::date
-        AND event.occurred_at >= ${openAt}::timestamptz
-        AND receipt.observed_at <= ${asOf}::timestamptz
-      ORDER BY receipt.event_id, receipt.decision_id`,
-    )
-    return yield* Effect.forEach(rows, (row) =>
-      Effect.gen(function* () {
-        return { ...row, sourceHash: yield* Effect.fromResult(canonicalHashV1Result(row)) }
-      }),
-    )
-  })
+import { captureInferenceSnapshot } from './inference-capture'
+import { captureOperationalSourceCut } from './operational-capture'
 
 /** Capture one database snapshot. External ledger verification can reject a moving or incomplete cut. */
 export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registrationHash: string) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const registration = yield* readSystemRegistration(registrationHash)
+      const registration = yield* readAssessmentRegistration(registrationHash)
+      if (registration.program === 'BAYN_OPERATIONAL_RELIABILITY')
+        return yield* captureOperationalSourceCut(config, registrationHash, registration)
       const runtimeConfiguration = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
       const runtimeConfigurationHash = yield* Effect.fromResult(canonicalHashV1Result(runtimeConfiguration))
       if (runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash)
@@ -331,13 +95,12 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               authorityGenerationHash: definition.authorityGenerationHash,
             })
             const decisions = yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.decisions)(
-              yield* sql`
-                SELECT cycle.execution_session_date::text AS "sessionDate", decision.document
-                FROM autonomous_cycles AS cycle JOIN (${executionDecisionRows(sql)}) AS decision USING (cycle_id)
-                WHERE cycle.account_id = ${accountIdentity.accountId}
-                  AND ${generationScope(sql, accountIdentity.accountId, definition.authorityGenerationHash, 'cycle')}
-                  AND cycle.execution_session_date BETWEEN ${first.sessionDate}::date AND ${last.sessionDate}::date
-                ORDER BY cycle.execution_session_date, decision.decision_hash`,
+              yield* systemDecisionQuery(sql, {
+                accountId: accountIdentity.accountId,
+                generationHash: definition.authorityGenerationHash,
+                firstSession: first.sessionDate,
+                lastSession: last.sessionDate,
+              }),
             )
             const scope = {
               accountId: accountIdentity.accountId,
@@ -428,18 +191,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                 )
                 const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
                 return {
-                  ...snapshot,
-                  evidence: {
-                    ...snapshot.evidence,
-                    requests: snapshot.evidence.requests.map(
-                      ({
-                        requestSchemaVersion: _version,
-                        sourceFingerprint: _fingerprint,
-                        stages: _stages,
-                        ...source
-                      }) => source,
-                    ),
-                  },
+                  ...captureInferenceSnapshot(snapshot, registration.program),
                   ledger,
                 }
               }),
@@ -453,14 +205,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                     !registration.obligations.configuration.protocol.universe.includes(t.symbol) ||
                     !registration.calendar.tradingMarkets.includes(instrumentMarket(t.symbol))),
               ) ||
-              decisions.some(({ document }) =>
-                [document.bindings.decisionMarketData, document.bindings.executionMarketData].some(
-                  (binding) =>
-                    binding !== undefined &&
-                    isSnapshotExecutionMarketDataBinding(binding) &&
-                    !sourceFitsRegisteredSession(binding, registration, binding.observedAt),
-                ),
-              )
+              decisions.some(({ document }) => !decisionMarketScopeSupported(document, registration))
             )
               return yield* new SystemAssessmentError({
                 message: 'Captured market scope is incompatible with the registered policy and session windows',
@@ -561,6 +306,10 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               candidate.authorityGenerationHash,
             ),
           )
+          const sourceAccounts = accounts.map(({ inferenceSnapshots, ...account }) => ({
+            ...account,
+            inferenceSnapshots: inferenceSnapshots.map(({ source, ledger }) => ({ ...source, ledger })),
+          }))
           const sourceMaterial = {
             captureBuild: {
               sourceRevision: config.build.sourceRevision,
@@ -568,9 +317,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               imageDigest: config.build.imageDigest,
             },
             runtimeConfiguration,
-            accounts,
+            accounts: sourceAccounts,
             decisions,
-            batches,
             mutations,
             orders,
             protectionIntents,
@@ -586,10 +334,12 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             asOf,
             runtimeConfigurationHash,
             financial: accounts.map((account) => account.financial),
-            inference: accounts.flatMap((account) => account.inferenceSnapshots.map((snapshot) => snapshot.evidence)),
+            inference: accounts.flatMap((account) =>
+              account.inferenceSnapshots.flatMap((snapshot) => (snapshot.evidence === null ? [] : [snapshot.evidence])),
+            ),
             inferenceLedgerEvidenceHash: yield* Effect.fromResult(
               canonicalHashV1Result(
-                accounts.map((account) => ({
+                sourceAccounts.map((account) => ({
                   policy: account.policy,
                   snapshots: account.inferenceSnapshots,
                 })),

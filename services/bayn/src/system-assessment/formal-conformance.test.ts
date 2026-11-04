@@ -1,3 +1,6 @@
+import { reconciliationCompletionSupported } from './obligation-witnesses'
+import { closedEntryWindowTimingSupported } from './decision-work'
+import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../execution/trading-scope'
 import { JevAcceptanceVersion } from '../jev/acceptance'
 import { OrderStatus, OrderSchema } from '../execution/contracts'
 import type { SystemSourceCut } from './source-cut'
@@ -86,6 +89,9 @@ import { continuousMarketHours } from '../market-hours'
 import { registeredSchedule } from './schedule'
 import { registrationFixture } from './fixtures.test-support'
 import { ObligationClass } from './reliability'
+import { ReliabilityStatus } from './reliability'
+import { operationalAssessmentVerdict } from './operational-assessment'
+import { operationalRegistrationFixture } from './operational-period.test-support'
 import { jevSignalWindowEndMs } from '../jev/observation-query'
 import { controllerClockDurations, nearestRank95 } from './controller-latency'
 import { fullBatchClockDuration } from './full-batch-latency'
@@ -163,7 +169,7 @@ import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../
 import { formalModelExecutable, runFormalModel as model } from './formal-model.test-support'
 import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { emptySourceCutFixture } from './source-cut.test-support'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { equityTafRate } from '../strategy/execution-model/fees'
 import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import { registrationBuildFixture } from './registration-build.test-support'
@@ -171,6 +177,111 @@ import { registrationBuildFixture } from './registration-build.test-support'
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('reconciliation batching preserves each original deadline and causal receipt', () => {
+    const cases = [0, 30, 60, 90].flatMap((due) =>
+      [0, 65, 95, 181].flatMap((observed) =>
+        [0, 66, 96, 182].map((witnessed) => ({ due, deadline: due + 120, observed, witnessed })),
+      ),
+    )
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'reconciliationCompletion',
+          due: String(c.due),
+          deadline: String(c.deadline),
+          observed: String(c.observed),
+          witnessed: String(c.witnessed),
+        })),
+      ),
+    ).toEqual(cases.map(reconciliationCompletionSupported))
+  })
+
+  test('closed windows require causal calendar arrival and cannot replace eligible entry work', () => {
+    const cases = [false, true].flatMap((entryEligible) =>
+      [0, 2, 10].flatMap((issued) =>
+        [0, 2, 10].flatMap((available) =>
+          [0, 2, 10].map((decided) => ({
+            issued,
+            evaluated: 2,
+            available,
+            decided,
+            observed: 6,
+            completed: 7,
+            witnessed: 8,
+            entryEligible,
+          })),
+        ),
+      ),
+    )
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'closedEntryWindowTiming',
+          ...Object.fromEntries(
+            Object.entries(c).map(([key, value]) => [key, typeof value === 'number' ? String(value) : value]),
+          ),
+        })),
+      ),
+    ).toEqual(cases.map(closedEntryWindowTimingSupported))
+  })
+
+  test('equity-only entry scope and retained crypto sells agree with Lean', () => {
+    const cases = [MarketKind.Equity, MarketKind.Crypto].flatMap((market) =>
+      [OrderSide.Buy, OrderSide.Sell].map((side) => ({ market, side })),
+    )
+    expect(
+      model(
+        cases.map((c) => ({ operation: 'currentTradingScope', market: c.market, sell: c.side === OrderSide.Sell })),
+      ),
+    ).toEqual(
+      cases.map((c) => ({
+        entryAllowed: currentEntryMarketEnabled(c.market),
+        submissionAllowed: currentSubmissionMarketAllowed({
+          symbol: c.market === MarketKind.Equity ? 'AAPL' : 'BTC/USD',
+          side: c.side,
+        }),
+      })),
+    )
+  })
+
+  test('operational verdicts require complete reliability evidence and zero safety violations without shortening deadlines', () => {
+    const cases = Object.values(ReliabilityStatus).flatMap((reliability) =>
+      [0, 1].flatMap((missing) =>
+        [false, true].flatMap((safetyComplete) =>
+          [0, 1].map((violations) => ({ reliability, missing, safetyComplete, violations })),
+        ),
+      ),
+    )
+    expect(
+      model(
+        cases.map((value) => ({
+          operation: 'operationalAssessmentVerdict',
+          ...value,
+          missing: String(value.missing),
+          violations: String(value.violations),
+        })),
+      ),
+    ).toEqual(
+      cases.map((value) =>
+        operationalAssessmentVerdict(value.reliability, value.missing, value.safetyComplete, value.violations),
+      ),
+    )
+    const registration = operationalRegistrationFixture()
+    const schedule = Result.getOrThrow(registeredSchedule(registration))
+    expect(
+      model(
+        schedule.map((row) => ({
+          operation: 'nativeObligationDeadline',
+          due: String(Date.parse(row.dueAt)),
+          window: String(
+            row.class === ObligationClass.Decision
+              ? registration.obligations.decisionWindowMs
+              : registration.obligations.reconciliationFreshnessMs,
+          ),
+        })),
+      ),
+    ).toEqual(schedule.map((row) => String(Date.parse(row.deadlineAt))))
+  })
   test('physical execution build matching binds registered source, digest and repository claims', () => {
     const { base, registered, buildLineage } = registrationBuildFixture()
     const candidate = registered.policies.find((p) => p.policy === 'JEV')
@@ -314,14 +425,16 @@ formal('pinned Lean executable conformance', () => {
                     ...base,
                     asOf: at(10),
                     decisions: [{ sessionDate, document }],
-                    mutations: [start, ...(routed ? [terminal] : [])].map((event) => ({
+                    decisionAdmissions: independent ? [receipt] : [],
+                  },
+                  generation,
+                  indexDecisionAdmissionMutations(
+                    [start, ...(routed ? [terminal] : [])].map((event) => ({
                       event,
                       authorityGenerationHash: generation,
                       strategyDecisionHash: document.bindings.strategyDecisionHash,
                     })),
-                    decisionAdmissions: independent ? [receipt] : [],
-                  },
-                  generation,
+                  ),
                 )
                 const witness = Result.isSuccess(result) ? result.success.witnesses[0] : undefined
                 expected.push(witness === undefined ? null : String(Date.parse(witness.witnessedAt) - origin))
