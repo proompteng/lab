@@ -31,7 +31,7 @@ postgres('bounded PostgreSQL snapshot rows', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`TRUNCATE entries`
-        yield* sql`INSERT INTO entries VALUES (1, '{}'::jsonb), (2, '{}'::jsonb)`
+        yield* sql`INSERT INTO entries SELECT id, '{}'::jsonb FROM generate_series(1, 130) AS id`
       }),
     ),
   )
@@ -47,41 +47,48 @@ postgres('bounded PostgreSQL snapshot rows', () => {
     }
   })
 
-  test('keeps the opening snapshot when another connection commits before consumption', async () => {
-    const seen = await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const opened = yield* Deferred.make<void>()
-        const changed = yield* Deferred.make<void>()
-        const reader = yield* Effect.forkChild(
-          sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql`SET TRANSACTION ISOLATION LEVEL READ COMMITTED`
-              const consume = yield* openSnapshotRows(sql, sql`SELECT id, payload FROM entries ORDER BY id`)
-              expect(
-                yield* sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_snapshot_%'`,
-              ).toEqual([{ count: 1 }])
-              yield* Deferred.succeed(opened, undefined)
-              yield* Deferred.await(changed)
-              const rows: number[] = []
-              yield* consume((input) =>
-                Effect.gen(function* () {
-                  const row = yield* Schema.decodeUnknownEffect(RowSchema)(input)
-                  rows.push(row.id)
-                }),
-              )
-              return rows
-            }),
-          ),
-        )
-        yield* Deferred.await(opened)
-        yield* sql`INSERT INTO entries VALUES (3, '{}'::jsonb)`
-        yield* Deferred.succeed(changed, undefined)
-        return yield* Fiber.join(reader)
-      }).pipe(Effect.scoped),
-    )
-    expect(seen).toEqual([1, 2])
-  })
+  test.each([1, 64])(
+    'keeps the opening snapshot across %s-row fetches after a concurrent commit',
+    async (batchSize) => {
+      const seen = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const opened = yield* Deferred.make<void>()
+          const changed = yield* Deferred.make<void>()
+          const reader = yield* Effect.forkChild(
+            sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SET TRANSACTION ISOLATION LEVEL READ COMMITTED`
+                const consume = yield* openSnapshotRows(
+                  sql,
+                  sql`SELECT id, payload FROM entries ORDER BY id`,
+                  batchSize,
+                )
+                expect(
+                  yield* sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_snapshot_%'`,
+                ).toEqual([{ count: 1 }])
+                yield* Deferred.succeed(opened, undefined)
+                yield* Deferred.await(changed)
+                const rows: number[] = []
+                yield* consume((input) =>
+                  Effect.gen(function* () {
+                    const row = yield* Schema.decodeUnknownEffect(RowSchema)(input)
+                    rows.push(row.id)
+                  }),
+                )
+                return rows
+              }),
+            ),
+          )
+          yield* Deferred.await(opened)
+          yield* sql`INSERT INTO entries VALUES (131, '{}'::jsonb)`
+          yield* Deferred.succeed(changed, undefined)
+          return yield* Fiber.join(reader)
+        }).pipe(Effect.scoped),
+      )
+      expect(seen).toEqual(Array.from({ length: 130 }, (_, index) => index + 1))
+    },
+  )
 
   test.each(['interruption', 'failure'] as const)(
     'closes its cursor and reuses the connection after %s',
@@ -95,9 +102,11 @@ postgres('bounded PostgreSQL snapshot rows', () => {
             const first = yield* Deferred.make<void>()
             const operation = sql.withTransaction(
               Effect.gen(function* () {
-                const consume = yield* openSnapshotRows(sql, sql`SELECT id, payload FROM entries ORDER BY id`)
-                yield* consume(() =>
+                const consume = yield* openSnapshotRows(sql, sql`SELECT id, payload FROM entries ORDER BY id`, 64)
+                yield* consume((input) =>
                   Effect.gen(function* () {
+                    const row = yield* Schema.decodeUnknownEffect(RowSchema)(input)
+                    if (row.id !== 70) return
                     yield* Deferred.succeed(first, undefined)
                     return yield* mode === 'failure' ? Effect.fail('source consumer failed') : Effect.never
                   }),

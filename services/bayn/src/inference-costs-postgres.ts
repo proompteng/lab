@@ -122,7 +122,7 @@ export const readInferenceExpenseSnapshot = (
           `
           const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
           const requests: DecodedInferenceCostRequest[] = []
-          const consume = yield* openSnapshotRows(sql, sourceQuery)
+          const consume = yield* openSnapshotRows(sql, sourceQuery, 64)
           yield* consume((input) =>
             Effect.gen(function* () {
               const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)

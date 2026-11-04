@@ -67,6 +67,10 @@ its enclosing writer transaction and deadline. Every session's frozen inference 
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
 
+Inference expense snapshots anchor their cut with one row, then fetch up to 64 rows per database round trip.
+Row consumption remains sequential and verifies the same cut, complete counts and financial evidence. Large decision
+and controller captures retain one-row buffering; transaction rollback still closes failed or interrupted cursors.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
