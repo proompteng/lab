@@ -499,7 +499,11 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
               operationTimeoutMs: 5_000,
               tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
             })
-            yield* postInferenceExpenses(client, Result.getOrThrow(buildInferenceExpensePlan(quotes)))
+            for (let offset = 0; offset < quotes.length; offset += inferenceExpenseBatchSize)
+              yield* postInferenceExpenses(
+                client,
+                Result.getOrThrow(buildInferenceExpensePlan(quotes.slice(offset, offset + inferenceExpenseBatchSize))),
+              )
             yield* store.acknowledge(quotes)
             const { captured, report, sessionRows } = yield* forwardPerformanceSnapshot(sql).withTransaction(
               Effect.gen(function* () {
