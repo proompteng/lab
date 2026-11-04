@@ -4,6 +4,7 @@ import { registrationFixture } from './fixtures.test-support'
 import { captureQualificationRuntime, qualificationDeadlines } from './configuration'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { MarketKind } from '../instruments'
+import { executionControllerPlanHash } from '../execution/controller'
 import { validateSystemRegistration } from './policy'
 import { evaluateSystemAssessment } from './assessment'
 import { supportedAssessmentFixture, testHash, withRegistrationCommitments } from './fixtures.test-support'
@@ -125,6 +126,18 @@ describe('runtime-derived qualification deadlines', () => {
         configuration: { ...registration.obligations.configuration, controllerPlanHash: null },
       },
     })
+    const captured = Result.getOrThrow(
+      captureQualificationRuntime(
+        {
+          ...unknown.obligations.configuration,
+          controllerPlanHash: executionControllerPlanHash,
+          entryMarkets: currentEntryMarkets,
+        },
+        unknown.obligations,
+      ),
+    )
+    expect(captured.runtimeConfiguration.controllerPlanHash).toBeNull()
+    expect(captured.runtimeConfigurationHash).toBe(unknown.obligations.runtimeConfigurationHash)
     const result = Result.getOrThrow(evaluateSystemAssessment({ ...input, registration: unknown }, verifiedSources))
     expect(result.missing).toContain('MISSING_CONTROLLER_PLAN_BINDING')
     expect(result.verdict).not.toBe('QUALIFIED_PAPER')

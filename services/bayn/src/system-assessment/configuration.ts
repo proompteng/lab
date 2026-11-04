@@ -61,9 +61,16 @@ export const captureQualificationRuntime = (
   },
 ) =>
   Result.gen(function* () {
-    // Append-only financial registrations predate entry scope; reproduce only that original omission.
+    // Legacy financial captures retain their original scope and unknown plan, never a new reliability claim.
     const { entryMarkets: _entryMarkets, ...unscopedRuntime } = runtime
-    const runtimeConfiguration = registered.configuration.entryMarkets === undefined ? unscopedRuntime : runtime
+    const runtimeConfiguration =
+      registered.configuration.entryMarkets === undefined
+        ? {
+            ...unscopedRuntime,
+            controllerPlanHash:
+              registered.configuration.controllerPlanHash === null ? null : runtime.controllerPlanHash,
+          }
+        : runtime
     const runtimeConfigurationHash = yield* canonicalHashV1Result(runtimeConfiguration)
     if (runtimeConfigurationHash !== registered.runtimeConfigurationHash)
       return yield* Result.fail(
