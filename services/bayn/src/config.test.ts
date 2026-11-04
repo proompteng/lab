@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import { PgClient } from '@effect/sql-pg'
+import { NodeServices } from '@effect/platform-node'
 
 import { ConfigProvider, Effect, Redacted, Result } from 'effect'
+import { Reactivity } from 'effect/reactivity'
+import { SqlClient } from 'effect/sql'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
@@ -17,7 +21,13 @@ import { loadApplicationPlan } from './application-plan'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { executionControllerPlanHash } from './execution/controller'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
-import { captureQualificationRuntime, qualificationRuntime } from './system-assessment/configuration'
+import {
+  captureQualificationRuntime,
+  qualificationDeadlines,
+  qualificationRuntime,
+} from './system-assessment/configuration'
+import { captureOperationalSourceCut } from './system-assessment/operational-capture'
+import { operationalRegistrationFixture } from './system-assessment/operational-period.test-support'
 import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
@@ -525,6 +535,88 @@ describe('runtime configuration loading', () => {
         expect(
           Result.isFailure(captureQualificationRuntime({ ...current, entryMarkets: [MarketKind.Crypto] }, registered)),
         ).toBe(true)
+    },
+  )
+
+  test.each([false, true])(
+    'operational capture retains historical null-plan runtime before account validation (scoped=%s)',
+    async (scoped) => {
+      const config = await Effect.runPromise(
+        provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
+      )
+      const current = qualificationRuntime(config, Result.getOrThrow(loadActiveStrategyProtocol()))
+      const { entryMarkets: _scope, ...unscoped } = current
+      const configuration = { ...(scoped ? current : unscoped), controllerPlanHash: null }
+      const base = operationalRegistrationFixture()
+      const registration = {
+        ...base,
+        obligations: {
+          ...base.obligations,
+          ...Result.getOrThrow(qualificationDeadlines(configuration)),
+          configuration,
+        },
+      }
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const client = yield* SqlClient.make({
+            acquirer: Effect.die('Capture runtime tests must not connect to PostgreSQL'),
+            compiler: PgClient.makeCompiler(undefined, false),
+            spanAttributes: [],
+          })
+          let accountReads = 0
+          const sql = new Proxy(client, {
+            apply() {
+              accountReads += 1
+              return Effect.succeed([])
+            },
+          }) as PgClient.PgClient
+          const rejected = yield* captureOperationalSourceCut(
+            config,
+            Result.getOrThrow(canonicalHashV1Result(registration)),
+            registration,
+          ).pipe(Effect.provideService(PgClient.PgClient, sql), Effect.flip)
+          // Runtime compatibility must reach the account boundary without inventing a missing capital binding.
+          expect(accountReads).toBe(1)
+          expect(rejected.cause).toMatchObject({
+            message: 'Operational capture account differs from its capital binding',
+          })
+          expect(registration.obligations.configuration).toEqual(configuration)
+          expect(registration.obligations.runtimeConfigurationHash).toBe(
+            Result.getOrThrow(canonicalHashV1Result(configuration)),
+          )
+          expect(config.execution.capitalAuthority._tag).toBe(CapitalAuthorityKind.None)
+          for (const changed of [
+            { ...configuration, operationTimeoutMs: configuration.operationTimeoutMs + 1 },
+            {
+              ...configuration,
+              protocol: {
+                ...configuration.protocol,
+                maximumDecisionLagMs: configuration.protocol.maximumDecisionLagMs + 1,
+              },
+            },
+            { ...configuration, controllerPlanHash: expectedExecutionControllerPlanHash },
+            ...(scoped ? [{ ...configuration, entryMarkets: [MarketKind.Crypto] }] : []),
+          ]) {
+            const different = {
+              ...registration,
+              obligations: {
+                ...registration.obligations,
+                ...Result.getOrThrow(qualificationDeadlines(changed)),
+                configuration: changed,
+              },
+            }
+            const failure = yield* captureOperationalSourceCut(
+              config,
+              Result.getOrThrow(canonicalHashV1Result(different)),
+              different,
+            ).pipe(Effect.provideService(PgClient.PgClient, sql), Effect.flip)
+            expect(failure.cause).toMatchObject({
+              message: 'Capture runtime differs from the prospectively registered configuration',
+            })
+            expect(accountReads).toBe(1)
+          }
+        }).pipe(Effect.provide(Reactivity.layer), Effect.provide(NodeServices.layer)),
+      )
     },
   )
 
