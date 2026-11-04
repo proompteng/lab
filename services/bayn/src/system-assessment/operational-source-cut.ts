@@ -1,0 +1,238 @@
+import { PgClient } from '@effect/sql-pg'
+import { Effect, Result, Schema } from 'effect'
+
+import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
+import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
+import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
+import {
+  ControllerPassEvidenceSchema,
+  controllerBuildEvidence,
+  decisionMarketScopeSupported,
+  type ControllerBuildBindingPolicy,
+  type ControllerBuildEvidence,
+} from './decision-work'
+import { SystemAssessmentError } from './economics'
+import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
+import { earliestDurableWitnesses } from './obligation-witnesses'
+import { bindOperationalWork, registeredControllerWork, registeredDecisionWork } from './operational-obligations'
+import { type OperationalRegistration, validateOperationalRegistration } from './operational-period'
+import { readSystemSourceCutPayload, SystemSourceCutSchema } from './source-cut'
+import { readSystemSourceRecord, SystemSourceRecordKind } from './source-records'
+
+export const OperationalSourceReferenceSchema = Schema.Struct({
+  kind: Schema.Enum(SystemSourceRecordKind),
+  sourceId: Sha256Schema,
+  recordHash: Sha256Schema,
+})
+type SourceReference = typeof OperationalSourceReferenceSchema.Type
+
+export const OperationalSourceCutSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.operational-source-cut.v1'),
+  registrationHash: Sha256Schema,
+  asOf: UtcInstantSchema,
+  runtimeConfigurationHash: Sha256Schema,
+  financial: SystemSourceCutSchema.fields.financial,
+  records: Schema.Array(OperationalSourceReferenceSchema),
+  protectionIntents: SystemSourceCutSchema.fields.protectionIntents,
+  decisionAdmissions: SystemSourceCutSchema.fields.decisionAdmissions,
+  mutations: SystemSourceCutSchema.fields.mutations,
+  durableObservations: SystemSourceCutSchema.fields.durableObservations,
+  sourceMaterial: Schema.Unknown,
+  sourceMaterialHash: Sha256Schema,
+})
+export type OperationalSourceCut = typeof OperationalSourceCutSchema.Type
+
+export const persistOperationalSourceCut = (input: unknown) =>
+  Effect.gen(function* () {
+    const cut = yield* Schema.decodeUnknownEffect(OperationalSourceCutSchema, strictParseOptions)(input)
+    if ((yield* Effect.fromResult(canonicalHashV1Result(cut.sourceMaterial))) !== cut.sourceMaterialHash)
+      return yield* new SystemAssessmentError({ message: 'Operational source material digest differs' })
+    const sourceCutHash = yield* Effect.fromResult(canonicalHashV1Result(cut))
+    const text = yield* Effect.fromResult(canonicalJsonV1Result(cut))
+    const sql = yield* PgClient.PgClient
+    yield* sql`INSERT INTO system_evidence_cuts(source_cut_hash, registration_hash, as_of, payload_text)
+    VALUES (${sourceCutHash}, ${cut.registrationHash}, ${cut.asOf}, ${text}) ON CONFLICT (source_cut_hash) DO NOTHING`
+    return { sourceCutHash, cut }
+  }).pipe(
+    Effect.mapError(
+      (cause) => new SystemAssessmentError({ message: 'Operational source cut persistence failed', cause }),
+    ),
+  )
+
+// A stored manifest carries source references, never trusted correctness claims.
+const verified = Symbol('verified operational sources')
+export type VerifiedOperationalSourceCut = {
+  readonly [verified]: true
+  readonly cut: OperationalSourceCut
+  readonly buildBinding: ControllerBuildBindingPolicy
+  readonly controllerEvidence: readonly ControllerBuildEvidence[]
+  readonly work: Parameters<typeof bindOperationalWork>[3]
+  readonly admissions: Result.Result.Success<ReturnType<typeof decisionAdmissionWitnesses>>
+}
+
+export const isVerifiedOperationalSourceCut = (
+  cut: VerifiedOperationalSourceCut | typeof SystemSourceCutSchema.Type,
+): cut is VerifiedOperationalSourceCut => verified in cut && cut[verified] === true
+
+const readDecision = (reference: SourceReference, registration: OperationalRegistration) =>
+  Effect.gen(function* () {
+    const record = yield* readSystemSourceRecord(reference.recordHash)
+    if (record.kind !== SystemSourceRecordKind.Decision || reference.kind !== record.kind)
+      return yield* new SystemAssessmentError({ message: 'Decision source record kind differs' })
+    const row = yield* Schema.decodeUnknownEffect(
+      SystemSourceCutSchema.fields.decisions.value,
+      strictParseOptions,
+    )(record.payload)
+    const document = yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
+    if (document.contentHash !== reference.sourceId)
+      return yield* new SystemAssessmentError({ message: 'Decision source identity differs' })
+    if (!decisionMarketScopeSupported(document, registration))
+      return yield* new SystemAssessmentError({ message: 'Decision source market scope differs from registration' })
+    return { ...row, document }
+  })
+
+const readController = (reference: SourceReference) =>
+  Effect.gen(function* () {
+    const record = yield* readSystemSourceRecord(reference.recordHash)
+    if (record.kind !== SystemSourceRecordKind.Controller || reference.kind !== record.kind)
+      return yield* new SystemAssessmentError({ message: 'Controller source record kind differs' })
+    const pass = yield* Schema.decodeUnknownEffect(ControllerPassEvidenceSchema, strictParseOptions)(record.payload)
+    if (pass.receiptHash !== reference.sourceId)
+      return yield* new SystemAssessmentError({ message: 'Controller source identity differs' })
+    return pass
+  })
+
+export const replayOperationalSourceRecords = (cut: OperationalSourceCut, registration: OperationalRegistration) =>
+  replayOperationalSourceRecordsForPolicy(cut, registration, 'CURRENT')
+
+const replayOperationalSourceRecordsForPolicy = (
+  cut: OperationalSourceCut,
+  registration: OperationalRegistration,
+  buildBinding: ControllerBuildBindingPolicy,
+) =>
+  Effect.gen(function* () {
+    const decisions = new Map<string, SourceReference>()
+    const controllers = new Map<string, SourceReference>()
+    const indexes = {
+      [SystemSourceRecordKind.Decision]: decisions,
+      [SystemSourceRecordKind.Controller]: controllers,
+    }
+    for (const reference of cut.records) {
+      const index = indexes[reference.kind]
+      if (index.has(reference.sourceId))
+        return yield* new SystemAssessmentError({ message: 'Operational source identity is repeated' })
+      index.set(reference.sourceId, reference)
+    }
+    const protectionsByDecision = protectionIntentsByDecision(cut.protectionIntents)
+    const documentWork = new Map<string, ReturnType<typeof registeredDecisionWork>>()
+    const intentOwners = new Set<string>()
+    const retainedProtections = new Set<string>()
+    for (const reference of decisions.values()) {
+      const row = yield* readDecision(reference, registration)
+      const protections = protectionsByDecision.get(row.document.contentHash) ?? []
+      const plans = yield* Effect.fromResult(executionOrderPlans([row], protections))
+      for (const intentId of plans.keys()) {
+        if (intentOwners.has(intentId))
+          return yield* new SystemAssessmentError({ message: 'Ambiguous execution intent ownership' })
+        intentOwners.add(intentId)
+      }
+      for (const protection of protections) retainedProtections.add(protection.intentId)
+      documentWork.set(row.document.contentHash, registeredDecisionWork(row.document, registration))
+    }
+    if (cut.protectionIntents.some((protection) => !retainedProtections.has(protection.intentId)))
+      return yield* new SystemAssessmentError({ message: 'Protection source has no retained entry decision' })
+
+    const admissions: Result.Result.Success<ReturnType<typeof decisionAdmissionWitnesses>> = {
+      sources: new Set<string>(),
+      witnesses: [],
+    }
+    const mutationIndex = indexDecisionAdmissionMutations(cut.mutations)
+    const admissionKeys = new Set<string>()
+    for (const receipt of cut.decisionAdmissions) {
+      const reference = decisions.get(receipt.decisionId)
+      const key = `${receipt.eventId}:${receipt.decisionId}`
+      if (reference === undefined || admissionKeys.has(key))
+        return yield* new SystemAssessmentError({ message: 'Decision admission has no unique retained source' })
+      admissionKeys.add(key)
+      const row = yield* readDecision(reference, registration)
+      const derived = yield* Effect.fromResult(
+        decisionAdmissionWitnesses(
+          {
+            asOf: cut.asOf,
+            decisions: [row],
+            protectionIntents: protectionsByDecision.get(row.document.contentHash) ?? [],
+            decisionAdmissions: [receipt],
+          },
+          registration.policies[0].authorityGenerationHash,
+          mutationIndex,
+        ),
+      )
+      for (const source of derived.sources) admissions.sources.add(source)
+      admissions.witnesses.push(...derived.witnesses)
+    }
+
+    const controllerWork = new Map<
+      string,
+      NonNullable<Result.Result.Success<ReturnType<typeof registeredControllerWork>>>
+    >()
+    const witnesses = earliestDurableWitnesses(cut)
+    const controllerEvidence: ControllerBuildEvidence[] = []
+    for (const reference of controllers.values()) {
+      const pass = yield* readController(reference)
+      // Provenance covers every authenticated pass, including those that cannot complete an obligation.
+      controllerEvidence.push(controllerBuildEvidence(pass))
+      const witness = witnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
+      if (witness === undefined) continue
+      const entryReference =
+        pass.observation.result === 'SUCCESS' && pass.observation.positionHold !== undefined
+          ? decisions.get(pass.observation.positionHold.entryDecisionHash)
+          : undefined
+      const entry = entryReference === undefined ? [] : [yield* readDecision(entryReference, registration)]
+      const work = yield* Effect.fromResult(
+        registeredControllerWork(pass, registration, entry, witness.witnessedAt, buildBinding),
+      )
+      if (work !== undefined) controllerWork.set(pass.receiptHash, work)
+    }
+    return {
+      [verified]: true,
+      cut,
+      buildBinding,
+      controllerEvidence,
+      work: { documentWork, controllerWork },
+      admissions,
+    } satisfies VerifiedOperationalSourceCut
+  })
+
+export const readOperationalAssessmentSourceCut = (hash: string, registration: OperationalRegistration) =>
+  readOperationalAssessmentSourceCutForPolicy(hash, registration, 'CURRENT')
+
+/** Only immutable v1 receipt verification may select the retained matching contract. */
+export const readRetainedOperationalAssessmentSourceCut = (hash: string, registration: OperationalRegistration) =>
+  readOperationalAssessmentSourceCutForPolicy(hash, registration, 'RETAINED_OPERATIONAL_V1')
+
+const readOperationalAssessmentSourceCutForPolicy = (
+  hash: string,
+  registration: OperationalRegistration,
+  buildBinding: ControllerBuildBindingPolicy,
+) =>
+  Effect.gen(function* () {
+    const value = yield* readSystemSourceCutPayload(hash)
+    const cut = yield* Schema.decodeUnknownEffect(
+      Schema.Union([SystemSourceCutSchema, OperationalSourceCutSchema]),
+      strictParseOptions,
+    )(value)
+    if ((yield* Effect.fromResult(canonicalHashV1Result(cut))) !== hash)
+      return yield* new SystemAssessmentError({ message: 'Operational source cut digest differs' })
+    if (cut.schemaVersion === 'bayn.system-source-cut.v4') return cut
+    const { registrationHash } = yield* Effect.fromResult(validateOperationalRegistration(registration))
+    if (
+      cut.registrationHash !== registrationHash ||
+      cut.runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash ||
+      (yield* Effect.fromResult(canonicalHashV1Result(cut.sourceMaterial))) !== cut.sourceMaterialHash
+    )
+      return yield* new SystemAssessmentError({ message: 'Operational source cut differs from its registration' })
+    return yield* replayOperationalSourceRecordsForPolicy(cut, registration, buildBinding)
+  }).pipe(
+    Effect.mapError((cause) => new SystemAssessmentError({ message: 'Operational source verification failed', cause })),
+  )

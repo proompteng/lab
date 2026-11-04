@@ -1,6 +1,7 @@
 import { JevResearchPolicy } from '../jev/acceptance'
 import { expect, test } from 'bun:test'
-import { Result, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
+import { PgClient } from '@effect/sql-pg'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import {
   evaluateOperationalAssessment,
@@ -19,7 +20,14 @@ import { registeredSchedule } from './schedule'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { qualificationDeadlines } from './configuration'
-import { sha256 } from '../hash'
+import { canonicalJsonV1Result, sha256 } from '../hash'
+import {
+  OperationalSourceCutSchema,
+  isVerifiedOperationalSourceCut,
+  readOperationalAssessmentSourceCut,
+  readRetainedOperationalAssessmentSourceCut,
+} from './operational-source-cut'
+import { makeSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 
 const fixture = (controllerPlanHash?: string | null) => {
   const baseRegistration = operationalRegistrationFixture()
@@ -252,7 +260,7 @@ test('each in-period controller pass must bind the registered build even without
   }
 })
 
-test('unbound in-period workers prevent an otherwise complete certificate without changing retained v1 receipts', () => {
+const completeFixture = () => {
   // Pin the original registration material independently of the current admission fixture.
   const { cut: original, input } = fixture(sha256('controller plan'))
   const registration = input.registration
@@ -400,6 +408,12 @@ test('unbound in-period workers prevent an otherwise complete certificate withou
     Result.getOrThrow(
       evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(source), safety }, source, verified),
     )
+  return { cut, input, verified, safety, evaluate, registration, build, passes, original, at, schedule }
+}
+
+test('unbound in-period workers prevent an otherwise complete certificate without changing retained v1 receipts', () => {
+  const { cut, input, verified, safety, evaluate, registration, build, passes, original, at, schedule } =
+    completeFixture()
   const complete = evaluate(cut)
   expect(complete.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
   expect(complete.missing).toEqual([])
@@ -579,4 +593,194 @@ test('operational accounting requires exact fill receipts and ledger evidence wi
     { ...forward, missingLedgerAccountCount: 1 },
   ])
     expect(evaluate(changed).missing).toContain('INCOMPLETE_FILL_ACCOUNTING')
+})
+
+// Exercise real digest/schema/source replay through a read-only SQL transport, without a database or forged brand.
+const archivedFixture = (source: typeof SystemSourceCutSchema.Type) => {
+  const records = source.controllerPasses.map((pass) =>
+    Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, pass)),
+  )
+  const manifest = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
+    ...source,
+    schemaVersion: 'bayn.operational-source-cut.v1',
+    records: records.map((record, index) => ({
+      kind: record.kind,
+      sourceId: source.controllerPasses[index]!.receiptHash,
+      recordHash: record.recordHash,
+    })),
+  })
+  const payloadText = Result.getOrThrow(canonicalJsonV1Result(manifest))
+  const hash = testHash(manifest)
+  const sql = ((strings: TemplateStringsArray, ...values: readonly unknown[]) => {
+    const query = strings.join('?')
+    if (query.includes('FROM system_evidence_cuts')) return Effect.succeed(values[0] === hash ? [{ payloadText }] : [])
+    if (query.includes('FROM system_source_records'))
+      return Effect.succeed(records.filter((record) => record.recordHash === values[0]))
+    return Effect.die(new Error('Unexpected SQL in read-only archived fixture'))
+  }) as unknown as PgClient.PgClient
+  return { manifest, hash, sql, records }
+}
+
+test('archive replay retains unwitnessed controller provenance and cannot downgrade current evaluation', async () => {
+  const { cut, input, verified, safety, build, passes, original, at } = completeFixture()
+  const read = async (source: typeof cut) => {
+    const archive = archivedFixture(source)
+    const current = await Effect.runPromise(
+      readOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+        Effect.provideService(PgClient.PgClient, archive.sql),
+      ),
+    )
+    const retained = await Effect.runPromise(
+      readRetainedOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+        Effect.provideService(PgClient.PgClient, archive.sql),
+      ),
+    )
+    const currentInput = { ...input, sourceCutHash: archive.hash, safety }
+    const retainedInput = { ...currentInput, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    expect(Result.isFailure(evaluateOperationalAssessment(currentInput, retained, verified))).toBe(true)
+    expect(Result.isFailure(verifyStoredOperationalAssessment(retainedInput, current, verified))).toBe(true)
+    expect(Result.isFailure(evaluateOperationalAssessment(retainedInput, retained, verified))).toBe(true)
+    return {
+      archive,
+      replay: current,
+      current: Result.getOrThrow(evaluateOperationalAssessment(currentInput, current, verified)),
+      retained: Result.getOrThrow(verifyStoredOperationalAssessment(retainedInput, retained, verified)),
+    }
+  }
+  const baseline = await read(cut)
+  expect(baseline.current.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  expect(baseline.retained.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  for (const executionBuild of [
+    undefined,
+    { ...build, sourceRevision: 'b'.repeat(40) },
+    { ...build, imageDigest: `sha256:${testHash('different archived worker image')}` },
+  ]) {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      executionIssuedAt: at(original.asOf, 20),
+      observedAt: at(original.asOf, 25),
+      ...(executionBuild === undefined ? {} : { executionBuild }),
+    }
+    const unbound = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+      ...passes[0]!,
+      sequence: 3,
+      completedAt: observation.observedAt,
+      receiptHash: testHash(observation),
+      observation,
+    })
+    const changed = await read({ ...cut, controllerPasses: [...passes, unbound] })
+    expect(isVerifiedOperationalSourceCut(changed.replay)).toBe(true)
+    if (!isVerifiedOperationalSourceCut(changed.replay)) throw new Error('Expected verified archive')
+    expect(changed.replay.controllerEvidence).toHaveLength(passes.length + 1)
+    expect(changed.replay.work.controllerWork.has(unbound.receiptHash)).toBe(false)
+    expect(changed.replay.controllerEvidence.at(-1)).toEqual({
+      receiptHash: unbound.receiptHash,
+      completedAt: unbound.completedAt,
+      observation: {
+        executionIssuedAt: observation.executionIssuedAt,
+        observedAt: observation.observedAt,
+        ...(executionBuild === undefined ? {} : { executionBuild }),
+      },
+    })
+    expect(changed.current.verdict).toBe('INCONCLUSIVE')
+    expect(changed.current.missing).toEqual([`UNBOUND_CONTROLLER_BUILD:${unbound.receiptHash}`])
+    expect(changed.current.reliability).toEqual(baseline.current.reliability)
+    expect(changed.retained.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+    expect(changed.retained.missing).toEqual([])
+    expect(changed.retained).not.toHaveProperty('evaluationPolicy')
+    expect(changed.retained.reliability).toEqual(baseline.retained.reliability)
+  }
+})
+
+test('archive replay preserves retained completion matching and rejects tampered source records', async () => {
+  const { cut, input, verified, safety, build, passes } = completeFixture()
+  for (const executionBuild of [
+    { ...build, imageRepository: 'example.test/foreign/worker' },
+    undefined,
+    { ...build, sourceRevision: 'b'.repeat(40) },
+    { ...build, imageDigest: `sha256:${testHash('different archived completion image')}` },
+  ]) {
+    const replacements = passes.map((pass) => {
+      const { executionBuild: _build, ...material } = pass.observation
+      const observation = { ...material, ...(executionBuild === undefined ? {} : { executionBuild }) }
+      return { ...pass, observation, receiptHash: testHash(observation) }
+    })
+    const source = {
+      ...cut,
+      controllerPasses: replacements,
+      durableObservations: cut.durableObservations.map((witness) => {
+        const index = passes.findIndex((pass) => pass.receiptHash === witness.sourceHash)
+        return index < 0 ? witness : { ...witness, sourceHash: replacements[index]!.receiptHash }
+      }),
+    }
+    const archive = archivedFixture(source)
+    const replay = await Effect.runPromise(
+      readRetainedOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+        Effect.provideService(PgClient.PgClient, archive.sql),
+      ),
+    )
+    const retained = Result.getOrThrow(
+      verifyStoredOperationalAssessment(
+        {
+          ...input,
+          schemaVersion: 'bayn.operational-assessment-input.v1',
+          sourceCutHash: archive.hash,
+          safety,
+        },
+        replay,
+        verified,
+      ),
+    )
+    const matched =
+      executionBuild?.sourceRevision === build.sourceRevision && executionBuild?.imageDigest === build.imageDigest
+    expect(retained.verdict).toBe(matched ? 'OPERATIONALLY_RELIABLE_PAPER' : 'REJECTED')
+    expect(retained.reliability.classes.find((row) => row.class === ObligationClass.Decision)?.correctOnTime).toBe(
+      matched ? '2' : '0',
+    )
+    expect(retained.missing.some((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toBe(false)
+    const originalHash = archive.records[0]!.recordHash
+    archive.records[0]!.payloadText = '{}'
+    expect(
+      await Effect.runPromise(
+        readOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+          Effect.provideService(PgClient.PgClient, archive.sql),
+          Effect.result,
+        ),
+      ).then(Result.isFailure),
+    ).toBe(true)
+    expect(archive.records[0]!.recordHash).toBe(originalHash)
+  }
+})
+
+test('an archived null-plan registration remains historical evidence but fails the current plan gate', async () => {
+  const { cut, input, verified } = fixture(null)
+  const archive = archivedFixture(cut)
+  const current = await Effect.runPromise(
+    readOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+      Effect.provideService(PgClient.PgClient, archive.sql),
+    ),
+  )
+  const retained = await Effect.runPromise(
+    readRetainedOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+      Effect.provideService(PgClient.PgClient, archive.sql),
+    ),
+  )
+  const currentResult = Result.getOrThrow(
+    evaluateOperationalAssessment({ ...input, sourceCutHash: archive.hash }, current, verified),
+  )
+  const retainedResult = Result.getOrThrow(
+    verifyStoredOperationalAssessment(
+      {
+        ...input,
+        sourceCutHash: archive.hash,
+        schemaVersion: 'bayn.operational-assessment-input.v1',
+      },
+      retained,
+      verified,
+    ),
+  )
+  expect(currentResult.missing).toContain('UNBOUND_CONTROLLER_PLAN')
+  expect(currentResult.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
+  expect(retainedResult.missing).not.toContain('UNBOUND_CONTROLLER_PLAN')
 })

@@ -143,7 +143,7 @@ test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
   }
 })
 
-test('the namespace can admit six slot leases with rolling-upgrade headroom', () => {
+test('the namespace can admit six slots with rolling-upgrade headroom', () => {
   const quota = manifest('argocd/applications/tengri/resource-quota.yaml')
   const source = readFileSync(new URL('../../../../services/tengri/src/controller.rs', import.meta.url), 'utf8')
   const slots = /const SLOT_COUNT: usize = (\d+);/.exec(source)
@@ -151,6 +151,14 @@ test('the namespace can admit six slot leases with rolling-upgrade headroom', ()
   expect(Number(quota.getIn(['spec', 'hard', 'count/leases.coordination.k8s.io']))).toBeGreaterThanOrEqual(
     Number(slots[1]) + 1,
   )
+  for (const [resource, headroomGiB] of [
+    ['requests.memory', 3],
+    ['limits.memory', 9],
+  ] as const) {
+    const quantity = String(quota.getIn(['spec', 'hard', resource]))
+    expect(quantity).toMatch(/^\d+Gi$/)
+    expect(Number(quantity.slice(0, -2))).toBeGreaterThanOrEqual(Number(slots[1]) * 12 + headroomGiB)
+  }
 })
 
 test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {

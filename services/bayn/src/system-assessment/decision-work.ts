@@ -7,7 +7,11 @@ import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pa
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
 import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
-import { jevProtocolIdentityMatches, type ExecutionDecisionDocument } from '../shadow-decision-contract'
+import {
+  isSnapshotExecutionMarketDataBinding,
+  jevProtocolIdentityMatches,
+  type ExecutionDecisionDocument,
+} from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { ScheduledEvaluation } from './policy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
@@ -34,6 +38,26 @@ export const ControllerPassEvidenceSchema = Schema.Struct({
   observation: RetainedAutonomousCyclePassObservationSchema,
 })
 export type ControllerPassEvidence = typeof ControllerPassEvidenceSchema.Type
+
+/** Small replay projection; full archived observations remain in their authenticated source records. */
+export type ControllerBuildEvidence = Pick<ControllerPassEvidence, 'receiptHash' | 'completedAt'> & {
+  readonly observation: Pick<
+    ControllerPassEvidence['observation'],
+    'executionBuild' | 'executionIssuedAt' | 'observedAt'
+  >
+}
+
+export const controllerBuildEvidence = (pass: ControllerPassEvidence): ControllerBuildEvidence => ({
+  receiptHash: pass.receiptHash,
+  completedAt: pass.completedAt,
+  observation: {
+    observedAt: pass.observation.observedAt,
+    ...(pass.observation.executionIssuedAt === undefined
+      ? {}
+      : { executionIssuedAt: pass.observation.executionIssuedAt }),
+    ...(pass.observation.executionBuild === undefined ? {} : { executionBuild: pass.observation.executionBuild }),
+  },
+})
 
 export const sourceFitsRegisteredSession = (
   manifest: Readonly<Record<string, unknown>>,
@@ -71,6 +95,14 @@ export const sourceFitsRegisteredSession = (
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
 }
+
+export const decisionMarketScopeSupported = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) =>
+  [document.bindings.decisionMarketData, document.bindings.executionMarketData].every(
+    (binding) =>
+      binding === undefined ||
+      !isSnapshotExecutionMarketDataBinding(binding) ||
+      sourceFitsRegisteredSession(binding, registration, binding.observedAt),
+  )
 
 const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) => {
   const { observation } = strategy.evidence
@@ -135,7 +167,10 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
   return undefined
 }
 
-export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: ScheduledEvaluation) => {
+export const controllerBuildMatchesRegistration = <Evidence extends Pick<ControllerBuildEvidence, 'observation'>>(
+  pass: Evidence,
+  registration: ScheduledEvaluation,
+) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
   const build = pass.observation.executionBuild
   return (

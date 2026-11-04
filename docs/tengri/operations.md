@@ -28,9 +28,11 @@ runner, Pod-local TAP, private snapshot/root disks, and a retained 32 GiB Ceph r
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
 
-Each 8 GiB guest uses a 9 GiB host runner reservation, matching native acceptance. Artifact-copy initialization is
-bounded separately at 2 GiB. The 56 GiB namespace memory quota includes six runners, their supervisors, and the
-controller and proxy. Repeated unchanged lifecycle failures retain their condition transition time and wait for the
+Each 8 GiB guest uses a 12 GiB host runner reservation, including charged disk/snapshot cache and VMM overhead.
+The former 9 GiB limit killed an awake runner with 2.1 GiB of file cache. Artifact-copy initialization has a separate
+3 GiB limit and a 2 GiB volume. The namespace admits 75 GiB of memory requests and 81 GiB of limits for six runners,
+supervisors, controllers and retained workers. Repeated unchanged lifecycle failures retain their condition transition
+time and wait for the
 controller's retry interval instead of creating another Kubernetes status event.
 
 Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes for this migration. Only the
