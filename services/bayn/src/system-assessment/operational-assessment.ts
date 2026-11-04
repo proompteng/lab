@@ -5,6 +5,7 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentInputSchema, completeSafetyAudit } from './assessment'
 import { decisionAdmissionWitnesses } from './decision-admissions'
+import { controllerBuildMatchesRegistration } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
 import { bindOperationalObligations } from './operational-obligations'
@@ -105,6 +106,9 @@ export const evaluateOperationalAssessment = (
         new SystemAssessmentError({ message: 'Operational source cut differs from its registration' }),
       )
     const missing: string[] = []
+    for (const pass of cut.controllerPasses)
+      if (!controllerBuildMatchesRegistration(pass, registration))
+        missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
     for (const source of [
       registration.calendar.sourceHash,
       ...registration.retainedIncidentSources,

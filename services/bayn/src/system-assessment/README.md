@@ -267,6 +267,9 @@ the operational evaluator; its input contains the saved registration, source-cut
 safety audit. Counters and successful-event totals are derived from the committed evidence rather than supplied by
 the packet. Operational registration requires verified calendar/scope and retained incident artifacts and the
 existing durable authorized generation. Registration and reporting do not change trading authority or risk limits.
+Every retained controller pass must also match the registered physical worker build. A missing or mismatched build
+adds `UNBOUND_CONTROLLER_BUILD` and prevents operational certification, even when independent decision documents
+complete scheduled obligations. Retained source documents and measured obligation counters are not discarded or rewritten.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

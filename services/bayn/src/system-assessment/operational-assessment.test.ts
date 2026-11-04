@@ -9,6 +9,7 @@ import { testHash } from './fixtures.test-support'
 import { SafetyViolationKind } from './assessment'
 import { ObligationClass, ReliabilityStatus } from './reliability'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { ControllerPassEvidenceSchema } from './decision-work'
 
 const fixture = () => {
   const registration = operationalRegistrationFixture()
@@ -141,6 +142,53 @@ test('a safety violation rejects the operating claim and scope substitutions fai
 })
 
 const originalFinancial = () => emptySourceCutFixture().cut.financial[0]!
+
+test('every retained controller pass must bind the registered build even without a completion witness', () => {
+  const { cut: original, input, verified } = fixture()
+  const candidate = input.registration.policies[0]
+  const build = {
+    sourceRevision: candidate.sourceRevision,
+    imageRepository: candidate.capitalAuthorization!.buildLineage.activation.imageRepository,
+    imageDigest: `sha256:${candidate.imageDigest}`,
+  }
+  const evaluate = (executionBuild: typeof build | undefined) => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      observedAt: original.asOf,
+      ...(executionBuild === undefined ? {} : { executionBuild }),
+    }
+    const pass = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+      controllerKey: candidate.capitalAuthorization!.request.broker.identityHash,
+      planHash: input.registration.obligations.configuration.controllerPlanHash,
+      epoch: 1,
+      sequence: 1,
+      receiptHash: testHash(observation),
+      completedAt: original.asOf,
+      observation,
+    })
+    const cut = { ...original, controllerPasses: [pass] }
+    const retainedHash = testHash(cut)
+    const result = Result.getOrThrow(
+      evaluateOperationalAssessment({ ...input, sourceCutHash: retainedHash }, cut, verified),
+    )
+    expect(testHash(cut)).toBe(retainedHash)
+    return { pass, result }
+  }
+  const matched = evaluate(build).result
+  expect(matched.missing.some((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toBe(false)
+  for (const executionBuild of [
+    undefined,
+    { ...build, sourceRevision: 'b'.repeat(40) },
+    { ...build, imageDigest: `sha256:${testHash('different worker image')}` },
+  ]) {
+    const { pass, result } = evaluate(executionBuild)
+    expect(result.missing).toContain(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
+    expect(result.reliability).toEqual(matched.reliability)
+    expect(result.economicQualification).toBe('NOT_ASSESSED')
+    expect(result.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
+  }
+})
 
 test('a verified file cannot certify different safety audit values or unverified scan evidence', () => {
   const { cut, input, verified } = fixture()
