@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ConfigProvider, Effect, Redacted, Result } from 'effect'
+import { ConfigProvider, Effect, FileSystem, Redacted, Result } from 'effect'
+import { PgClient } from '@effect/sql-pg'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
@@ -22,6 +23,10 @@ import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
 import { MarketKind } from './instruments'
+import { captureOperationalSourceCut } from './system-assessment/operational-capture'
+import { operationalRegistrationFixture } from './system-assessment/operational-period.test-support'
+import { qualificationDeadlines } from './system-assessment/configuration'
+import { makeBrokerIdentity } from './broker/identity'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -527,6 +532,61 @@ describe('runtime configuration loading', () => {
         ).toBe(true)
     },
   )
+
+  test('operational capture retains a scoped historical null plan before reading its registered account', async () => {
+    const loaded = await Effect.runPromise(
+      provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
+    )
+    const config = {
+      ...loaded,
+      execution: {
+        ...loaded.execution,
+        brokerIdentity: Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: alpacaAccountId,
+          }),
+        ),
+      },
+    }
+    const current = qualificationRuntime(config, Result.getOrThrow(loadActiveStrategyProtocol()))
+    const configuration = { ...current, controllerPlanHash: null }
+    const base = operationalRegistrationFixture()
+    const registration = {
+      ...base,
+      obligations: { ...base.obligations, ...Result.getOrThrow(qualificationDeadlines(configuration)), configuration },
+    }
+    const before = JSON.stringify(registration)
+    const registrationHash = Result.getOrThrow(canonicalHashV1Result(registration))
+    let accountReads = 0
+    const sql = (() => {
+      accountReads += 1
+      return Effect.succeed([])
+    }) as unknown as PgClient.PgClient
+    const run = (runtime: typeof config) =>
+      Effect.runPromise(
+        captureOperationalSourceCut(runtime, registrationHash, registration).pipe(
+          Effect.provideService(PgClient.PgClient, sql),
+          Effect.provide(FileSystem.layerNoop({})),
+          Effect.flip,
+        ),
+      )
+    // Stop at the independent account-binding gate, without a broker, ledger, or capture write.
+    const captured = await run(config)
+    expect(captured.cause).toMatchObject({ message: 'Operational capture account differs from its capital binding' })
+    expect(accountReads).toBe(1)
+    const drifted = await run({ ...config, operationTimeoutMs: config.operationTimeoutMs + 1 })
+    expect(drifted.cause).toMatchObject({
+      message: 'Capture runtime differs from the prospectively registered configuration',
+    })
+    expect(accountReads).toBe(1)
+    expect(JSON.stringify(registration)).toBe(before)
+    expect(Result.getOrThrow(canonicalHashV1Result(registration))).toBe(registrationHash)
+    expect(registration.obligations.configuration.controllerPlanHash).toBeNull()
+    expect(registration.obligations.configuration.entryMarkets).toEqual(current.entryMarkets)
+  })
 
   test('keeps scoped capture bound to the native controller plan from the runtime builder', async () => {
     const config = await Effect.runPromise(
