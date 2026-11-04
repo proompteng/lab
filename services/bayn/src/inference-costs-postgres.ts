@@ -1,5 +1,4 @@
 import { PgClient } from '@effect/sql-pg'
-import { randomUUID } from 'node:crypto'
 import { Effect, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -15,6 +14,7 @@ import { decodeInferenceExpenseSessionRows } from './inference-expense-postgres'
 import { IsoDateSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from './schemas'
 import type { WriterFenceService } from './execution/writer-fence'
 import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
+import { openSnapshotRows } from './db/snapshot-rows'
 
 enum SnapshotRowKind {
   Cut = 'CUT',
@@ -70,11 +70,7 @@ export const readInferenceExpenseSnapshot = (
     return yield* forwardPerformanceSnapshot(sql, writerFence)
       .withTransaction(
         Effect.gen(function* () {
-          // The transaction owns this non-holdable cursor, including rollback cleanup on failure or interruption.
-          // Every fetch uses its original MVCC snapshot even inside a READ COMMITTED writer transaction.
-          const cursor = sql(`bayn_expense_${yield* Effect.sync(randomUUID)}`)
-          yield* sql`
-            DECLARE ${cursor} NO SCROLL CURSOR WITHOUT HOLD FOR
+          const sourceQuery = sql`
             WITH cut AS (
               SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
                 (SELECT count(*)::integer FROM jev_evaluation_requests AS request
@@ -126,20 +122,16 @@ export const readInferenceExpenseSnapshot = (
           `
           const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
           const requests: DecodedInferenceCostRequest[] = []
-          while (true) {
-            // A single source row bounds FETCH's utility-result spool as well as each statement's work.
-            const batch = yield* sql<Record<string, unknown>>`FETCH NEXT FROM ${cursor}`.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(SnapshotSchema)),
-            )
-            if (batch.length === 0) break
-            for (const row of batch) {
+          const consume = yield* openSnapshotRows(sql, sourceQuery)
+          yield* consume((input) =>
+            Effect.gen(function* () {
+              const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
               if (row.kind === SnapshotRowKind.Request) {
                 requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
               }
-            }
-            rows.push(...batch)
-          }
-          yield* sql`CLOSE ${cursor}`
+              rows.push(row)
+            }),
+          )
           const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
           const cut = cuts[0]
           if (

@@ -1,5 +1,5 @@
-import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture'
-import { decisionAdmissionWitnesses } from '../system-assessment/decision-admissions'
+import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture-queries'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from '../system-assessment/decision-admissions'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -309,7 +309,11 @@ const main = Effect.gen(function* () {
             )
             assert.deepEqual(bound.missing, [])
             const admissions = yield* Effect.fromResult(
-              decisionAdmissionWitnesses(executionCut, identity.generationHash),
+              decisionAdmissionWitnesses(
+                executionCut,
+                identity.generationHash,
+                indexDecisionAdmissionMutations(executionCut.mutations),
+              ),
             )
             for (const evidence of protection)
               assert.ok(
