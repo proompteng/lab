@@ -1508,6 +1508,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             WHERE controller_key = ${controllerKey}`
           const retained = yield* readSystemControllerPasses(controllerKey, planHash, at, at, at)
           expect(retained).toHaveLength(2)
+          expect(yield* readSystemControllerPasses(controllerKey, null, at, at, at)).toEqual([])
           expect(new Set(retained.map((pass) => pass.receiptHash)).size).toBe(1)
           expect(retained.map((pass) => pass.observation.executionBuild)).toEqual([executionBuild, executionBuild])
           expect(

@@ -8,8 +8,40 @@ import { executionControllerPlanHash } from '../execution/controller'
 import { validateSystemRegistration } from './policy'
 import { evaluateSystemAssessment } from './assessment'
 import { supportedAssessmentFixture, testHash, withRegistrationCommitments } from './fixtures.test-support'
+import { operationalRegistrationFixture } from './operational-period.test-support'
+import { emptySourceCutFixture } from './source-cut.test-support'
+import { bindOperationalObligations } from './operational-obligations'
+import { measureReliability, ObligationClass, ReliabilityStatus } from './reliability'
 
 describe('capture runtime compatibility', () => {
+  test('a retained scoped null plan cannot borrow controller evidence or complete its scheduled obligations', () => {
+    const base = operationalRegistrationFixture()
+    const configuration = { ...base.obligations.configuration, controllerPlanHash: null }
+    const registration = {
+      ...base,
+      obligations: { ...base.obligations, ...Result.getOrThrow(qualificationDeadlines(configuration)), configuration },
+    }
+    const captured = Result.getOrThrow(
+      captureQualificationRuntime(base.obligations.configuration, registration.obligations),
+    )
+    expect(captured.runtimeConfiguration).toEqual(configuration)
+    const { cut: original } = emptySourceCutFixture()
+    const cut = {
+      ...original,
+      registrationHash: testHash(registration),
+      runtimeConfigurationHash: captured.runtimeConfigurationHash,
+      asOf: '2026-11-04T01:00:00.000Z',
+      controllerPasses: [],
+      durableObservations: [],
+    }
+    const bound = Result.getOrThrow(bindOperationalObligations(cut, registration, testHash(cut)))
+    const reliability = Result.getOrThrow(measureReliability(bound.reliability, false, true))
+    const reconciliation = reliability.classes.find((row) => row.class === ObligationClass.Reconciliation)
+    expect(BigInt(reconciliation?.scheduled ?? '0')).toBeGreaterThan(0n)
+    expect(reconciliation?.correctOnTime).toBe('0')
+    expect(reliability.status).toBe(ReliabilityStatus.MissesTarget)
+  })
+
   test('reproduces an unchanged historical financial registration without changing its original hash', () => {
     const registered = registrationFixture().obligations
     expect(registered.configuration.entryMarkets).toBeUndefined()

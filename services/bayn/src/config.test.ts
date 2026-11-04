@@ -21,6 +21,7 @@ import { captureQualificationRuntime, qualificationRuntime } from './system-asse
 import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
+import { MarketKind } from './instruments'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -478,37 +479,54 @@ describe('runtime configuration loading', () => {
     ).toBe(executionControllerPlanHash)
   })
 
-  test('captures a historical unscoped null-plan registration through the current runtime builder', async () => {
-    const environment = new Map(runtimeEnvironment)
-    environment.delete('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
-    const config = await Effect.runPromise(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment))
-    const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
-    const current = qualificationRuntime(config, protocol)
-    const { entryMarkets: _scope, ...unscoped } = current
-    const configuration = { ...unscoped, controllerPlanHash: null }
-    const registered = {
-      configuration,
-      runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(configuration)),
-    }
-    const captured = Result.getOrThrow(captureQualificationRuntime(current, registered))
-    expect(captured).toEqual({
-      runtimeConfiguration: configuration,
-      runtimeConfigurationHash: registered.runtimeConfigurationHash,
-    })
-    expect(captured.runtimeConfiguration.controllerPlanHash).toBeNull()
-    expect(captured.runtimeConfiguration).not.toHaveProperty('entryMarkets')
-    expect(Result.getOrThrow(canonicalHashV1Result(captured.runtimeConfiguration))).toBe(
-      registered.runtimeConfigurationHash,
-    )
-    expect(current.controllerPlanHash).toBe(executionControllerPlanHash)
-    expect(registered.configuration.controllerPlanHash).toBeNull()
-    expect(config.execution.capitalAuthority._tag).toBe(CapitalAuthorityKind.None)
-    expect(
-      Result.isFailure(
-        captureQualificationRuntime({ ...current, operationTimeoutMs: current.operationTimeoutMs + 1 }, registered),
-      ),
-    ).toBe(true)
-  })
+  test.each([false, true])(
+    'captures a retained null-plan registration through the current runtime builder (scoped=%s)',
+    async (scoped) => {
+      const environment = new Map(runtimeEnvironment)
+      environment.delete('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
+      const config = await Effect.runPromise(
+        provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment),
+      )
+      const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
+      const current = qualificationRuntime(config, protocol)
+      const { entryMarkets: _scope, ...unscoped } = current
+      const configuration = { ...(scoped ? current : unscoped), controllerPlanHash: null }
+      const registered = {
+        configuration,
+        runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(configuration)),
+      }
+      const captured = Result.getOrThrow(captureQualificationRuntime(current, registered))
+      expect(captured).toEqual({
+        runtimeConfiguration: configuration,
+        runtimeConfigurationHash: registered.runtimeConfigurationHash,
+      })
+      expect(captured.runtimeConfiguration.controllerPlanHash).toBeNull()
+      expect(captured.runtimeConfiguration.entryMarkets).toEqual(scoped ? current.entryMarkets : undefined)
+      expect(Result.getOrThrow(canonicalHashV1Result(captured.runtimeConfiguration))).toBe(
+        registered.runtimeConfigurationHash,
+      )
+      expect(current.controllerPlanHash).toBe(executionControllerPlanHash)
+      expect(registered.configuration.controllerPlanHash).toBeNull()
+      expect(config.execution.capitalAuthority._tag).toBe(CapitalAuthorityKind.None)
+      expect(
+        Result.isFailure(
+          captureQualificationRuntime({ ...current, operationTimeoutMs: current.operationTimeoutMs + 1 }, registered),
+        ),
+      ).toBe(true)
+      expect(
+        Result.isFailure(
+          captureQualificationRuntime(
+            { ...current, protocol: { ...protocol, maximumDecisionLagMs: protocol.maximumDecisionLagMs + 1 } },
+            registered,
+          ),
+        ),
+      ).toBe(true)
+      if (scoped)
+        expect(
+          Result.isFailure(captureQualificationRuntime({ ...current, entryMarkets: [MarketKind.Crypto] }, registered)),
+        ).toBe(true)
+    },
+  )
 
   test('keeps scoped capture bound to the native controller plan from the runtime builder', async () => {
     const config = await Effect.runPromise(
@@ -526,7 +544,8 @@ describe('runtime configuration loading', () => {
         configuration,
         runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(configuration)),
       }
-      expect(Result.isFailure(captureQualificationRuntime(current, different))).toBe(true)
+      if (controllerPlanHash !== null)
+        expect(Result.isFailure(captureQualificationRuntime(current, different))).toBe(true)
       expect(Result.isFailure(captureQualificationRuntime(configuration, registered))).toBe(true)
     }
   })

@@ -61,16 +61,12 @@ export const captureQualificationRuntime = (
   },
 ) =>
   Result.gen(function* () {
-    // Legacy financial captures retain their original scope and unknown plan, never a new reliability claim.
-    const { entryMarkets: _entryMarkets, ...unscopedRuntime } = runtime
-    const runtimeConfiguration =
-      registered.configuration.entryMarkets === undefined
-        ? {
-            ...unscopedRuntime,
-            controllerPlanHash:
-              registered.configuration.controllerPlanHash === null ? null : runtime.controllerPlanHash,
-          }
-        : runtime
+    // Capture has already verified the persisted registration. Unknown historical plans stay unknown.
+    const retainedPlanRuntime =
+      registered.configuration.controllerPlanHash === null ? { ...runtime, controllerPlanHash: null } : runtime
+    const { entryMarkets: _entryMarkets, ...unscopedRuntime } = retainedPlanRuntime
+    const runtimeConfiguration: typeof QualificationRuntimeSchema.Type =
+      registered.configuration.entryMarkets === undefined ? unscopedRuntime : retainedPlanRuntime
     const runtimeConfigurationHash = yield* canonicalHashV1Result(runtimeConfiguration)
     if (runtimeConfigurationHash !== registered.runtimeConfigurationHash)
       return yield* Result.fail(
