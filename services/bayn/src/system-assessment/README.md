@@ -312,7 +312,7 @@ existing durable authorized generation. Registration and reporting do not change
 Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
 `evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
 reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
-Their original source/digest controller comparison is frozen separately from current repository-aware matching.
+Their original source/digest controller comparison is frozen separately from the current build matcher.
 Those historical results do not establish a certificate under the current build-binding rule.
 Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
 unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small

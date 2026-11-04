@@ -220,7 +220,10 @@ postgres('replayed operational source records', () => {
       ...bound.reliability.schedule.map((row) => Date.parse(row.deadlineAt)),
     )
     const at = (offset: number) => new Date(through + offset).toISOString()
-    const badBuild = { ...f.pass.observation.executionBuild!, sourceRevision: testHash('unregistered worker') }
+    const badBuild = {
+      ...f.pass.observation.executionBuild!,
+      sourceRevision: testHash('unregistered worker').slice(0, 40),
+    }
     const cases = [
       {
         name: 'in-period',
@@ -272,18 +275,32 @@ postgres('replayed operational source records', () => {
 
   test('compact replay preserves historical work and rejects mismatched evaluation policies', async () => {
     const f = fixture()
-    expect(f.pass.observation.executionBuild?.imageRepository).toBe('registry.example.test/lab/bayn')
+    const pass = {
+      ...f.pass,
+      observation: {
+        ...f.pass.observation,
+        executionBuild: { ...f.pass.observation.executionBuild!, imageRepository: 'example.test/foreign/worker' },
+      },
+    }
+    expect(pass.observation.executionBuild.imageRepository).not.toBe(
+      f.registration.policies[0].capitalAuthorization!.buildLineage.activation.imageRepository,
+    )
+    const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, pass))
+    const cut = {
+      ...f.cut,
+      records: [{ kind: record.kind, sourceId: pass.receiptHash, recordHash: record.recordHash }],
+    }
     const [current, retained] = await runtime.runPromise(
       Effect.gen(function* () {
-        yield* persistSystemSourceRecord(f.record)
+        yield* persistSystemSourceRecord(record)
         return [
-          yield* replayOperationalSourceRecords(f.cut, f.registration),
-          yield* replayOperationalSourceRecords(f.cut, f.registration, 'RETAINED_OPERATIONAL_V1'),
+          yield* replayOperationalSourceRecords(cut, f.registration),
+          yield* replayOperationalSourceRecords(cut, f.registration, 'RETAINED_OPERATIONAL_V1'),
         ] as const
       }),
     )
     expect(retained.work.controllerWork.get(f.pass.receiptHash)?.correct).toBe(true)
-    const { input, sources } = assessmentFixture(f.cut, f.registration)
+    const { input, sources } = assessmentFixture(cut, f.registration)
     const legacyInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
     expect(Result.isFailure(evaluateOperationalAssessment(input, retained, sources))).toBe(true)
     expect(Result.isFailure(verifyStoredOperationalAssessment(legacyInput, current, sources))).toBe(true)
