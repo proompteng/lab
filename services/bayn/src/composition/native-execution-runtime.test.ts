@@ -40,12 +40,12 @@ import { CandidateObservationStore, type CandidateObservation } from '../observe
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
+import { executionControllerPlanHash } from '../execution/controller'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
-  executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionProjectionRuntime,
   makePublishedExecutionCycleDriverLive,
