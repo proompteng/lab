@@ -282,6 +282,9 @@ Current operational packets use `bayn.operational-assessment-input.v2`; results 
 reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
 Their original source/digest controller comparison is frozen separately from current repository-aware matching.
 Those historical results do not establish a certificate under the current build-binding rule.
+Current assessment of a retained registration with a null controller plan adds `UNBOUND_CONTROLLER_PLAN` even
+without captured controller passes. Independent decision witnesses cannot replace this missing provenance;
+historical v1 receipt reproduction and new-registration admission retain their original separate rules.
 
 Retained controller passes must match the registered physical worker build through the reporting period and any
 remaining original obligation deadlines. A missing or mismatched build adds `UNBOUND_CONTROLLER_BUILD` and prevents

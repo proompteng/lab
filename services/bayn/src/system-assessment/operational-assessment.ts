@@ -138,6 +138,8 @@ const evaluateDecodedOperationalAssessment = (
         new SystemAssessmentError({ message: 'Operational source cut differs from its registration' }),
       )
     const missing: string[] = []
+    if (current && registration.obligations.configuration.controllerPlanHash === null)
+      missing.push('UNBOUND_CONTROLLER_PLAN')
     for (const source of [
       registration.calendar.sourceHash,
       ...registration.retainedIncidentSources,

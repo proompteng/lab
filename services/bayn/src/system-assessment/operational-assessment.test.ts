@@ -5,6 +5,7 @@ import { operationalRegistrationFixture } from './operational-period.test-suppor
 import {
   evaluateOperationalAssessment,
   makeOperationalSafetyAudit,
+  operationalAssessmentVerdict,
   verifyStoredOperationalAssessment,
 } from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
@@ -17,9 +18,23 @@ import { ControllerPassEvidenceSchema } from './decision-work'
 import { registeredSchedule } from './schedule'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { MutationEventSchema } from '../execution/mutations/model'
+import { qualificationDeadlines } from './configuration'
+import { sha256 } from '../hash'
 
-const fixture = () => {
-  const registration = operationalRegistrationFixture()
+const fixture = (controllerPlanHash?: string | null) => {
+  const baseRegistration = operationalRegistrationFixture()
+  const configuration = {
+    ...baseRegistration.obligations.configuration,
+    ...(controllerPlanHash === undefined ? {} : { controllerPlanHash }),
+  }
+  const registration = {
+    ...baseRegistration,
+    obligations: {
+      ...baseRegistration.obligations,
+      configuration,
+      ...Result.getOrThrow(qualificationDeadlines(configuration)),
+    },
+  }
   const { cut: base } = emptySourceCutFixture()
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
     ...base,
@@ -90,6 +105,31 @@ test('scheduled work that never starts stays in the closed period denominator', 
   expect(decisions.scheduled).toBe('2')
   expect(decisions.correctOnTime).toBe('0')
   expect(decisions.missed).toHaveLength(2)
+})
+
+test('a retained null controller plan cannot certify current operational reliability or alter v1 replay', () => {
+  const { cut, input, verified } = fixture(null)
+  expect(input.registration.obligations.configuration.controllerPlanHash).toBeNull()
+  expect(input.registration.obligations.configuration.entryMarkets).toBeDefined()
+  expect(cut.controllerPasses).toEqual([])
+  const sourceCutHash = testHash(cut)
+  const historicalInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
+  const historical = Result.getOrThrow(verifyStoredOperationalAssessment(historicalInput, cut, verified))
+  const current = Result.getOrThrow(evaluateOperationalAssessment(input, cut, verified))
+  expect(current.missing).toContain('UNBOUND_CONTROLLER_PLAN')
+  expect(historical.missing).not.toContain('UNBOUND_CONTROLLER_PLAN')
+  expect(historical).not.toHaveProperty('evaluationPolicy')
+  expect(current.reliability).toEqual(historical.reliability)
+  const { evaluationPolicy: _policy, ...material } = current
+  expect(historical).toEqual({
+    ...material,
+    missing: current.missing.filter((reason) => reason !== 'UNBOUND_CONTROLLER_PLAN'),
+  })
+  expect(testHash(cut)).toBe(sourceCutHash)
+  expect(Result.isFailure(evaluateOperationalAssessment(historicalInput, cut, verified))).toBe(true)
+  // Even complete independent witnesses and a clean safety audit cannot remove this provenance gate.
+  const planMissing = current.missing.filter((reason) => reason === 'UNBOUND_CONTROLLER_PLAN').length
+  expect(operationalAssessmentVerdict(ReliabilityStatus.MeetsTarget, planMissing, true, 0)).toBe('INCONCLUSIVE')
 })
 
 test('an empty recovery class is inapplicable only when its complete captured mutation scope is available', () => {
@@ -213,7 +253,8 @@ test('each in-period controller pass must bind the registered build even without
 })
 
 test('unbound in-period workers prevent an otherwise complete certificate without changing retained v1 receipts', () => {
-  const { cut: original, input } = fixture()
+  // Pin the original registration material independently of the current admission fixture.
+  const { cut: original, input } = fixture(sha256('controller plan'))
   const registration = input.registration
   const candidate = registration.policies[0]
   const build = candidate.capitalAuthorization!.buildLineage.activation
