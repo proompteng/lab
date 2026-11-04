@@ -4,7 +4,7 @@ import { BrokerEnvironment, type BrokerIdentity } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { SystemAssessmentError } from './economics'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import { ObligationClass } from './reliability'
 import { registeredSchedule } from './schedule'
 import type { SystemSourceCut } from './source-cut'
@@ -34,7 +34,7 @@ export const controllerClockDurations = (clock: {
 
 /** Observed controller work, including failed and waiting passes. This is not a portfolio stress result. */
 export const measureControllerLatency = (
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   cut: SystemSourceCut,
   identity: BrokerIdentity,
 ) =>

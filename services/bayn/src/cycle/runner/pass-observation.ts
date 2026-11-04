@@ -2,7 +2,15 @@ import { Schema } from 'effect'
 
 import { ExecutionBuildSchema } from '../../build'
 
-import { IsoDateSchema, Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema } from '../../schemas'
+import {
+  IsoDateSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UtcDatabaseInstantSchema,
+  UtcInstantSchema,
+} from '../../schemas'
+import { MarketCalendarObservationSchema } from '../../broker/alpaca/model'
+import { CycleExecutionPolicySchema } from '../model'
 import { CycleWaitReasonSchema, DecisionReadinessReason, DecisionReadinessSchema } from './readiness'
 import { JevPositionHoldSchema } from '../../jev/hold'
 import { JevEntryTargetSchema } from '../../jev/decision'
@@ -20,6 +28,24 @@ export const AdmissionProtectionEvidenceSchema = Schema.Struct({
 })
 
 export type AdmissionProtectionEvidence = typeof AdmissionProtectionEvidenceSchema.Type
+
+export const ClosedEntryWindowSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.closed-entry-window.v1'),
+  accountId: StrictNonEmptyStringSchema,
+  authorityGenerationHash: Schema.NullOr(Sha256Schema),
+  strategyProtocolHash: Sha256Schema,
+  evaluatedAt: UtcInstantSchema,
+  decidedAt: UtcInstantSchema,
+  executionPolicy: CycleExecutionPolicySchema,
+  calendar: MarketCalendarObservationSchema,
+  calendarRead: Schema.Struct({
+    requestId: StrictNonEmptyStringSchema,
+    status: Schema.Int,
+    contentHash: Sha256Schema,
+    observedAt: UtcInstantSchema,
+  }),
+})
+export type ClosedEntryWindow = typeof ClosedEntryWindowSchema.Type
 
 export const maximumRetainedJevObservationReferences = 16
 export const JevObservationReferencesSchema = Schema.Struct({
@@ -49,6 +75,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
       'ACQUIRED',
       'REACQUIRED',
     ]),
+    closedEntryWindow: Schema.optionalKey(ClosedEntryWindowSchema),
     recoveryAction: Schema.optionalKey(
       Schema.Literals(['ACTIVATED', 'BLOCKED', 'BOUND_DECISION', 'COMPLETED', 'NO_TRADE', 'WAITING']),
     ),
@@ -67,6 +94,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   }).check(
     Schema.makeFilter(
       (observation) => {
+        if (observation.closedEntryWindow !== undefined && observation.outcome !== 'WINDOW_CLOSED') return false
         if (
           observation.entryAbstention !== undefined &&
           (observation.outcome !== 'RECOVERED' ||

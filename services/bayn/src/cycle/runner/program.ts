@@ -26,6 +26,7 @@ import {
 } from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
+import { ClosedEntryWindowSchema } from './pass-observation'
 
 const hashCalendar = (hours: MarketHours) =>
   Effect.fromResult(canonicalHashV1Result(hours)).pipe(
@@ -110,8 +111,33 @@ export const discoverAutonomousCyclePass = <R>(
     if (
       executionSession === undefined ||
       firstIntradayObservationAtMs(executionSession, candidate.executionPolicy) > Date.parse(observedAt)
-    )
-      return { outcome: 'WINDOW_CLOSED', observedAt } as const
+    ) {
+      const { requestId, status, contentHash, observedAt: availableAt } = calendar.evidence
+      return {
+        outcome: 'WINDOW_CLOSED',
+        observedAt,
+        closedEntryWindow: yield* Schema.decodeUnknownEffect(ClosedEntryWindowSchema)({
+          schemaVersion: 'bayn.closed-entry-window.v1',
+          accountId: context.accountId,
+          authorityGenerationHash: context.authorityGenerationHash ?? null,
+          strategyProtocolHash: context.strategyProtocolHash,
+          evaluatedAt: observedAt,
+          decidedAt: yield* currentUtcInstant,
+          executionPolicy: context.executionPolicy,
+          calendar: hours,
+          calendarRead: { requestId, status, contentHash, observedAt: availableAt },
+        }).pipe(
+          Effect.mapError((cause) =>
+            runnerError({
+              operation: 'build-cycle',
+              failure: 'contract',
+              message: 'closed equity window evidence is malformed',
+              cause,
+            }),
+          ),
+        ),
+      } as const
+    }
     const firstAttemptDraft = yield* Effect.fromResult(
       makeIntradayCycleDraft(candidate, hours, executionSession, 1),
     ).pipe(
