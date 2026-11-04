@@ -27,7 +27,7 @@ import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
 import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
-import { qualificationRuntime } from './configuration'
+import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { BrokerEnvironment } from '../broker/identity'
 import { registeredMarkIntervalMs } from './policy'
 import { measureControllerLatency } from './controller-latency'
@@ -48,12 +48,12 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
       const registration = yield* readAssessmentRegistration(registrationHash)
       if (registration.program === 'BAYN_OPERATIONAL_RELIABILITY')
         return yield* captureOperationalSourceCut(config, registrationHash, registration)
-      const runtimeConfiguration = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
-      const runtimeConfigurationHash = yield* Effect.fromResult(canonicalHashV1Result(runtimeConfiguration))
-      if (runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash)
-        return yield* new SystemAssessmentError({
-          message: 'Capture runtime differs from the prospectively registered configuration',
-        })
+      const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
+        captureQualificationRuntime(
+          qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol())),
+          registration.obligations,
+        ),
+      )
       const candidate = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
       const identity = config.execution.brokerIdentity
       const first = registration.calendar.sessions[0]
