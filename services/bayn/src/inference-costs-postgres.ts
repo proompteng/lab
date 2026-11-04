@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { Effect, Schema, Stream } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
 import {
@@ -14,7 +14,6 @@ import { decodeInferenceExpenseSessionRows } from './inference-expense-postgres'
 import { IsoDateSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from './schemas'
 import type { WriterFenceService } from './execution/writer-fence'
 import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
-import { openSnapshotRows } from './db/snapshot-rows'
 
 enum SnapshotRowKind {
   Cut = 'CUT',
@@ -122,8 +121,7 @@ export const readInferenceExpenseSnapshot = (
           `
           const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
           const requests: DecodedInferenceCostRequest[] = []
-          const consume = yield* openSnapshotRows(sql, sourceQuery)
-          yield* consume((input) =>
+          yield* Stream.runForEach(sourceQuery.stream, (input) =>
             Effect.gen(function* () {
               const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
               if (row.kind === SnapshotRowKind.Request) {
