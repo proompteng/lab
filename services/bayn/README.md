@@ -567,6 +567,10 @@ Initial acquisition retries a native `ECONNREFUSED` failure at most twice, one s
 apart, closing each failed acquisition before the next attempt. Authentication,
 TLS, configuration and timeout failures fail immediately. The retry boundary ends
 before the cache service is exposed, so it never replays a caller's command.
+Each acquisition has a two-second budget covering TCP, TLS and the RESP handshake.
+Cancellation aborts the native connection and awaits its settlement before closing
+the layer scope. Healthy idle connections have no socket inactivity timeout or
+periodic ping; the existing one-second command deadline detects stalled work.
 
 Each command owns that connection through reconnect, its request, and cancellation;
 `SET` and its replica `WAIT` stay together. Observation publication pipelines its
