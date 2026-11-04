@@ -72,6 +72,31 @@ can certify economic qualification or grant capital. Operational safety audit ar
 registration, evidence cut, violations and verified scan-evidence hash. A verified unrelated file cannot certify zero violations. An operating period's dated scope does not establish behavior
 outside that period or substitute for the required native equity-opening verification.
 
+Operational capture validates every inference source, frozen quote and native ledger prefix before retaining source
+fingerprints and complete quote and ledger evidence. It omits raw inference bodies from the operational cut; economics
+remain `NOT_ASSESSED`. Financial capture retains each complete inference request once, with its source fingerprint in
+the accounting material. Session reads paginate all retained cost records rather than rejecting sessions above a
+fixed record count. Immutable source tables and earlier cuts and assessment receipts remain unchanged.
+
+New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native decisions and controller receipts
+one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
+archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
+identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+The archive is persisted before the manifest, and PostgreSQL rejects missing references, repeated native identities,
+and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
+retry verifies and reuses their exact contents rather than replacing evidence.
+
+Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
+witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
+the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
+and their receipt hashes remain reproducible. Financial qualification continues to require its full financial cut;
+an operational manifest cannot certify profit. Temporary spool files are private and removed when capture exits,
+including failure and interruption.
+The reporting API has a 4 GiB disk-backed temporary volume for the source snapshot. Its former 256 MiB volume cannot
+hold a complete native session's evidence. This storage bound is separate from trading deadlines and reliability
+targets; exhausted storage fails capture without dropping records or creating a successful assessment. Trading
+workers keep their existing resources.
+
 ## Realism
 
 `measureRealism` verifies causal input availability, persistence and routing order, position ownership, fixed order
@@ -115,6 +140,13 @@ completion must precede the first open. Retries return the same registration; fa
 reset the attempt history. These functions require verified audit and allocation-source hashes from their caller.
 
 ## Evidence and assessment
+
+Source cuts retain each complete batch once in `batches`; the provenance material does not copy those payloads.
+Earlier cuts retain their original bytes and hashes. The private reporting command runs on the API workload,
+with a 3 GiB Node heap inside its 4 GiB memory limit, separately from the native trading controller.
+Stream command output to a private file. A local capacity measurement using 540 copies of one retained
+514 KB batch exceeded Node's string limit with duplicate payloads. A single copy serialized 279 MB with a
+2.62 GiB process peak. This is reporting capacity evidence, not trading or reliability qualification.
 
 `captureSystemSourceCut` reads the registered accounts and authority generations, financial and inference records,
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing

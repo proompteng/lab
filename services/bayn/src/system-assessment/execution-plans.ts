@@ -31,6 +31,18 @@ export const ProtectionIntentEvidenceSchema = Schema.Struct({
 })
 export type ProtectionIntentEvidence = typeof ProtectionIntentEvidenceSchema.Type
 
+export const protectionIntentsByDecision = (intents: readonly ProtectionIntentEvidence[]) => {
+  const byDecision = new Map<string, ProtectionIntentEvidence[]>()
+  for (const intent of intents) {
+    const terms = intent.plan.protection
+    if (terms === undefined || terms._tag === 'Bracket') continue
+    const entries = byDecision.get(terms.entryDecisionHash)
+    if (entries === undefined) byDecision.set(terms.entryDecisionHash, [intent])
+    else entries.push(intent)
+  }
+  return byDecision
+}
+
 type Target = ExecutionDecisionDocument['targetPlan']['intentTargets'][number]
 type Risk = ExecutionDecisionDocument['deltaRisk'][number]
 export interface ExecutionOrderPlan {

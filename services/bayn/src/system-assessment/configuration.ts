@@ -6,8 +6,8 @@ import { jevSignalIntervalMs } from '../jev/observation-query'
 import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
-import { executionControllerPlanHash } from '../execution/controller'
 import { SystemAssessmentError } from './economics'
+import { executionControllerPlanHash } from '../execution/controller'
 
 /** Only operational settings and public strategy parameters are retained; credentials and endpoints are excluded. */
 export const QualificationRuntimeSchema = Schema.Struct({
