@@ -316,6 +316,24 @@ the operational evaluator; its input contains the saved registration, source-cut
 safety audit. Counters and successful-event totals are derived from the committed evidence rather than supplied by
 the packet. Operational registration requires verified calendar/scope and retained incident artifacts and the
 existing durable authorized generation. Registration and reporting do not change trading authority or risk limits.
+Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
+`evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
+reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
+Their original source/digest controller comparison is frozen separately from the current build matcher.
+Those historical results do not establish a certificate under the current build-binding rule.
+Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
+unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small
+receipt/timing summaries without retaining complete archived records. A replay-policy/input mismatch is rejected.
+Current assessment of a retained registration with a null controller plan adds `UNBOUND_CONTROLLER_PLAN` even
+without captured controller passes. Independent decision witnesses cannot replace this missing provenance;
+historical v1 receipt reproduction and new-registration admission retain their original separate rules.
+
+Retained controller passes must match the registered physical worker build through the reporting period and any
+remaining original obligation deadlines. A missing or mismatched build adds `UNBOUND_CONTROLLER_BUILD` and prevents
+operational certification, even when independent decision documents complete scheduled obligations. A pass known to
+start after that period and all required work has completed cannot invalidate the finished claim. This exemption
+requires ordered issue, observation and completion clocks ending no later than the cut; missing or contradictory
+clocks remain fail-closed. Retained source documents and measured obligation counters are not discarded or rewritten.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

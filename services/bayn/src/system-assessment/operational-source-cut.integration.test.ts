@@ -19,6 +19,12 @@ import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { replacementProtectionFixture } from './protection-evidence.test-support'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { MutationEventSchema, MutationEventType } from '../execution/mutations/model'
+import {
+  evaluateOperationalAssessment,
+  makeOperationalSafetyAudit,
+  verifyStoredOperationalAssessment,
+} from './operational-assessment'
+import { qualificationDeadlines } from './configuration'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = (url: string) =>
@@ -100,6 +106,36 @@ const fixture = (status = 200) => {
   return { registration, legacy, cut, record, pass }
 }
 
+const assessmentFixture = (
+  cut: typeof OperationalSourceCutSchema.Type,
+  registration: ReturnType<typeof operationalRegistrationFixture>,
+) => {
+  const safety = Result.getOrThrow(
+    makeOperationalSafetyAudit({
+      schemaVersion: 'bayn.operational-safety-audit.v1',
+      coverage: 'COMPLETE',
+      auditEvidenceHash: testHash('compact source safety evidence'),
+      registrationHash: cut.registrationHash,
+      asOf: cut.asOf,
+      violations: [],
+    }),
+  )
+  return {
+    input: {
+      schemaVersion: 'bayn.operational-assessment-input.v2',
+      registration,
+      sourceCutHash: testHash(cut),
+      safety,
+    },
+    sources: new Set([
+      registration.calendar.sourceHash,
+      ...registration.retainedIncidentSources,
+      safety.sourceHash,
+      safety.auditEvidenceHash,
+    ]),
+  }
+}
+
 postgres('replayed operational source records', () => {
   let runtime: ReturnType<typeof makeRuntime>
   beforeAll(() => {
@@ -173,6 +209,132 @@ postgres('replayed operational source records', () => {
           ),
         ).toBe(true)
       }),
+    )
+  })
+
+  test('compact current assessments check unwitnessed builds and retain the exact deadline-tail boundary', async () => {
+    const f = fixture()
+    const bound = Result.getOrThrow(bindOperationalObligations(f.legacy, f.registration, testHash(f.legacy)))
+    const through = Math.max(
+      Date.parse(f.registration.calendar.sessions.at(-1)!.closeAt),
+      ...bound.reliability.schedule.map((row) => Date.parse(row.deadlineAt)),
+    )
+    const at = (offset: number) => new Date(through + offset).toISOString()
+    const badBuild = {
+      ...f.pass.observation.executionBuild!,
+      sourceRevision: testHash('unregistered worker').slice(0, 40),
+    }
+    const cases = [
+      {
+        name: 'in-period',
+        issued: f.pass.observation.executionIssuedAt,
+        observed: f.pass.observation.observedAt,
+        completed: f.pass.completedAt,
+        missing: true,
+      },
+      { name: 'deadline-overlap', issued: at(-1), observed: at(1), completed: at(2), missing: true },
+      { name: 'known-later', issued: at(1), observed: at(2), completed: at(3), missing: false },
+      { name: 'unknown-issued', issued: undefined, observed: at(2), completed: at(3), missing: true },
+      { name: 'issued-after-observed', issued: at(3), observed: at(2), completed: at(4), missing: true },
+      { name: 'observed-after-completed', issued: at(1), observed: at(3), completed: at(2), missing: true },
+      { name: 'completed-after-cut', issued: at(1), observed: at(2), completed: at(11), missing: true },
+    ]
+    for (const row of cases) {
+      const { executionIssuedAt: _issued, ...observation } = f.pass.observation
+      const pass = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+        ...f.pass,
+        receiptHash: testHash(row.name),
+        completedAt: row.completed,
+        observation: {
+          ...observation,
+          ...(row.issued === undefined ? {} : { executionIssuedAt: row.issued }),
+          observedAt: row.observed,
+          executionBuild: badBuild,
+        },
+      })
+      const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, pass))
+      const cut = {
+        ...f.cut,
+        asOf: at(10),
+        durableObservations: [],
+        records: [{ kind: record.kind, sourceId: pass.receiptHash, recordHash: record.recordHash }],
+      }
+      const replayed = await runtime.runPromise(
+        Effect.gen(function* () {
+          yield* persistSystemSourceRecord(record)
+          return yield* replayOperationalSourceRecords(cut, f.registration)
+        }),
+      )
+      expect(replayed.work.controllerWork.size).toBe(0)
+      expect(replayed.unboundControllerBuilds).toHaveLength(1)
+      const { input, sources } = assessmentFixture(cut, f.registration)
+      const result = Result.getOrThrow(evaluateOperationalAssessment(input, replayed, sources))
+      expect(result.missing.includes(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)).toBe(row.missing)
+    }
+  })
+
+  test('compact replay preserves historical work and rejects mismatched evaluation policies', async () => {
+    const f = fixture()
+    const pass = {
+      ...f.pass,
+      observation: {
+        ...f.pass.observation,
+        executionBuild: { ...f.pass.observation.executionBuild!, imageRepository: 'example.test/foreign/worker' },
+      },
+    }
+    expect(pass.observation.executionBuild.imageRepository).not.toBe(
+      f.registration.policies[0].capitalAuthorization!.buildLineage.activation.imageRepository,
+    )
+    const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, pass))
+    const cut = {
+      ...f.cut,
+      records: [{ kind: record.kind, sourceId: pass.receiptHash, recordHash: record.recordHash }],
+    }
+    const [current, retained] = await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* persistSystemSourceRecord(record)
+        return [
+          yield* replayOperationalSourceRecords(cut, f.registration),
+          yield* replayOperationalSourceRecords(cut, f.registration, 'RETAINED_OPERATIONAL_V1'),
+        ] as const
+      }),
+    )
+    expect(retained.work.controllerWork.get(f.pass.receiptHash)?.correct).toBe(true)
+    const { input, sources } = assessmentFixture(cut, f.registration)
+    const legacyInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    expect(Result.isFailure(evaluateOperationalAssessment(input, retained, sources))).toBe(true)
+    expect(Result.isFailure(verifyStoredOperationalAssessment(legacyInput, current, sources))).toBe(true)
+    expect(Result.isFailure(evaluateOperationalAssessment(legacyInput, retained, sources))).toBe(true)
+    const legacy = Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, retained, sources))
+    expect(legacy).not.toHaveProperty('evaluationPolicy')
+    expect(legacy.missing.some((row) => row.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toBe(false)
+    expect(Result.getOrThrow(evaluateOperationalAssessment(input, current, sources)).evaluationPolicy).toBe(
+      'bayn.operational-build-binding.v1',
+    )
+  })
+
+  test('a compact cut with no controller passes still withholds a null-plan current claim', async () => {
+    const f = fixture()
+    const configuration = { ...f.registration.obligations.configuration, controllerPlanHash: null }
+    const registration = {
+      ...f.registration,
+      obligations: {
+        ...f.registration.obligations,
+        configuration,
+        ...Result.getOrThrow(qualificationDeadlines(configuration)),
+      },
+    }
+    const cut = {
+      ...f.cut,
+      registrationHash: testHash(registration),
+      runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
+      records: [],
+      durableObservations: [],
+    }
+    const replayed = await runtime.runPromise(replayOperationalSourceRecords(cut, registration))
+    const { input, sources } = assessmentFixture(cut, registration)
+    expect(Result.getOrThrow(evaluateOperationalAssessment(input, replayed, sources)).missing).toContain(
+      'UNBOUND_CONTROLLER_PLAN',
     )
   })
 

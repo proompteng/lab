@@ -2,16 +2,39 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { operationalRegistrationFixture } from './operational-period.test-support'
-import { evaluateOperationalAssessment, makeOperationalSafetyAudit } from './operational-assessment'
+import {
+  evaluateOperationalAssessment,
+  makeOperationalSafetyAudit,
+  operationalAssessmentVerdict,
+  verifyStoredOperationalAssessment,
+} from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { SystemSourceCutSchema } from './source-cut'
 import { testHash } from './fixtures.test-support'
 import { SafetyViolationKind } from './assessment'
 import { ObligationClass, ReliabilityStatus } from './reliability'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { ControllerPassEvidenceSchema } from './decision-work'
+import { registeredSchedule } from './schedule'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
+import { MutationEventSchema } from '../execution/mutations/model'
+import { qualificationDeadlines } from './configuration'
+import { sha256 } from '../hash'
 
-const fixture = () => {
-  const registration = operationalRegistrationFixture()
+const fixture = (controllerPlanHash?: string | null) => {
+  const baseRegistration = operationalRegistrationFixture()
+  const configuration = {
+    ...baseRegistration.obligations.configuration,
+    ...(controllerPlanHash === undefined ? {} : { controllerPlanHash }),
+  }
+  const registration = {
+    ...baseRegistration,
+    obligations: {
+      ...baseRegistration.obligations,
+      configuration,
+      ...Result.getOrThrow(qualificationDeadlines(configuration)),
+    },
+  }
   const { cut: base } = emptySourceCutFixture()
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
     ...base,
@@ -21,7 +44,7 @@ const fixture = () => {
     financial: [],
   })
   const input = {
-    schemaVersion: 'bayn.operational-assessment-input.v1',
+    schemaVersion: 'bayn.operational-assessment-input.v2',
     registration,
     sourceCutHash: testHash(cut),
     safety: Result.getOrThrow(
@@ -84,6 +107,31 @@ test('scheduled work that never starts stays in the closed period denominator', 
   expect(decisions.missed).toHaveLength(2)
 })
 
+test('a retained null controller plan cannot certify current operational reliability or alter v1 replay', () => {
+  const { cut, input, verified } = fixture(null)
+  expect(input.registration.obligations.configuration.controllerPlanHash).toBeNull()
+  expect(input.registration.obligations.configuration.entryMarkets).toBeDefined()
+  expect(cut.controllerPasses).toEqual([])
+  const sourceCutHash = testHash(cut)
+  const historicalInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
+  const historical = Result.getOrThrow(verifyStoredOperationalAssessment(historicalInput, cut, verified))
+  const current = Result.getOrThrow(evaluateOperationalAssessment(input, cut, verified))
+  expect(current.missing).toContain('UNBOUND_CONTROLLER_PLAN')
+  expect(historical.missing).not.toContain('UNBOUND_CONTROLLER_PLAN')
+  expect(historical).not.toHaveProperty('evaluationPolicy')
+  expect(current.reliability).toEqual(historical.reliability)
+  const { evaluationPolicy: _policy, ...material } = current
+  expect(historical).toEqual({
+    ...material,
+    missing: current.missing.filter((reason) => reason !== 'UNBOUND_CONTROLLER_PLAN'),
+  })
+  expect(testHash(cut)).toBe(sourceCutHash)
+  expect(Result.isFailure(evaluateOperationalAssessment(historicalInput, cut, verified))).toBe(true)
+  // Even complete independent witnesses and a clean safety audit cannot remove this provenance gate.
+  const planMissing = current.missing.filter((reason) => reason === 'UNBOUND_CONTROLLER_PLAN').length
+  expect(operationalAssessmentVerdict(ReliabilityStatus.MeetsTarget, planMissing, true, 0)).toBe('INCONCLUSIVE')
+})
+
 test('an empty recovery class is inapplicable only when its complete captured mutation scope is available', () => {
   const { cut: original, input, verified } = fixture()
   const identity = Result.getOrThrow(
@@ -141,6 +189,333 @@ test('a safety violation rejects the operating claim and scope substitutions fai
 })
 
 const originalFinancial = () => emptySourceCutFixture().cut.financial[0]!
+
+test('each in-period controller pass must bind the registered build even without a completion witness', () => {
+  const { cut: original, input, verified } = fixture()
+  const candidate = input.registration.policies[0]
+  const build = {
+    sourceRevision: candidate.sourceRevision,
+    imageRepository: candidate.capitalAuthorization!.buildLineage.activation.imageRepository,
+    imageDigest: `sha256:${candidate.imageDigest}`,
+  }
+  const evaluate = (executionBuild: typeof build | undefined) => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      observedAt: original.asOf,
+      ...(executionBuild === undefined ? {} : { executionBuild }),
+    }
+    const pass = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+      controllerKey: candidate.capitalAuthorization!.request.broker.identityHash,
+      planHash: input.registration.obligations.configuration.controllerPlanHash,
+      epoch: 1,
+      sequence: 1,
+      receiptHash: testHash(observation),
+      completedAt: original.asOf,
+      observation,
+    })
+
+    const cut = { ...original, controllerPasses: [pass] }
+    const retainedHash = testHash(cut)
+    const result = Result.getOrThrow(
+      evaluateOperationalAssessment({ ...input, sourceCutHash: retainedHash }, cut, verified),
+    )
+    expect(testHash(cut)).toBe(retainedHash)
+    const retainedInput = {
+      ...input,
+      schemaVersion: 'bayn.operational-assessment-input.v1',
+      sourceCutHash: retainedHash,
+    }
+    expect(Result.isFailure(evaluateOperationalAssessment(retainedInput, cut, verified))).toBe(true)
+    const historical = Result.getOrThrow(verifyStoredOperationalAssessment(retainedInput, cut, verified))
+    const { evaluationPolicy: _policy, ...currentMaterial } = result
+    expect(historical).toEqual({
+      ...currentMaterial,
+      missing: currentMaterial.missing.filter((reason) => !reason.startsWith('UNBOUND_CONTROLLER_BUILD:')),
+    })
+    expect(historical).not.toHaveProperty('evaluationPolicy')
+    expect(result.evaluationPolicy).toBe('bayn.operational-build-binding.v1')
+    return { pass, result }
+  }
+  const matched = evaluate(build).result
+  expect(matched.missing.some((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toBe(false)
+  for (const executionBuild of [
+    undefined,
+    { ...build, sourceRevision: 'b'.repeat(40) },
+    { ...build, imageDigest: `sha256:${testHash('different worker image')}` },
+  ]) {
+    const { pass, result } = evaluate(executionBuild)
+    expect(result.missing).toContain(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
+    expect(result.reliability).toEqual(matched.reliability)
+    expect(result.economicQualification).toBe('NOT_ASSESSED')
+    expect(result.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
+  }
+})
+
+test('unbound in-period workers prevent an otherwise complete certificate without changing retained v1 receipts', () => {
+  // Pin the original registration material independently of the current admission fixture.
+  const { cut: original, input } = fixture(sha256('controller plan'))
+  const registration = input.registration
+  const candidate = registration.policies[0]
+  const build = candidate.capitalAuthorization!.buildLineage.activation
+  const identity = Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId: candidate.riskPolicy.accountId,
+    }),
+  )
+  const at = (source: string, offset: number) => new Date(Date.parse(source) + offset).toISOString()
+  const asOf = '2026-11-04T00:03:00.000Z'
+  const schedule = Result.getOrThrow(registeredSchedule(registration))
+  const passes = schedule
+    .filter((row) => row.class === ObligationClass.Decision)
+    .map((row, index) => {
+      const observation = {
+        result: 'SUCCESS',
+        outcome: 'WINDOW_CLOSED',
+        executionIssuedAt: row.dueAt,
+        executionBuild: build,
+        observedAt: at(row.dueAt, 3),
+        closedEntryWindow: {
+          schemaVersion: 'bayn.closed-entry-window.v1',
+          accountId: identity.accountId,
+          authorityGenerationHash: candidate.authorityGenerationHash,
+          strategyProtocolHash: candidate.protocolHash,
+          executionPolicy: Result.getOrThrow(
+            makeCycleExecutionPolicyFromModel(registration.obligations.configuration.protocol.executionModel),
+          ),
+          evaluatedAt: row.dueAt,
+          decidedAt: at(row.dueAt, 2),
+          calendar: registration.calendar.marketCalendar,
+          calendarRead: {
+            requestId: `calendar-${index}`,
+            status: 200,
+            contentHash: testHash(`calendar-${index}`),
+            observedAt: at(row.dueAt, 1),
+          },
+        },
+      }
+      return Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+        controllerKey: identity.identityHash,
+        planHash: registration.obligations.configuration.controllerPlanHash,
+        epoch: 1,
+        sequence: index + 1,
+        receiptHash: testHash(observation),
+        completedAt: at(row.dueAt, 4),
+        observation,
+      })
+    })
+  const mutations = ['SUBMIT_STARTED', 'SUBMIT_ACCEPTED'].map((eventType, index) => ({
+    authorityGenerationHash: candidate.authorityGenerationHash,
+    strategyDecisionHash: testHash('mutation decision'),
+    event: Schema.decodeUnknownSync(MutationEventSchema)({
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: testHash(eventType),
+      mutationId: testHash('mutation'),
+      intentId: testHash('intent'),
+      sequence: index + 1,
+      operation: 'SUBMIT',
+      eventType,
+      requestHash: testHash('request'),
+      consistencyDelayMs: 1000,
+      occurredAt: at(original.asOf, 100 + index),
+    }),
+  }))
+  const sourceMaterial = {
+    mutations,
+    accounts: [
+      {
+        policy: JevResearchPolicy.Candidate,
+        identity,
+        forward: {
+          unresolvedMutationCount: 0,
+          accountingReceiptsExact: true,
+          ledgerExact: true,
+          missingLedgerAccountCount: 0,
+          accountTransactions: [],
+          accountCashSettlements: [],
+          accountPositionCounts: { reconciledAt: asOf },
+        },
+      },
+    ],
+  }
+  const cut = {
+    ...original,
+    asOf,
+    mutations,
+    controllerPasses: passes,
+    sourceMaterial,
+    sourceMaterialHash: testHash(sourceMaterial),
+    financial: [
+      {
+        policy: JevResearchPolicy.Candidate,
+        sourceHash: testHash(sourceMaterial),
+        accountBindingHash: candidate.accountBindingHash,
+        definitionHash: testHash(candidate),
+        cashHistory: null,
+        sessions: registration.calendar.sessions.map((s) => ({
+          sessionDate: s.sessionDate,
+          evidenceHash: testHash(s),
+          facts: null,
+        })),
+      },
+    ],
+    durableObservations: [
+      ...passes.map((pass) => ({
+        kind: 'CONTROLLER' as const,
+        sourceHash: pass.receiptHash,
+        sourceAt: pass.completedAt,
+        witnessedAt: at(pass.completedAt, 1),
+        correct: true,
+      })),
+      ...schedule
+        .filter((row) => row.class === ObligationClass.Reconciliation)
+        .map((row) => ({
+          kind: 'RECONCILIATION' as const,
+          sourceHash: testHash(row),
+          sourceAt: row.dueAt,
+          witnessedAt: at(row.dueAt, 1),
+          correct: true,
+        })),
+      {
+        kind: 'MUTATION' as const,
+        sourceHash: mutations[1]!.event.eventId,
+        sourceAt: mutations[1]!.event.occurredAt,
+        witnessedAt: at(mutations[1]!.event.occurredAt, 1),
+        correct: true,
+      },
+    ],
+  }
+  const { sourceHash: _sourceHash, ...safetyMaterial } = input.safety
+  const safety = Result.getOrThrow(makeOperationalSafetyAudit({ ...safetyMaterial, asOf }))
+  const verified = new Set([
+    registration.calendar.sourceHash,
+    ...registration.retainedIncidentSources,
+    safety.sourceHash,
+    safety.auditEvidenceHash,
+  ])
+  const evaluate = (source: typeof cut) =>
+    Result.getOrThrow(
+      evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(source), safety }, source, verified),
+    )
+  const complete = evaluate(cut)
+  expect(complete.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  expect(complete.missing).toEqual([])
+  const replaceControllerBuild = (executionBuild: typeof build | undefined) => {
+    const replacements = passes.map((pass) => {
+      const { executionBuild: _build, ...material } = pass.observation
+      const observation = { ...material, ...(executionBuild === undefined ? {} : { executionBuild }) }
+      return { ...pass, observation, receiptHash: testHash(observation) }
+    })
+    return {
+      ...cut,
+      controllerPasses: replacements,
+      durableObservations: cut.durableObservations.map((witness) => {
+        const index = passes.findIndex((pass) => pass.receiptHash === witness.sourceHash)
+        return index < 0 ? witness : { ...witness, sourceHash: replacements[index]!.receiptHash }
+      }),
+    }
+  }
+  const historicalFor = (source: typeof cut) => {
+    const retainedInput = {
+      ...input,
+      schemaVersion: 'bayn.operational-assessment-input.v1',
+      sourceCutHash: testHash(source),
+      safety,
+    }
+    expect(Result.isFailure(evaluateOperationalAssessment(retainedInput, source, verified))).toBe(true)
+    return Result.getOrThrow(verifyStoredOperationalAssessment(retainedInput, source, verified))
+  }
+  const foreignRepository = replaceControllerBuild({ ...build, imageRepository: 'example.test/foreign/worker' })
+  const retainedForeign = historicalFor(foreignRepository)
+  expect(retainedForeign.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  // Original v1 receipt material, including the foreign-repository controller completion evidence.
+  expect(testHash(retainedForeign)).toBe('a2873915c8c3ef1ac976cd0c0d127e0a6b6f7b75285380b9d1e0a42084a90d1b')
+  for (const executionBuild of [
+    undefined,
+    { ...build, sourceRevision: 'b'.repeat(40) },
+    { ...build, imageDigest: `sha256:${testHash('different worker image')}` },
+  ]) {
+    const retainedUnbound = historicalFor(replaceControllerBuild(executionBuild))
+    expect(retainedUnbound.verdict).toBe('REJECTED')
+    expect(
+      retainedUnbound.reliability.classes.find((row) => row.class === ObligationClass.Decision)?.correctOnTime,
+    ).toBe('0')
+  }
+  const observation = {
+    result: 'SUCCESS',
+    outcome: 'WINDOW_CLOSED',
+    executionIssuedAt: at(original.asOf, 20),
+    observedAt: at(original.asOf, 25),
+    executionBuild: { ...build, sourceRevision: 'b'.repeat(40) },
+  }
+  const unbound = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+    ...passes[0]!,
+    sequence: 3,
+    completedAt: observation.observedAt,
+    receiptHash: testHash(observation),
+    observation,
+  })
+  const changed = { ...cut, controllerPasses: [...passes, unbound] }
+  const current = evaluate(changed)
+  expect(current.verdict).toBe('INCONCLUSIVE')
+  expect(current.missing).toEqual([`UNBOUND_CONTROLLER_BUILD:${unbound.receiptHash}`])
+  expect(current.reliability).toEqual(complete.reliability)
+  const historicalInput = {
+    ...input,
+    schemaVersion: 'bayn.operational-assessment-input.v1',
+    sourceCutHash: testHash(changed),
+    safety,
+  }
+  const historical = Result.getOrThrow(verifyStoredOperationalAssessment(historicalInput, changed, verified))
+  expect(historical.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  expect(historical.missing).toEqual([])
+  expect(historical.reliability).toEqual(complete.reliability)
+  expect(historical).not.toHaveProperty('evaluationPolicy')
+  expect(Result.isFailure(evaluateOperationalAssessment(historicalInput, changed, verified))).toBe(true)
+  const closeAt = registration.calendar.sessions.at(-1)!.closeAt
+  const tailObservation = {
+    ...unbound.observation,
+    executionIssuedAt: at(closeAt, 1),
+    observedAt: at(closeAt, 2),
+  }
+  const tail = {
+    ...unbound,
+    completedAt: tailObservation.observedAt,
+    receiptHash: testHash(tailObservation),
+    observation: tailObservation,
+  }
+  expect(evaluate({ ...cut, controllerPasses: [...passes, tail] }).verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  for (const invalidClock of [
+    { ...tail, observation: { ...tailObservation, observedAt: at(closeAt, -1) } },
+    { ...tail, completedAt: at(closeAt, 1) },
+    { ...tail, completedAt: at(cut.asOf, 1) },
+  ]) {
+    const malformedTail = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)(invalidClock)
+    const result = evaluate({ ...cut, controllerPasses: [...passes, malformedTail] })
+    expect(result.verdict).toBe('INCONCLUSIVE')
+    expect(result.missing).toEqual([`UNBOUND_CONTROLLER_BUILD:${tail.receiptHash}`])
+    expect(result.reliability).toEqual(complete.reliability)
+  }
+  const overlapping = { ...tail, observation: { ...tailObservation, executionIssuedAt: at(closeAt, -1) } }
+  expect(evaluate({ ...cut, controllerPasses: [...passes, overlapping] }).verdict).toBe('INCONCLUSIVE')
+  const { executionIssuedAt: _issued, ...unknownStart } = tailObservation
+  expect(evaluate({ ...cut, controllerPasses: [...passes, { ...tail, observation: unknownStart }] }).verdict).toBe(
+    'INCONCLUSIVE',
+  )
+  const lastReconciliation = schedule.filter((row) => row.class === ObligationClass.Reconciliation).at(-1)!
+  expect(lastReconciliation.deadlineAt > closeAt).toBe(true)
+  const finishing = {
+    ...cut,
+    durableObservations: cut.durableObservations.map((witness) =>
+      witness.sourceHash === testHash(lastReconciliation) ? { ...witness, witnessedAt: at(closeAt, 10) } : witness,
+    ),
+  }
+  expect(evaluate(finishing).verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  expect(evaluate({ ...finishing, controllerPasses: [...passes, tail] }).verdict).toBe('INCONCLUSIVE')
+})
 
 test('a verified file cannot certify different safety audit values or unverified scan evidence', () => {
   const { cut, input, verified } = fixture()

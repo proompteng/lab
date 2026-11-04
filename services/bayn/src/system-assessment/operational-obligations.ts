@@ -13,6 +13,7 @@ import {
   decisionDocumentWork,
   entryAbstentionWork,
   positionHoldWork,
+  type ControllerBuildBindingPolicy,
 } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { JevResearchPolicy } from '../jev/acceptance'
@@ -36,13 +37,14 @@ export const registeredControllerWork = (
   registration: ScheduledEvaluation,
   decisions: SystemSourceCut['decisions'],
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const work =
-      (yield* positionHoldWork(pass, registration, decisions, witnessedAt)) ??
-      (yield* entryAbstentionWork(pass, registration, witnessedAt)) ??
-      (yield* accountProtectionWork(pass, registration, witnessedAt)) ??
-      (yield* closedEntryWindowWork(pass, registration, witnessedAt))
+      (yield* positionHoldWork(pass, registration, decisions, witnessedAt, buildBinding)) ??
+      (yield* entryAbstentionWork(pass, registration, witnessedAt, buildBinding)) ??
+      (yield* accountProtectionWork(pass, registration, witnessedAt, buildBinding)) ??
+      (yield* closedEntryWindowWork(pass, registration, witnessedAt, buildBinding))
     return work === undefined ? undefined : { ...work, completedAt: pass.completedAt }
   })
 
@@ -178,6 +180,20 @@ export const bindOperationalObligations = (
   cut: SystemSourceCut,
   registration: ScheduledEvaluation,
   sourceCutHash: string,
+) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'CURRENT')
+
+/** Only the stored v1 assessment reader may reproduce the original controller-build matching rule. */
+export const verifyRetainedOperationalV1Obligations = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'RETAINED_OPERATIONAL_V1')
+
+const bindOperationalObligationsForPolicy = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+  buildBinding: ControllerBuildBindingPolicy,
 ) =>
   Result.gen(function* () {
     const controllerReceipts = new Map<string, string>()
@@ -195,7 +211,7 @@ export const bindOperationalObligations = (
     for (const pass of cut.controllerPasses) {
       const witness = earliestWitnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
       if (witness === undefined) continue
-      const work = yield* registeredControllerWork(pass, registration, cut.decisions, witness.witnessedAt)
+      const work = yield* registeredControllerWork(pass, registration, cut.decisions, witness.witnessedAt, buildBinding)
       if (work !== undefined) controllerWork.set(pass.receiptHash, work)
     }
     const documentWork = new Map(
