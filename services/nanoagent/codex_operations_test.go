@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +14,74 @@ import (
 )
 
 const operationParams = `{"threadId":"thread-1","clientUserMessageId":"11111111-1111-4111-8111-111111111111","input":[{"type":"text","text":"Create the requested file"}]}`
+
+func TestCodexOperationRecoversOnlyConfirmedGenerationCleanup(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	acceptOperation(t, supervisor, writer)
+	generation := supervisor.generation.id
+	supervisor.failProcess(errors.New("accepting process exited"))
+	params := json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1","turnId":"turn-1"}`)
+	readStopped := func() bool {
+		t.Helper()
+		result, err := supervisor.call(context.Background(), "tengri/operation", params)
+		var status struct {
+			Alive   bool `json:"generationAlive"`
+			Stopped bool `json:"processesStopped"`
+		}
+		if err != nil || json.Unmarshal(result.result, &status) != nil || status.Alive {
+			t.Fatalf("invalid replaced-generation status: %s %v", result.result, err)
+		}
+		return status.Stopped
+	}
+	if readStopped() {
+		t.Fatal("process exit alone proved command cleanup")
+	}
+	directory := filepath.Join(supervisor.cwd, ".tengri", "codex-generations")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	boot, _ := os.ReadFile(bootIDPath)
+	bootID := strings.TrimSpace(string(boot))
+	if bootID == "" {
+		bootID = "11111111-1111-4111-8111-111111111111"
+	}
+	for _, stopped := range []bool{false, true} {
+		content, _ := json.Marshal(map[string]any{"version": 1, "generation": generation, "bootId": bootID, "processesStopped": stopped})
+		if err := os.WriteFile(filepath.Join(directory, generation+".json"), content, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if got := readStopped(); got != stopped {
+			t.Fatalf("generation cleanup proof = %v, want %v", got, stopped)
+		}
+	}
+}
+
+func TestCodexInterruptCannotReachAReplacementProcess(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	acceptOperation(t, supervisor, writer)
+	supervisor.failProcess(errors.New("accepting process exited"))
+	supervisor.mu.Lock()
+	supervisor.stdin = writer
+	closeSignal(supervisor.generation.ready)
+	supervisor.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(ctx, "turn/interrupt", json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","clientUserMessageId":"22222222-2222-4222-8222-222222222222"}`))
+		done <- err
+	}()
+	select {
+	case request := <-writer.messages:
+		t.Fatalf("Stop reached the replacement process: %s", request)
+	case err := <-done:
+		if !errors.Is(err, errCodexOperationUnknown) {
+			t.Fatalf("unproven cleanup did not retain reconciliation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("generation-fenced Stop did not return")
+	}
+}
 
 func TestCodexDispatchDoesNotResumeForOtherRejections(t *testing.T) {
 	for _, test := range []struct {

@@ -26,8 +26,12 @@ func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) 
 		if process {
 			name = "running command"
 		}
-		t.Run(name, func(t *testing.T) { testPinnedCodexRecoversAcceptance(t, process) })
+		t.Run(name, func(t *testing.T) { testPinnedCodexRecoversAcceptance(t, process, false) })
 	}
+}
+
+func TestPinnedCodexProcessReplacementStopsAcceptedCommands(t *testing.T) {
+	testPinnedCodexRecoversAcceptance(t, true, true)
 }
 
 func TestPinnedCodexArchivesAndRestoresPersistedHistory(t *testing.T) {
@@ -145,7 +149,7 @@ completed:
 	}
 }
 
-func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
+func testPinnedCodexRecoversAcceptance(t *testing.T, process, replace bool) {
 	binary := os.Getenv("TENGRI_CODEX_CONTRACT_BINARY")
 	if binary == "" {
 		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.164.0 binary")
@@ -336,6 +340,62 @@ stream_max_retries = 0
 	case <-started:
 	case <-ctx.Done():
 		t.Fatal("native model request did not reach the held loopback provider")
+	}
+	if replace {
+		requestsBefore := requests.Load()
+		committed, err := readCodexOperation(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		supervisor.mu.Lock()
+		command, generation := supervisor.command, supervisor.generation
+		supervisor.mu.Unlock()
+		stopCodexProcess(command)
+		for {
+			supervisor.mu.Lock()
+			changed := supervisor.generation != generation
+			supervisor.mu.Unlock()
+			if changed && supervisor.isReady() {
+				break
+			}
+			if ctx.Err() != nil {
+				t.Fatal("Codex did not recover after its process ended")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		query, _ := json.Marshal(map[string]string{"operationId": "11111111-1111-4111-8111-111111111111", "threadId": thread.Thread.ID, "turnId": turn.Turn.ID})
+		result, err := supervisor.call(ctx, "tengri/operation", query)
+		var status struct {
+			Alive   bool `json:"generationAlive"`
+			Stopped bool `json:"processesStopped"`
+		}
+		if err != nil || json.Unmarshal(result.result, &status) != nil || status.Alive || !status.Stopped {
+			t.Fatalf("native process replacement lost cleanup proof: %s %v", result.result, err)
+		}
+		_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if _, err := connection.Read(make([]byte, 1)); err != io.EOF {
+			t.Fatalf("native process replacement left its accepted command alive: %v", err)
+		}
+		if _, err := supervisor.call(ctx, "turn/interrupt", interrupt); !errors.Is(err, errCodexOperationUnknown) {
+			t.Fatalf("Stop did not remain bound to the ended generation: %v", err)
+		}
+		replayed, err := supervisor.call(ctx, "turn/start", json.RawMessage(params))
+		if err != nil || string(replayed.result) != string(committed.Result) {
+			t.Fatalf("process recovery changed the committed operation receipt: %s %v", replayed.result, err)
+		}
+		if requests.Load() != requestsBefore {
+			t.Fatalf("process recovery resent the original model request: requests=%d, want %d", requests.Load(), requestsBefore)
+		}
+		nextParams := json.RawMessage(strings.Replace(params, "11111111-1111-4111-8111-111111111111", "33333333-3333-4333-8333-333333333333", 1))
+		if _, err := supervisor.call(ctx, "turn/start", nextParams); err != nil {
+			t.Fatal("a new turn could not start after confirmed cleanup", err)
+		}
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("the new native turn did not reach the provider after recovery")
+		}
+		return
 	}
 	archive, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID})
 	if _, err := supervisor.call(ctx, "thread/archive", archive); !errors.Is(err, errCodexThreadActive) {
