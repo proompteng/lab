@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Context, Effect, Exit, Fiber, Layer, Result } from 'effect'
 import { RedisError } from 'effect/persistence/Redis'
 import { TestClock } from 'effect/testing'
+import { ConnectionTimeoutError } from 'redis'
 
 import { withValkeyStartupRetry } from './valkey-startup'
 
@@ -9,6 +10,12 @@ class Connection extends Context.Service<Connection, { readonly command: Effect.
   'test/ValkeyStartupConnection',
 ) {}
 const refused = new RedisError({ cause: Object.assign(new Error('fixture refused'), { code: 'ECONNREFUSED' }) })
+const handshakeUntilAbort = (signal: AbortSignal) =>
+  Effect.callback<never, RedisError>((resume) => {
+    const abort = () => resume(Effect.fail(new RedisError({ cause: new Error('fixture acquisition aborted') })))
+    signal.addEventListener('abort', abort, { once: true })
+    return Effect.sync(() => signal.removeEventListener('abort', abort))
+  })
 
 describe('Valkey startup connection refusal', () => {
   test.each([false, true])(
@@ -35,7 +42,7 @@ describe('Valkey startup connection refusal', () => {
           if (persistent || attempts < 3) return yield* refused
           return { command: Effect.void }
         }),
-      ).pipe(withValkeyStartupRetry)
+      ).pipe((layer) => withValkeyStartupRetry(() => layer))
       const result = await Effect.gen(function* () {
         const fiber = yield* Connection.pipe(
           Effect.tap(() =>
@@ -89,7 +96,7 @@ describe('Valkey startup connection refusal', () => {
           attempts++
           return Effect.fail(failure)
         }),
-      ).pipe(withValkeyStartupRetry)
+      ).pipe((layer) => withValkeyStartupRetry(() => layer))
       const result = await Connection.pipe(Effect.provide(layer), Effect.result, Effect.runPromise)
       expect(attempts).toBe(1)
       expect(Result.isFailure(result)).toBe(true)
@@ -112,7 +119,7 @@ describe('Valkey startup connection refusal', () => {
           }),
         }
       }),
-    ).pipe(withValkeyStartupRetry)
+    ).pipe((layer) => withValkeyStartupRetry(() => layer))
     const result = await Effect.flatMap(Connection, (connection) => connection.command).pipe(
       Effect.provide(layer),
       Effect.result,
@@ -129,23 +136,25 @@ describe('Valkey startup connection refusal', () => {
       let attempts = 0
       let active = 0
       let released = 0
-      const layer = Layer.effect(
-        Connection,
-        Effect.gen(function* () {
-          yield* Effect.acquireRelease(
-            Effect.sync(() => {
-              active++
-            }),
-            () =>
+      const layer = withValkeyStartupRetry((signal) =>
+        Layer.effect(
+          Connection,
+          Effect.gen(function* () {
+            yield* Effect.acquireRelease(
               Effect.sync(() => {
-                active--
-                released++
+                active++
               }),
-          )
-          attempts++
-          return yield* phase === 'acquisition' ? Effect.never : refused
-        }),
-      ).pipe(withValkeyStartupRetry)
+              () =>
+                Effect.sync(() => {
+                  active--
+                  released++
+                }),
+            )
+            attempts++
+            return yield* phase === 'acquisition' ? handshakeUntilAbort(signal) : refused
+          }),
+        ),
+      )
       await Effect.gen(function* () {
         const fiber = yield* Connection.pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust('500 millis')
@@ -158,6 +167,38 @@ describe('Valkey startup connection refusal', () => {
       expect(released).toBe(1)
     },
   )
+
+  test('the complete acquisition aborts at two seconds and settles before its finalizer runs once', async () => {
+    const events: string[] = []
+    let attempts = 0
+    const layer = withValkeyStartupRetry((signal) =>
+      Layer.effect(
+        Connection,
+        Effect.gen(function* () {
+          attempts++
+          signal.addEventListener('abort', () => events.push('abort'), { once: true })
+          yield* Effect.addFinalizer(() => Effect.sync(() => events.push('release')))
+          return yield* handshakeUntilAbort(signal)
+        }),
+      ),
+    )
+    await Effect.gen(function* () {
+      const fiber = yield* Connection.pipe(
+        Effect.provide(layer),
+        Effect.result,
+        Effect.forkChild({ startImmediately: true }),
+      )
+      yield* TestClock.adjust('1999 millis')
+      expect(events).toEqual([])
+      yield* TestClock.adjust('1 millis')
+      const result = yield* Fiber.join(fiber)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) expect(result.failure.cause).toBeInstanceOf(ConnectionTimeoutError)
+      yield* TestClock.adjust('5 seconds')
+    }).pipe(Effect.provide(TestClock.layer()), Effect.runPromise)
+    expect(attempts).toBe(1)
+    expect(events).toEqual(['abort', 'release'])
+  })
 
   test('defects release the failed acquisition without retrying', async () => {
     let attempts = 0
@@ -173,7 +214,7 @@ describe('Valkey startup connection refusal', () => {
         attempts++
         return yield* Effect.die('fixture defect')
       }),
-    ).pipe(withValkeyStartupRetry)
+    ).pipe((layer) => withValkeyStartupRetry(() => layer))
     const exit = await Connection.pipe(Effect.provide(layer), Effect.exit, Effect.runPromise)
     expect(Exit.isFailure(exit)).toBe(true)
     expect(attempts).toBe(1)
