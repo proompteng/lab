@@ -517,3 +517,9 @@ successful build nor independent kernel acceptance grants capital authority or e
 It proves crypto entries and crypto buys fail the current market scope while equity orders retain scope eligibility.
 Crypto sells still require every existing capital, ownership and risk check; scope eligibility is not execution authority.
 Executable conformance covers both markets and sides, and broker regressions verify zero crypto-buy transmissions.
+
+### Evidenced closed windows
+
+`Bayn/Reliability.lean` proves that closed-window timing requires causal calendar arrival and completion. Eligible entry work cannot be classified as a closed window. `decision-work.ts` reproduces the registered day's calendar, native execution policy, physical controller build and account/generation before using that timing predicate. `closed-entry-window.test.ts` verifies that omitted, late, future, foreign and substituted evidence cannot supply successful work. The actual discovery regression retains the original admission clock across a delayed calendar read.
+
+`reconciliation_batching_keeps_each_original_deadline` maps to `obligation-witnesses.ts`. Its conformance cases and native obligation regression retain fixed denominators and show that late observations leave expired checks missed.

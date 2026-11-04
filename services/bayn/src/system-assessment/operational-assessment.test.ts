@@ -2,7 +2,7 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { operationalRegistrationFixture } from './operational-period.test-support'
-import { evaluateOperationalAssessment } from './operational-assessment'
+import { evaluateOperationalAssessment, makeOperationalSafetyAudit } from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { SystemSourceCutSchema } from './source-cut'
 import { testHash } from './fixtures.test-support'
@@ -24,18 +24,22 @@ const fixture = () => {
     schemaVersion: 'bayn.operational-assessment-input.v1',
     registration,
     sourceCutHash: testHash(cut),
-    safety: {
-      coverage: 'COMPLETE',
-      sourceHash: testHash('safety audit'),
-      registrationHash: cut.registrationHash,
-      asOf: cut.asOf,
-      violations: [],
-    },
+    safety: Result.getOrThrow(
+      makeOperationalSafetyAudit({
+        schemaVersion: 'bayn.operational-safety-audit.v1',
+        coverage: 'COMPLETE',
+        auditEvidenceHash: testHash('complete safety scan evidence'),
+        registrationHash: cut.registrationHash,
+        asOf: cut.asOf,
+        violations: [],
+      }),
+    ),
   }
   const verified = new Set([
     registration.calendar.sourceHash,
     ...registration.retainedIncidentSources,
     input.safety.sourceHash,
+    input.safety.auditEvidenceHash,
   ])
   return { cut, input, verified }
 }
@@ -45,6 +49,7 @@ test('an open operating period and missing accounting cannot become a reliabilit
   const result = Result.getOrThrow(evaluateOperationalAssessment(input, cut, verified))
   expect(result.verdict).toBe('INCONCLUSIVE')
   expect(result.economicQualification).toBe('NOT_ASSESSED')
+  expect(result.safety.pass).toBe(true)
   expect(result.missing).toContain('OPEN_REPORTING_PERIOD')
   expect(result.missing).toContain('INCOMPLETE_FILL_ACCOUNTING')
   expect(result.reliability.classes.find((row) => row.class === ObligationClass.Mutation)?.status).toBe(
@@ -136,3 +141,67 @@ test('a safety violation rejects the operating claim and scope substitutions fai
 })
 
 const originalFinancial = () => emptySourceCutFixture().cut.financial[0]!
+
+test('a verified file cannot certify different safety audit values or unverified scan evidence', () => {
+  const { cut, input, verified } = fixture()
+  const unrelated = testHash('unrelated verified artifact')
+  const replaced = { ...input, safety: { ...input.safety, sourceHash: unrelated } }
+  const result = Result.getOrThrow(evaluateOperationalAssessment(replaced, cut, new Set([...verified, unrelated])))
+  expect(result.safety.pass).toBe(false)
+  expect(result.missing).toContain('UNBOUND_SAFETY_AUDIT')
+  expect(result.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
+  const withoutScan = new Set(verified)
+  withoutScan.delete(input.safety.auditEvidenceHash)
+  expect(Result.getOrThrow(evaluateOperationalAssessment(input, cut, withoutScan)).safety.pass).toBe(false)
+})
+
+test('operational accounting requires exact fill receipts and ledger evidence without importing economic qualification gates', () => {
+  const { cut: original, input, verified } = fixture()
+  const definition = input.registration.policies[0]
+  const identity = Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId: definition.riskPolicy.accountId,
+    }),
+  )
+  const forward = {
+    accountTransactions: [],
+    accountCashSettlements: [],
+    accountPositionCounts: { reconciledAt: original.asOf },
+    unresolvedMutationCount: 0,
+    accountingReceiptsExact: true,
+    ledgerExact: true,
+    missingLedgerAccountCount: 0,
+  }
+  const evaluate = (flags: typeof forward) => {
+    const sourceMaterial = { mutations: [], accounts: [{ policy: 'JEV', identity, forward: flags }] }
+    const financial = [
+      {
+        policy: JevResearchPolicy.Candidate,
+        sourceHash: testHash(sourceMaterial),
+        accountBindingHash: definition.accountBindingHash,
+        definitionHash: testHash(definition),
+        cashHistory: null,
+        sessions: input.registration.calendar.sessions.map((s) => ({
+          sessionDate: s.sessionDate,
+          evidenceHash: testHash(s),
+          facts: null,
+        })),
+      },
+    ]
+    const cut = { ...original, sourceMaterial, sourceMaterialHash: testHash(sourceMaterial), financial }
+    return Result.getOrThrow(evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(cut) }, cut, verified))
+  }
+  const exact = evaluate(forward)
+  expect(exact.missing).not.toContain('INCOMPLETE_FILL_ACCOUNTING')
+  expect(exact.economicQualification).toBe('NOT_ASSESSED')
+  expect(exact.verdict).toBe('INCONCLUSIVE')
+  for (const changed of [
+    { ...forward, accountingReceiptsExact: false },
+    { ...forward, ledgerExact: false },
+    { ...forward, missingLedgerAccountCount: 1 },
+  ])
+    expect(evaluate(changed).missing).toContain('INCOMPLETE_FILL_ACCOUNTING')
+})

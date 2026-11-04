@@ -1,3 +1,5 @@
+import { reconciliationCompletionSupported } from './obligation-witnesses'
+import { closedEntryWindowTimingSupported } from './decision-work'
 import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../execution/trading-scope'
 import { JevAcceptanceVersion } from '../jev/acceptance'
 import { OrderStatus, OrderSchema } from '../execution/contracts'
@@ -174,6 +176,54 @@ import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strat
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('reconciliation batching preserves each original deadline and causal receipt', () => {
+    const cases = [0, 30, 60, 90].flatMap((due) =>
+      [0, 65, 95, 181].flatMap((observed) =>
+        [0, 66, 96, 182].map((witnessed) => ({ due, deadline: due + 120, observed, witnessed })),
+      ),
+    )
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'reconciliationCompletion',
+          due: String(c.due),
+          deadline: String(c.deadline),
+          observed: String(c.observed),
+          witnessed: String(c.witnessed),
+        })),
+      ),
+    ).toEqual(cases.map(reconciliationCompletionSupported))
+  })
+
+  test('closed windows require causal calendar arrival and cannot replace eligible entry work', () => {
+    const cases = [false, true].flatMap((entryEligible) =>
+      [0, 2, 10].flatMap((issued) =>
+        [0, 2, 10].flatMap((available) =>
+          [0, 2, 10].map((decided) => ({
+            issued,
+            evaluated: 2,
+            available,
+            decided,
+            observed: 6,
+            completed: 7,
+            witnessed: 8,
+            entryEligible,
+          })),
+        ),
+      ),
+    )
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'closedEntryWindowTiming',
+          ...Object.fromEntries(
+            Object.entries(c).map(([key, value]) => [key, typeof value === 'number' ? String(value) : value]),
+          ),
+        })),
+      ),
+    ).toEqual(cases.map(closedEntryWindowTimingSupported))
+  })
+
   test('equity-only entry scope and retained crypto sells agree with Lean', () => {
     const cases = [MarketKind.Equity, MarketKind.Crypto].flatMap((market) =>
       [OrderSide.Buy, OrderSide.Sell].map((side) => ({ market, side })),

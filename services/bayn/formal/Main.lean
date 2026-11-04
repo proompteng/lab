@@ -891,6 +891,14 @@ def evaluate (json : Json) : Except String Json := do
       (← readNatural json "missing") (← json.getObjValAs? Bool "safetyComplete") (← readNatural json "violations"))
   | "nativeObligationDeadline" =>
     return toJson (toString (nativeObligationDeadline (← readInteger json "due") (← readInteger json "window")))
+  | "closedEntryWindowTiming" =>
+    return toJson (closedEntryWindowTimingSupported (← readInteger json "issued")
+      (← readInteger json "evaluated") (← readInteger json "available") (← readInteger json "decided")
+      (← readInteger json "observed") (← readInteger json "completed") (← readInteger json "witnessed")
+      (← json.getObjValAs? Bool "entryEligible"))
+  | "reconciliationCompletion" =>
+    return toJson (reconciliationCompletionSupported (← readInteger json "due")
+      (← readInteger json "deadline") (← readInteger json "observed") (← readInteger json "witnessed"))
   | "binaryEdge" =>
     let gain ← readNatural json "gainMicros"
     let loss ← readNatural json "lossMicros"

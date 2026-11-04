@@ -1,8 +1,11 @@
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
+import { qualificationCalendar } from './calendar'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { JevProtocolSchema } from '../jev/protocol'
+import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
+import { JevProtocolSchema, jevBehaviorHash } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema, scheduledEvaluationFields, validateRegisteredPolicyIdentity } from './policy'
@@ -35,6 +38,7 @@ export const OperationalRegistrationSchema = Schema.Struct({
     ...scheduledEvaluationFields.calendar.fields,
     referenceMarket: Schema.Literal('NATIVE_POLICY'),
     operatingHours: Schema.Literal('NATIVE'),
+    marketCalendar: MarketCalendarObservationSchema,
   }),
   policies: Schema.Tuple([PolicyDefinitionSchema]),
   obligations: scheduledEvaluationFields.obligations,
@@ -61,7 +65,12 @@ export const validateOperationalRegistration = (input: unknown) =>
     const runtime = registration.obligations.configuration
     if (!Schema.is(JevProtocolSchema)(runtime.protocol))
       return yield* invalid('Operational registration requires the current native protocol')
-    if (candidate.parametersHash !== (yield* canonicalHashV1Result(runtime.protocol)))
+    if (
+      candidate.parametersHash !== (yield* canonicalHashV1Result(runtime.protocol)) ||
+      candidate.strategyHash !== jevBehaviorHash ||
+      !jevProtocolIdentityMatches(runtime.protocol, candidate.protocolHash) ||
+      candidate.executionModelHash !== (yield* canonicalHashV1Result(runtime.protocol.executionModel))
+    )
       return yield* invalid('Operational schedule must bind the authorized native strategy')
     const deadlines = yield* qualificationDeadlines(runtime)
     for (const key of Object.keys(deadlines) as (keyof typeof deadlines)[])
@@ -78,6 +87,10 @@ export const validateOperationalRegistration = (input: unknown) =>
       markets.some((market) => !registration.calendar.tradingMarkets.includes(market))
     )
       return yield* invalid('Operational reporting must match the compiled runtime entry scope')
+    const calendar = registration.calendar.marketCalendar
+    const verifiedCalendar = yield* qualificationCalendar(calendar)
+    if (registration.calendar.sourceHash !== verifiedCalendar.sourceHash)
+      return yield* invalid('Operational reporting requires its verified canonical equity calendar')
     let previousClose: string | undefined
     let previousDate = ''
     for (const session of registration.calendar.sessions) {
@@ -93,5 +106,12 @@ export const validateOperationalRegistration = (input: unknown) =>
       previousDate = session.sessionDate
     }
     if (previousClose === undefined) return yield* invalid('Operational registration requires a reporting period')
+    const firstOpen = registration.calendar.sessions[0]?.openAt
+    if (
+      firstOpen === undefined ||
+      calendar.requestedRange.start > firstOpen.slice(0, 10) ||
+      calendar.requestedRange.end < new Date(Date.parse(previousClose) - 1).toISOString().slice(0, 10)
+    )
+      return yield* invalid('Operational calendar must cover the complete reporting period')
     return { registration, registrationHash: yield* canonicalHashV1Result(registration) }
   })

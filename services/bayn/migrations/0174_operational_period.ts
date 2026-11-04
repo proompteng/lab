@@ -26,6 +26,7 @@ export default Effect.gen(function* () {
         AND (payload_text::jsonb #>> '{calendar,sessions,-1,closeAt}')::timestamptz=last_close_at
         AND payload_text::jsonb #>> '{calendar,operatingHours}'='NATIVE'
         AND payload_text::jsonb #>> '{calendar,referenceMarket}'='NATIVE_POLICY'
+        AND payload_text::jsonb #>> '{calendar,marketCalendar,schemaVersion}'='bayn.alpaca-market-calendar-observation.v2'
         AND jsonb_array_length(payload_text::jsonb #> '{calendar,sessions}')>0
         AND jsonb_array_length(payload_text::jsonb->'policies')=1
         AND payload_text::jsonb #>> '{policies,0,policy}'='JEV'
@@ -91,6 +92,7 @@ export default Effect.gen(function* () {
     IF registration.program<>'BAYN_OPERATIONAL_RELIABILITY' OR source.registration_hash<>NEW.registration_hash
       OR source.as_of<>NEW.as_of OR NEW.as_of>NEW.created_at
       OR NEW.input_text::jsonb->'registration' IS DISTINCT FROM registration.payload_text::jsonb
+      OR NEW.input_text::jsonb->'safety' IS DISTINCT FROM (NEW.assessment_text::jsonb->'safety')-'pass'
       OR (NEW.verdict='OPERATIONALLY_RELIABLE_PAPER' AND NEW.as_of<registration.last_close_at) THEN
       RAISE EXCEPTION 'operational assessment evidence scope differs' USING ERRCODE='23514';
     END IF;

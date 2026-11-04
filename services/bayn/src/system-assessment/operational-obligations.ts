@@ -7,7 +7,13 @@ import type { ScheduledEvaluation } from './policy'
 import { SystemAssessmentError } from './economics'
 import { ObligationClass, ObligationOutcome, type ObligationCompletionSchema } from './reliability'
 import { registeredSchedule } from './schedule'
-import { accountProtectionWork, decisionDocumentWork, entryAbstentionWork, positionHoldWork } from './decision-work'
+import {
+  accountProtectionWork,
+  closedEntryWindowWork,
+  decisionDocumentWork,
+  entryAbstentionWork,
+  positionHoldWork,
+} from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { JevResearchPolicy } from '../jev/acceptance'
 
@@ -120,7 +126,8 @@ export const bindOperationalObligations = (
       const work =
         (yield* positionHoldWork(pass, registration, cut.decisions, witness.witnessedAt)) ??
         (yield* entryAbstentionWork(pass, registration, witness.witnessedAt)) ??
-        (yield* accountProtectionWork(pass, registration, witness.witnessedAt))
+        (yield* accountProtectionWork(pass, registration, witness.witnessedAt)) ??
+        (yield* closedEntryWindowWork(pass, registration, witness.witnessedAt))
       if (work !== undefined) controllerWork.set(pass.receiptHash, { ...work, completedAt: pass.completedAt })
     }
     const documentWork = new Map(

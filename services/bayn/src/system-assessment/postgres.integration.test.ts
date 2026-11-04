@@ -1,6 +1,7 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { operationalRegistrationFixture } from './operational-period.test-support'
+import { makeOperationalSafetyAudit } from './operational-assessment'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
 import { registerOperationalPeriod, readAssessmentRegistration, assessAndPersistOperational } from './postgres'
@@ -251,19 +252,23 @@ postgres('PostgreSQL prospective system qualification', () => {
         inference: [],
       }),
     )
-    const safetySource = testHash('current complete source-bound safety audit')
-    sources.add(safetySource)
+    const safety = Result.getOrThrow(
+      makeOperationalSafetyAudit({
+        schemaVersion: 'bayn.operational-safety-audit.v1',
+        coverage: 'COMPLETE',
+        auditEvidenceHash: testHash('source-bound safety scan'),
+        registrationHash: saved.registrationHash,
+        asOf,
+        violations: [],
+      }),
+    )
+    sources.add(safety.sourceHash)
+    sources.add(safety.auditEvidenceHash)
     const input = {
       schemaVersion: 'bayn.operational-assessment-input.v1',
       registration: prospective,
       sourceCutHash: savedCut.sourceCutHash,
-      safety: {
-        coverage: 'COMPLETE',
-        sourceHash: safetySource,
-        registrationHash: saved.registrationHash,
-        asOf,
-        violations: [],
-      },
+      safety,
     }
     const result = await runtime.runPromise(asApplication(assessAndPersistOperational(input, sources)))
     expect(result.verdict).toBe('INCONCLUSIVE')

@@ -1,5 +1,8 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import { jevBehaviorHash } from '../jev/protocol'
 import { Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
 import {
   makeResearchCapitalActivationRequest,
@@ -15,8 +18,21 @@ import { qualificationDeadlines } from './configuration'
 
 export const operationalRegistrationFixture = (): OperationalRegistration => {
   const base = registrationFixture()
-  const candidate = base.policies.find((policy) => policy.policy === 'JEV')
-  if (candidate === undefined) throw new Error('Missing candidate')
+  const registered = base.policies.find((policy) => policy.policy === 'JEV')
+  if (registered === undefined) throw new Error('Missing candidate')
+  const candidate = {
+    ...registered,
+    strategyHash: jevBehaviorHash,
+    protocolHash: Result.getOrThrow(
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash: registered.parametersHash,
+        parameterSchemaVersion: base.obligations.configuration.protocol.schemaVersion,
+      }),
+    ),
+    executionModelHash: testHash(base.obligations.configuration.protocol.executionModel),
+  }
   const broker = Result.getOrThrow(
     makeBrokerIdentity({
       schemaVersion: 'bayn.broker-identity.v2',
@@ -70,6 +86,26 @@ export const operationalRegistrationFixture = (): OperationalRegistration => {
     activation: request.activation,
   }
   const configuration = { ...base.obligations.configuration, entryMarkets: currentEntryMarkets }
+  const calendarMaterial = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
+    source: 'alpaca-v2-calendar',
+    requestedRange: { start: '2026-11-04', end: '2026-12-04' },
+    timeZone: 'UTC',
+    sessions: [{ date: '2026-11-04', openAt: '2026-11-04T13:00:00.000Z', closeAt: '2026-11-04T22:00:00.000Z' }],
+    providerSessions: [
+      {
+        date: '2026-11-04',
+        regularOpenAt: '2026-11-04T14:30:00.000Z',
+        regularCloseAt: '2026-11-04T21:00:00.000Z',
+        sessionOpenAt: '2026-11-04T13:00:00.000Z',
+        sessionCloseAt: '2026-11-04T22:00:00.000Z',
+      },
+    ],
+  }
+  const marketCalendar = Schema.decodeUnknownSync(MarketCalendarObservationSchema)({
+    ...calendarMaterial,
+    normalizedResponseHash: testHash(calendarMaterial),
+  })
   const registration: OperationalRegistration = {
     schemaVersion: 'bayn.operational-registration.v1',
     program: 'BAYN_OPERATIONAL_RELIABILITY',
@@ -83,7 +119,8 @@ export const operationalRegistrationFixture = (): OperationalRegistration => {
       referenceMarket: 'NATIVE_POLICY',
       operatingHours: 'NATIVE',
       tradingMarkets: currentEntryMarkets,
-      sourceHash: testHash('complete native reporting scope'),
+      sourceHash: testHash(marketCalendar),
+      marketCalendar,
       sessions: [
         { sessionDate: '2026-11-04', openAt: '2026-11-04T00:00:00.000Z', closeAt: '2026-11-04T00:02:00.000Z' },
       ],

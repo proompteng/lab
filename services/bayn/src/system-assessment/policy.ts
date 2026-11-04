@@ -1,3 +1,4 @@
+import type { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import { Result, Schema } from 'effect'
 import { ResearchCapitalGrantGenerationSchema } from '../execution/contracts'
 import {
@@ -162,9 +163,16 @@ export type ScheduledEvaluation = Pick<SystemRegistration, 'obligations' | 'poli
   readonly program: string
   readonly attemptIndex: number
   readonly schemaVersion: string
-  readonly calendar: Pick<SystemRegistration['calendar'], 'sessions' | 'tradingMarkets'> & {
-    readonly operatingHours: 'REGULAR_SESSION' | 'NATIVE'
-  }
+  readonly calendar: Pick<SystemRegistration['calendar'], 'sessions' | 'tradingMarkets'> &
+    (
+      | {
+          readonly operatingHours: 'REGULAR_SESSION'
+        }
+      | {
+          readonly operatingHours: 'NATIVE'
+          readonly marketCalendar: typeof MarketCalendarObservationSchema.Type
+        }
+    )
 }
 
 export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Current) =>

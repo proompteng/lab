@@ -36,19 +36,30 @@ Operational reporting uses `bayn.operational-registration.v1` in the `BAYN_OPERA
 one existing native PAPER policy, its sealed capital generation and physical execution build, the unchanged runtime
 deadlines, the compiled runtime entry scope, and a prospective contiguous reporting period.
 The current scope is equities only; retaining the mixed-market capital protocol does not re-enable crypto entries. The registration retains
-the earlier incident evidence. Its attempt chain is append-only; a later period cannot erase an earlier failure.
+the earlier incident evidence. Its scope source is the canonical equity calendar captured before registration;
+an unexpected empty or substituted calendar cannot be treated as a legitimate closure. Its attempt chain is append-only; a later period cannot erase an earlier failure.
 There is no research control, bootstrap, profit quota, minimum session count, or trade quota in this operating claim.
 
-The native schedule keeps globally aligned signal and reconciliation times. Starting a report does not restart the
+The native schedule keeps globally aligned signal and reconciliation times. One exact post-due reconciliation may
+complete several pending checks for the same account; each check retains its own original freshness deadline, and
+a late reconciliation cannot repair an expired obligation. Starting a report does not restart the
 signal warmup or an admitted mutation's clock. Obligations due before the final reporting boundary keep their original
 deadlines afterward. Capture retains the whole event sequence for mutations active across the opening boundary,
 including unresolved work with no event inside the period. A report remains incomplete while required evidence or
-original deadlines are outstanding.
+original deadlines are outstanding. Closed entry windows count only with retained calendar, policy, account,
+generation, physical worker and causal arrival evidence. Bare historical closed ticks and read-only capital holds do not
+prove correct decision work. Closed evidence preserves the original admission clock through calendar I/O.
+The reporter reproduces the native admission rule and the registered day's hours before accepting the abstention.
+
+Operational accounting requires the reader's exact fill/receipt and ledger verification, the complete retained
+transaction and cash-settlement rows, and the existing cash-settlement identity checks. Economic qualification
+remains separate; open inventory or an unpaid, accounted fee liability does not impose a new operating quota.
 
 `evaluateOperationalAssessment` shares the financial evaluator's schedule, durable witnesses, integer reliability
 measurement, capital identity checks, and safety audit predicate. Its separate immutable receipt can report
 `OPERATIONALLY_RELIABLE_PAPER`, `REJECTED`, or `INCONCLUSIVE`; economics remain `NOT_ASSESSED`. No operational receipt
-can certify economic qualification or grant capital. An operating period's dated scope does not establish behavior
+can certify economic qualification or grant capital. Operational safety audit artifacts bind the exact coverage,
+registration, evidence cut, violations and verified scan-evidence hash. A verified unrelated file cannot certify zero violations. An operating period's dated scope does not establish behavior
 outside that period or substitute for the required native equity-opening verification.
 
 ## Realism

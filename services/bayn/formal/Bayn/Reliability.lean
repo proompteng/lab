@@ -79,6 +79,36 @@ theorem native_deadline_retains_original_window (due window : Int) :
   unfold nativeObligationDeadline
   omega
 
+def closedEntryWindowTimingSupported (issued evaluated available decided observed completed witnessed : Int)
+    (entryEligible : Bool) : Bool :=
+  !entryEligible && decide (issued ≤ evaluated ∧ evaluated ≤ decided ∧ available ≤ decided ∧
+    decided ≤ observed ∧ observed ≤ completed ∧ completed ≤ witnessed)
+
+theorem closed_window_requires_causal_evidence (i e a d o c w : Int) (eligible : Bool)
+    (supported : closedEntryWindowTimingSupported i e a d o c w eligible = true) :
+    eligible = false ∧ i ≤ e ∧ e ≤ d ∧ a ≤ d ∧ d ≤ o ∧ o ≤ c ∧ c ≤ w := by
+  simpa [closedEntryWindowTimingSupported] using supported
+
+theorem eligible_entry_cannot_be_a_closed_window (i e a d o c w : Int) :
+    closedEntryWindowTimingSupported i e a d o c w true = false := by
+  simp [closedEntryWindowTimingSupported]
+
+def reconciliationCompletionSupported (due deadline observed witnessed : Int) : Bool :=
+  decide (due ≤ observed ∧ observed ≤ witnessed ∧ witnessed ≤ deadline)
+
+theorem reconciliation_batching_keeps_each_original_deadline (d e o w : Int)
+    (supported : reconciliationCompletionSupported d e o w = true) :
+    d ≤ o ∧ o ≤ w ∧ w ≤ e := by
+  simpa [reconciliationCompletionSupported] using supported
+
+theorem late_reconciliation_cannot_repair_an_expired_obligation (d e o w : Int)
+    (late : e < w) : reconciliationCompletionSupported d e o w = false := by
+  simp [reconciliationCompletionSupported]
+  omega
+
+example : closedEntryWindowTimingSupported 0 0 4 5 6 7 8 false = true ∧
+    closedEntryWindowTimingSupported 0 0 9 5 6 7 8 false = false := by decide
+
 example : operationalAssessmentVerdict "MEETS_TARGET" 0 true 0 = "OPERATIONALLY_RELIABLE_PAPER" ∧
     operationalAssessmentVerdict "UNDETERMINED" 0 true 0 = "INCONCLUSIVE" := by decide
 

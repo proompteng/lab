@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentInputSchema, completeSafetyAudit } from './assessment'
 import { decisionAdmissionWitnesses } from './decision-admissions'
 import { SystemAssessmentError } from './economics'
@@ -13,6 +13,9 @@ import { measureReliability, ReliabilityStatus } from './reliability'
 import type { SystemSourceCut } from './source-cut'
 import { SystemSourceCutSchema } from './source-cut'
 import { BrokerIdentitySchema } from '../broker/identity'
+import { AccountingTransactionSchema } from '../accounting/schema'
+import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
+import { cashSettlementMatches } from './cash-settlements'
 
 const MutationCoverageSchema = Schema.Struct({
   mutations: SystemSourceCutSchema.fields.mutations,
@@ -24,12 +27,46 @@ const MutationCoverageSchema = Schema.Struct({
     }),
   ),
 })
+const CapturedAccount = MutationCoverageSchema.fields.accounts.value
+const AccountingCoverageSchema = Schema.Struct({
+  accounts: Schema.Array(
+    Schema.Struct({
+      ...CapturedAccount.fields,
+      forward: Schema.Struct({
+        ...CapturedAccount.fields.forward.fields,
+        accountingReceiptsExact: Schema.Boolean,
+        ledgerExact: Schema.Boolean,
+        missingLedgerAccountCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        accountTransactions: Schema.Array(AccountingTransactionSchema),
+        accountCashSettlements: Schema.Array(StoredCashSettlementSchema),
+        accountPositionCounts: Schema.Struct({ reconciledAt: UtcInstantSchema }),
+      }),
+    }),
+  ),
+})
+
+const { sourceHash: _safetySource, ...safetyMaterialFields } = SystemAssessmentInputSchema.fields.safety.fields
+const OperationalSafetyMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.operational-safety-audit.v1'),
+  ...safetyMaterialFields,
+  auditEvidenceHash: Sha256Schema,
+})
+
+export const makeOperationalSafetyAudit = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    OperationalSafetyMaterialSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.flatMap((material) =>
+      canonicalHashV1Result(material).pipe(Result.map((sourceHash) => ({ ...material, sourceHash }))),
+    ),
+  )
 
 export const OperationalAssessmentInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.operational-assessment-input.v1'),
   registration: OperationalRegistrationSchema,
   sourceCutHash: Sha256Schema,
-  safety: SystemAssessmentInputSchema.fields.safety,
+  safety: Schema.Struct({ ...OperationalSafetyMaterialSchema.fields, sourceHash: Sha256Schema }),
 })
 
 export const operationalAssessmentVerdict = (
@@ -78,16 +115,30 @@ export const evaluateOperationalAssessment = (
     if (lastClose === undefined || cut.asOf < lastClose) missing.push('OPEN_REPORTING_PERIOD')
     const accounts = yield* registeredFinancialAccounts(registration, cut.financial)
     const account = accounts.get(JevResearchPolicy.Candidate)
-    if (account === undefined || account.sessions.some((session) => session.facts === null))
-      missing.push('INCOMPLETE_FILL_ACCOUNTING')
+    const accounting = Schema.decodeUnknownResult(AccountingCoverageSchema)(cut.sourceMaterial)
+    const accountingAccount = Result.isSuccess(accounting)
+      ? accounting.success.accounts.find((row) => row.policy === JevResearchPolicy.Candidate)
+      : undefined
     if (
-      account !== undefined &&
-      account.sessions.some(
-        (session) =>
-          session.facts !== null && (session.facts.unsettledFillCount > 0 || session.facts.uncertainMutationCount > 0),
+      account === undefined ||
+      accountingAccount === undefined ||
+      accountingAccount.identity.accountId !== registration.policies[0].riskPolicy.accountId ||
+      accountingAccount.identity.identityHash !==
+        registration.policies[0].capitalAuthorization?.request.broker.identityHash ||
+      !accountingAccount.forward.accountingReceiptsExact ||
+      !accountingAccount.forward.ledgerExact ||
+      accountingAccount.forward.missingLedgerAccountCount !== 0 ||
+      accountingAccount.forward.accountTransactions.some(
+        (trade) =>
+          !cashSettlementMatches(
+            trade,
+            accountingAccount.forward.accountCashSettlements.find((s) => s.data.transactionId === trade.transactionId),
+            accountingAccount.identity.accountId,
+            accountingAccount.forward.accountPositionCounts.reconciledAt,
+          ),
       )
     )
-      missing.push('UNSETTLED_OR_UNCERTAIN_EXECUTION')
+      missing.push('INCOMPLETE_FILL_ACCOUNTING')
     const admissions = yield* decisionAdmissionWitnesses(cut, registration.policies[0].authorityGenerationHash)
     const bound = yield* bindOperationalObligations(
       { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] },
@@ -112,7 +163,11 @@ export const evaluateOperationalAssessment = (
     if (coverageAccount !== undefined && coverageAccount.forward.unresolvedMutationCount > 0)
       missing.push('UNRESOLVED_ACCOUNT_MUTATION')
     const reliability = yield* measureReliability(bound.reliability, false, recoveryEvidenceComplete)
-    const safetyPass = completeSafetyAudit(data.safety, registrationHash, cut.asOf, verifiedSources)
+    const { sourceHash, ...auditMaterial } = data.safety
+    const auditBound =
+      sourceHash === (yield* canonicalHashV1Result(auditMaterial)) && verifiedSources.has(data.safety.auditEvidenceHash)
+    if (!auditBound) missing.push('UNBOUND_SAFETY_AUDIT')
+    const safetyPass = auditBound && completeSafetyAudit(data.safety, registrationHash, cut.asOf, verifiedSources)
     if (!safetyPass && data.safety.violations.length === 0) missing.push('INCOMPLETE_SAFETY_AUDIT')
     const verdict = operationalAssessmentVerdict(
       reliability.status,

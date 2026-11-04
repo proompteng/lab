@@ -17,6 +17,12 @@ import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema
 import { exchangeSessions, isContinuousMarket, marketHoursAreCanonical } from '../market-hours'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { decideAccountProtection } from '../jev/account-protection'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
+import {
+  firstIntradayObservationAtMs,
+  marketCalendarQueryFromSession,
+  selectIntradayExecutionSession,
+} from '../cycle/runner/calendar-decisions'
 
 export const ControllerPassEvidenceSchema = Schema.Struct({
   controllerKey: Sha256Schema,
@@ -183,6 +189,88 @@ const registeredControllerOwns = (
           historicalIdentity === candidate.protocolHash &&
           historicalBehavior === candidate.strategyHash)
     )
+  })
+
+export const closedEntryWindowTimingSupported = (clock: {
+  readonly issued: number
+  readonly evaluated: number
+  readonly available: number
+  readonly decided: number
+  readonly observed: number
+  readonly completed: number
+  readonly witnessed: number
+  readonly entryEligible: boolean
+}) =>
+  !clock.entryEligible &&
+  clock.issued <= clock.evaluated &&
+  clock.evaluated <= clock.decided &&
+  clock.available <= clock.decided &&
+  clock.decided <= clock.observed &&
+  clock.observed <= clock.completed &&
+  clock.completed <= clock.witnessed
+
+/** Reproduce an idle discovery result; a bare closed/healthy tick cannot supply decision evidence. */
+export const closedEntryWindowWork = (
+  pass: ControllerPassEvidence,
+  registration: ScheduledEvaluation,
+  witnessedAt: string,
+) =>
+  Result.gen(function* () {
+    const observation = pass.observation
+    if (
+      registration.calendar.operatingHours !== 'NATIVE' ||
+      observation.result !== 'SUCCESS' ||
+      observation.outcome !== 'WINDOW_CLOSED' ||
+      observation.closedEntryWindow === undefined
+    )
+      return undefined
+    const evidence = observation.closedEntryWindow
+    const runtime = registration.obligations.configuration
+    const policy = yield* makeCycleExecutionPolicyFromModel(runtime.protocol.executionModel)
+    const query = yield* marketCalendarQueryFromSession(evidence.evaluatedAt.slice(0, 10))
+    const session = selectIntradayExecutionSession(evidence.calendar, evidence.executionPolicy, evidence.evaluatedAt)
+    const lockedCalendar = registration.calendar.marketCalendar
+    const sessionDate = evidence.evaluatedAt.slice(0, 10)
+    const actualSession = evidence.calendar.providerSessions.find((s) => s.date === sessionDate) ?? null
+    const lockedSession = lockedCalendar.providerSessions.find((s) => s.date === sessionDate) ?? null
+    const entryEligible =
+      session !== undefined &&
+      firstIntradayObservationAtMs(session, evidence.executionPolicy) <= Date.parse(evidence.evaluatedAt)
+    return {
+      sourceAt: evidence.evaluatedAt,
+      correct:
+        evidence.authorityGenerationHash !== null &&
+        observation.executionIssuedAt !== undefined &&
+        runtime.entryMarkets?.length === 1 &&
+        runtime.entryMarkets[0] === MarketKind.Equity &&
+        evidence.strategyProtocolHash ===
+          registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)?.protocolHash &&
+        evidence.executionPolicy.executionPolicyHash === policy.executionPolicyHash &&
+        (yield* canonicalHashV1Result(evidence.calendar.requestedRange)) === (yield* canonicalHashV1Result(query)) &&
+        (yield* canonicalHashV1Result(actualSession)) === (yield* canonicalHashV1Result(lockedSession)) &&
+        marketHoursAreCanonical(evidence.calendar) &&
+        evidence.calendarRead.status === 200 &&
+        (yield* registeredControllerOwns(
+          pass,
+          registration,
+          evidence.accountId,
+          evidence.authorityGenerationHash,
+          runtime.protocol,
+        )) &&
+        registration.calendar.sessions.some(
+          (s) => s.openAt <= evidence.evaluatedAt && evidence.evaluatedAt < s.closeAt,
+        ) &&
+        closedEntryWindowTimingSupported({
+          issued: Date.parse(observation.executionIssuedAt),
+          evaluated: Date.parse(evidence.evaluatedAt),
+          available: Date.parse(evidence.calendarRead.observedAt),
+          decided: Date.parse(evidence.decidedAt),
+          observed: Date.parse(observation.observedAt),
+          completed: Date.parse(pass.completedAt),
+          witnessed: Date.parse(witnessedAt),
+          entryEligible,
+        }),
+    }
   })
 
 export const entryAbstentionWork = (
