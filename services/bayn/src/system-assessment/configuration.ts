@@ -7,6 +7,7 @@ import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { SystemAssessmentError } from './economics'
+import { executionControllerPlanHash } from '../execution/controller'
 
 /** Only operational settings and public strategy parameters are retained; credentials and endpoints are excluded. */
 export const QualificationRuntimeSchema = Schema.Struct({
@@ -29,7 +30,7 @@ export const qualificationRuntime = (
   protocol: JevProtocol,
 ): Omit<typeof QualificationRuntimeSchema.Type, 'protocol'> & { readonly protocol: JevProtocol } => ({
   schemaVersion: 'bayn.qualification-runtime.v1',
-  controllerPlanHash: config.expectedExecutionControllerPlanHash ?? null,
+  controllerPlanHash: executionControllerPlanHash,
   cyclePollIntervalMs: config.cyclePollIntervalMs,
   operationTimeoutMs: config.operationTimeoutMs,
   reconciliationIntervalMs: config.alpaca.reconciliationIntervalMs,

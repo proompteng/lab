@@ -169,7 +169,7 @@ import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../
 import { formalModelExecutable, runFormalModel as model } from './formal-model.test-support'
 import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { emptySourceCutFixture } from './source-cut.test-support'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { equityTafRate } from '../strategy/execution-model/fees'
 import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strategy/intraday-market'
 
@@ -412,14 +412,16 @@ formal('pinned Lean executable conformance', () => {
                     ...base,
                     asOf: at(10),
                     decisions: [{ sessionDate, document }],
-                    mutations: [start, ...(routed ? [terminal] : [])].map((event) => ({
+                    decisionAdmissions: independent ? [receipt] : [],
+                  },
+                  generation,
+                  indexDecisionAdmissionMutations(
+                    [start, ...(routed ? [terminal] : [])].map((event) => ({
                       event,
                       authorityGenerationHash: generation,
                       strategyDecisionHash: document.bindings.strategyDecisionHash,
                     })),
-                    decisionAdmissions: independent ? [receipt] : [],
-                  },
-                  generation,
+                  ),
                 )
                 const witness = Result.isSuccess(result) ? result.success.witnesses[0] : undefined
                 expected.push(witness === undefined ? null : String(Date.parse(witness.witnessedAt) - origin))

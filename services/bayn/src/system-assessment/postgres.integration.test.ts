@@ -4,7 +4,12 @@ import { operationalRegistrationFixture } from './operational-period.test-suppor
 import { makeOperationalSafetyAudit } from './operational-assessment'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
-import { registerOperationalPeriod, readAssessmentRegistration, assessAndPersistOperational } from './postgres'
+import {
+  registerOperationalPeriod,
+  readAssessmentRegistration,
+  assessAndPersistOperational,
+  readPersistedOperationalAssessment,
+} from './postgres'
 import { historicalRegistrationFixture } from './historical-registration.test-support'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
@@ -43,7 +48,7 @@ import {
   readSystemDurableObservations,
   readSystemDecisionAdmissions,
   readSystemMutationEvidence,
-} from './capture'
+} from './capture-queries'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
 import { OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
 import {
@@ -61,6 +66,9 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
+import { qualificationDeadlines } from './configuration'
+import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
@@ -73,6 +81,17 @@ import {
 
 import { validateSystemRegistration } from './policy'
 import { emptySourceCutFixture } from './source-cut.test-support'
+import {
+  OperationalSourceCutSchema,
+  persistOperationalSourceCut,
+  readOperationalAssessmentSourceCut,
+} from './operational-source-cut'
+import {
+  makeSystemSourceRecord,
+  persistSystemSourceRecord,
+  readSystemSourceRecord,
+  SystemSourceRecordKind,
+} from './source-records'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const role = 'bayn_assessment_test_app'
@@ -160,6 +179,57 @@ postgres('PostgreSQL prospective system qualification', () => {
       )
     })
 
+  test('retains source records once across concurrent archive writes and rejects every history mutation', async () => {
+    const payload = { schemaVersion: 'synthetic-retained-source.v1', evidence: 'complete source bytes '.repeat(1000) }
+    const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Decision, payload))
+    const stored = await runtime.runPromise(
+      Effect.all([asApplication(persistSystemSourceRecord(record)), asApplication(persistSystemSourceRecord(record))], {
+        concurrency: 2,
+      }),
+    )
+    expect(stored).toEqual([
+      { recordHash: record.recordHash, kind: record.kind, payload },
+      { recordHash: record.recordHash, kind: record.kind, payload },
+    ])
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_source_records`).toEqual([{ count: 1 }])
+        for (const mutation of [
+          sql`UPDATE system_source_records SET payload_text='{}' WHERE record_hash=${record.recordHash}`,
+          sql`DELETE FROM system_source_records WHERE record_hash=${record.recordHash}`,
+          sql`TRUNCATE system_source_records`,
+        ])
+          expect(Exit.isFailure(yield* asApplication(mutation).pipe(Effect.exit))).toBe(true)
+        expect(yield* readSystemSourceRecord(record.recordHash)).toEqual(stored[0])
+      }),
+    )
+  })
+
+  test('archive replay rejects missing, substituted and noncanonical records', async () => {
+    const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, { correct: false }))
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(Exit.isFailure(yield* readSystemSourceRecord(record.recordHash).pipe(Effect.exit))).toBe(true)
+        for (const substituted of [
+          { ...record, recordHash: sha256('substituted source') },
+          { ...record, kind: SystemSourceRecordKind.Decision },
+          { ...record, payloadText: '{ "correct": false }' },
+        ])
+          expect(Exit.isFailure(yield* asApplication(persistSystemSourceRecord(substituted)).pipe(Effect.exit))).toBe(
+            true,
+          )
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_source_records`).toEqual([{ count: 0 }])
+        expect(yield* asApplication(persistSystemSourceRecord(record))).toEqual({
+          recordHash: record.recordHash,
+          kind: record.kind,
+          payload: { correct: false },
+        })
+      }),
+    )
+  })
+
   test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
     const base = operationalRegistrationFixture()
     const definition = base.policies[0]
@@ -230,6 +300,36 @@ postgres('PostgreSQL prospective system qualification', () => {
         return yield* (yield* PgClient.PgClient)`SELECT * FROM authority_generations ORDER BY authority_version`
       }),
     )
+    for (const controllerPlanHash of [null, testHash('unregistered controller plan')]) {
+      const configuration = { ...prospective.obligations.configuration, controllerPlanHash }
+      const unbound = {
+        ...prospective,
+        obligations: {
+          ...prospective.obligations,
+          ...Result.getOrThrow(qualificationDeadlines(configuration)),
+          configuration,
+        },
+      }
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(registerOperationalPeriod(unbound, sources)))),
+      ).toBe(true)
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                yield* sql`INSERT INTO system_qualification_registrations
+          (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
+          VALUES (${testHash(unbound)},${unbound.program},${unbound.attemptIndex},${unbound.priorAttemptHash},
+            ${unbound.registeredAt},${open},${unbound.calendar.sessions[0]!.closeAt},
+            ${Result.getOrThrow(canonicalJsonV1Result(unbound))})`
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
     const saved = await runtime.runPromise(asApplication(registerOperationalPeriod(prospective, sources)))
     expect(await runtime.runPromise(readAssessmentRegistration(saved.registrationHash))).toEqual(prospective)
     expect(Exit.isFailure(await runtime.runPromiseExit(readSystemRegistration(saved.registrationHash)))).toBe(true)
@@ -273,6 +373,58 @@ postgres('PostgreSQL prospective system qualification', () => {
     const result = await runtime.runPromise(asApplication(assessAndPersistOperational(input, sources)))
     expect(result.verdict).toBe('INCONCLUSIVE')
     expect(result.economicQualification).toBe('NOT_ASSESSED')
+    const compact = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
+      ...savedCut.cut,
+      schemaVersion: 'bayn.operational-source-cut.v1',
+      records: [],
+    })
+    const missing = {
+      kind: SystemSourceRecordKind.Controller,
+      sourceId: testHash('missing pass'),
+      recordHash: testHash('missing archive'),
+    }
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(asApplication(persistOperationalSourceCut({ ...compact, records: [missing] }))),
+      ),
+    ).toBe(true)
+    const record = Result.getOrThrow(
+      makeSystemSourceRecord(SystemSourceRecordKind.Controller, { retained: 'database scope check' }),
+    )
+    await runtime.runPromise(asApplication(persistSystemSourceRecord(record)))
+    const reference = { ...missing, recordHash: record.recordHash }
+    for (const records of [[{ ...reference, kind: SystemSourceRecordKind.Decision }], [reference, reference]])
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(asApplication(persistOperationalSourceCut({ ...compact, records }))),
+        ),
+      ).toBe(true)
+    const storedCompact = await runtime.runPromise(asApplication(persistOperationalSourceCut(compact)))
+    expect(await runtime.runPromise(readSystemSourceCut(savedCut.sourceCutHash))).toEqual(savedCut.cut)
+    expect(Exit.isFailure(await runtime.runPromiseExit(readSystemSourceCut(storedCompact.sourceCutHash)))).toBe(true)
+    const replayed = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(storedCompact.sourceCutHash, prospective),
+    )
+    expect('cut' in replayed && replayed.cut).toEqual(compact)
+    const compactResult = await runtime.runPromise(
+      asApplication(assessAndPersistOperational({ ...input, sourceCutHash: storedCompact.sourceCutHash }, sources)),
+    )
+    expect(compactResult.verdict).toBe('INCONCLUSIVE')
+    expect(compactResult.economicQualification).toBe('NOT_ASSESSED')
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(result.assessmentHash))).toEqual(result)
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(compactResult.assessmentHash))).toEqual(
+      compactResult,
+    )
+    const financialRegistration = await runtime.runPromise(asApplication(registerFixture(registration())))
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(
+          asApplication(
+            persistOperationalSourceCut({ ...compact, registrationHash: financialRegistration.registrationHash }),
+          ),
+        ),
+      ),
+    ).toBe(true)
     for (const action of [
       'UPDATE operational_assessment_receipts SET verdict=verdict',
       'DELETE FROM operational_assessment_receipts',
@@ -1368,7 +1520,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               sourceMaterialHash: testHash({}),
             })
             yield* Effect.sleep('2 millis')
-            const at = new Date().toISOString()
+            const at = yield* databaseNow
             const receipt = yield* Schema.decodeUnknownEffect(ReplayExecutionReceiptSchema)({
               schemaVersion: 'bayn.replay-execution-receipt.v1',
               registrationHash: registered.registrationHash,
@@ -1539,6 +1691,66 @@ postgres('PostgreSQL prospective system qualification', () => {
     await runtime.runPromise(Effect.sleep(Math.max(0, opens - Date.now() + 10)))
     return { registered, definition, account, opens }
   }
+
+  test('projection witnesses its committed completion without waiting for the next controller tick', async () => {
+    const { registered } = await activeEvaluation()
+    const planHash = registered.registration.obligations.configuration.controllerPlanHash
+    if (planHash === null) throw new Error('Missing controller plan')
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ExecutionControllerStatusStore
+        const sql = yield* PgClient.PgClient
+        const at = yield* databaseNow
+        const status = {
+          schemaVersion: 1 as const,
+          controllerKey: sha256('identity'),
+          planHash,
+          active: true,
+          epoch: 1,
+          nextSequence: 1,
+          lastSequence: 0,
+          lastOutcome: ExecutionControllerOutcome.Waiting,
+          lastReceiptHash: sha256('independently witnessed completion'),
+          completedAt: at,
+          nextDueAt: new Date(Date.parse(at) + 30_000).toISOString(),
+          lastPass: { result: 'SUCCESS' as const, outcome: 'WINDOW_CLOSED' as const, observedAt: at },
+        }
+        expect((yield* store.project(status))._tag).toBe('Applied')
+        const first = yield* readSystemDurableObservations(registered.registrationHash)
+        const witness = first.find((row) => row.kind === 'CONTROLLER' && row.sourceHash === status.lastReceiptHash)
+        expect(witness).toBeDefined()
+        expect(witness?.sourceAt).toBe(at)
+        expect(Date.parse(witness?.witnessedAt ?? at)).toBeLessThanOrEqual(
+          Date.parse(at) + registered.registration.obligations.decisionWindowMs,
+        )
+        expect((yield* store.project(status))._tag).toBe('Replayed')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* store.read(status.controllerKey)).toEqual(status)
+        expect(
+          (yield* readSystemControllerPasses(status.controllerKey, planHash, at, at, yield* databaseNow)).map(
+            (pass) => pass.receiptHash,
+          ),
+        ).toEqual([status.lastReceiptHash])
+        const next = { ...status, nextSequence: 2, lastSequence: 1, lastReceiptHash: sha256('rolled back completion') }
+        const rolledBack = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* store.project(next)
+              expect(
+                (yield* readSystemDurableObservations(registered.registrationHash)).some(
+                  (row) => row.sourceHash === next.lastReceiptHash,
+                ),
+              ).toBe(false)
+              return yield* Effect.fail('rollback')
+            }),
+          ),
+        )
+        expect(Exit.isFailure(rolledBack)).toBe(true)
+        expect(yield* store.read(status.controllerKey)).toEqual(status)
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+      }).pipe(Effect.provide(ExecutionControllerStatusStoreLive)),
+    )
+  })
 
   test('an active evaluation witnesses only committed account evidence and retains the first durable observation', async () => {
     const { registered, definition, account, opens } = await activeEvaluation()
