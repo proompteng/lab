@@ -500,7 +500,6 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             runtimeConfiguration,
             accounts,
             decisions,
-            batches,
             mutations,
             orders,
             protectionIntents,
