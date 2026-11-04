@@ -48,7 +48,12 @@ import {
   reconciliationExactness,
 } from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
-import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
+import {
+  executionEvidenceFromRows,
+  indexExecutionEvidence,
+  marketVolumeRequestsFromRows,
+  verifyPerformanceDecisions,
+} from './projection'
 
 export const readForwardPerformanceUnclosedCycleCount = (
   sql: PgClient.PgClient,
@@ -923,6 +928,7 @@ export const readForwardPerformancePostgres = (
             occurredAt: row.occurred_at.toISOString(),
           }),
         )
+        const executionIndex = indexExecutionEvidence(executionIntentRows, executionOrderRows, executionFillRows)
         const unverified = new Set<string>()
         const executionEvidence: ForwardPerformanceExecutionEvidence[] = []
         yield* consumeDecisionRows((input) =>
@@ -930,14 +936,7 @@ export const readForwardPerformancePostgres = (
             const row = yield* Schema.decodeUnknownEffect(CycleDecisionRow, strictParseOptions)(input)
             const verified = verifyPerformanceDecisions([row])
             for (const hash of verified.unverifiedDecisionHashes) unverified.add(hash)
-            executionEvidence.push(
-              ...executionEvidenceFromRows(
-                verified.verifiedRows,
-                executionIntentRows,
-                executionOrderRows,
-                executionFillRows,
-              ),
-            )
+            executionEvidence.push(...executionEvidenceFromRows(verified.verifiedRows, executionIndex))
           }),
         )
         const unverifiedDecisionHashes = [...unverified].sort()
