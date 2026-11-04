@@ -62,6 +62,8 @@ import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
+import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
@@ -1570,6 +1572,66 @@ postgres('PostgreSQL prospective system qualification', () => {
     await runtime.runPromise(Effect.sleep(Math.max(0, opens - Date.now() + 10)))
     return { registered, definition, account, opens }
   }
+
+  test('projection witnesses its committed completion without waiting for the next controller tick', async () => {
+    const { registered } = await activeEvaluation()
+    const planHash = registered.registration.obligations.configuration.controllerPlanHash
+    if (planHash === null) throw new Error('Missing controller plan')
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ExecutionControllerStatusStore
+        const sql = yield* PgClient.PgClient
+        const at = yield* databaseNow
+        const status = {
+          schemaVersion: 1 as const,
+          controllerKey: sha256('identity'),
+          planHash,
+          active: true,
+          epoch: 1,
+          nextSequence: 1,
+          lastSequence: 0,
+          lastOutcome: ExecutionControllerOutcome.Waiting,
+          lastReceiptHash: sha256('independently witnessed completion'),
+          completedAt: at,
+          nextDueAt: new Date(Date.parse(at) + 30_000).toISOString(),
+          lastPass: { result: 'SUCCESS' as const, outcome: 'WINDOW_CLOSED' as const, observedAt: at },
+        }
+        expect((yield* store.project(status))._tag).toBe('Applied')
+        const first = yield* readSystemDurableObservations(registered.registrationHash)
+        const witness = first.find((row) => row.kind === 'CONTROLLER' && row.sourceHash === status.lastReceiptHash)
+        expect(witness).toBeDefined()
+        expect(witness?.sourceAt).toBe(at)
+        expect(Date.parse(witness?.witnessedAt ?? at)).toBeLessThanOrEqual(
+          Date.parse(at) + registered.registration.obligations.decisionWindowMs,
+        )
+        expect((yield* store.project(status))._tag).toBe('Replayed')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* store.read(status.controllerKey)).toEqual(status)
+        expect(
+          (yield* readSystemControllerPasses(status.controllerKey, planHash, at, at, yield* databaseNow)).map(
+            (pass) => pass.receiptHash,
+          ),
+        ).toEqual([status.lastReceiptHash])
+        const next = { ...status, nextSequence: 2, lastSequence: 1, lastReceiptHash: sha256('rolled back completion') }
+        const rolledBack = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* store.project(next)
+              expect(
+                (yield* readSystemDurableObservations(registered.registrationHash)).some(
+                  (row) => row.sourceHash === next.lastReceiptHash,
+                ),
+              ).toBe(false)
+              return yield* Effect.fail('rollback')
+            }),
+          ),
+        )
+        expect(Exit.isFailure(rolledBack)).toBe(true)
+        expect(yield* store.read(status.controllerKey)).toEqual(status)
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+      }).pipe(Effect.provide(ExecutionControllerStatusStoreLive)),
+    )
+  })
 
   test('an active evaluation witnesses only committed account evidence and retains the first durable observation', async () => {
     const { registered, definition, account, opens } = await activeEvaluation()

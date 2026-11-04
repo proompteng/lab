@@ -45,6 +45,11 @@ read-only status expectation is not that identity and cannot replace or remove i
 or substituted plan bindings. Earlier registrations and receipts retain their original contents and results;
 the first operational attempt with a missing plan remains incomplete or failed rather than being rewritten.
 
+Controller projection observes the committed status in a separate database statement before returning.
+This supplies a durability witness without waiting for another trading tick. The observation cannot witness
+its own transaction or released savepoint; rolled-back and deferred-rejected sources remain unwitnessed.
+Repeated observations preserve the first witness and the original completion time, epoch, sequence and deadline.
+
 The native schedule keeps globally aligned signal and reconciliation times. One exact post-due reconciliation may
 complete several pending checks for the same account; each check retains its own original freshness deadline, and
 a late reconciliation cannot repair an expired obligation. Starting a report does not restart the
