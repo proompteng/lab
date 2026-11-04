@@ -7,9 +7,10 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
   UtcInstantSchema,
+  Sha256Schema,
 } from '../../schemas'
-import type { EquityProviderSession } from '../../equity-hours'
 import type { BrokerProvider } from '../connection'
+import type { EquityProviderSession } from '../../equity-hours'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
 
@@ -384,25 +385,6 @@ export interface AssetObservation {
   readonly normalizedResponseHash: string
 }
 
-export interface MarketCalendarSession {
-  readonly date: string
-  readonly openAt: string
-  readonly closeAt: string
-}
-
-export interface MarketCalendarObservation {
-  readonly schemaVersion: typeof marketCalendarSchemaVersion
-  readonly source: typeof marketCalendarSource
-  readonly requestedRange: {
-    readonly start: string
-    readonly end: string
-  }
-  readonly timeZone: 'UTC'
-  readonly sessions: readonly MarketCalendarSession[]
-  readonly providerSessions: readonly EquityProviderSession[]
-  readonly normalizedResponseHash: string
-}
-
 export const MarketCalendarProviderSessionSchema = Schema.Struct({
   date: IsoDate,
   regularOpenAt: UtcInstantSchema,
@@ -410,6 +392,30 @@ export const MarketCalendarProviderSessionSchema = Schema.Struct({
   sessionOpenAt: UtcInstantSchema,
   sessionCloseAt: UtcInstantSchema,
 })
+
+export const MarketCalendarObservationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(marketCalendarSchemaVersion),
+  source: Schema.Literal(marketCalendarSource),
+  requestedRange: Schema.Struct({ start: IsoDate, end: IsoDate }),
+  timeZone: Schema.Literal('UTC'),
+  sessions: Schema.Array(Schema.Struct({ date: IsoDate, openAt: UtcInstantSchema, closeAt: UtcInstantSchema })),
+  providerSessions: Schema.Array(MarketCalendarProviderSessionSchema),
+  normalizedResponseHash: Sha256Schema,
+})
+export interface MarketCalendarSession {
+  readonly date: string
+  readonly openAt: string
+  readonly closeAt: string
+}
+export interface MarketCalendarObservation {
+  readonly schemaVersion: typeof marketCalendarSchemaVersion
+  readonly source: typeof marketCalendarSource
+  readonly requestedRange: { readonly start: string; readonly end: string }
+  readonly timeZone: 'UTC'
+  readonly sessions: readonly MarketCalendarSession[]
+  readonly providerSessions: readonly EquityProviderSession[]
+  readonly normalizedResponseHash: string
+}
 
 export interface OrdersQuery {
   readonly status?: OrderCollection
