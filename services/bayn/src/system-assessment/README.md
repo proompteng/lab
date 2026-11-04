@@ -72,6 +72,12 @@ can certify economic qualification or grant capital. Operational safety audit ar
 registration, evidence cut, violations and verified scan-evidence hash. A verified unrelated file cannot certify zero violations. An operating period's dated scope does not establish behavior
 outside that period or substitute for the required native equity-opening verification.
 
+Operational capture validates every inference source, frozen quote and native ledger prefix before retaining source
+fingerprints and complete quote and ledger evidence. It omits raw inference bodies from the operational cut; economics
+remain `NOT_ASSESSED`. Financial capture retains each complete inference request once, with its source fingerprint in
+the accounting material. Session reads paginate all retained cost records rather than rejecting sessions above a
+fixed record count. Immutable source tables and earlier cuts and assessment receipts remain unchanged.
+
 ## Realism
 
 `measureRealism` verifies causal input availability, persistence and routing order, position ownership, fixed order
