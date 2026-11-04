@@ -24,7 +24,7 @@ import {
   systemControllerPassQuery,
   systemDecisionQuery,
 } from './capture-queries'
-import { qualificationRuntime } from './configuration'
+import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { decisionMarketScopeSupported } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
@@ -84,14 +84,17 @@ export const captureOperationalSourceCut = (
       const identity = config.execution.brokerIdentity
       const first = registration.calendar.sessions[0]
       const last = registration.calendar.sessions.at(-1)
-      const runtimeConfiguration = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
-      const runtimeConfigurationHash = yield* Effect.fromResult(canonicalHashV1Result(runtimeConfiguration))
+      const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
+        captureQualificationRuntime(
+          qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol())),
+          registration.obligations,
+        ),
+      )
       if (
         identity === undefined ||
         identity.environment !== BrokerEnvironment.Sandbox ||
         first === undefined ||
-        last === undefined ||
-        runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash
+        last === undefined
       )
         return yield* new SystemAssessmentError({
           message: 'Operational capture requires the registered PAPER runtime and calendar',

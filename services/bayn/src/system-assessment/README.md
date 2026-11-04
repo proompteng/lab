@@ -159,6 +159,8 @@ A persisted historical registration with a null controller plan also keeps that 
 builder supplies the native plan, whether its entry scope is present or absent. Capture still queries the registered
 null plan, so it cannot borrow native controller observations. Non-null plans, scoped entry markets, and all other
 runtime fields retain exact hash checks. New operational registration admission still requires the native plan.
+The native operational archive path applies the same compatibility check before reading account evidence and retains
+the matching runtime shape in its source material. A historical null plan still selects no native controller records.
 
 IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
 the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
