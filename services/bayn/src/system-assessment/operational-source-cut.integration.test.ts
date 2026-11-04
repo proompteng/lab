@@ -252,6 +252,8 @@ postgres('replayed operational source records', () => {
         true,
       )
     },
+    // Full native document construction and canonical replay must finish before the next schema reset.
+    30000,
   )
 
   test.each(['success', 'failure', 'interruption'] as const)('removes private spool files after %s', async (mode) => {
