@@ -349,7 +349,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
                 ),
               )
               expect(
-                yield* sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
+                yield* sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_snapshot_%'`,
               ).toEqual([{ count: 0 }])
               return captured
             }),
@@ -387,7 +387,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       await runtime.runPromise(
         Effect.flatMap(
           PgClient.PgClient,
-          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
+          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_snapshot_%'`,
         ),
       ),
     ).toEqual([{ count: 0 }])
@@ -406,7 +406,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       await runtime.runPromise(
         Effect.flatMap(
           PgClient.PgClient,
-          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
+          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_snapshot_%'`,
         ),
       ),
     ).toEqual([{ count: 0 }])

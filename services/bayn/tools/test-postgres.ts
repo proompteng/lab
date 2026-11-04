@@ -13,6 +13,7 @@ const files = [
   'src/db/available-history-migration.integration.test.ts',
   'src/execution/writer-fence.integration.test.ts',
   'src/db/postgres-backend-tracing.integration.test.ts',
+  'src/db/snapshot-rows.integration.test.ts',
   'src/db/broker-observations.integration.test.ts',
   'src/cycle/store/observability.integration.test.ts',
   'src/db/execution-store.integration.test.ts',
@@ -39,6 +40,7 @@ const files = [
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',
   'src/system-assessment/postgres.integration.test.ts',
+  'src/system-assessment/operational-source-cut.integration.test.ts',
 ]
 const [shard = '1/1', ...extra] = process.argv.slice(2)
 if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
