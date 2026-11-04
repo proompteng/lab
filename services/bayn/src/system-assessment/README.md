@@ -116,6 +116,13 @@ reset the attempt history. These functions require verified audit and allocation
 
 ## Evidence and assessment
 
+Source cuts retain each complete batch once in `batches`; the provenance material does not copy those payloads.
+Earlier cuts retain their original bytes and hashes. The private reporting command runs on the API workload,
+with a 3 GiB Node heap inside its 4 GiB memory limit, separately from the native trading controller.
+Stream command output to a private file. A local capacity measurement using 540 copies of one retained
+514 KB batch exceeded Node's string limit with duplicate payloads. A single copy serialized 279 MB with a
+2.62 GiB process peak. This is reporting capacity evidence, not trading or reliability qualification.
+
 `captureSystemSourceCut` reads the registered accounts and authority generations, financial and inference records,
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
