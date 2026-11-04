@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn slot_memory_covers_the_guest_and_artifact_copy() {
+    fn slot_memory_covers_guest_ram_host_cache_and_artifact_copy() {
         fn bytes(quantity: &str) -> u64 {
             for (suffix, multiplier) in [("Gi", 1_u64 << 30), ("Mi", 1_u64 << 20)] {
                 if let Some(number) = quantity.strip_suffix(suffix) {
@@ -288,7 +288,8 @@ mod tests {
             limit,
             bytes(&resources.requests.as_ref().unwrap()["memory"].0)
         );
-        assert!(limit >= (u64::from(crate::crd::MEMORY_MIB) << 20) + (1 << 30));
+        // An awake production guest exhausted 9 GiB with 2.1 GiB of charged file cache.
+        assert!(limit >= (u64::from(crate::crd::MEMORY_MIB) << 20) + (4 << 30));
         let copier = &spec.init_containers.as_ref().unwrap()[0];
         let copy_memory = &copier.resources.as_ref().unwrap().limits.as_ref().unwrap()["memory"].0;
         let artifacts = spec
