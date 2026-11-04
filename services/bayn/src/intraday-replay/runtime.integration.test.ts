@@ -40,10 +40,12 @@ import { IntentStore } from '../execution/intents/domain'
 import { IntentStoreLive } from '../execution/intents/postgres'
 import { BlockedCycleIntentStore, BlockedCycleIntentStoreError } from '../execution/intents/blocked-cycle'
 import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
-import { MutationStore, MutationStoreError } from '../execution/mutations/model'
+import { MutationEventType, MutationStore, MutationStoreError } from '../execution/mutations/model'
 import { MutationStoreLive } from '../execution/mutations/program'
 import { SubmissionDenialReason } from '../execution/submission-denial'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { classifyCancelResponse, prepareCancel } from '../broker/alpaca-mutations/decisions'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
@@ -132,6 +134,9 @@ durableTest.each(
       'failed-model-response',
       'recovery',
       'recovery-filled',
+      'accepted-cancel-terminal',
+      'accepted-cancel-open',
+      'accepted-cancel-lookup-failed',
       'early-exit',
       'partial-exit-reentry',
       'measured-exit',
@@ -174,6 +179,7 @@ durableTest.each(
               ? 'fill'
               : mode
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
+    const acceptedCancel = scenario.startsWith('accepted-cancel-')
     const admissionRace = scenario.startsWith('entry-lease-')
     const latencyStress = scenario.startsWith('latency-stress-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -615,7 +621,7 @@ durableTest.each(
             latencyMs: 10,
             slippageBps: slippedExit ? 1 : 0,
             availableLiquidityPpm:
-              scenario === 'recovery' || scenario === 'measured-zero-fill-reentry'
+              scenario === 'recovery' || acceptedCancel || scenario === 'measured-zero-fill-reentry'
                 ? 1
                 : partialEntryReentry
                   ? 100000
@@ -1283,7 +1289,7 @@ durableTest.each(
           }
           return { _tag: 'Coverage' as const }
         }
-        if (scenario === 'recovery' || scenario === 'recovery-filled') {
+        if (scenario === 'recovery' || scenario === 'recovery-filled' || acceptedCancel) {
           const advanceBy = (ms: number) =>
             Effect.gen(function* () {
               const next = (yield* Clock.currentTimeMillis) + ms
@@ -1360,6 +1366,44 @@ durableTest.each(
             ),
           )
           const reconciliationConflicts = new Set<string>()
+          const cancelRecoveryCalls = { submit: 0, cancel: 0, lookup: 0 }
+          const recoveryRead = {
+            ...broker.read,
+            orderByClientId: (clientOrderId: string) =>
+              Effect.gen(function* () {
+                cancelRecoveryCalls.lookup += 1
+                if (scenario === 'accepted-cancel-lookup-failed')
+                  return yield* new BrokerReadError({
+                    operation: 'order-by-client-id',
+                    kind: BrokerReadErrorKind.Transport,
+                    message: 'Injected cancel recovery lookup failure',
+                    retryable: true,
+                  })
+                return yield* broker.read.orderByClientId(clientOrderId)
+              }),
+          }
+          const cancelRecoveryBroker = {
+            ...broker.mutation,
+            submit: (...args: Parameters<typeof broker.mutation.submit>) =>
+              Effect.sync(() => {
+                cancelRecoveryCalls.submit += 1
+              }).pipe(Effect.andThen(broker.mutation.submit(...args))),
+            cancel: (brokerOrderId: string) =>
+              Effect.gen(function* () {
+                cancelRecoveryCalls.cancel += 1
+                if (scenario !== 'accepted-cancel-open') return yield* broker.mutation.cancel(brokerOrderId)
+                // The simulated endpoint acknowledges the request while the simulated order remains working.
+                // A successful DELETE response alone must never be treated as a terminal order observation.
+                return yield* Effect.fromResult(
+                  classifyCancelResponse({
+                    ...Result.getOrThrow(prepareCancel(brokerOrderId)),
+                    status: 204,
+                    requestId: 'accepted-cancel-open-fixture',
+                    observedAt: yield* currentUtcInstant,
+                  }),
+                )
+              }),
+          }
           let lostResponses = 0
           const submitResponseLost = yield* Deferred.make<void>()
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
@@ -1393,7 +1437,7 @@ durableTest.each(
                 },
                 execution: {
                   currentUtcInstant,
-                  brokerRead: broker.read,
+                  brokerRead: acceptedCancel ? recoveryRead : broker.read,
                   brokerMutation: loseResponse
                     ? {
                         ...broker.mutation,
@@ -1408,7 +1452,9 @@ durableTest.each(
                             Effect.andThen(Effect.never),
                           ),
                       }
-                    : broker.mutation,
+                    : acceptedCancel
+                      ? cancelRecoveryBroker
+                      : broker.mutation,
                   intentStore: intents,
                   mutationStore: mutations,
                   writerFence: fence,
@@ -1443,8 +1489,118 @@ durableTest.each(
                 owner: (value) => Deferred.succeed(published, value).pipe(Effect.andThen(Effect.never)),
               })(driver).pipe(Effect.provideContext(resources), Effect.forkChild({ startImmediately: true }))
               const owned = yield* Deferred.await(published)
-              return { owner, advance: owned.advance.pipe(Effect.provideContext(resources)) }
+              return {
+                owner,
+                program: engine.executionProgram,
+                advance: owned.advance.pipe(Effect.provideContext(resources)),
+              }
             })
+          if (acceptedCancel) {
+            const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation')
+            for (let pass = 0; pass < 20 && cancelRecoveryCalls.submit === 0; pass++) {
+              yield* advanceBy(1000)
+              yield* healthy.advance
+            }
+            expect(cancelRecoveryCalls.submit).toBe(1)
+            const [entry] = yield* sql<{
+              intent_id: string
+            }>`SELECT intent_id FROM intents WHERE account_id=${accountId}`
+            if (entry === undefined) throw new Error('Missing accepted-cancel fixture entry')
+            const accepted = yield* healthy.program.cancel(entry.intent_id, 1000)
+            expect(accepted.eventType).toBe(MutationEventType.CancelAccepted)
+            expect(yield* sql`SELECT state, terminal_outcome FROM intents WHERE intent_id=${entry.intent_id}`).toEqual([
+              { state: 'ACKNOWLEDGED', terminal_outcome: null },
+            ])
+            const history = yield* sql`SELECT * FROM mutation_events ORDER BY event_id`
+            const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(
+              runtime.authorityGenerationHash,
+            )
+            const lookupBeforePreflight = cancelRecoveryCalls.lookup
+            yield* advanceBy(1000)
+            const discrepancy = yield* runtime.reconcile
+            expect(discrepancy.report.reconciliation.status).toBe(ReconciliationStatus.Discrepancy)
+            expect(discrepancy.report.reconciliation.discrepancies.some(({ kind }) => kind === 'MUTATION')).toBe(true)
+            expect(discrepancy.riskContext.unknownMutationCount).toBe(1)
+            expect(cancelRecoveryCalls.lookup).toBe(lookupBeforePreflight)
+            const restricted = yield* readAuthority
+            expect(restricted).toMatchObject({
+              generationHash: runtime.authorityGenerationHash,
+              maximum: Authority.Execution,
+              effective: Authority.Observe,
+              kill: KillState.Active,
+            })
+            expect(yield* settle).toEqual({ _tag: 'NotRequired' })
+            expect(yield* readAuthority).toEqual(restricted)
+            yield* healthy.advance
+            yield* Fiber.join(healthy.owner)
+
+            const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+            const lookupBeforeRecovery = cancelRecoveryCalls.lookup
+            const found = yield* recovery.program.recover(entry.intent_id, MutationOperation.Cancel)
+            expect(cancelRecoveryCalls.lookup).toBe(lookupBeforeRecovery + 1)
+            expect(found.eventType).toBe(
+              scenario === 'accepted-cancel-lookup-failed'
+                ? MutationEventType.RecoveryUnknown
+                : MutationEventType.RecoveryFound,
+            )
+            // A lookup may resolve the intent, but it must not clear the restriction or grant a new generation.
+            expect(yield* readAuthority).toEqual(restricted)
+            expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+            if (scenario !== 'accepted-cancel-terminal') {
+              for (let pass = 0; pass < 3; pass++) {
+                yield* advanceBy(1000)
+                yield* recovery.advance
+                expect(yield* readAuthority).toMatchObject({
+                  generationHash: runtime.authorityGenerationHash,
+                  effective: Authority.Observe,
+                  kill: KillState.Active,
+                })
+                expect(yield* sql`SELECT count(*)::int AS count FROM intents WHERE state='TERMINAL'`).toEqual([
+                  { count: 0 },
+                ])
+                expect((yield* runtime.reconcile).riskContext.unknownMutationCount).toBe(1)
+                expect(yield* settle).toEqual({ _tag: 'NotRequired' })
+              }
+              yield* Fiber.interrupt(recovery.owner)
+            } else {
+              expect(
+                yield* sql`SELECT state, terminal_outcome FROM intents WHERE intent_id=${entry.intent_id}`,
+              ).toEqual([{ state: 'TERMINAL', terminal_outcome: 'CANCELED' }])
+              const replay = yield* recovery.program.recover(entry.intent_id, MutationOperation.Cancel)
+              expect(replay.eventId).toBe(found.eventId)
+              expect(cancelRecoveryCalls.lookup).toBe(lookupBeforeRecovery + 1)
+              yield* advanceBy(1)
+              const exact = yield* runtime.reconcile
+              expect(exact.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+              expect(exact.riskContext.unknownMutationCount).toBe(0)
+              expect(yield* readAuthority).toEqual(restricted)
+              for (let pass = 0; pass < 20 && recovery.owner.pollUnsafe() === undefined; pass++) {
+                yield* advanceBy(1000)
+                yield* recovery.advance
+              }
+              expect(recovery.owner.pollUnsafe()).toBeDefined()
+              yield* Fiber.join(recovery.owner)
+              expect(yield* readAuthority).toMatchObject({
+                maximum: Authority.Observe,
+                effective: Authority.Observe,
+                kill: KillState.Clear,
+              })
+              expect((yield* readAuthority).generationHash).not.toBe(runtime.authorityGenerationHash)
+              expect(yield* settle).toEqual({ _tag: 'NotRequired' })
+            }
+            expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
+            expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 1 }])
+            expect((yield* broker.snapshot).fills).toHaveLength(0)
+            expect((yield* broker.snapshot).ledger.positions).toHaveLength(0)
+            expect(
+              yield* store.authorityGeneration.readResearchAuthorityGeneration(runtime.authorityGenerationHash),
+            ).toEqual(generation)
+            const retained = yield* sql`SELECT * FROM mutation_events ORDER BY event_id`
+            expect(
+              retained.filter((event) => history.some((original) => original['event_id'] === event['event_id'])),
+            ).toEqual([...history])
+            return { _tag: 'Recovery' as const }
+          }
           const deadlineClock = yield* TestClock.make()
           yield* Deferred.await(submitResponseLost).pipe(
             Effect.andThen(deadlineClock.adjust(3000)),
