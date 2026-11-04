@@ -11,6 +11,14 @@ This restriction ships through the normal immutable main image and Kargo/Argo pa
 change the risk limits, reset financial history or revoke PAPER capital. The deployed `/v1/status` response reports
 `tradingScope.entryMarkets: ["EQUITY"]`; retained crypto cycles report recovery-only or closed entry scope.
 
+## Private evidence reporting
+
+Run the private forward-performance command in the API workload, separately from the native controller.
+The API workload retains its existing CPU allocation and 256 MiB memory request; its 4 GiB memory limit supports
+large immutable evidence cuts. Use a 3 GiB Node heap for that command and stream stdout to a private file.
+A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The native controller's resource limits,
+original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
+
 ## Jev-only inference
 
 Protocol v37 moves CHART and conditional BASE_START to pinned Jev 1.13 image assets. The final proposal judgments
