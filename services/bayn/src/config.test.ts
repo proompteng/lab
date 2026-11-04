@@ -14,8 +14,10 @@ import {
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
-import { executionControllerConfig, executionControllerPlanHash } from './composition/native-execution-runtime'
+import { executionControllerConfig } from './composition/native-execution-runtime'
+import { executionControllerPlanHash } from './execution/controller'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
+import { qualificationRuntime } from './system-assessment/configuration'
 import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
@@ -461,6 +463,19 @@ describe('runtime configuration loading', () => {
       username: 'bayn',
       password: Redacted.make('secret'),
     })
+  })
+
+  test('reporting binds the native controller plan without an optional read-only status expectation', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.delete('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
+    const config = await Effect.runPromise(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment))
+    expect(config.expectedExecutionControllerPlanHash).toBeUndefined()
+    const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
+    expect(qualificationRuntime(config, protocol).controllerPlanHash).toBe(executionControllerPlanHash)
+    expect(
+      qualificationRuntime({ ...config, expectedExecutionControllerPlanHash: '6'.repeat(64) }, protocol)
+        .controllerPlanHash,
+    ).toBe(executionControllerPlanHash)
   })
 
   test('keeps strategy and controller identities independent of stale historical settings', async () => {
