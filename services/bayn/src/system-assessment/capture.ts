@@ -33,6 +33,7 @@ import { executableBid, readValuationQuotes } from './valuation-quotes'
 import { captureExecutionOrders, captureExecutionFills } from './execution-evidence'
 import { readSystemExecutionOrders, readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
 import { executionOrderPlans } from './execution-plans'
+import { captureInferenceSnapshot } from './inference-capture'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -350,18 +351,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                 )
                 const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
                 return {
-                  ...snapshot,
-                  evidence: {
-                    ...snapshot.evidence,
-                    requests: snapshot.evidence.requests.map(
-                      ({
-                        requestSchemaVersion: _version,
-                        sourceFingerprint: _fingerprint,
-                        stages: _stages,
-                        ...source
-                      }) => source,
-                    ),
-                  },
+                  ...captureInferenceSnapshot(snapshot, registration.program),
                   ledger,
                 }
               }),
@@ -491,6 +481,10 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               candidate.authorityGenerationHash,
             ),
           )
+          const sourceAccounts = accounts.map(({ inferenceSnapshots, ...account }) => ({
+            ...account,
+            inferenceSnapshots: inferenceSnapshots.map(({ source, ledger }) => ({ ...source, ledger })),
+          }))
           const sourceMaterial = {
             captureBuild: {
               sourceRevision: config.build.sourceRevision,
@@ -498,7 +492,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               imageDigest: config.build.imageDigest,
             },
             runtimeConfiguration,
-            accounts,
+            accounts: sourceAccounts,
             decisions,
             mutations,
             orders,
@@ -515,10 +509,12 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             asOf,
             runtimeConfigurationHash,
             financial: accounts.map((account) => account.financial),
-            inference: accounts.flatMap((account) => account.inferenceSnapshots.map((snapshot) => snapshot.evidence)),
+            inference: accounts.flatMap((account) =>
+              account.inferenceSnapshots.flatMap((snapshot) => (snapshot.evidence === null ? [] : [snapshot.evidence])),
+            ),
             inferenceLedgerEvidenceHash: yield* Effect.fromResult(
               canonicalHashV1Result(
-                accounts.map((account) => ({
+                sourceAccounts.map((account) => ({
                   policy: account.policy,
                   snapshots: account.inferenceSnapshots,
                 })),
