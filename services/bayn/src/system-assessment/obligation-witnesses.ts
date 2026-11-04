@@ -2,13 +2,20 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
-import type { SystemRegistration } from './policy'
+import type { ScheduledEvaluation } from './policy'
 import { ObligationClass, type ScheduledObligationSchema } from './reliability'
 import type { SystemSourceCut } from './source-cut'
 
 type Witness = SystemSourceCut['durableObservations'][number]
 type Obligation = typeof ScheduledObligationSchema.Type
 type Work = { readonly sourceAt: string; readonly correct: boolean }
+
+export const reconciliationCompletionSupported = (clock: {
+  readonly due: number
+  readonly deadline: number
+  readonly observed: number
+  readonly witnessed: number
+}) => clock.due <= clock.observed && clock.observed <= clock.witnessed && clock.witnessed <= clock.deadline
 
 export const earliestDurableWitnesses = (cut: SystemSourceCut) => {
   const earliest = new Map<string, Witness>()
@@ -28,7 +35,7 @@ export const earliestDurableWitnesses = (cut: SystemSourceCut) => {
 /** Join each witness once to its scheduled time bucket or admitted mutation identity. */
 export const indexObligationWitnesses = (
   cut: SystemSourceCut,
-  registration: SystemRegistration,
+  registration: ScheduledEvaluation,
   schedule: readonly Obligation[],
   controllerWork: ReadonlyMap<string, Work & { readonly completedAt: string }>,
   documentWork: ReadonlyMap<string, Work | undefined>,
@@ -102,6 +109,25 @@ export const indexObligationWitnesses = (
         else high = middle
       }
       const obligation = obligations[low - 1]
+      if (kind === ObligationClass.Reconciliation && registration.calendar.operatingHours === 'NATIVE') {
+        // One exact account observation can complete pending checks; each keeps its original deadline.
+        for (let index = low - 1; index >= 0; index -= 1) {
+          const pending = obligations[index]
+          if (pending === undefined || pending.deadlineAt < sourceAt) break
+          append(
+            pending,
+            witness,
+            witness.correct &&
+              reconciliationCompletionSupported({
+                due: Date.parse(pending.dueAt),
+                deadline: Date.parse(pending.deadlineAt),
+                observed: Date.parse(sourceAt),
+                witnessed: Date.parse(witness.witnessedAt),
+              }),
+          )
+        }
+        continue
+      }
       const interval =
         kind === ObligationClass.Decision
           ? registration.obligations.decisionIntervalMs

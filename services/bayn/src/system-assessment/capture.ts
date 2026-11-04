@@ -1,9 +1,8 @@
+import { readRegisteredFinancialIdentity } from './capital-identity'
 import { executionDecisionRows } from '../db/execution-decision-query'
+import { utcInstantFromEpochMillis } from '../time'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
-import { researchCapitalGenerationIsBoundToBuildLineage } from '../execution/configuration'
-import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
-import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 
 import { canonicalHashV1Result } from '../hash'
 import { readForwardPerformanceInput } from '../forward-performance/program'
@@ -17,15 +16,15 @@ import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
-import { Sha256Schema, SignedMicrosSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
-import { readSystemRegistration } from './postgres'
+import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
+import { readAssessmentRegistration } from './postgres'
 import { SystemAssessmentError } from './economics'
 import { captureForwardFinancialEvidence } from './forward-evidence'
 import { SystemSourceCutSchema, persistSystemSourceCut } from './source-cut'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { qualificationRuntime } from './configuration'
-import { BrokerEnvironment, BrokerIdentitySchema } from '../broker/identity'
-import { registeredMarkIntervalMs, type SystemRegistration } from './policy'
+import { BrokerEnvironment } from '../broker/identity'
+import { registeredMarkIntervalMs } from './policy'
 import { measureControllerLatency } from './controller-latency'
 import { measureFullBatchLatency } from './full-batch-latency'
 import { sourceFitsRegisteredSession } from './decision-work'
@@ -70,90 +69,6 @@ export const readSystemCashObservations = (
     )
   })
 
-export const readRegisteredFinancialIdentity = (definition: SystemRegistration['policies'][number]) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    const rows = yield* Schema.decodeUnknownEffect(
-      Schema.Array(
-        Schema.Struct({
-          identity: BrokerIdentitySchema,
-          riskPolicyHash: Sha256Schema,
-          sourceRevision: StrictNonEmptyStringSchema,
-          imageDigest: StrictNonEmptyStringSchema,
-          strategyHash: Sha256Schema,
-          parametersHash: Sha256Schema,
-          protocolHash: Sha256Schema,
-        }),
-      ),
-    )(
-      yield* sql`SELECT risk_policy_hash AS "riskPolicyHash",
-        activation_source_revision AS "sourceRevision", activation_image_digest AS "imageDigest",
-        strategy_behavior_hash AS "strategyHash", strategy_parameter_hash AS "parametersHash",
-        strategy_protocol_hash AS "protocolHash", jsonb_build_object(
-        'schemaVersion', broker_identity_schema_version, 'provider', broker_provider,
-        'environment', broker_environment, 'accountId', account_id, 'identityHash', broker_identity_hash
-      ) AS identity FROM authority_generations WHERE generation_hash = ${definition.authorityGenerationHash}`,
-    )
-    const row = rows[0]
-    if (row === undefined) return null
-    const accountBindingHash = yield* Effect.fromResult(
-      canonicalHashV1Result({
-        schemaVersion: 'bayn.inference-cost-account.v1',
-        accountId: row.identity.accountId,
-      }),
-    )
-    if (
-      row.identity.environment !== BrokerEnvironment.Sandbox ||
-      row.riskPolicyHash !== definition.riskPolicyHash ||
-      row.strategyHash !== definition.strategyHash ||
-      row.parametersHash !== definition.parametersHash ||
-      row.protocolHash !== definition.protocolHash ||
-      accountBindingHash !== definition.accountBindingHash
-    )
-      return yield* new SystemAssessmentError({
-        message:
-          'Financial capture account, environment, risk policy or generation provenance differs from registration',
-      })
-    const authoredBuildMatches =
-      row.sourceRevision === definition.sourceRevision &&
-      row.imageDigest.replace(/^sha256:/, '') === definition.imageDigest
-    const binding = definition.capitalAuthorization
-    if (!authoredBuildMatches && binding === undefined)
-      return yield* new SystemAssessmentError({
-        message: 'Different execution build requires registered capital lineage',
-      })
-    if (binding !== undefined) {
-      const generation = yield* makeObserveAuthorityInterpreter(
-        sql,
-        makeAuthorityPostgres(sql),
-        row.identity,
-      ).readResearchAuthorityGeneration(definition.authorityGenerationHash)
-      if (generation === undefined)
-        return yield* new SystemAssessmentError({ message: 'Capture capital generation is missing' })
-      if (
-        (yield* Effect.fromResult(canonicalHashV1Result(generation))) !==
-        (yield* Effect.fromResult(canonicalHashV1Result(binding.generation)))
-      )
-        return yield* new SystemAssessmentError({
-          message: 'Registered capital generation differs from durable history',
-        })
-      yield* Effect.fromResult(
-        researchCapitalGenerationIsBoundToBuildLineage(
-          binding.buildLineage,
-          binding.request,
-          {
-            sourceRevision: definition.sourceRevision,
-            imageRepository: binding.buildLineage.activation.imageRepository,
-            imageDigest: `sha256:${definition.imageDigest}`,
-          },
-          generation.previousGenerationHash,
-          generation,
-        ),
-      ).pipe(Effect.mapError((message) => new SystemAssessmentError({ message })))
-    }
-    return row.identity
-  })
-
 export const readSystemBatchEvidence = (accountId: string, generationHash: string, openAt: string, closeAt: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -175,6 +90,12 @@ export const readSystemMutationEvidence = (accountId: string, generationHash: st
     const sql = yield* PgClient.PgClient
     return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema.fields.mutations)(
       yield* sql`
+        WITH latest AS MATERIALIZED (
+          SELECT DISTINCT ON (event.mutation_id) event.mutation_id, event.event_type, event.occurred_at
+          FROM mutation_events AS event JOIN intents AS intent USING (intent_id)
+          WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
+          ORDER BY event.mutation_id, event.sequence DESC
+        )
         SELECT intent.authority_generation_hash AS "authorityGenerationHash", intent.decision_hash AS "strategyDecisionHash", jsonb_strip_nulls(jsonb_build_object(
           'schemaVersion', event.schema_version, 'eventId', event.event_id, 'mutationId', event.mutation_id,
           'intentId', event.intent_id, 'sequence', event.sequence::integer, 'operation', event.operation,
@@ -183,9 +104,10 @@ export const readSystemMutationEvidence = (accountId: string, generationHash: st
           'responseContentHash', event.response_content_hash, 'denialReason', event.denial_reason,
           'occurredAt', to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
           || CASE WHEN event.routing IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('routing', event.routing) END AS event
-        FROM mutation_events AS event JOIN intents AS intent USING (intent_id)
+        FROM mutation_events AS event JOIN intents AS intent USING (intent_id) JOIN latest USING (mutation_id)
         WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
-          AND event.occurred_at >= ${from}::timestamptz
+          AND (latest.occurred_at >= ${from}::timestamptz OR latest.event_type IN (
+            'SUBMIT_STARTED', 'CANCEL_STARTED', 'SUBMIT_UNKNOWN', 'CANCEL_UNKNOWN', 'RECOVERY_UNKNOWN'))
         ORDER BY event.mutation_id, event.sequence`,
     )
   })
@@ -283,7 +205,7 @@ export const readSystemDecisionAdmissions = ({
 export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registrationHash: string) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const registration = yield* readSystemRegistration(registrationHash)
+      const registration = yield* readAssessmentRegistration(registrationHash)
       const runtimeConfiguration = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
       const runtimeConfigurationHash = yield* Effect.fromResult(canonicalHashV1Result(runtimeConfiguration))
       if (runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash)
@@ -531,7 +453,15 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             identity.identityHash,
             registration.obligations.configuration.controllerPlanHash,
             first.openAt,
-            last.closeAt,
+            registration.calendar.operatingHours === 'NATIVE'
+              ? utcInstantFromEpochMillis(
+                  Date.parse(last.closeAt) +
+                    Math.max(
+                      registration.obligations.decisionWindowMs,
+                      registration.obligations.reconciliationFreshnessMs,
+                    ),
+                )
+              : last.closeAt,
             asOf,
           )
           const durableObservations = yield* readSystemDurableObservations(registrationHash)

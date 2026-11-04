@@ -16,6 +16,9 @@ import { continuousMarketHours } from '../../market-hours'
 import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './calendar-decisions'
 import type { CycleRunContext } from './model'
 import { discoverAutonomousCyclePass } from './program'
+import { currentUtcInstant } from '../../time'
+import { retainAutonomousCyclePassObservation } from './pass-decisions'
+import { RetainedAutonomousCyclePassObservationSchema } from './pass-observation'
 
 const forbidden = () => Effect.die(new Error('unexpected discovery side effect'))
 const policy = Result.getOrThrow(
@@ -139,6 +142,61 @@ const fixture = (
 }
 
 describe('unbound pre-submission cycle recovery', () => {
+  test('retains the original admission clock and actual calendar arrival through a closed-window read', async () => {
+    const f = fixture(null)
+    const start = '2026-09-18T13:30:00.000Z'
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(start))
+        const entered = yield* Deferred.make<void>()
+        const attempt = yield* discoverAutonomousCyclePass(context).pipe(
+          Effect.provideService(BrokerRead, {
+            ...f.broker,
+            marketCalendar: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined)
+                yield* Effect.sleep(3500)
+                return {
+                  value: calendar,
+                  evidence: {
+                    requestId: 'delayed-calendar',
+                    status: 200,
+                    contentHash: '6'.repeat(64),
+                    observedAt: yield* currentUtcInstant,
+                  },
+                }
+              }),
+          }),
+          Effect.provideService(CycleStore, f.store),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(3500)
+        return yield* Fiber.join(attempt)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(result.outcome).toBe('WINDOW_CLOSED')
+    if (result.outcome !== 'WINDOW_CLOSED') throw new Error('Expected closed entry window')
+    expect(result.observedAt).toBe(start)
+    expect(result.closedEntryWindow?.calendarRead.observedAt).toBe('2026-09-18T13:30:03.500Z')
+    expect(result.closedEntryWindow?.decidedAt).toBe('2026-09-18T13:30:03.500Z')
+    const retained = retainAutonomousCyclePassObservation({
+      outcome: 'SUCCEEDED',
+      observedAt: '2026-09-18T13:30:03.501Z',
+      result,
+    })
+    expect(Schema.is(RetainedAutonomousCyclePassObservationSchema)(retained)).toBe(true)
+    expect(retained).toMatchObject({
+      closedEntryWindow: {
+        evaluatedAt: start,
+        accountId: context.accountId,
+        authorityGenerationHash: context.authorityGenerationHash,
+        calendar,
+      },
+    })
+    expect(f.acquisitions()).toBe(0)
+  })
+
   test.each([
     BrokerReadErrorKind.Timeout,
     BrokerReadErrorKind.Transport,
