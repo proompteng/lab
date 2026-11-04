@@ -4,11 +4,16 @@ import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentInputSchema, completeSafetyAudit } from './assessment'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { controllerBuildMatchesRegistration } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
-import { bindOperationalObligations, verifyRetainedOperationalV1Obligations } from './operational-obligations'
+import {
+  bindOperationalObligations,
+  bindOperationalWork,
+  verifyRetainedOperationalV1Obligations,
+} from './operational-obligations'
+import { isVerifiedOperationalSourceCut, type VerifiedOperationalSourceCut } from './operational-source-cut'
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
 import { measureReliability, ObligationOutcome, ReliabilityStatus } from './reliability'
 import type { SystemSourceCut } from './source-cut'
@@ -95,7 +100,7 @@ export const operationalAssessmentVerdict = (
 /** Reproduce counters from committed witnesses; callers cannot submit successful-event totals. */
 export const evaluateOperationalAssessment = (
   input: unknown,
-  cut: SystemSourceCut,
+  evidence: SystemSourceCut | VerifiedOperationalSourceCut,
   verifiedSources: ReadonlySet<string>,
 ) =>
   Schema.decodeUnknownResult(
@@ -103,13 +108,13 @@ export const evaluateOperationalAssessment = (
     strictParseOptions,
   )(input).pipe(
     Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
-    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, cut, verifiedSources)),
+    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, evidence, verifiedSources)),
   )
 
 /** Reproduce immutable receipts under their original input contract; admission only accepts the current version. */
 export const verifyStoredOperationalAssessment = (
   input: unknown,
-  cut: SystemSourceCut,
+  evidence: SystemSourceCut | VerifiedOperationalSourceCut,
   verifiedSources: ReadonlySet<string>,
 ) =>
   Schema.decodeUnknownResult(
@@ -117,16 +122,22 @@ export const verifyStoredOperationalAssessment = (
     strictParseOptions,
   )(input).pipe(
     Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
-    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, cut, verifiedSources)),
+    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, evidence, verifiedSources)),
   )
 
 const evaluateDecodedOperationalAssessment = (
   data: typeof StoredOperationalAssessmentInputSchema.Type,
-  cut: SystemSourceCut,
+  evidence: SystemSourceCut | VerifiedOperationalSourceCut,
   verifiedSources: ReadonlySet<string>,
 ) =>
   Result.gen(function* () {
     const current = data.schemaVersion === 'bayn.operational-assessment-input.v2'
+    const cut = isVerifiedOperationalSourceCut(evidence) ? evidence.cut : evidence
+    if (
+      isVerifiedOperationalSourceCut(evidence) &&
+      evidence.buildBinding !== (current ? 'CURRENT' : 'RETAINED_OPERATIONAL_V1')
+    )
+      return yield* Result.fail(new SystemAssessmentError({ message: 'Operational source replay policy differs' }))
     const { registration, registrationHash } = yield* validateOperationalRegistration(data.registration)
     if (
       cut.registrationHash !== registrationHash ||
@@ -174,13 +185,18 @@ const evaluateDecodedOperationalAssessment = (
       )
     )
       missing.push('INCOMPLETE_FILL_ACCOUNTING')
-    const admissions = yield* decisionAdmissionWitnesses(cut, registration.policies[0].authorityGenerationHash)
+    const admissions = isVerifiedOperationalSourceCut(evidence)
+      ? evidence.admissions
+      : yield* decisionAdmissionWitnesses(
+          evidence,
+          registration.policies[0].authorityGenerationHash,
+          indexDecisionAdmissionMutations(evidence.mutations),
+        )
+    const durableObservations = [...cut.durableObservations, ...admissions.witnesses]
     const bind = current ? bindOperationalObligations : verifyRetainedOperationalV1Obligations
-    const bound = yield* bind(
-      { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] },
-      registration,
-      data.sourceCutHash,
-    )
+    const bound = isVerifiedOperationalSourceCut(evidence)
+      ? yield* bindOperationalWork({ ...cut, durableObservations }, registration, data.sourceCutHash, evidence.work)
+      : yield* bind({ ...evidence, durableObservations }, registration, data.sourceCutHash)
     if (current) {
       const completions = new Map(bound.reliability.completions.map((row) => [row.obligationId, row]))
       let requiredThroughAt = lastClose ?? cut.asOf
@@ -192,19 +208,28 @@ const evaluateDecodedOperationalAssessment = (
             : obligation.deadlineAt
         if (resolvedAt > requiredThroughAt) requiredThroughAt = resolvedAt
       }
-      for (const pass of cut.controllerPasses) {
+      const unboundBuilds = isVerifiedOperationalSourceCut(evidence)
+        ? evidence.unboundControllerBuilds
+        : evidence.controllerPasses
+            .filter((pass) => !controllerBuildMatchesRegistration(pass, registration))
+            .map((pass) => ({
+              receiptHash: pass.receiptHash,
+              completedAt: pass.completedAt,
+              executionIssuedAt: pass.observation.executionIssuedAt,
+              observedAt: pass.observation.observedAt,
+            }))
+      for (const pass of unboundBuilds) {
         // Capture retains deadline tails. A known later tick cannot invalidate work already durably completed.
-        const issuedAt = pass.observation.executionIssuedAt
+        const issuedAt = pass.executionIssuedAt
         if (
           issuedAt !== undefined &&
           issuedAt > requiredThroughAt &&
-          issuedAt <= pass.observation.observedAt &&
-          pass.observation.observedAt <= pass.completedAt &&
+          issuedAt <= pass.observedAt &&
+          pass.observedAt <= pass.completedAt &&
           pass.completedAt <= cut.asOf
         )
           continue
-        if (!controllerBuildMatchesRegistration(pass, registration))
-          missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
+        missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
       }
     }
     const coverage = Schema.decodeUnknownResult(MutationCoverageSchema)(cut.sourceMaterial)
