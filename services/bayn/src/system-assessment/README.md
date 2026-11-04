@@ -110,6 +110,9 @@ reset the attempt history. These functions require verified audit and allocation
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
 or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
+Runtime capture preserves the original unscoped hash of historical financial registrations that omit `entryMarkets`.
+All originally committed runtime fields must still match; registrations that include entry scope retain its exact
+hash commitment. Capture stores the matching runtime shape without rewriting the immutable registration.
 
 IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
 the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
