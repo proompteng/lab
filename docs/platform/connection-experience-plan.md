@@ -2,8 +2,9 @@
 
 Status: gateway isolation, workspace policy, the independent admin portal, access requests, one-action Kubernetes
 Connect, HTTP/CLI/upstream MCP drivers, and shared provider OAuth2 with product/admin return flows are deployed.
-The deployed source passed native identity and platform qualification. Standalone OpenCode returned real Kubernetes
-status, logs and events on 2026-11-03; final signed-in Tengri and portal acceptance remain pending. See the
+The deployed source passed native identity and platform qualification. Signed-in Tengri and standalone OpenCode
+returned real Kubernetes status, logs and events on 2026-11-03. Portal SSO, all eight administration pages, phone
+layouts and passkey verification during a running Tengri turn passed. See the
 [administration acceptance boundary](admin-portal-acceptance.md#delivery-and-live-acceptance-gate).
 Provider registration defaults to empty: qualification uses a controlled TLS provider without onboarding an external account.
 

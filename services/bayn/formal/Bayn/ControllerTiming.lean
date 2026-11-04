@@ -5,6 +5,24 @@ import Lean.Elab.Tactic.Omega
 
 namespace Bayn
 
+/-- This checks retained build claims; receipt authenticity is a separate evidence requirement. -/
+def controllerBuildBound (registeredSource registeredDigest workerSource workerDigest : Option String) : Bool :=
+  match registeredSource, registeredDigest, workerSource, workerDigest with
+  | some rs, some rd, some ws, some wd => rs == ws && rd == wd
+  | _, _, _, _ => false
+
+theorem controller_build_bound_requires_both_identities
+    (rs rd ws wd : Option String) (bound : controllerBuildBound rs rd ws wd = true) :
+    rs = ws ∧ rd = wd ∧ rs.isSome = true ∧ rd.isSome = true := by
+  cases rs <;> cases rd <;> cases ws <;> cases wd <;> simp_all [controllerBuildBound]
+
+theorem missing_worker_build_cannot_bind (rs rd : Option String) :
+    controllerBuildBound rs rd none none = false := by
+  cases rs <;> cases rd <;> rfl
+
+example : controllerBuildBound (some "source") (some "image") (some "source") (some "image") = true ∧
+    controllerBuildBound (some "source") (some "image") (some "foreign") (some "image") = false := by decide
+
 structure ControllerClock where
   issuedAt : Int
   observedAt : Int

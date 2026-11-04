@@ -4,7 +4,8 @@ import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import type { AutonomousCycle } from '../cycle/model'
+import { CycleState, type AutonomousCycle } from '../cycle/model'
+import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import {
   CycleDecisionBuildError,
   CycleRunnerError,
@@ -392,16 +393,33 @@ export const executionEvidenceContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
-/** A known future signal boundary may shorten one durable wait, without accelerating missing-data retries. */
+/** Recheck usable entry admissions without sleeping through late inputs; projection failures retain their backoff. */
 export const decisionReadinessContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
 ): number | undefined => {
+  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.readiness === undefined) return undefined
+  const query = result.readiness.snapshotQuery
+  const pendingSnapshot =
+    result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
+    query?.previousWindowEndAt !== undefined &&
+    Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt)
+  if (result.readiness.reason === DecisionReadinessReason.InferenceExpired || pendingSnapshot) {
+    const now = Date.parse(observedAt)
+    const cycle = result.cycle
+    const expiresAt = unusedEntryExpiresAt(cycle)
+    return cycle.state === CycleState.Active &&
+      cycle.bindings.snapshotId === undefined &&
+      cycle.bindings.decisionHash === undefined &&
+      now >= Math.max(Date.parse(cycle.createdAt), Date.parse(cycle.window.submissionOpenAt)) &&
+      now < expiresAt
+      ? pendingSnapshot
+        ? Math.min(1_000, normalDelayMs, expiresAt - now)
+        : 1
+      : undefined
+  }
   if (
-    result.outcome !== 'RECOVERED' ||
-    result.action !== 'WAITING' ||
-    result.readiness === undefined ||
     (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
       result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved) ||
     result.readiness.availableAt === undefined
@@ -664,7 +682,13 @@ const makeRecoveryFirstCycleDriverEffect = (
                 nextWakeAt: new Date(Date.parse(observedAt) + delay).toISOString(),
               }
             }
-            return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
+            return continuation === undefined
+              ? advanced
+              : {
+                  ...advanced,
+                  nextDelayMs: continuation,
+                  nextWakeAt: new Date(Date.parse(observedAt) + continuation).toISOString(),
+                }
           }),
         )
       }),

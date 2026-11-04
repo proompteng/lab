@@ -18,6 +18,7 @@ import {
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlan } from '../app'
+import type { ExecutionBuild } from '../build'
 import {
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
@@ -35,10 +36,10 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
+  executionControllerPlanHash,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
-import { sha256 } from '../hash'
 import {
   type RecoveryFirstCycleAdvance,
   type RecoveryFirstCycleDriver,
@@ -70,12 +71,6 @@ export interface NativeExecutionRuntimeResource {
 
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
   operationTimeoutMs * 5
-
-/**
- * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
- * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
- */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner/model').CycleRunnerError>
@@ -119,6 +114,7 @@ export const executionControllerConfig = (
 
 const bindRecoveryFirstCycleDriver = (
   driver: RecoveryFirstCycleDriver,
+  executionBuild: ExecutionBuild,
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
@@ -184,6 +180,7 @@ const bindRecoveryFirstCycleDriver = (
           ...advanced,
           observation: {
             ...advanced.observation,
+            executionBuild,
             jevObservationReferences: { hashes: [...hashes].sort(), complete },
           },
         }
@@ -193,9 +190,9 @@ const bindRecoveryFirstCycleDriver = (
   )
 
 export const captureRecoveryFirstCycleDriver =
-  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverOwner =>
+  (slot: RecoveryFirstCycleDriverSlot, executionBuild: ExecutionBuild): RecoveryFirstCycleDriverOwner =>
   (driver) =>
-    bindRecoveryFirstCycleDriver(driver).pipe(
+    bindRecoveryFirstCycleDriver(driver, executionBuild).pipe(
       Effect.flatMap((bound) =>
         Ref.set(slot.state, { _tag: 'Ready', driver: bound }).pipe(
           Effect.andThen(Deferred.succeed(slot.ready, undefined)),
@@ -476,7 +473,11 @@ const logEffect = (
 
 const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
-    ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
+    ownCycleDriver: captureRecoveryFirstCycleDriver(slot, {
+      sourceRevision: plan.config.build.sourceRevision,
+      imageRepository: plan.config.build.imageRepository,
+      imageDigest: plan.config.build.imageDigest,
+    }),
   }).pipe(
     Effect.flatMap(({ runtime }) => prepareAutonomousApplication(runtime)),
     Effect.flatMap(({ cycleFiber }) =>

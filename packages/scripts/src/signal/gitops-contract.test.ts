@@ -174,6 +174,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.intraday_trades_v1',
       'GRANT SELECT ON signal.intraday_features_v1',
       'GRANT SELECT ON signal.crypto_market_events_v1',
+      'GRANT SELECT ON signal.webull_research_events_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])

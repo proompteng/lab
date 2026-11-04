@@ -16,8 +16,6 @@ import { IsoDateSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from './s
 import type { WriterFenceService } from './execution/writer-fence'
 import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
 
-const maximumRequests = 10_000
-
 enum SnapshotRowKind {
   Cut = 'CUT',
   Request = 'REQUEST',
@@ -79,18 +77,14 @@ export const readInferenceExpenseSnapshot = (
             DECLARE ${cursor} NO SCROLL CURSOR WITHOUT HOLD FOR
             WITH cut AS (
               SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
-                (SELECT count(*)::integer FROM (
-                  SELECT 1 FROM jev_evaluation_requests AS request
+                (SELECT count(*)::integer FROM jev_evaluation_requests AS request
                   JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
                   WHERE cycle.account_id = ${scope.accountId}
                     AND cycle.execution_session_date = ${scope.sessionDate}::date
-                  LIMIT ${maximumRequests + 1}
-                ) AS requests) AS request_count,
-                (SELECT count(*)::integer FROM (
-                  SELECT 1 FROM inference_expense_quotes
+                ) AS request_count,
+                (SELECT count(*)::integer FROM inference_expense_quotes
                   WHERE account_id = ${scope.accountId} AND session_date = ${scope.sessionDate}::date
-                  LIMIT ${maximumRequests + 1}
-                ) AS quotes) AS quote_count
+                ) AS quote_count
             )
             SELECT cut.as_of, cut.request_count, cut.quote_count, 'CUT'::text AS kind, NULL::jsonb AS payload FROM cut
             UNION ALL
@@ -119,7 +113,6 @@ export const readInferenceExpenseSnapshot = (
                 LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
                 WHERE cycle.account_id = ${scope.accountId}
                   AND cycle.execution_session_date = ${scope.sessionDate}::date
-                LIMIT ${maximumRequests + 1}
               ) AS item
             UNION ALL
             SELECT cut.as_of, cut.request_count, cut.quote_count, 'QUOTE', to_jsonb(item)
@@ -128,7 +121,7 @@ export const readInferenceExpenseSnapshot = (
                   to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
                 FROM inference_expense_quotes
                 WHERE account_id = ${scope.accountId} AND session_date = ${scope.sessionDate}::date
-                ORDER BY quote_hash COLLATE "C" LIMIT ${maximumRequests + 1}
+                ORDER BY quote_hash COLLATE "C"
               ) AS item
           `
           const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
@@ -140,15 +133,7 @@ export const readInferenceExpenseSnapshot = (
             )
             if (batch.length === 0) break
             for (const row of batch) {
-              if (row.request_count > maximumRequests || row.quote_count > maximumRequests)
-                return yield* new InferenceCostError({
-                  message: 'Inference cost read exceeded its complete-report limit',
-                })
               if (row.kind === SnapshotRowKind.Request) {
-                if (requests.length === maximumRequests)
-                  return yield* new InferenceCostError({
-                    message: 'Inference cost read exceeded its complete-report limit',
-                  })
                 requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
               }
             }

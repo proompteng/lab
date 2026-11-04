@@ -1,11 +1,15 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
 
+import { executionControllerPlanHash } from '../execution/controller'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
-import { validateSystemRegistration, verifyStoredSystemRegistration } from './policy'
+import { validateSystemRegistration, verifyStoredSystemRegistration, type ScheduledEvaluation } from './policy'
+import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
+import { evaluateOperationalAssessment, OperationalAssessmentInputSchema } from './operational-assessment'
+import { readRegisteredFinancialIdentity } from './capital-identity'
 import { readSystemSourceCut } from './source-cut'
 import { bindSystemSourceCut } from './bind-source'
 import { SystemAssessmentInputSchema } from './assessment'
@@ -19,7 +23,7 @@ import { readReplayExecutionReceipt, type ReplayExecutionReceiptSchema } from '.
 
 export const ProgramHistorySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.system-qualification-history.v1'),
-  program: Schema.Literal('BAYN_SYSTEM_QUALIFICATION'),
+  program: Schema.Literals(['BAYN_SYSTEM_QUALIFICATION', 'BAYN_OPERATIONAL_RELIABILITY']),
   historySourceHash: Sha256Schema,
   auditedAt: UtcInstantSchema,
   attempts: Schema.Array(
@@ -71,6 +75,38 @@ export const registerSystemQualification = (input: unknown, verifiedSources: Rea
       return yield* new SystemAssessmentError({
         message: 'Registration requires verified cost allocation basis artifacts before the first open',
       })
+    return yield* persistProspectiveRegistration(registration, registrationHash)
+  }).pipe(Effect.mapError(boundaryError('Prospective system registration failed')))
+
+export const registerOperationalPeriod = (input: unknown, verifiedSources: ReadonlySet<string>) =>
+  Effect.gen(function* () {
+    const { registration, registrationHash } = yield* Effect.fromResult(validateOperationalRegistration(input))
+    if (registration.obligations.configuration.controllerPlanHash !== executionControllerPlanHash)
+      return yield* new SystemAssessmentError({
+        message: 'Operational registration requires the native controller plan',
+      })
+    if (
+      [registration.calendar.sourceHash, ...registration.retainedIncidentSources].some(
+        (hash) => !verifiedSources.has(hash),
+      )
+    )
+      return yield* new SystemAssessmentError({
+        message: 'Operational registration requires verified scope and retained incident evidence',
+      })
+    if ((yield* readRegisteredFinancialIdentity(registration.policies[0])) === null)
+      return yield* new SystemAssessmentError({
+        message: 'Operational registration requires its existing durable capital generation',
+      })
+    return yield* persistProspectiveRegistration(registration, registrationHash)
+  }).pipe(Effect.mapError(boundaryError('Prospective operational registration failed')))
+
+const persistProspectiveRegistration = <
+  R extends ScheduledEvaluation & { readonly priorAttemptHash: string; readonly registeredAt: string },
+>(
+  registration: R,
+  registrationHash: string,
+) =>
+  Effect.gen(function* () {
     const schedule = yield* Effect.fromResult(registeredSchedule(registration))
     if (
       schedule.some(
@@ -106,7 +142,7 @@ export const registerSystemQualification = (input: unknown, verifiedSources: Rea
     return { registrationHash, registration }
   }).pipe(Effect.mapError(boundaryError('Prospective system registration failed')))
 
-export const readSystemRegistration = (hash: string) =>
+export const readAssessmentRegistration = (hash: string) =>
   Effect.gen(function* () {
     const registrationHash = yield* Schema.decodeUnknownEffect(Sha256Schema)(hash)
     const sql = yield* PgClient.PgClient
@@ -115,11 +151,72 @@ export const readSystemRegistration = (hash: string) =>
     )
     const row = rows[0]
     if (row === undefined) return yield* new SystemAssessmentError({ message: 'System registration does not exist' })
-    const result = yield* Effect.fromResult(verifyStoredSystemRegistration(row.payload))
+    const result = Schema.is(OperationalRegistrationSchema)(row.payload)
+      ? yield* Effect.fromResult(validateOperationalRegistration(row.payload))
+      : yield* Effect.fromResult(verifyStoredSystemRegistration(row.payload))
     if (result.registrationHash !== registrationHash)
       return yield* new SystemAssessmentError({ message: 'Stored registration hash differs from its contents' })
     return result.registration
   }).pipe(Effect.mapError(boundaryError('System registration read failed')))
+
+export const readSystemRegistration = (hash: string) =>
+  readAssessmentRegistration(hash).pipe(
+    Effect.flatMap((registration) =>
+      registration.program === 'BAYN_SYSTEM_QUALIFICATION'
+        ? Effect.succeed(registration)
+        : Effect.fail(
+            new SystemAssessmentError({ message: 'An operational period cannot establish economic qualification' }),
+          ),
+    ),
+  )
+
+export const assessAndPersistOperational = (input: unknown, verifiedSources: ReadonlySet<string>) =>
+  Effect.gen(function* () {
+    const decoded = yield* Schema.decodeUnknownEffect(OperationalAssessmentInputSchema, strictParseOptions)(input)
+    const cut = yield* readSystemSourceCut(decoded.sourceCutHash)
+    const assessment = yield* Effect.fromResult(evaluateOperationalAssessment(decoded, cut, verifiedSources))
+    yield* readAssessmentRegistration(assessment.registrationHash)
+    const material = { ...assessment, verifiedSourceHashes: [...verifiedSources].sort() }
+    const assessmentHash = yield* Effect.fromResult(canonicalHashV1Result(material))
+    const text = yield* Effect.fromResult(canonicalJsonV1Result(material))
+    const inputText = yield* Effect.fromResult(canonicalJsonV1Result(decoded))
+    const sql = yield* PgClient.PgClient
+    yield* sql`INSERT INTO operational_assessment_receipts(assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+      VALUES (${assessmentHash}, ${assessment.registrationHash}, ${assessment.sourceCutHash}, ${assessment.asOf}, ${assessment.verdict}, ${inputText}, ${text})
+      ON CONFLICT (assessment_hash) DO NOTHING`
+    return yield* readPersistedOperationalAssessment(assessmentHash)
+  }).pipe(Effect.mapError(boundaryError('Operational assessment persistence failed')))
+
+export const readPersistedOperationalAssessment = (hash: string) =>
+  Effect.gen(function* () {
+    const assessmentHash = yield* Schema.decodeUnknownEffect(Sha256Schema)(hash)
+    const sql = yield* PgClient.PgClient
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          input: OperationalAssessmentInputSchema,
+          verifiedSourceHashes: Schema.Array(Sha256Schema),
+        }),
+      ),
+    )(
+      yield* sql`SELECT input_text::jsonb AS input, assessment_text::jsonb->'verifiedSourceHashes' AS "verifiedSourceHashes"
+    FROM operational_assessment_receipts WHERE assessment_hash=${assessmentHash}`,
+    )
+    const row = rows[0]
+    if (row === undefined)
+      return yield* new SystemAssessmentError({ message: 'Operational assessment receipt does not exist' })
+    const cut = yield* readSystemSourceCut(row.input.sourceCutHash)
+    const assessment = yield* Effect.fromResult(
+      evaluateOperationalAssessment(row.input, cut, new Set(row.verifiedSourceHashes)),
+    )
+    yield* readAssessmentRegistration(assessment.registrationHash)
+    const material = { ...assessment, verifiedSourceHashes: row.verifiedSourceHashes }
+    if ((yield* Effect.fromResult(canonicalHashV1Result(material))) !== assessmentHash)
+      return yield* new SystemAssessmentError({
+        message: 'Recomputed operational assessment differs from its immutable receipt',
+      })
+    return { ...material, assessmentHash }
+  }).pipe(Effect.mapError(boundaryError('Operational assessment verification failed')))
 
 export const assessAndPersistSystem = (
   input: unknown,
