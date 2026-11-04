@@ -137,9 +137,7 @@ const evaluateDecodedOperationalAssessment = (
       isVerifiedOperationalSourceCut(evidence) &&
       evidence.buildBinding !== (current ? 'CURRENT' : 'RETAINED_OPERATIONAL_V1')
     )
-      return yield* Result.fail(
-        new SystemAssessmentError({ message: 'Operational replay differs from its assessment policy' }),
-      )
+      return yield* Result.fail(new SystemAssessmentError({ message: 'Operational source replay policy differs' }))
     const { registration, registrationHash } = yield* validateOperationalRegistration(data.registration)
     if (
       cut.registrationHash !== registrationHash ||
@@ -187,7 +185,6 @@ const evaluateDecodedOperationalAssessment = (
       )
     )
       missing.push('INCOMPLETE_FILL_ACCOUNTING')
-    const bind = current ? bindOperationalObligations : verifyRetainedOperationalV1Obligations
     const admissions = isVerifiedOperationalSourceCut(evidence)
       ? evidence.admissions
       : yield* decisionAdmissionWitnesses(
@@ -196,6 +193,7 @@ const evaluateDecodedOperationalAssessment = (
           indexDecisionAdmissionMutations(evidence.mutations),
         )
     const durableObservations = [...cut.durableObservations, ...admissions.witnesses]
+    const bind = current ? bindOperationalObligations : verifyRetainedOperationalV1Obligations
     const bound = isVerifiedOperationalSourceCut(evidence)
       ? yield* bindOperationalWork({ ...cut, durableObservations }, registration, data.sourceCutHash, evidence.work)
       : yield* bind({ ...evidence, durableObservations }, registration, data.sourceCutHash)
@@ -210,21 +208,28 @@ const evaluateDecodedOperationalAssessment = (
             : obligation.deadlineAt
         if (resolvedAt > requiredThroughAt) requiredThroughAt = resolvedAt
       }
-      for (const pass of isVerifiedOperationalSourceCut(evidence)
-        ? evidence.controllerEvidence
-        : evidence.controllerPasses) {
+      const unboundBuilds = isVerifiedOperationalSourceCut(evidence)
+        ? evidence.unboundControllerBuilds
+        : evidence.controllerPasses
+            .filter((pass) => !controllerBuildMatchesRegistration(pass, registration))
+            .map((pass) => ({
+              receiptHash: pass.receiptHash,
+              completedAt: pass.completedAt,
+              executionIssuedAt: pass.observation.executionIssuedAt,
+              observedAt: pass.observation.observedAt,
+            }))
+      for (const pass of unboundBuilds) {
         // Capture retains deadline tails. A known later tick cannot invalidate work already durably completed.
-        const issuedAt = pass.observation.executionIssuedAt
+        const issuedAt = pass.executionIssuedAt
         if (
           issuedAt !== undefined &&
           issuedAt > requiredThroughAt &&
-          issuedAt <= pass.observation.observedAt &&
-          pass.observation.observedAt <= pass.completedAt &&
+          issuedAt <= pass.observedAt &&
+          pass.observedAt <= pass.completedAt &&
           pass.completedAt <= cut.asOf
         )
           continue
-        if (!controllerBuildMatchesRegistration(pass, registration))
-          missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
+        missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
       }
     }
     const coverage = Schema.decodeUnknownResult(MutationCoverageSchema)(cut.sourceMaterial)

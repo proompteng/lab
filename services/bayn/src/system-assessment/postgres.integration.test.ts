@@ -85,7 +85,6 @@ import {
   OperationalSourceCutSchema,
   persistOperationalSourceCut,
   readOperationalAssessmentSourceCut,
-  readRetainedOperationalAssessmentSourceCut,
 } from './operational-source-cut'
 import {
   makeSystemSourceRecord,
@@ -375,33 +374,39 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(result.verdict).toBe('INCONCLUSIVE')
     expect(result.economicQualification).toBe('NOT_ASSESSED')
     expect(result.evaluationPolicy).toBe('bayn.operational-build-binding.v1')
-    const legacyInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
-    const legacy = {
-      ...Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, savedCut.cut, sources)),
-      verifiedSourceHashes: [...sources].sort(),
-    }
-    const legacyHash = testHash(legacy)
-    const legacyText = Result.getOrThrow(canonicalJsonV1Result(legacy))
-    const legacyInputText = Result.getOrThrow(canonicalJsonV1Result(legacyInput))
-    // Seed the immutable row as the old application wrote it; current admission must not accept its contract.
-    await runtime.runPromise(
-      asApplication(
-        Effect.gen(function* () {
-          yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
+    const assertLegacyReadback = async (sourceCutHash: string, currentAssessmentHash: string) => {
+      const legacyInput = { ...input, sourceCutHash, schemaVersion: 'bayn.operational-assessment-input.v1' }
+      const evidence = await runtime.runPromise(
+        readOperationalAssessmentSourceCut(sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
+      )
+      const legacy = {
+        ...Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, evidence, sources)),
+        verifiedSourceHashes: [...sources].sort(),
+      }
+      const legacyHash = testHash(legacy)
+      const legacyText = Result.getOrThrow(canonicalJsonV1Result(legacy))
+      const legacyInputText = Result.getOrThrow(canonicalJsonV1Result(legacyInput))
+      // Seed the immutable row as the old application wrote it; current admission must not accept its contract.
+      await runtime.runPromise(
+        asApplication(
+          Effect.gen(function* () {
+            yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
             (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
             VALUES (${legacyHash}, ${legacy.registrationHash}, ${legacy.sourceCutHash}, ${legacy.asOf},
               ${legacy.verdict}, ${legacyInputText}, ${legacyText})`
-        }),
-      ),
-    )
-    expect(await runtime.runPromise(readPersistedOperationalAssessment(legacyHash))).toEqual({
-      ...legacy,
-      assessmentHash: legacyHash,
-    })
-    expect(legacyHash).not.toBe(result.assessmentHash)
-    expect(
-      Exit.isFailure(await runtime.runPromiseExit(asApplication(assessAndPersistOperational(legacyInput, sources)))),
-    ).toBe(true)
+          }),
+        ),
+      )
+      expect(await runtime.runPromise(readPersistedOperationalAssessment(legacyHash))).toEqual({
+        ...legacy,
+        assessmentHash: legacyHash,
+      })
+      expect(legacyHash).not.toBe(currentAssessmentHash)
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(assessAndPersistOperational(legacyInput, sources)))),
+      ).toBe(true)
+    }
+    await assertLegacyReadback(savedCut.sourceCutHash, result.assessmentHash)
     const compact = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
       ...savedCut.cut,
       schemaVersion: 'bayn.operational-source-cut.v1',
@@ -472,7 +477,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(unboundResult.missing).toContain(`UNBOUND_CONTROLLER_BUILD:${unboundPass.receiptHash}`)
     const retainedArchiveInput = { ...unboundInput, schemaVersion: 'bayn.operational-assessment-input.v1' }
     const retainedArchive = await runtime.runPromise(
-      readRetainedOperationalAssessmentSourceCut(unboundCut.sourceCutHash, prospective),
+      readOperationalAssessmentSourceCut(unboundCut.sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
     )
     const retainedArchiveMaterial = {
       ...Result.getOrThrow(verifyStoredOperationalAssessment(retainedArchiveInput, retainedArchive, sources)),
@@ -508,6 +513,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(await runtime.runPromise(readPersistedOperationalAssessment(compactResult.assessmentHash))).toEqual(
       compactResult,
     )
+    await assertLegacyReadback(storedCompact.sourceCutHash, compactResult.assessmentHash)
     const financialRegistration = await runtime.runPromise(asApplication(registerFixture(registration())))
     expect(
       Exit.isFailure(

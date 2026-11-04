@@ -7,10 +7,9 @@ import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import {
   ControllerPassEvidenceSchema,
-  controllerBuildEvidence,
+  controllerBuildMatchesRegistration,
   decisionMarketScopeSupported,
   type ControllerBuildBindingPolicy,
-  type ControllerBuildEvidence,
 } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
@@ -66,7 +65,12 @@ export type VerifiedOperationalSourceCut = {
   readonly [verified]: true
   readonly cut: OperationalSourceCut
   readonly buildBinding: ControllerBuildBindingPolicy
-  readonly controllerEvidence: readonly ControllerBuildEvidence[]
+  readonly unboundControllerBuilds: readonly {
+    readonly receiptHash: string
+    readonly completedAt: string
+    readonly executionIssuedAt: string | undefined
+    readonly observedAt: string
+  }[]
   readonly work: Parameters<typeof bindOperationalWork>[3]
   readonly admissions: Result.Result.Success<ReturnType<typeof decisionAdmissionWitnesses>>
 }
@@ -103,13 +107,10 @@ const readController = (reference: SourceReference) =>
     return pass
   })
 
-export const replayOperationalSourceRecords = (cut: OperationalSourceCut, registration: OperationalRegistration) =>
-  replayOperationalSourceRecordsForPolicy(cut, registration, 'CURRENT')
-
-const replayOperationalSourceRecordsForPolicy = (
+export const replayOperationalSourceRecords = (
   cut: OperationalSourceCut,
   registration: OperationalRegistration,
-  buildBinding: ControllerBuildBindingPolicy,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Effect.gen(function* () {
     const decisions = new Map<string, SourceReference>()
@@ -176,12 +177,18 @@ const replayOperationalSourceRecordsForPolicy = (
       string,
       NonNullable<Result.Result.Success<ReturnType<typeof registeredControllerWork>>>
     >()
+    const unboundControllerBuilds: VerifiedOperationalSourceCut['unboundControllerBuilds'][number][] = []
     const witnesses = earliestDurableWitnesses(cut)
-    const controllerEvidence: ControllerBuildEvidence[] = []
     for (const reference of controllers.values()) {
       const pass = yield* readController(reference)
-      // Provenance covers every authenticated pass, including those that cannot complete an obligation.
-      controllerEvidence.push(controllerBuildEvidence(pass))
+      // Retain only small provenance/timing evidence, including passes with no durable work witness.
+      if (!controllerBuildMatchesRegistration(pass, registration))
+        unboundControllerBuilds.push({
+          receiptHash: pass.receiptHash,
+          completedAt: pass.completedAt,
+          executionIssuedAt: pass.observation.executionIssuedAt,
+          observedAt: pass.observation.observedAt,
+        })
       const witness = witnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
       if (witness === undefined) continue
       const entryReference =
@@ -198,23 +205,16 @@ const replayOperationalSourceRecordsForPolicy = (
       [verified]: true,
       cut,
       buildBinding,
-      controllerEvidence,
+      unboundControllerBuilds,
       work: { documentWork, controllerWork },
       admissions,
     } satisfies VerifiedOperationalSourceCut
   })
 
-export const readOperationalAssessmentSourceCut = (hash: string, registration: OperationalRegistration) =>
-  readOperationalAssessmentSourceCutForPolicy(hash, registration, 'CURRENT')
-
-/** Only immutable v1 receipt verification may select the retained matching contract. */
-export const readRetainedOperationalAssessmentSourceCut = (hash: string, registration: OperationalRegistration) =>
-  readOperationalAssessmentSourceCutForPolicy(hash, registration, 'RETAINED_OPERATIONAL_V1')
-
-const readOperationalAssessmentSourceCutForPolicy = (
+export const readOperationalAssessmentSourceCut = (
   hash: string,
   registration: OperationalRegistration,
-  buildBinding: ControllerBuildBindingPolicy,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Effect.gen(function* () {
     const value = yield* readSystemSourceCutPayload(hash)
@@ -232,7 +232,7 @@ const readOperationalAssessmentSourceCutForPolicy = (
       (yield* Effect.fromResult(canonicalHashV1Result(cut.sourceMaterial))) !== cut.sourceMaterialHash
     )
       return yield* new SystemAssessmentError({ message: 'Operational source cut differs from its registration' })
-    return yield* replayOperationalSourceRecordsForPolicy(cut, registration, buildBinding)
+    return yield* replayOperationalSourceRecords(cut, registration, buildBinding)
   }).pipe(
     Effect.mapError((cause) => new SystemAssessmentError({ message: 'Operational source verification failed', cause })),
   )

@@ -182,7 +182,7 @@ export const bindOperationalObligations = (
   sourceCutHash: string,
 ) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'CURRENT')
 
-/** Only stored v1 receipts use the original build-matching contract. */
+/** Only the stored v1 assessment reader may reproduce the original controller-build matching rule. */
 export const verifyRetainedOperationalV1Obligations = (
   cut: SystemSourceCut,
   registration: ScheduledEvaluation,

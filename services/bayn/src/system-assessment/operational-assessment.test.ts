@@ -25,7 +25,6 @@ import {
   OperationalSourceCutSchema,
   isVerifiedOperationalSourceCut,
   readOperationalAssessmentSourceCut,
-  readRetainedOperationalAssessmentSourceCut,
 } from './operational-source-cut'
 import { makeSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 
@@ -631,7 +630,7 @@ test('archive replay retains unwitnessed controller provenance and cannot downgr
       ),
     )
     const retained = await Effect.runPromise(
-      readRetainedOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+      readOperationalAssessmentSourceCut(archive.hash, input.registration, 'RETAINED_OPERATIONAL_V1').pipe(
         Effect.provideService(PgClient.PgClient, archive.sql),
       ),
     )
@@ -672,16 +671,13 @@ test('archive replay retains unwitnessed controller provenance and cannot downgr
     const changed = await read({ ...cut, controllerPasses: [...passes, unbound] })
     expect(isVerifiedOperationalSourceCut(changed.replay)).toBe(true)
     if (!isVerifiedOperationalSourceCut(changed.replay)) throw new Error('Expected verified archive')
-    expect(changed.replay.controllerEvidence).toHaveLength(passes.length + 1)
+    expect(changed.replay.unboundControllerBuilds).toHaveLength(1)
     expect(changed.replay.work.controllerWork.has(unbound.receiptHash)).toBe(false)
-    expect(changed.replay.controllerEvidence.at(-1)).toEqual({
+    expect(changed.replay.unboundControllerBuilds[0]).toEqual({
       receiptHash: unbound.receiptHash,
       completedAt: unbound.completedAt,
-      observation: {
-        executionIssuedAt: observation.executionIssuedAt,
-        observedAt: observation.observedAt,
-        ...(executionBuild === undefined ? {} : { executionBuild }),
-      },
+      executionIssuedAt: observation.executionIssuedAt,
+      observedAt: observation.observedAt,
     })
     expect(changed.current.verdict).toBe('INCONCLUSIVE')
     expect(changed.current.missing).toEqual([`UNBOUND_CONTROLLER_BUILD:${unbound.receiptHash}`])
@@ -716,7 +712,7 @@ test('archive replay preserves retained completion matching and rejects tampered
     }
     const archive = archivedFixture(source)
     const replay = await Effect.runPromise(
-      readRetainedOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+      readOperationalAssessmentSourceCut(archive.hash, input.registration, 'RETAINED_OPERATIONAL_V1').pipe(
         Effect.provideService(PgClient.PgClient, archive.sql),
       ),
     )
@@ -762,7 +758,7 @@ test('an archived null-plan registration remains historical evidence but fails t
     ),
   )
   const retained = await Effect.runPromise(
-    readRetainedOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+    readOperationalAssessmentSourceCut(archive.hash, input.registration, 'RETAINED_OPERATIONAL_V1').pipe(
       Effect.provideService(PgClient.PgClient, archive.sql),
     ),
   )

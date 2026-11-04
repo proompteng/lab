@@ -16,10 +16,7 @@ import {
 } from './operational-assessment'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { readSystemSourceCut } from './source-cut'
-import {
-  readOperationalAssessmentSourceCut,
-  readRetainedOperationalAssessmentSourceCut,
-} from './operational-source-cut'
+import { readOperationalAssessmentSourceCut } from './operational-source-cut'
 import { bindSystemSourceCut } from './bind-source'
 import { SystemAssessmentInputSchema } from './assessment'
 import { registeredSchedule } from './schedule'
@@ -214,11 +211,11 @@ export const readPersistedOperationalAssessment = (hash: string) =>
     const row = rows[0]
     if (row === undefined)
       return yield* new SystemAssessmentError({ message: 'Operational assessment receipt does not exist' })
-    const readCut =
-      row.input.schemaVersion === 'bayn.operational-assessment-input.v1'
-        ? readRetainedOperationalAssessmentSourceCut
-        : readOperationalAssessmentSourceCut
-    const cut = yield* readCut(row.input.sourceCutHash, row.input.registration)
+    const cut = yield* readOperationalAssessmentSourceCut(
+      row.input.sourceCutHash,
+      row.input.registration,
+      row.input.schemaVersion === 'bayn.operational-assessment-input.v1' ? 'RETAINED_OPERATIONAL_V1' : 'CURRENT',
+    )
     const assessment = yield* Effect.fromResult(
       verifyStoredOperationalAssessment(row.input, cut, new Set(row.verifiedSourceHashes)),
     )

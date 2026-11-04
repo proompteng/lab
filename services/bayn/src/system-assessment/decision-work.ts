@@ -39,26 +39,6 @@ export const ControllerPassEvidenceSchema = Schema.Struct({
 })
 export type ControllerPassEvidence = typeof ControllerPassEvidenceSchema.Type
 
-/** Small replay projection; full archived observations remain in their authenticated source records. */
-export type ControllerBuildEvidence = Pick<ControllerPassEvidence, 'receiptHash' | 'completedAt'> & {
-  readonly observation: Pick<
-    ControllerPassEvidence['observation'],
-    'executionBuild' | 'executionIssuedAt' | 'observedAt'
-  >
-}
-
-export const controllerBuildEvidence = (pass: ControllerPassEvidence): ControllerBuildEvidence => ({
-  receiptHash: pass.receiptHash,
-  completedAt: pass.completedAt,
-  observation: {
-    observedAt: pass.observation.observedAt,
-    ...(pass.observation.executionIssuedAt === undefined
-      ? {}
-      : { executionIssuedAt: pass.observation.executionIssuedAt }),
-    ...(pass.observation.executionBuild === undefined ? {} : { executionBuild: pass.observation.executionBuild }),
-  },
-})
-
 export const sourceFitsRegisteredSession = (
   manifest: Readonly<Record<string, unknown>>,
   registration: ScheduledEvaluation,
@@ -167,10 +147,7 @@ export const decisionDocumentWork = (document: ExecutionDecisionDocument, regist
   return undefined
 }
 
-export const controllerBuildMatchesRegistration = <Evidence extends Pick<ControllerBuildEvidence, 'observation'>>(
-  pass: Evidence,
-  registration: ScheduledEvaluation,
-) => {
+export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence, registration: ScheduledEvaluation) => {
   const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
   const build = pass.observation.executionBuild
   return (

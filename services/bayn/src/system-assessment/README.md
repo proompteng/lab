@@ -88,11 +88,7 @@ retry verifies and reuses their exact contents rather than replacing evidence.
 
 Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
 witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
-the manifest. Replay retains bounded receipt/build/clock metadata for every authenticated controller source before
-filtering completion witnesses. Current provenance checks include unwitnessed or otherwise non-completing passes;
-the replay does not retain their full observation bodies. Stored v1 receipts select frozen build matching from their
-immutable input version, and current assessment admission rejects legacy-policy replay. Missing, substituted or
-malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
+the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
 and their receipt hashes remain reproducible. Financial qualification continues to require its full financial cut;
 an operational manifest cannot certify profit. Temporary spool files are private and removed when capture exits,
 including failure and interruption.
@@ -316,8 +312,11 @@ existing durable authorized generation. Registration and reporting do not change
 Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
 `evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
 reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
-Their original source/digest controller comparison is frozen separately from current repository-aware matching.
+Their original source/digest controller comparison is frozen separately from the current build matcher.
 Those historical results do not establish a certificate under the current build-binding rule.
+Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
+unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small
+receipt/timing summaries without retaining complete archived records. A replay-policy/input mismatch is rejected.
 Current assessment of a retained registration with a null controller plan adds `UNBOUND_CONTROLLER_PLAN` even
 without captured controller passes. Independent decision witnesses cannot replace this missing provenance;
 historical v1 receipt reproduction and new-registration admission retain their original separate rules.
