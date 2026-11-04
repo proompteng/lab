@@ -8,7 +8,7 @@ import { decisionAdmissionWitnesses } from './decision-admissions'
 import { controllerBuildMatchesRegistration } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
-import { bindOperationalObligations } from './operational-obligations'
+import { bindOperationalObligations, verifyRetainedOperationalV1Obligations } from './operational-obligations'
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
 import { measureReliability, ObligationOutcome, ReliabilityStatus } from './reliability'
 import type { SystemSourceCut } from './source-cut'
@@ -173,7 +173,8 @@ const evaluateDecodedOperationalAssessment = (
     )
       missing.push('INCOMPLETE_FILL_ACCOUNTING')
     const admissions = yield* decisionAdmissionWitnesses(cut, registration.policies[0].authorityGenerationHash)
-    const bound = yield* bindOperationalObligations(
+    const bind = current ? bindOperationalObligations : verifyRetainedOperationalV1Obligations
+    const bound = yield* bind(
       { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] },
       registration,
       data.sourceCutHash,
@@ -192,7 +193,14 @@ const evaluateDecodedOperationalAssessment = (
       for (const pass of cut.controllerPasses) {
         // Capture retains deadline tails. A known later tick cannot invalidate work already durably completed.
         const issuedAt = pass.observation.executionIssuedAt
-        if (issuedAt !== undefined && issuedAt > requiredThroughAt) continue
+        if (
+          issuedAt !== undefined &&
+          issuedAt > requiredThroughAt &&
+          issuedAt <= pass.observation.observedAt &&
+          pass.observation.observedAt <= pass.completedAt &&
+          pass.completedAt <= cut.asOf
+        )
+          continue
         if (!controllerBuildMatchesRegistration(pass, registration))
           missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
       }

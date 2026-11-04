@@ -362,6 +362,47 @@ test('unbound in-period workers prevent an otherwise complete certificate withou
   const complete = evaluate(cut)
   expect(complete.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
   expect(complete.missing).toEqual([])
+  const replaceControllerBuild = (executionBuild: typeof build | undefined) => {
+    const replacements = passes.map((pass) => {
+      const { executionBuild: _build, ...material } = pass.observation
+      const observation = { ...material, ...(executionBuild === undefined ? {} : { executionBuild }) }
+      return { ...pass, observation, receiptHash: testHash(observation) }
+    })
+    return {
+      ...cut,
+      controllerPasses: replacements,
+      durableObservations: cut.durableObservations.map((witness) => {
+        const index = passes.findIndex((pass) => pass.receiptHash === witness.sourceHash)
+        return index < 0 ? witness : { ...witness, sourceHash: replacements[index]!.receiptHash }
+      }),
+    }
+  }
+  const historicalFor = (source: typeof cut) => {
+    const retainedInput = {
+      ...input,
+      schemaVersion: 'bayn.operational-assessment-input.v1',
+      sourceCutHash: testHash(source),
+      safety,
+    }
+    expect(Result.isFailure(evaluateOperationalAssessment(retainedInput, source, verified))).toBe(true)
+    return Result.getOrThrow(verifyStoredOperationalAssessment(retainedInput, source, verified))
+  }
+  const foreignRepository = replaceControllerBuild({ ...build, imageRepository: 'example.test/foreign/worker' })
+  const retainedForeign = historicalFor(foreignRepository)
+  expect(retainedForeign.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  // Original v1 receipt material, including the foreign-repository controller completion evidence.
+  expect(testHash(retainedForeign)).toBe('a2873915c8c3ef1ac976cd0c0d127e0a6b6f7b75285380b9d1e0a42084a90d1b')
+  for (const executionBuild of [
+    undefined,
+    { ...build, sourceRevision: 'b'.repeat(40) },
+    { ...build, imageDigest: `sha256:${testHash('different worker image')}` },
+  ]) {
+    const retainedUnbound = historicalFor(replaceControllerBuild(executionBuild))
+    expect(retainedUnbound.verdict).toBe('REJECTED')
+    expect(
+      retainedUnbound.reliability.classes.find((row) => row.class === ObligationClass.Decision)?.correctOnTime,
+    ).toBe('0')
+  }
   const observation = {
     result: 'SUCCESS',
     outcome: 'WINDOW_CLOSED',
@@ -406,6 +447,17 @@ test('unbound in-period workers prevent an otherwise complete certificate withou
     observation: tailObservation,
   }
   expect(evaluate({ ...cut, controllerPasses: [...passes, tail] }).verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
+  for (const invalidClock of [
+    { ...tail, observation: { ...tailObservation, observedAt: at(closeAt, -1) } },
+    { ...tail, completedAt: at(closeAt, 1) },
+    { ...tail, completedAt: at(cut.asOf, 1) },
+  ]) {
+    const malformedTail = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)(invalidClock)
+    const result = evaluate({ ...cut, controllerPasses: [...passes, malformedTail] })
+    expect(result.verdict).toBe('INCONCLUSIVE')
+    expect(result.missing).toEqual([`UNBOUND_CONTROLLER_BUILD:${tail.receiptHash}`])
+    expect(result.reliability).toEqual(complete.reliability)
+  }
   const overlapping = { ...tail, observation: { ...tailObservation, executionIssuedAt: at(closeAt, -1) } }
   expect(evaluate({ ...cut, controllerPasses: [...passes, overlapping] }).verdict).toBe('INCONCLUSIVE')
   const { executionIssuedAt: _issued, ...unknownStart } = tailObservation

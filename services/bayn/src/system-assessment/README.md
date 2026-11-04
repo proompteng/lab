@@ -270,13 +270,15 @@ existing durable authorized generation. Registration and reporting do not change
 Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
 `evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
 reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
+Their original source/digest controller comparison is frozen separately from current repository-aware matching.
 Those historical results do not establish a certificate under the current build-binding rule.
 
 Retained controller passes must match the registered physical worker build through the reporting period and any
 remaining original obligation deadlines. A missing or mismatched build adds `UNBOUND_CONTROLLER_BUILD` and prevents
 operational certification, even when independent decision documents complete scheduled obligations. A pass known to
-start after that period and all required work has completed cannot invalidate the finished claim; an absent start
-clock remains fail-closed. Retained source documents and measured obligation counters are not discarded or rewritten.
+start after that period and all required work has completed cannot invalidate the finished claim. This exemption
+requires ordered issue, observation and completion clocks ending no later than the cut; missing or contradictory
+clocks remain fail-closed. Retained source documents and measured obligation counters are not discarded or rewritten.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

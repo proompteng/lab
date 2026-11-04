@@ -13,6 +13,7 @@ import {
   decisionDocumentWork,
   entryAbstentionWork,
   positionHoldWork,
+  type ControllerBuildBindingPolicy,
 } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { JevResearchPolicy } from '../jev/acceptance'
@@ -95,6 +96,20 @@ export const bindOperationalObligations = (
   cut: SystemSourceCut,
   registration: ScheduledEvaluation,
   sourceCutHash: string,
+) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'CURRENT')
+
+/** Only the stored v1 assessment reader may reproduce the original controller-build matching rule. */
+export const verifyRetainedOperationalV1Obligations = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'RETAINED_OPERATIONAL_V1')
+
+const bindOperationalObligationsForPolicy = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+  buildBinding: ControllerBuildBindingPolicy,
 ) =>
   Result.gen(function* () {
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -124,10 +139,10 @@ export const bindOperationalObligations = (
       const witness = earliestWitnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
       if (witness === undefined) continue
       const work =
-        (yield* positionHoldWork(pass, registration, cut.decisions, witness.witnessedAt)) ??
-        (yield* entryAbstentionWork(pass, registration, witness.witnessedAt)) ??
-        (yield* accountProtectionWork(pass, registration, witness.witnessedAt)) ??
-        (yield* closedEntryWindowWork(pass, registration, witness.witnessedAt))
+        (yield* positionHoldWork(pass, registration, cut.decisions, witness.witnessedAt, buildBinding)) ??
+        (yield* entryAbstentionWork(pass, registration, witness.witnessedAt, buildBinding)) ??
+        (yield* accountProtectionWork(pass, registration, witness.witnessedAt, buildBinding)) ??
+        (yield* closedEntryWindowWork(pass, registration, witness.witnessedAt, buildBinding))
       if (work !== undefined) controllerWork.set(pass.receiptHash, { ...work, completedAt: pass.completedAt })
     }
     const documentWork = new Map(
