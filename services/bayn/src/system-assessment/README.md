@@ -78,6 +78,25 @@ remain `NOT_ASSESSED`. Financial capture retains each complete inference request
 the accounting material. Session reads paginate all retained cost records rather than rejecting sessions above a
 fixed record count. Immutable source tables and earlier cuts and assessment receipts remain unchanged.
 
+New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native decisions and controller receipts
+one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
+archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
+identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+The archive is persisted before the manifest, and PostgreSQL rejects missing references, repeated native identities,
+and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
+retry verifies and reuses their exact contents rather than replacing evidence.
+
+Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
+witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
+the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
+and their receipt hashes remain reproducible. Financial qualification continues to require its full financial cut;
+an operational manifest cannot certify profit. Temporary spool files are private and removed when capture exits,
+including failure and interruption.
+The reporting API has a 4 GiB disk-backed temporary volume for the source snapshot. Its former 256 MiB volume cannot
+hold a complete native session's evidence. This storage bound is separate from trading deadlines and reliability
+targets; exhausted storage fails capture without dropping records or creating a successful assessment. Trading
+workers keep their existing resources.
+
 ## Realism
 
 `measureRealism` verifies causal input availability, persistence and routing order, position ownership, fixed order

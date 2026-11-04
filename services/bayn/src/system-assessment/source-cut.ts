@@ -2,7 +2,7 @@ import { AccountMarkSchema } from './valuation'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
 
-import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../hash'
 import { InferenceCostEvidenceSchema } from '../inference-costs'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import {
@@ -111,15 +111,28 @@ export const persistSystemSourceCut = (input: unknown) =>
     Effect.mapError((cause) => new SystemAssessmentError({ message: 'System source cut persistence failed', cause })),
   )
 
-export const readSystemSourceCut = (hash: string) =>
+export const readSystemSourceCutPayload = (hash: string) =>
   Effect.gen(function* () {
     const sourceCutHash = yield* Schema.decodeUnknownEffect(Sha256Schema)(hash)
     const sql = yield* PgClient.PgClient
-    const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ payload: SystemSourceCutSchema })))(
-      yield* sql`SELECT payload_text::jsonb AS payload FROM system_evidence_cuts WHERE source_cut_hash = ${sourceCutHash}`,
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(Schema.Struct({ payloadText: StrictNonEmptyStringSchema })),
+    )(
+      yield* sql`SELECT payload_text AS "payloadText" FROM system_evidence_cuts WHERE source_cut_hash = ${sourceCutHash}`,
     )
-    const cut = rows[0]?.payload
-    if (cut === undefined || (yield* Effect.fromResult(canonicalHashV1Result(cut))) !== sourceCutHash)
+    const row = rows[0]
+    if (rows.length !== 1 || row === undefined || sha256(row.payloadText) !== sourceCutHash)
+      return yield* new SystemAssessmentError({ message: 'Immutable source cut is missing or its digest differs' })
+    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(row.payloadText)
+  }).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'System source cut read failed', cause })))
+
+export const readSystemSourceCut = (hash: string) =>
+  Effect.gen(function* () {
+    const cut = yield* Schema.decodeUnknownEffect(
+      SystemSourceCutSchema,
+      strictParseOptions,
+    )(yield* readSystemSourceCutPayload(hash))
+    if ((yield* Effect.fromResult(canonicalHashV1Result(cut))) !== hash)
       return yield* new SystemAssessmentError({ message: 'Immutable source cut is missing or its digest differs' })
     return cut
   }).pipe(Effect.mapError((cause) => new SystemAssessmentError({ message: 'System source cut read failed', cause })))
