@@ -221,7 +221,6 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
     return Effect.succeed(statement.includes('count(*)::integer AS count') ? [{ count: 0 }] : [])
   }) as unknown as PgClient.PgClient
   Object.assign(query, {
-    literal: (value: string) => value,
     withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
   })
   return query
