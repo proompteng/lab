@@ -5,7 +5,12 @@ import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
-import { ControllerPassEvidenceSchema, decisionMarketScopeSupported } from './decision-work'
+import {
+  ControllerPassEvidenceSchema,
+  controllerBuildMatchesRegistration,
+  decisionMarketScopeSupported,
+  type ControllerBuildBindingPolicy,
+} from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
 import { earliestDurableWitnesses } from './obligation-witnesses'
@@ -59,6 +64,13 @@ const verified = Symbol('verified operational sources')
 export type VerifiedOperationalSourceCut = {
   readonly [verified]: true
   readonly cut: OperationalSourceCut
+  readonly buildBinding: ControllerBuildBindingPolicy
+  readonly unboundControllerBuilds: readonly {
+    readonly receiptHash: string
+    readonly completedAt: string
+    readonly executionIssuedAt: string | undefined
+    readonly observedAt: string
+  }[]
   readonly work: Parameters<typeof bindOperationalWork>[3]
   readonly admissions: Result.Result.Success<ReturnType<typeof decisionAdmissionWitnesses>>
 }
@@ -95,7 +107,11 @@ const readController = (reference: SourceReference) =>
     return pass
   })
 
-export const replayOperationalSourceRecords = (cut: OperationalSourceCut, registration: OperationalRegistration) =>
+export const replayOperationalSourceRecords = (
+  cut: OperationalSourceCut,
+  registration: OperationalRegistration,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
+) =>
   Effect.gen(function* () {
     const decisions = new Map<string, SourceReference>()
     const controllers = new Map<string, SourceReference>()
@@ -161,9 +177,18 @@ export const replayOperationalSourceRecords = (cut: OperationalSourceCut, regist
       string,
       NonNullable<Result.Result.Success<ReturnType<typeof registeredControllerWork>>>
     >()
+    const unboundControllerBuilds: VerifiedOperationalSourceCut['unboundControllerBuilds'][number][] = []
     const witnesses = earliestDurableWitnesses(cut)
     for (const reference of controllers.values()) {
       const pass = yield* readController(reference)
+      // Retain only small provenance/timing evidence, including passes with no durable work witness.
+      if (!controllerBuildMatchesRegistration(pass, registration))
+        unboundControllerBuilds.push({
+          receiptHash: pass.receiptHash,
+          completedAt: pass.completedAt,
+          executionIssuedAt: pass.observation.executionIssuedAt,
+          observedAt: pass.observation.observedAt,
+        })
       const witness = witnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
       if (witness === undefined) continue
       const entryReference =
@@ -171,18 +196,26 @@ export const replayOperationalSourceRecords = (cut: OperationalSourceCut, regist
           ? decisions.get(pass.observation.positionHold.entryDecisionHash)
           : undefined
       const entry = entryReference === undefined ? [] : [yield* readDecision(entryReference, registration)]
-      const work = yield* Effect.fromResult(registeredControllerWork(pass, registration, entry, witness.witnessedAt))
+      const work = yield* Effect.fromResult(
+        registeredControllerWork(pass, registration, entry, witness.witnessedAt, buildBinding),
+      )
       if (work !== undefined) controllerWork.set(pass.receiptHash, work)
     }
     return {
       [verified]: true,
       cut,
+      buildBinding,
+      unboundControllerBuilds,
       work: { documentWork, controllerWork },
       admissions,
     } satisfies VerifiedOperationalSourceCut
   })
 
-export const readOperationalAssessmentSourceCut = (hash: string, registration: OperationalRegistration) =>
+export const readOperationalAssessmentSourceCut = (
+  hash: string,
+  registration: OperationalRegistration,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
+) =>
   Effect.gen(function* () {
     const value = yield* readSystemSourceCutPayload(hash)
     const cut = yield* Schema.decodeUnknownEffect(
@@ -199,7 +232,7 @@ export const readOperationalAssessmentSourceCut = (hash: string, registration: O
       (yield* Effect.fromResult(canonicalHashV1Result(cut.sourceMaterial))) !== cut.sourceMaterialHash
     )
       return yield* new SystemAssessmentError({ message: 'Operational source cut differs from its registration' })
-    return yield* replayOperationalSourceRecords(cut, registration)
+    return yield* replayOperationalSourceRecords(cut, registration, buildBinding)
   }).pipe(
     Effect.mapError((cause) => new SystemAssessmentError({ message: 'Operational source verification failed', cause })),
   )

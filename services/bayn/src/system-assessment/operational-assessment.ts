@@ -5,12 +5,17 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentInputSchema, completeSafetyAudit } from './assessment'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
+import { controllerBuildMatchesRegistration } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
-import { bindOperationalObligations, bindOperationalWork } from './operational-obligations'
+import {
+  bindOperationalObligations,
+  bindOperationalWork,
+  verifyRetainedOperationalV1Obligations,
+} from './operational-obligations'
 import { isVerifiedOperationalSourceCut, type VerifiedOperationalSourceCut } from './operational-source-cut'
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
-import { measureReliability, ReliabilityStatus } from './reliability'
+import { measureReliability, ObligationOutcome, ReliabilityStatus } from './reliability'
 import type { SystemSourceCut } from './source-cut'
 import { SystemSourceCutSchema } from './source-cut'
 import { BrokerIdentitySchema } from '../broker/identity'
@@ -63,12 +68,22 @@ export const makeOperationalSafetyAudit = (input: unknown) =>
     ),
   )
 
-export const OperationalAssessmentInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.operational-assessment-input.v1'),
+const operationalAssessmentInputFields = {
   registration: OperationalRegistrationSchema,
   sourceCutHash: Sha256Schema,
   safety: Schema.Struct({ ...OperationalSafetyMaterialSchema.fields, sourceHash: Sha256Schema }),
+}
+export const OperationalAssessmentInputSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.operational-assessment-input.v2'),
+  ...operationalAssessmentInputFields,
 })
+export const StoredOperationalAssessmentInputSchema = Schema.Union([
+  OperationalAssessmentInputSchema,
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.operational-assessment-input.v1'),
+    ...operationalAssessmentInputFields,
+  }),
+])
 
 export const operationalAssessmentVerdict = (
   reliability: ReliabilityStatus,
@@ -88,14 +103,41 @@ export const evaluateOperationalAssessment = (
   evidence: SystemSourceCut | VerifiedOperationalSourceCut,
   verifiedSources: ReadonlySet<string>,
 ) =>
+  Schema.decodeUnknownResult(
+    OperationalAssessmentInputSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
+    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, evidence, verifiedSources)),
+  )
+
+/** Reproduce immutable receipts under their original input contract; admission only accepts the current version. */
+export const verifyStoredOperationalAssessment = (
+  input: unknown,
+  evidence: SystemSourceCut | VerifiedOperationalSourceCut,
+  verifiedSources: ReadonlySet<string>,
+) =>
+  Schema.decodeUnknownResult(
+    StoredOperationalAssessmentInputSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
+    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, evidence, verifiedSources)),
+  )
+
+const evaluateDecodedOperationalAssessment = (
+  data: typeof StoredOperationalAssessmentInputSchema.Type,
+  evidence: SystemSourceCut | VerifiedOperationalSourceCut,
+  verifiedSources: ReadonlySet<string>,
+) =>
   Result.gen(function* () {
+    const current = data.schemaVersion === 'bayn.operational-assessment-input.v2'
     const cut = isVerifiedOperationalSourceCut(evidence) ? evidence.cut : evidence
-    const data = yield* Schema.decodeUnknownResult(
-      OperationalAssessmentInputSchema,
-      strictParseOptions,
-    )(input).pipe(
-      Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
+    if (
+      isVerifiedOperationalSourceCut(evidence) &&
+      evidence.buildBinding !== (current ? 'CURRENT' : 'RETAINED_OPERATIONAL_V1')
     )
+      return yield* Result.fail(new SystemAssessmentError({ message: 'Operational source replay policy differs' }))
     const { registration, registrationHash } = yield* validateOperationalRegistration(data.registration)
     if (
       cut.registrationHash !== registrationHash ||
@@ -107,6 +149,8 @@ export const evaluateOperationalAssessment = (
         new SystemAssessmentError({ message: 'Operational source cut differs from its registration' }),
       )
     const missing: string[] = []
+    if (current && registration.obligations.configuration.controllerPlanHash === null)
+      missing.push('UNBOUND_CONTROLLER_PLAN')
     for (const source of [
       registration.calendar.sourceHash,
       ...registration.retainedIncidentSources,
@@ -149,9 +193,45 @@ export const evaluateOperationalAssessment = (
           indexDecisionAdmissionMutations(evidence.mutations),
         )
     const durableObservations = [...cut.durableObservations, ...admissions.witnesses]
+    const bind = current ? bindOperationalObligations : verifyRetainedOperationalV1Obligations
     const bound = isVerifiedOperationalSourceCut(evidence)
       ? yield* bindOperationalWork({ ...cut, durableObservations }, registration, data.sourceCutHash, evidence.work)
-      : yield* bindOperationalObligations({ ...evidence, durableObservations }, registration, data.sourceCutHash)
+      : yield* bind({ ...evidence, durableObservations }, registration, data.sourceCutHash)
+    if (current) {
+      const completions = new Map(bound.reliability.completions.map((row) => [row.obligationId, row]))
+      let requiredThroughAt = lastClose ?? cut.asOf
+      for (const obligation of bound.reliability.schedule) {
+        const completion = completions.get(obligation.obligationId)
+        const resolvedAt =
+          completion?.outcome === ObligationOutcome.Correct && completion.completedAt <= obligation.deadlineAt
+            ? completion.completedAt
+            : obligation.deadlineAt
+        if (resolvedAt > requiredThroughAt) requiredThroughAt = resolvedAt
+      }
+      const unboundBuilds = isVerifiedOperationalSourceCut(evidence)
+        ? evidence.unboundControllerBuilds
+        : evidence.controllerPasses
+            .filter((pass) => !controllerBuildMatchesRegistration(pass, registration))
+            .map((pass) => ({
+              receiptHash: pass.receiptHash,
+              completedAt: pass.completedAt,
+              executionIssuedAt: pass.observation.executionIssuedAt,
+              observedAt: pass.observation.observedAt,
+            }))
+      for (const pass of unboundBuilds) {
+        // Capture retains deadline tails. A known later tick cannot invalidate work already durably completed.
+        const issuedAt = pass.executionIssuedAt
+        if (
+          issuedAt !== undefined &&
+          issuedAt > requiredThroughAt &&
+          issuedAt <= pass.observedAt &&
+          pass.observedAt <= pass.completedAt &&
+          pass.completedAt <= cut.asOf
+        )
+          continue
+        missing.push(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)
+      }
+    }
     const coverage = Schema.decodeUnknownResult(MutationCoverageSchema)(cut.sourceMaterial)
     const coverageAccount = Result.isSuccess(coverage)
       ? coverage.success.accounts.find((account) => account.policy === JevResearchPolicy.Candidate)
@@ -184,6 +264,7 @@ export const evaluateOperationalAssessment = (
     )
     return {
       schemaVersion: 'bayn.operational-assessment.v1' as const,
+      ...(current ? { evaluationPolicy: 'bayn.operational-build-binding.v1' as const } : {}),
       registrationHash,
       sourceCutHash: data.sourceCutHash,
       asOf: cut.asOf,

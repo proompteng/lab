@@ -1,7 +1,7 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
 import { operationalRegistrationFixture } from './operational-period.test-support'
-import { makeOperationalSafetyAudit } from './operational-assessment'
+import { makeOperationalSafetyAudit, verifyStoredOperationalAssessment } from './operational-assessment'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
 import {
@@ -365,7 +365,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     sources.add(safety.sourceHash)
     sources.add(safety.auditEvidenceHash)
     const input = {
-      schemaVersion: 'bayn.operational-assessment-input.v1',
+      schemaVersion: 'bayn.operational-assessment-input.v2',
       registration: prospective,
       sourceCutHash: savedCut.sourceCutHash,
       safety,
@@ -373,6 +373,40 @@ postgres('PostgreSQL prospective system qualification', () => {
     const result = await runtime.runPromise(asApplication(assessAndPersistOperational(input, sources)))
     expect(result.verdict).toBe('INCONCLUSIVE')
     expect(result.economicQualification).toBe('NOT_ASSESSED')
+    expect(result.evaluationPolicy).toBe('bayn.operational-build-binding.v1')
+    const assertLegacyReadback = async (sourceCutHash: string, currentAssessmentHash: string) => {
+      const legacyInput = { ...input, sourceCutHash, schemaVersion: 'bayn.operational-assessment-input.v1' }
+      const evidence = await runtime.runPromise(
+        readOperationalAssessmentSourceCut(sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
+      )
+      const legacy = {
+        ...Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, evidence, sources)),
+        verifiedSourceHashes: [...sources].sort(),
+      }
+      const legacyHash = testHash(legacy)
+      const legacyText = Result.getOrThrow(canonicalJsonV1Result(legacy))
+      const legacyInputText = Result.getOrThrow(canonicalJsonV1Result(legacyInput))
+      // Seed the immutable row as the old application wrote it; current admission must not accept its contract.
+      await runtime.runPromise(
+        asApplication(
+          Effect.gen(function* () {
+            yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
+            (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+            VALUES (${legacyHash}, ${legacy.registrationHash}, ${legacy.sourceCutHash}, ${legacy.asOf},
+              ${legacy.verdict}, ${legacyInputText}, ${legacyText})`
+          }),
+        ),
+      )
+      expect(await runtime.runPromise(readPersistedOperationalAssessment(legacyHash))).toEqual({
+        ...legacy,
+        assessmentHash: legacyHash,
+      })
+      expect(legacyHash).not.toBe(currentAssessmentHash)
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(assessAndPersistOperational(legacyInput, sources)))),
+      ).toBe(true)
+    }
+    await assertLegacyReadback(savedCut.sourceCutHash, result.assessmentHash)
     const compact = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
       ...savedCut.cut,
       schemaVersion: 'bayn.operational-source-cut.v1',
@@ -411,10 +445,75 @@ postgres('PostgreSQL prospective system qualification', () => {
     )
     expect(compactResult.verdict).toBe('INCONCLUSIVE')
     expect(compactResult.economicQualification).toBe('NOT_ASSESSED')
+    const unboundObservation = {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      executionIssuedAt: asOf,
+      observedAt: asOf,
+    }
+    const unboundPass = {
+      controllerKey: prospective.policies[0].capitalAuthorization!.request.broker.identityHash,
+      planHash: prospective.obligations.configuration.controllerPlanHash,
+      epoch: 1,
+      sequence: 1,
+      receiptHash: testHash(unboundObservation),
+      completedAt: asOf,
+      observation: unboundObservation,
+    }
+    const unboundRecord = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, unboundPass))
+    await runtime.runPromise(asApplication(persistSystemSourceRecord(unboundRecord)))
+    const unboundCut = await runtime.runPromise(
+      asApplication(
+        persistOperationalSourceCut({
+          ...compact,
+          records: [
+            { kind: unboundRecord.kind, sourceId: unboundPass.receiptHash, recordHash: unboundRecord.recordHash },
+          ],
+        }),
+      ),
+    )
+    const unboundInput = { ...input, sourceCutHash: unboundCut.sourceCutHash }
+    const unboundResult = await runtime.runPromise(asApplication(assessAndPersistOperational(unboundInput, sources)))
+    expect(unboundResult.missing).toContain(`UNBOUND_CONTROLLER_BUILD:${unboundPass.receiptHash}`)
+    const retainedArchiveInput = { ...unboundInput, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    const retainedArchive = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(unboundCut.sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
+    )
+    const retainedArchiveMaterial = {
+      ...Result.getOrThrow(verifyStoredOperationalAssessment(retainedArchiveInput, retainedArchive, sources)),
+      verifiedSourceHashes: [...sources].sort(),
+    }
+    expect(retainedArchiveMaterial.missing).not.toContain(`UNBOUND_CONTROLLER_BUILD:${unboundPass.receiptHash}`)
+    const retainedArchiveHash = testHash(retainedArchiveMaterial)
+    const retainedArchiveInputText = Result.getOrThrow(canonicalJsonV1Result(retainedArchiveInput))
+    const retainedArchiveText = Result.getOrThrow(canonicalJsonV1Result(retainedArchiveMaterial))
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
+        (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+        VALUES (${retainedArchiveHash}, ${retainedArchiveMaterial.registrationHash}, ${retainedArchiveMaterial.sourceCutHash},
+          ${retainedArchiveMaterial.asOf}, ${retainedArchiveMaterial.verdict}, ${retainedArchiveInputText}, ${retainedArchiveText})`
+        }),
+      ),
+    )
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(retainedArchiveHash))).toEqual({
+      ...retainedArchiveMaterial,
+      assessmentHash: retainedArchiveHash,
+    })
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(asApplication(assessAndPersistOperational(retainedArchiveInput, sources))),
+      ),
+    ).toBe(true)
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(unboundResult.assessmentHash))).toEqual(
+      unboundResult,
+    )
     expect(await runtime.runPromise(readPersistedOperationalAssessment(result.assessmentHash))).toEqual(result)
     expect(await runtime.runPromise(readPersistedOperationalAssessment(compactResult.assessmentHash))).toEqual(
       compactResult,
     )
+    await assertLegacyReadback(storedCompact.sourceCutHash, compactResult.assessmentHash)
     const financialRegistration = await runtime.runPromise(asApplication(registerFixture(registration())))
     expect(
       Exit.isFailure(
