@@ -1097,7 +1097,7 @@ describe('native execution runtime', () => {
   })
 
   test.each([false, true])(
-    'does not attribute the previous pass to a deactivation epoch (stored: %s)',
+    'retains a pass only in its existing projection epoch (stored inactive: %s)',
     async (storedInactive) => {
       const retained = status({
         lastPass: windowClosedObservation,
@@ -1135,7 +1135,8 @@ describe('native execution runtime', () => {
         ),
       )
       expect(projected).toMatchObject({ epoch: command.epoch + 1, lastReceiptHash: retained.lastReceiptHash })
-      expect(projected).not.toHaveProperty('lastPass')
+      if (storedInactive) expect(projected).toHaveProperty('lastPass', windowClosedObservation)
+      else expect(projected).not.toHaveProperty('lastPass')
     },
   )
 

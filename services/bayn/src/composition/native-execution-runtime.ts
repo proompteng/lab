@@ -266,7 +266,6 @@ const retainedProjectedPass = (
 ): RetainedAutonomousCyclePassObservation | undefined => {
   const completion = state.lastCompletion
   if (
-    !state.active ||
     completion === undefined ||
     stored === null ||
     !executionControllerStatusHasCompletion(stored) ||

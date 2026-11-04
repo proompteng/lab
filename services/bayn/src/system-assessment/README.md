@@ -86,6 +86,7 @@ Controller pass capture uses active completion projections. Deactivation preserv
 advancing the controller epoch; it does not perform that pass again. Its inactive projection cannot reattribute the
 earlier receipt to the new epoch. The original completion and every raw projection remain retained, and conflicting
 active evidence still fails capture.
+Already-stored inactive projections replay exactly without rewriting their retained pass; they do not count as new completed work.
 The archive is persisted before the manifest, and PostgreSQL rejects missing references, repeated native identities,
 and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
 retry verifies and reuses their exact contents rather than replacing evidence.
