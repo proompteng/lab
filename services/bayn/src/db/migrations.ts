@@ -1,3 +1,4 @@
+import operationalControllerPlan from '../../migrations/0175_operational_controller_plan'
 import operationalPeriod from '../../migrations/0174_operational_period'
 import inferenceExpenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import jevOnlyInference from '../../migrations/0172_jev_only_inference'
@@ -176,6 +177,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '175_operational_controller_plan': operationalControllerPlan,
   '164_focused_entry_evidence': focusedEntryEvidence,
   '165_observed_resistance': observedResistance,
   '166_candidate_entry_evidence': candidateEntryEvidence,

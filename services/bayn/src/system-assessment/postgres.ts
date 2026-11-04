@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
 
+import { executionControllerPlanHash } from '../execution/controller'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { evaluateSystemAssessment } from './assessment'
@@ -80,6 +81,10 @@ export const registerSystemQualification = (input: unknown, verifiedSources: Rea
 export const registerOperationalPeriod = (input: unknown, verifiedSources: ReadonlySet<string>) =>
   Effect.gen(function* () {
     const { registration, registrationHash } = yield* Effect.fromResult(validateOperationalRegistration(input))
+    if (registration.obligations.configuration.controllerPlanHash !== executionControllerPlanHash)
+      return yield* new SystemAssessmentError({
+        message: 'Operational registration requires the native controller plan',
+      })
     if (
       [registration.calendar.sourceHash, ...registration.retainedIncidentSources].some(
         (hash) => !verifiedSources.has(hash),

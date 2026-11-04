@@ -61,6 +61,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
+import { qualificationDeadlines } from './configuration'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
@@ -230,6 +231,36 @@ postgres('PostgreSQL prospective system qualification', () => {
         return yield* (yield* PgClient.PgClient)`SELECT * FROM authority_generations ORDER BY authority_version`
       }),
     )
+    for (const controllerPlanHash of [null, testHash('unregistered controller plan')]) {
+      const configuration = { ...prospective.obligations.configuration, controllerPlanHash }
+      const unbound = {
+        ...prospective,
+        obligations: {
+          ...prospective.obligations,
+          ...Result.getOrThrow(qualificationDeadlines(configuration)),
+          configuration,
+        },
+      }
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(registerOperationalPeriod(unbound, sources)))),
+      ).toBe(true)
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                yield* sql`INSERT INTO system_qualification_registrations
+          (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
+          VALUES (${testHash(unbound)},${unbound.program},${unbound.attemptIndex},${unbound.priorAttemptHash},
+            ${unbound.registeredAt},${open},${unbound.calendar.sessions[0]!.closeAt},
+            ${Result.getOrThrow(canonicalJsonV1Result(unbound))})`
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
     const saved = await runtime.runPromise(asApplication(registerOperationalPeriod(prospective, sources)))
     expect(await runtime.runPromise(readAssessmentRegistration(saved.registrationHash))).toEqual(prospective)
     expect(Exit.isFailure(await runtime.runPromiseExit(readSystemRegistration(saved.registrationHash)))).toBe(true)
@@ -1368,7 +1399,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               sourceMaterialHash: testHash({}),
             })
             yield* Effect.sleep('2 millis')
-            const at = new Date().toISOString()
+            const at = yield* databaseNow
             const receipt = yield* Schema.decodeUnknownEffect(ReplayExecutionReceiptSchema)({
               schemaVersion: 'bayn.replay-execution-receipt.v1',
               registrationHash: registered.registrationHash,
