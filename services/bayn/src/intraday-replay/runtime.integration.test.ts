@@ -1372,6 +1372,22 @@ durableTest.each(
             orderByClientId: (clientOrderId: string) =>
               Effect.gen(function* () {
                 cancelRecoveryCalls.lookup += 1
+                if (cancelRecoveryCalls.cancel > 0) {
+                  expect(yield* readAuthority.pipe(Effect.orDie)).toMatchObject({
+                    generationHash: runtime.authorityGenerationHash,
+                    effective: Authority.Observe,
+                    kill: KillState.Active,
+                  })
+                  expect(
+                    yield* sql`SELECT count(*)::int AS count FROM intents WHERE state='TERMINAL'`.pipe(Effect.orDie),
+                  ).toEqual([{ count: 0 }])
+                  expect(
+                    yield* sql`SELECT status,
+                    EXISTS(SELECT 1 FROM jsonb_array_elements(discrepancies) d WHERE d->>'kind'='MUTATION') AS unresolved
+                    FROM reconciliations WHERE account_id=${accountId}
+                    ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1`.pipe(Effect.orDie),
+                  ).toEqual([{ status: 'DISCREPANCY', unresolved: true }])
+                }
                 if (scenario === 'accepted-cancel-lookup-failed')
                   return yield* new BrokerReadError({
                     operation: 'order-by-client-id',
@@ -1517,11 +1533,17 @@ durableTest.each(
             )
             const lookupBeforePreflight = cancelRecoveryCalls.lookup
             yield* advanceBy(1000)
-            const discrepancy = yield* runtime.reconcile
-            expect(discrepancy.report.reconciliation.status).toBe(ReconciliationStatus.Discrepancy)
-            expect(discrepancy.report.reconciliation.discrepancies.some(({ kind }) => kind === 'MUTATION')).toBe(true)
-            expect(discrepancy.riskContext.unknownMutationCount).toBe(1)
-            expect(cancelRecoveryCalls.lookup).toBe(lookupBeforePreflight)
+            // The real driver's post-mutation continuation must reconcile and restrict before lookup.
+            // The lookup adapter above inspects those durable boundaries before returning any order evidence.
+            yield* healthy.advance
+            expect(cancelRecoveryCalls.lookup).toBe(lookupBeforePreflight + 1)
+            const found = yield* mutations.latest(entry.intent_id, MutationOperation.Cancel)
+            if (found === undefined) throw new Error('Missing driver cancel recovery event')
+            expect(found.eventType).toBe(
+              scenario === 'accepted-cancel-lookup-failed'
+                ? MutationEventType.RecoveryUnknown
+                : MutationEventType.RecoveryFound,
+            )
             const restricted = yield* readAuthority
             expect(restricted).toMatchObject({
               generationHash: runtime.authorityGenerationHash,
@@ -1531,18 +1553,10 @@ durableTest.each(
             })
             expect(yield* settle).toEqual({ _tag: 'NotRequired' })
             expect(yield* readAuthority).toEqual(restricted)
-            yield* healthy.advance
             yield* Fiber.join(healthy.owner)
 
             const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
             const lookupBeforeRecovery = cancelRecoveryCalls.lookup
-            const found = yield* recovery.program.recover(entry.intent_id, MutationOperation.Cancel)
-            expect(cancelRecoveryCalls.lookup).toBe(lookupBeforeRecovery + 1)
-            expect(found.eventType).toBe(
-              scenario === 'accepted-cancel-lookup-failed'
-                ? MutationEventType.RecoveryUnknown
-                : MutationEventType.RecoveryFound,
-            )
             // A lookup may resolve the intent, but it must not clear the restriction or grant a new generation.
             expect(yield* readAuthority).toEqual(restricted)
             expect(cancelRecoveryCalls).toMatchObject({ submit: 1, cancel: 1 })
@@ -1568,7 +1582,7 @@ durableTest.each(
               ).toEqual([{ state: 'TERMINAL', terminal_outcome: 'CANCELED' }])
               const replay = yield* recovery.program.recover(entry.intent_id, MutationOperation.Cancel)
               expect(replay.eventId).toBe(found.eventId)
-              expect(cancelRecoveryCalls.lookup).toBe(lookupBeforeRecovery + 1)
+              expect(cancelRecoveryCalls.lookup).toBe(lookupBeforeRecovery)
               yield* advanceBy(1)
               const exact = yield* runtime.reconcile
               expect(exact.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
