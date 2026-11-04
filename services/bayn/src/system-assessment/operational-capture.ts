@@ -29,7 +29,7 @@ import { decisionMarketScopeSupported } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
 import { captureExecutionFills } from './execution-evidence'
-import { executionOrderPlans } from './execution-plans'
+import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
 import { captureForwardFinancialEvidence } from './forward-evidence'
 import { captureInferenceSnapshot } from './inference-capture'
 import type { OperationalRegistration } from './operational-period'
@@ -139,6 +139,15 @@ export const captureOperationalSourceCut = (
             })
           const protectionIntents = yield* readSystemProtectionIntents(scope, definition.riskPolicy.maxBrokerStateAgeMs)
           const rawFills = yield* readSystemExecutionFills(scope, first.openAt, last.closeAt)
+          const protectionsByDecision = protectionIntentsByDecision(protectionIntents)
+          const fillsByIntent = new Map<string, { observation: (typeof rawFills)[number]; index: number }[]>()
+          for (const [index, observation] of rawFills.entries()) {
+            const intentId = observation.fill.intentId
+            if (intentId === undefined) continue
+            const entries = fillsByIntent.get(intentId)
+            if (entries === undefined) fillsByIntent.set(intentId, [{ observation, index }])
+            else entries.push({ observation, index })
+          }
           const capturedFills = new Map<number, (typeof SystemSourceCutSchema.Type)['fills'][number]>()
           const decisions: { sessionDate: string; decisionHash: string }[] = []
           const consumeDecisions = yield* openSnapshotRows(sql, systemDecisionQuery(sql, scope))
@@ -152,18 +161,11 @@ export const captureOperationalSourceCut = (
                 return yield* new SystemAssessmentError({
                   message: 'Captured market scope is incompatible with the registered policy and session windows',
                 })
-              const protections = protectionIntents.filter(
-                ({ plan }) =>
-                  plan.protection !== undefined &&
-                  plan.protection._tag !== 'Bracket' &&
-                  plan.protection.entryDecisionHash === row.document.contentHash,
-              )
+              const protections = protectionsByDecision.get(row.document.contentHash) ?? []
               const plans = yield* Effect.fromResult(executionOrderPlans([row], protections))
-              const matched = rawFills.flatMap((observation, index) =>
-                observation.fill.intentId !== undefined && plans.has(observation.fill.intentId)
-                  ? [{ observation, index }]
-                  : [],
-              )
+              const matched = [...plans.keys()]
+                .flatMap((intentId) => fillsByIntent.get(intentId) ?? [])
+                .sort((a, b) => a.index - b.index)
               const fills = yield* Effect.fromResult(
                 captureExecutionFills(
                   plans,

@@ -4,7 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentInputSchema, completeSafetyAudit } from './assessment'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { SystemAssessmentError } from './economics'
 import { registeredFinancialAccounts } from './forward-evidence'
 import { bindOperationalObligations, bindOperationalWork } from './operational-obligations'
@@ -143,7 +143,11 @@ export const evaluateOperationalAssessment = (
       missing.push('INCOMPLETE_FILL_ACCOUNTING')
     const admissions = isVerifiedOperationalSourceCut(evidence)
       ? evidence.admissions
-      : yield* decisionAdmissionWitnesses(evidence, registration.policies[0].authorityGenerationHash)
+      : yield* decisionAdmissionWitnesses(
+          evidence,
+          registration.policies[0].authorityGenerationHash,
+          indexDecisionAdmissionMutations(evidence.mutations),
+        )
     const durableObservations = [...cut.durableObservations, ...admissions.witnesses]
     const bound = isVerifiedOperationalSourceCut(evidence)
       ? yield* bindOperationalWork({ ...cut, durableObservations }, registration, data.sourceCutHash, evidence.work)

@@ -4,10 +4,10 @@ import { Effect, Result, Schema } from 'effect'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { ControllerPassEvidenceSchema, decisionMarketScopeSupported } from './decision-work'
 import { SystemAssessmentError } from './economics'
-import { executionOrderPlans } from './execution-plans'
+import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
 import { earliestDurableWitnesses } from './obligation-witnesses'
 import { bindOperationalWork, registeredControllerWork, registeredDecisionWork } from './operational-obligations'
 import { type OperationalRegistration, validateOperationalRegistration } from './operational-period'
@@ -95,13 +95,6 @@ const readController = (reference: SourceReference) =>
     return pass
   })
 
-const protectionSources = (cut: OperationalSourceCut, decisionHash: string) =>
-  cut.protectionIntents.filter(({ plan }) =>
-    plan.protection !== undefined && plan.protection._tag !== 'Bracket'
-      ? plan.protection.entryDecisionHash === decisionHash
-      : false,
-  )
-
 export const replayOperationalSourceRecords = (cut: OperationalSourceCut, registration: OperationalRegistration) =>
   Effect.gen(function* () {
     const decisions = new Map<string, SourceReference>()
@@ -116,12 +109,13 @@ export const replayOperationalSourceRecords = (cut: OperationalSourceCut, regist
         return yield* new SystemAssessmentError({ message: 'Operational source identity is repeated' })
       index.set(reference.sourceId, reference)
     }
+    const protectionsByDecision = protectionIntentsByDecision(cut.protectionIntents)
     const documentWork = new Map<string, ReturnType<typeof registeredDecisionWork>>()
     const intentOwners = new Set<string>()
     const retainedProtections = new Set<string>()
     for (const reference of decisions.values()) {
       const row = yield* readDecision(reference, registration)
-      const protections = protectionSources(cut, row.document.contentHash)
+      const protections = protectionsByDecision.get(row.document.contentHash) ?? []
       const plans = yield* Effect.fromResult(executionOrderPlans([row], protections))
       for (const intentId of plans.keys()) {
         if (intentOwners.has(intentId))
@@ -138,6 +132,7 @@ export const replayOperationalSourceRecords = (cut: OperationalSourceCut, regist
       sources: new Set<string>(),
       witnesses: [],
     }
+    const mutationIndex = indexDecisionAdmissionMutations(cut.mutations)
     const admissionKeys = new Set<string>()
     for (const receipt of cut.decisionAdmissions) {
       const reference = decisions.get(receipt.decisionId)
@@ -151,11 +146,11 @@ export const replayOperationalSourceRecords = (cut: OperationalSourceCut, regist
           {
             asOf: cut.asOf,
             decisions: [row],
-            protectionIntents: protectionSources(cut, row.document.contentHash),
-            mutations: cut.mutations,
+            protectionIntents: protectionsByDecision.get(row.document.contentHash) ?? [],
             decisionAdmissions: [receipt],
           },
           registration.policies[0].authorityGenerationHash,
+          mutationIndex,
         ),
       )
       for (const source of derived.sources) admissions.sources.add(source)

@@ -17,7 +17,8 @@ import { makeSystemSourceRecord, persistSystemSourceRecord, SystemSourceRecordKi
 import { makeOperationalSourceSpool } from './operational-capture'
 import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { replacementProtectionFixture } from './protection-evidence.test-support'
-import { decisionAdmissionWitnesses } from './decision-admissions'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
+import { MutationEventSchema, MutationEventType } from '../execution/mutations/model'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = (url: string) =>
@@ -191,24 +192,60 @@ postgres('replayed operational source records', () => {
         },
         policies: [{ ...base.policies[0], authorityGenerationHash: document.bindings.authorityGenerationHash }],
       } satisfies typeof base
+      const entryOutcome = f.cut.mutations[0]!
+      const { routing: _routing, brokerOrderId: _order, ...entryEvent } = entryOutcome.event
+      const entryStart = {
+        ...entryOutcome,
+        event: Schema.decodeUnknownSync(MutationEventSchema)({
+          ...entryEvent,
+          eventId: testHash('streamed native entry admission'),
+          sequence: 1,
+          eventType: MutationEventType.SubmitStarted,
+          occurredAt: f.at(1),
+        }),
+      }
+      const receipt = { eventId: entryStart.event.eventId, decisionId: document.contentHash, observedAt: f.at(1) }
+      const legacy = {
+        ...f.cut,
+        mutations: [entryStart, ...f.cut.mutations],
+        decisionAdmissions: [{ ...receipt, sourceHash: testHash(receipt) }, ...f.cut.decisionAdmissions],
+      }
       const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Decision, f.cut.decisions[0]))
       const cut = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
-        ...f.cut,
+        ...legacy,
         schemaVersion: 'bayn.operational-source-cut.v1',
         records: [{ kind: record.kind, sourceId: document.contentHash, recordHash: record.recordHash }],
+      })
+      let mutationTraversals = 0
+      const mutations = new Proxy(cut.mutations, {
+        get(target, key, receiver) {
+          if (key === Symbol.iterator)
+            return function* () {
+              mutationTraversals++
+              yield* target
+            }
+          return Reflect.get(target, key, receiver)
+        },
       })
       const replayed = await runtime.runPromise(
         Effect.gen(function* () {
           yield* persistSystemSourceRecord(record)
-          return yield* replayOperationalSourceRecords(cut, registration)
+          return yield* replayOperationalSourceRecords({ ...cut, mutations }, registration)
         }),
       )
-      const expected = Result.getOrThrow(decisionAdmissionWitnesses(f.cut, document.bindings.authorityGenerationHash))
+      expect(mutationTraversals).toBe(1)
+      const expected = Result.getOrThrow(
+        decisionAdmissionWitnesses(
+          legacy,
+          document.bindings.authorityGenerationHash,
+          indexDecisionAdmissionMutations(legacy.mutations),
+        ),
+      )
       expect(replayed.admissions).toEqual(expected)
       expect(replayed.admissions.witnesses.some((w) => w.sourceHash === f.evidence.intentId)).toBe(true)
       const hash = testHash('same logical evidence for protected entry')
       expect(Result.getOrThrow(bindOperationalWork(cut, registration, hash, replayed.work))).toEqual(
-        Result.getOrThrow(bindOperationalObligations(f.cut, registration, hash)),
+        Result.getOrThrow(bindOperationalObligations(legacy, registration, hash)),
       )
       const missing = { ...cut, records: [] }
       expect(Exit.isFailure(await runtime.runPromiseExit(replayOperationalSourceRecords(missing, registration)))).toBe(
