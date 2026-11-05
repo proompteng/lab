@@ -1,3 +1,5 @@
+import webullObserveCutover from '../../../migrations/0179_webull_observe_cutover'
+import { observeCycleGenerationHash } from '../../composition/lifecycle'
 import { orderRequestBody } from '../../broker/alpaca-mutations/decisions'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
@@ -169,7 +171,11 @@ const makeExpiredNativeFixture = () => {
   }
 }
 
-const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<typeof makeFixture>) => {
+const seedExecutionAuthority = (
+  sql: PgClient.PgClient,
+  fixture: ReturnType<typeof makeFixture>,
+  protocolVersion: 'bayn.jev.protocol.v37' | 'bayn.jev.protocol.v38' = defaultJevProtocolDocument.schemaVersion,
+) => {
   const observeGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))
   const executionGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
   const reconciliationId = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'activation' }))
@@ -210,7 +216,7 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         'bayn.paper-authority-generation.v3', ${observeGenerationHash}, 'PAPER', 2,
         ${'2'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'3'.repeat(64)}`},
         'jev', ${'4'.repeat(64)}, ${'5'.repeat(64)},
-        ${defaultJevProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
+        ${protocolVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
         'bayn.broker-identity.v2', ${brokerIdentity.identityHash}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
         ${planHash}, ${reconciliationId}, ${reconciliationHash}, ${planHash},
         ${fixture.generationActivatedAt}
@@ -418,6 +424,43 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
+  test.each(['retired-clear', 'operator-hold', 'current-clear'] as const)(
+    'Webull cutover restricts only clear retired authority and is idempotent: %s',
+    async (scenario) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* seedExecutionAuthority(
+            sql,
+            makeFixture(),
+            scenario === 'current-clear' ? 'bayn.jev.protocol.v38' : 'bayn.jev.protocol.v37',
+          )
+          if (scenario === 'operator-hold')
+            yield* sql`UPDATE authority_state SET effective='OBSERVE', kill_state='ACTIVE', reason='operator hold',
+              version=version+1, updated_at=clock_timestamp() WHERE singleton`
+          const before = yield* sql`SELECT * FROM authority_state`
+          const history = yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`
+          yield* sql.withTransaction(webullObserveCutover)
+          const after = yield* sql`SELECT * FROM authority_state`
+          if (scenario === 'retired-clear') {
+            expect(after).toMatchObject([
+              {
+                generation_hash: before[0]?.['generation_hash'],
+                maximum: 'PAPER',
+                effective: 'OBSERVE',
+                kill_state: 'ACTIVE',
+                reason: strategyProtocolCutoverRestrictionReason,
+              },
+            ])
+            expect(Number(after[0]?.['version'])).toBe(Number(before[0]?.['version']) + 1)
+          } else expect(after).toEqual(before)
+          yield* sql.withTransaction(webullObserveCutover)
+          expect(yield* sql`SELECT * FROM authority_state`).toEqual(after)
+          expect(yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`).toEqual(history)
+        }),
+      ),
+  )
+
   test.each(
     [
       executionActivationExpiredRestrictionReason,
@@ -441,12 +484,19 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           const cycles = yield* CycleStore
           const blocked = yield* BlockedCycleIntentStore
           const fence = yield* WriterFence
-          yield* seedExecutionAuthority(sql, fixture)
+          const migratedCutover = reason === strategyProtocolCutoverRestrictionReason && scenario === 'no-cycle'
+          yield* seedExecutionAuthority(
+            sql,
+            fixture,
+            migratedCutover ? 'bayn.jev.protocol.v37' : defaultJevProtocolDocument.schemaVersion,
+          )
           if (scenario !== 'no-cycle') {
             yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
             yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
           }
-          yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          if (migratedCutover) yield* sql.withTransaction(webullObserveCutover)
+          else
+            yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
   reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
           const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
           let reconciliations = 0
@@ -503,6 +553,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             effective: Authority.Observe,
             kill: KillState.Clear,
           })
+          expect(Result.getOrThrow(observeCycleGenerationHash(state))).toBe(state.generationHash)
           expect(state.generationHash).not.toBe(generationHash)
           if (scenario !== 'no-cycle') {
             expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Blocked)
