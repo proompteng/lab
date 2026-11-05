@@ -52,9 +52,11 @@ does not emit a recovery gap. `/coverage` reports each symbol's actual latest ba
 Each batch uses a current completed UTC-minute cutoff and a five-minute recovery window, so later
 batches do not remain pinned to an earlier sweep's window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
-[documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects
+[documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). Pacing reserves request starts;
+network and capture waits do not hold the endpoint lock, so a stalled catalog response does not block
+independent priority requests. HTTP 429 starts the shared cooldown when response headers arrive and respects
 numeric or HTTP-date Retry-After without truncating long cooldowns, or waits 60 seconds. The final
-429 cooldown also applies to subsequent batches. Bounded 5xx retries apply to read-only calls; uncertain subscription
+429 cooldown also applies to subsequent batches and requests already waiting for a slot. Bounded 5xx retries apply to read-only calls; uncertain subscription
 failures reconnect instead of blindly repeating side effects.
 
 One invalid symbol rejects a whole provider batch. Bisection isolates invalid symbols without

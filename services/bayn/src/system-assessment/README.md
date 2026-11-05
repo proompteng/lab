@@ -91,6 +91,11 @@ The archive is persisted before the manifest, and PostgreSQL rejects missing ref
 and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
 retry verifies and reuses their exact contents rather than replacing evidence.
 
+Whole-session decision reads retain premarket and later decisions as source context, including the original owners of
+inventory and mutations carried into the reporting period. Their market, universe and native exchange session must
+match the registered policy. Context outside the registered reporting window cannot complete scheduled decision work;
+the original window and deadlines still determine every numerator and denominator.
+
 Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
 witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
 the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
