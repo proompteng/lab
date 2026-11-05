@@ -733,6 +733,9 @@ def evaluate (json : Json) : Except String Json := do
       (← json.getObjValAs? Bool "sourceMatches"))
   | "mutationAdmissionIndependent" =>
     return toJson (mutationAdmissionIndependent (← json.getObjValAs? Bool "ambient"))
+  | "intentRiskClockRejection" =>
+    return toJson (intentRiskClockRejection (← readInteger json "decided") (← readInteger json "expires")
+      (← readInteger json "updated") (← readInteger json "checked"))
   | "decisionCommitmentUpperBound" =>
     let bound := decisionCommitmentUpperBound (← json.getObjValAs? Bool "receiptValid")
       (← json.getObjValAs? Bool "independent") (← json.getObjValAs? Bool "routed")

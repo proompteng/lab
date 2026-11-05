@@ -119,7 +119,7 @@ describePostgres('PostgreSQL execution controller diagnostics', () => {
         outcome: 'RECOVERED' as const,
         recoveryAction: 'WAITING' as const,
         readiness: {
-          reason: DecisionReadinessReason.SnapshotUnavailable,
+          reason: DecisionReadinessReason.SnapshotUnavailable as const,
           message: 'missing range-completion bar',
           symbol: 'IWM',
         },
