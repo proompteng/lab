@@ -76,6 +76,17 @@ export const stagedChartAssessments = (source: ChartDecisionSource, initial: unk
     const prepared = yield* makeInitialChartStageRequest(source)
     const chartResponse = yield* decodeBoundStageResponse(prepared, initial)
     const next = yield* selectedBaseStartFromChart(source, prepared, chartResponse)
+    return yield* assessmentsFromPreparedStages(source, prepared, chartResponse, next, baseStart)
+  })
+
+const assessmentsFromPreparedStages = (
+  source: ChartDecisionSource,
+  prepared: Result.Result.Success<ReturnType<typeof makeInitialChartStageRequest>>,
+  chartResponse: Result.Result.Success<ReturnType<typeof decodeBoundStageResponse>>,
+  next: Result.Result.Success<ReturnType<typeof selectedBaseStartFromChart>>,
+  baseStart: unknown | null,
+) =>
+  Result.gen(function* () {
     if (next.status === 'NOT_REQUESTED') {
       if (baseStart !== null)
         return yield* Result.fail(new JevContractError({ message: 'Skipped base start has unexpected response' }))
@@ -93,6 +104,59 @@ export const stagedChartAssessments = (source: ChartDecisionSource, initial: unk
       { ...prepared.request, questions: { ...prepared.request.questions, ...next.request.questions } },
     )
   })
+
+/** One synchronous financial evidence decode owns this replay; never retain it across requests. */
+export const makeFinancialChartStageReplay = () => {
+  let initialCache:
+    | { readonly key: string; readonly value: Result.Result.Success<ReturnType<typeof makeInitialChartStageRequest>> }
+    | undefined
+  const initial = (source: ChartDecisionSource) =>
+    Result.gen(function* () {
+      const key = yield* canonicalHashV1Result(source).pipe(
+        Result.mapError(
+          (cause) => new JevContractError({ message: 'Financial chart replay source is malformed', cause }),
+        ),
+      )
+      if (initialCache?.key === key) return initialCache.value
+      const value = yield* makeInitialChartStageRequest(source)
+      initialCache = { key, value }
+      return value
+    })
+  const prepareSelected = (source: ChartDecisionSource, response: unknown) =>
+    Result.gen(function* () {
+      const prepared = yield* initial(source)
+      const chartResponse = yield* decodeBoundStageResponse(prepared, response)
+      const next = yield* selectedBaseStartFromChart(source, prepared, chartResponse)
+      return { prepared, chartResponse, next }
+    })
+  let selectedCache:
+    | { readonly key: string; readonly value: Result.Result.Success<ReturnType<typeof prepareSelected>> }
+    | undefined
+  const selected = (source: ChartDecisionSource, response: unknown) =>
+    Result.gen(function* () {
+      // Include actual source and response bytes, not only their claimed hashes.
+      const key = yield* canonicalHashV1Result({ source, response }).pipe(
+        Result.mapError(
+          (cause) => new JevContractError({ message: 'Financial chart replay response is malformed', cause }),
+        ),
+      )
+      if (selectedCache?.key === key) return selectedCache.value
+      const value = yield* prepareSelected(source, response)
+      selectedCache = { key, value }
+      return value
+    })
+  return {
+    makeInitialChartStageRequest: initial,
+    makeSelectedBaseStartStageRequest: (source: ChartDecisionSource, response: unknown) =>
+      selected(source, response).pipe(Result.map(({ next }) => next)),
+    stagedChartAssessments: (source: ChartDecisionSource, response: unknown, baseStart: unknown | null) =>
+      selected(source, response).pipe(
+        Result.flatMap(({ prepared, chartResponse, next }) =>
+          assessmentsFromPreparedStages(source, prepared, chartResponse, next, baseStart),
+        ),
+      ),
+  }
+}
 
 // Identity checks only: no claim that these bytes were dispatched, durably stored,
 // paid for, or observed before a deadline. Integration must supply those proofs.
