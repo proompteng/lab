@@ -35,6 +35,7 @@ import {
 } from './projection'
 import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
 import { technicalReceiptAvailableAt } from './technical-projection'
+import { webullSnapshotEvidence } from './webull-projection'
 import type { StreamingFeatureReceipt } from './snapshot'
 
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
@@ -298,6 +299,15 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       featureReceipts,
       barPublications,
       technical,
+      webull:
+        source?.topics.webullBars === undefined
+          ? undefined
+          : webullSnapshotEvidence(
+              state.webull,
+              symbols.filter((symbol) => !excluded.has(symbol)),
+              Date.parse(request.rangeEndAt),
+              observedAtMs,
+            ),
       bars,
       quotes,
       trades,
