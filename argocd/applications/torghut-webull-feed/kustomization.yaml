@@ -8,4 +8,4 @@ resources:
 - service.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/torghut-webull-feed
-  digest: sha256:2a5f43388197544f3053e25a9737c3a384a6cfaf28eea7da187ffacb7681eb0c
+  digest: sha256:89d4ba873df47bc9faaec34718482df34097ecc93cf423e151da7a0a5e7cdab9

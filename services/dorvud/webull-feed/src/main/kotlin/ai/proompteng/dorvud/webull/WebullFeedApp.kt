@@ -253,20 +253,13 @@ private suspend fun runWebullFeed(
                   }
                 }
               },
-              sweepStarted = { sweepStartedAt ->
-                previousSweep?.takeIf { it < sweepStartedAt.minus(5, ChronoUnit.MINUTES) }?.let { previous ->
-                  control(
-                    "gap",
-                    buildJsonObject {
-                      put("channel", "bars")
-                      put("reason", "bounded_recovery_window_exceeded")
-                      put("scope", "catalog_sweep")
-                      put("from", previous.toString())
-                      put("to", sweepStartedAt.minus(5, ChronoUnit.MINUTES).toString())
-                      put("catalogId", activeCatalog.identity)
-                    },
-                  )
-                }
+              sweepStarted = { sweepStartedAt, backgroundSymbols ->
+                webullCatalogSweepGap(
+                  previousSweep,
+                  sweepStartedAt,
+                  activeCatalog.identity,
+                  backgroundSymbols.filter { it !in progress.invalidBarSymbols },
+                )?.let { control("gap", it) }
                 previousSweep = sweepStartedAt
               },
               sweepCompleted = { control("coverage", progress.report()) },
