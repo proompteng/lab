@@ -160,6 +160,10 @@ or reliability. The capture checks each account's risk, source, image, strategy,
 Runtime capture preserves the original unscoped hash of historical financial registrations that omit `entryMarkets`.
 All originally committed runtime fields must still match; registrations that include entry scope retain its exact
 hash commitment. Capture stores the matching runtime shape without rewriting the immutable registration.
+A persisted historical registration with a null controller plan also keeps that null commitment when the current
+builder supplies the native plan, whether its entry scope is present or absent. Capture still queries the registered
+null plan, so it cannot borrow native controller observations. Non-null plans, scoped entry markets, and all other
+runtime fields retain exact hash checks. New operational registration admission still requires the native plan.
 
 IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
 the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
