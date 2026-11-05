@@ -617,6 +617,17 @@ def evaluate (json : Json) : Except String Json := do
     return toJson (pendingMarketInputsContinuation (← json.getObjValAs? Bool "pending")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
       (← json.getObjValAs? Nat "normalDelay"))
+  | "sourceWaitReconciliationReusable" =>
+    return toJson (sourceWaitReconciliationReusable
+      (← json.getObjValAs? Bool "exact") (← json.getObjValAs? Bool "accounting")
+      (← json.getObjValAs? Bool "sameGeneration") (← json.getObjValAs? Bool "sameVersion")
+      (← json.getObjValAs? Bool "flat") (← json.getObjValAs? Bool "clearMutations")
+      (← json.getObjValAs? Bool "clearOrders") (← readInteger json "oldest")
+      (← readInteger json "newest") (← readInteger json "now") (← readInteger json "maximumAge"))
+  | "sourceWindowContinuation" =>
+    return toJson (sourceWindowContinuation (← json.getObjValAs? Bool "known")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
+      (← readInteger json "availableAt") (← json.getObjValAs? Nat "normalDelay"))
   | "cycleDecisionBinding" =>
     return toJson (cycleDecisionBinding (← readCycleEvidence (← json.getObjVal? "cycle"))
       (← readCycleDecision (← json.getObjVal? "document")) (← readInteger json "now")

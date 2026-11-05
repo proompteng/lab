@@ -299,6 +299,21 @@ The recovery driver publishes the absolute wake instant with the delay. Its comp
 real driver; native controller tests retain that instant across persistence work and projected replay, so durable
 publication cannot restart the source wait from a later clock.
 
+`source_wait_reuse_preserves_authority_and_original_freshness` maps
+`canReuseSourceWaitReconciliation` in the recovery driver. The executable comparison covers all 256 combinations
+of exactness, accounting, generation/version identity, positions, unresolved mutations, pending orders and unknown
+orders across original freshness boundaries. `source_wait_cannot_reuse_at_original_freshness_boundary` excludes
+reuse at expiry. This proves the read predicate; serialized-driver regressions separately verify periodic refresh
+and discard after mutation, bound cycles and failures. Reuse never changes final submission authority.
+
+`source_window_wake_preserves_original_admission` covers a committed, source-excluded window with a known next
+signal time. `evaluateJevObservationFromSnapshot` retains the source failure and supplies that time from the consumed
+window and protocol. The recovery driver can wake early only while the entry is active, unbound, and within its
+original lease. The wake equals the supplied future time and precedes both the original expiry and ordinary poll.
+`source_window_cannot_wake_at_original_expiry` rejects the exact expiry. The reachable example retains the observed
+4,471 ms wait with 26,136 ms left on the original lease; the ordinary 30-second delay would miss it. Source failures
+without a known next time keep their existing backoff, and a committed window cannot be reevaluated.
+
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
 modes, risk blocks, and attached versus explicitly supplied completion evidence. The full document-equivalence predicate
