@@ -405,7 +405,11 @@ export const decisionReadinessContinuationDelayMs = (
     result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
     query?.previousWindowEndAt !== undefined &&
     Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt)
-  if (result.readiness.reason === DecisionReadinessReason.InferenceExpired || pendingSnapshot) {
+  if (
+    result.readiness.reason === DecisionReadinessReason.InferenceExpired ||
+    result.readiness.reason === DecisionReadinessReason.ExecutionRiskExpired ||
+    pendingSnapshot
+  ) {
     const now = Date.parse(observedAt)
     const cycle = result.cycle
     const expiresAt = unusedEntryExpiresAt(cycle)

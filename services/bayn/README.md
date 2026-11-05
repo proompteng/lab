@@ -21,6 +21,12 @@ A rejected intent rolls back its decision binding. Broker submission starts afte
 the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
 mutation during persistence cannot change the approved intent identities or protection.
 
+If PostgreSQL rejects an expired risk approval during binding, its named constraint records the intent, decision,
+and exact database clock boundary. After the entire writer transaction rolls back, the same unbound cycle can await
+fresh decision evidence within its original entry deadline. At that deadline it is blocked. Future-dated decisions,
+unverified rejections and rollback failures remain failures. This wait is unavailable decision work, not a valid
+strategy abstention or a successful reliability obligation. Risk, quote and broker freshness checks remain unchanged.
+
 Cycle discovery bounds the authoritative equity-calendar read to the original five seconds. An unavailable calendar
 remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects

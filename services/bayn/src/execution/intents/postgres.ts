@@ -7,6 +7,7 @@ import { JevPurpose } from '../../jev/portfolio'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../contracts'
 import { Sha256Schema as Sha256, strictParseOptions } from '../../schemas'
 import { WriterFence, WriterFenceError } from '../writer-fence'
+import { expiredRiskClockRejection } from '../risk-clock'
 import {
   IntentStore,
   IntentStoreError,
@@ -387,7 +388,19 @@ const transitionIntent = (sql: PgClient.PgClient, intent: Intent, decision: Risk
       END
     WHERE intent_id = ${intent.intentId} AND state = ${IntentState.Planned}
     RETURNING intent_id
-  `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
+  `.pipe(
+    Effect.mapError((cause) => {
+      const expired = expiredRiskClockRejection(cause, {
+        intentId: intent.intentId,
+        decisionId: decision.decisionId,
+        decidedAt: decision.decidedAt,
+        expiresAt: decision.expiresAt,
+      })
+      return expired === undefined
+        ? classifyIntentCause('commit', cause)
+        : storeError('invariant', 'commit', 'risk decision expired before its intent transition', expired)
+    }),
+  )
 }
 
 type ResolvedIntent = { readonly _tag: 'Replay'; readonly receipt: IntentReceipt } | { readonly _tag: 'Pending' }

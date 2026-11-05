@@ -73,7 +73,7 @@ import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBat
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
   readonly message: string
   readonly availableAt?: string
-  readonly readiness: DecisionReadinessReason
+  readonly readiness: Exclude<DecisionReadinessReason, DecisionReadinessReason.ExecutionRiskExpired>
   readonly entryAbstention?: ProtectedEntryTarget
 }> {}
 
