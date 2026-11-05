@@ -4349,9 +4349,9 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynOperationMetricsUnavailable
           expr: label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"} ==
-            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"})
+            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"} <= time() + 5)
             >= time() - 90), "service", "bayn", "source_revision", ".*") or label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
-            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"})
+            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"} <= time() + 5)
             >= time() - 90), "service", "bayn-execution-controller", "source_revision", ".*")
           for: 2m
           labels:
