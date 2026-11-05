@@ -182,6 +182,11 @@
   },
   {
     "surface": "controller",
+    "operation": "RecoverCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "InterruptCodexTurn",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -555,6 +560,11 @@
   {
     "surface": "bff",
     "operation": "steer-turn",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "recover-run",
     "action": "ACTION_CODEX_CONTROL"
   },
   {

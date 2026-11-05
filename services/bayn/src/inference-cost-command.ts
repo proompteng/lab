@@ -6,7 +6,7 @@ import { PostgresClientLive } from './db/postgres-client'
 import { researchLedgerReaderConfig, researchReaderConfig } from './db/research-reader-config'
 import { canonicalJsonV1Result } from './hash'
 import { InferenceCostError, decodeInferenceCostEvidence, makeInferenceCostReport } from './inference-costs'
-import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeOperatingCostReport } from './operating-costs'
 import { readOperatingCostPacket } from './operating-cost-files'
 import { IsoDateSchema } from './schemas'
@@ -85,7 +85,9 @@ const readSession = (sessionDate: string) =>
     const config = yield* researchReaderConfig
     const read = Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      return (yield* readInferenceExpenseSnapshot(sql, Redacted.value(config.accountId), sessionDate)).evidence
+      return (yield* acquireInferenceExpenseSnapshot(sql, Redacted.value(config.accountId), sessionDate).pipe(
+        Effect.flatMap(({ verify }) => verify),
+      )).evidence
     })
     return yield* read.pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- read-only command owns the scoped database layer
@@ -112,7 +114,9 @@ export const readInferenceExpenseSession = (sessionDate: string) =>
       const read = Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const accountId = Redacted.value(config.accountId)
-        const snapshot = yield* readInferenceExpenseSnapshot(sql, accountId, sessionDate)
+        const snapshot = yield* acquireInferenceExpenseSnapshot(sql, accountId, sessionDate).pipe(
+          Effect.flatMap(({ verify }) => verify),
+        )
         const { evidence, quotes: rows } = snapshot
         const store = makeInferenceExpenseStore(sql, accountId)
         const coverage = yield* Effect.fromResult(verifyInferenceExpenseCoverage(evidence, accountId, rows))

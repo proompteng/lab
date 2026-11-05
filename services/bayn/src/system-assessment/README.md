@@ -32,6 +32,76 @@ windows remain `UNDETERMINED`. Retained policy versions keep their original empt
 impossible timestamps fail validation. Safe failures and late recoveries count as missed service. Safety violations
 are evaluated separately by the combined assessment and have no error budget.
 
+Operational reporting uses `bayn.operational-registration.v1` in the `BAYN_OPERATIONAL_RELIABILITY` program. It binds
+one existing native PAPER policy, its sealed capital generation and physical execution build, the unchanged runtime
+deadlines, the compiled runtime entry scope, and a prospective contiguous reporting period.
+The current scope is equities only; retaining the mixed-market capital protocol does not re-enable crypto entries. The registration retains
+the earlier incident evidence. Its scope source is the canonical equity calendar captured before registration;
+an unexpected empty or substituted calendar cannot be treated as a legitimate closure. Its attempt chain is append-only; a later period cannot erase an earlier failure.
+There is no research control, bootstrap, profit quota, minimum session count, or trade quota in this operating claim.
+
+New operational registrations bind the native execution controller's plan identity directly. The optional
+read-only status expectation is not that identity and cannot replace or remove it. PostgreSQL rejects new missing
+or substituted plan bindings. Earlier registrations and receipts retain their original contents and results;
+the first operational attempt with a missing plan remains incomplete or failed rather than being rewritten.
+
+Controller projection observes the committed status in a separate database statement before returning.
+This supplies a durability witness without waiting for another trading tick. The observation cannot witness
+its own transaction or released savepoint; rolled-back and deferred-rejected sources remain unwitnessed.
+Repeated observations preserve the first witness and the original completion time, epoch, sequence and deadline.
+
+The native schedule keeps globally aligned signal and reconciliation times. One exact post-due reconciliation may
+complete several pending checks for the same account; each check retains its own original freshness deadline, and
+a late reconciliation cannot repair an expired obligation. Starting a report does not restart the
+signal warmup or an admitted mutation's clock. Obligations due before the final reporting boundary keep their original
+deadlines afterward. Capture retains the whole event sequence for mutations active across the opening boundary,
+including unresolved work with no event inside the period. A report remains incomplete while required evidence or
+original deadlines are outstanding. Closed entry windows count only with retained calendar, policy, account,
+generation, physical worker and causal arrival evidence. Bare historical closed ticks and read-only capital holds do not
+prove correct decision work. Closed evidence preserves the original admission clock through calendar I/O.
+The reporter reproduces the native admission rule and the registered day's hours before accepting the abstention.
+
+Operational accounting requires the reader's exact fill/receipt and ledger verification, the complete retained
+transaction and cash-settlement rows, and the existing cash-settlement identity checks. Economic qualification
+remains separate; open inventory or an unpaid, accounted fee liability does not impose a new operating quota.
+
+`evaluateOperationalAssessment` shares the financial evaluator's schedule, durable witnesses, integer reliability
+measurement, capital identity checks, and safety audit predicate. Its separate immutable receipt can report
+`OPERATIONALLY_RELIABLE_PAPER`, `REJECTED`, or `INCONCLUSIVE`; economics remain `NOT_ASSESSED`. No operational receipt
+can certify economic qualification or grant capital. Operational safety audit artifacts bind the exact coverage,
+registration, evidence cut, violations and verified scan-evidence hash. A verified unrelated file cannot certify zero violations. An operating period's dated scope does not establish behavior
+outside that period or substitute for the required native equity-opening verification.
+
+Operational capture validates every inference source, frozen quote and native ledger prefix before retaining source
+fingerprints and complete quote and ledger evidence. It omits raw inference bodies from the operational cut; economics
+remain `NOT_ASSESSED`. Financial capture retains each complete inference request once, with its source fingerprint in
+the accounting material. Session reads paginate all retained cost records rather than rejecting sessions above a
+fixed record count. Immutable source tables and earlier cuts and assessment receipts remain unchanged.
+
+New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native decisions and controller receipts
+one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
+archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
+identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+Controller pass capture uses active completion projections. Deactivation preserves the last completion summary while
+advancing the controller epoch; it does not perform that pass again. Its inactive projection cannot reattribute the
+earlier receipt to the new epoch. The original completion and every raw projection remain retained, and conflicting
+active evidence still fails capture.
+Already-stored inactive projections replay exactly without rewriting their retained pass; they do not count as new completed work.
+The archive is persisted before the manifest, and PostgreSQL rejects missing references, repeated native identities,
+and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
+retry verifies and reuses their exact contents rather than replacing evidence.
+
+Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
+witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
+the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
+and their receipt hashes remain reproducible. Financial qualification continues to require its full financial cut;
+an operational manifest cannot certify profit. Temporary spool files are private and removed when capture exits,
+including failure and interruption.
+The reporting API has a 4 GiB disk-backed temporary volume for the source snapshot. Its former 256 MiB volume cannot
+hold a complete native session's evidence. This storage bound is separate from trading deadlines and reliability
+targets; exhausted storage fails capture without dropping records or creating a successful assessment. Trading
+workers keep their existing resources.
+
 ## Realism
 
 `measureRealism` verifies causal input availability, persistence and routing order, position ownership, fixed order
@@ -76,10 +146,24 @@ reset the attempt history. These functions require verified audit and allocation
 
 ## Evidence and assessment
 
+Source cuts retain each complete batch once in `batches`; the provenance material does not copy those payloads.
+Earlier cuts retain their original bytes and hashes. The private reporting command runs on the API workload,
+with a 3 GiB Node heap inside its 4 GiB memory limit, separately from the native trading controller.
+Stream command output to a private file. A local capacity measurement using 540 copies of one retained
+514 KB batch exceeded Node's string limit with duplicate payloads. A single copy serialized 279 MB with a
+2.62 GiB process peak. This is reporting capacity evidence, not trading or reliability qualification.
+
 `captureSystemSourceCut` reads the registered accounts and authority generations, financial and inference records,
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
 or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
+Runtime capture preserves the original unscoped hash of historical financial registrations that omit `entryMarkets`.
+All originally committed runtime fields must still match; registrations that include entry scope retain its exact
+hash commitment. Capture stores the matching runtime shape without rewriting the immutable registration.
+A persisted historical registration with a null controller plan also keeps that null commitment when the current
+builder supplies the native plan, whether its entry scope is present or absent. Capture still queries the registered
+null plan, so it cannot borrow native controller observations. Non-null plans, scoped entry markets, and all other
+runtime fields retain exact hash checks. New operational registration admission still requires the native plan.
 
 IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
 the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
@@ -231,6 +315,30 @@ evidence obligation.
    its receipt.
 6. `--authority-generation <sha256> --assessment <sha256>` includes the saved assessment in the scoped financial
    report. `--persist-receipt` also persists that forward-performance report.
+
+The same history, register, capture, and assess commands accept operational packets. Their program and schema select
+the operational evaluator; its input contains the saved registration, source-cut hash, and a verified source-bound
+safety audit. Counters and successful-event totals are derived from the committed evidence rather than supplied by
+the packet. Operational registration requires verified calendar/scope and retained incident artifacts and the
+existing durable authorized generation. Registration and reporting do not change trading authority or risk limits.
+Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
+`evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
+reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
+Their original source/digest controller comparison is frozen separately from the current build matcher.
+Those historical results do not establish a certificate under the current build-binding rule.
+Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
+unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small
+receipt/timing summaries without retaining complete archived records. A replay-policy/input mismatch is rejected.
+Current assessment of a retained registration with a null controller plan adds `UNBOUND_CONTROLLER_PLAN` even
+without captured controller passes. Independent decision witnesses cannot replace this missing provenance;
+historical v1 receipt reproduction and new-registration admission retain their original separate rules.
+
+Retained controller passes must match the registered physical worker build through the reporting period and any
+remaining original obligation deadlines. A missing or mismatched build adds `UNBOUND_CONTROLLER_BUILD` and prevents
+operational certification, even when independent decision documents complete scheduled obligations. A pass known to
+start after that period and all required work has completed cannot invalidate the finished claim. This exemption
+requires ordered issue, observation and completion clocks ending no later than the cut; missing or contradictory
+clocks remain fail-closed. Retained source documents and measured obligation counters are not discarded or rewritten.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

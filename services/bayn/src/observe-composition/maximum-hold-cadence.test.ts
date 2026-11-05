@@ -63,7 +63,7 @@ test.each([
     const result = {
       ...position,
       readiness: {
-        reason: DecisionReadinessReason.SignalWindowObserved,
+        reason: DecisionReadinessReason.SignalWindowObserved as const,
         message: 'The completed signal window was already consumed',
         availableAt: instant(signalOffset),
       },

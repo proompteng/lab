@@ -18,6 +18,7 @@ public import Bayn.InferenceHandoff
 public import Bayn.Mutations
 public import Bayn.DecisionWork
 public import Bayn.ControllerTiming
+public import Bayn.TradingScope
 public import Bayn.AccountProtection
 public import Bayn.ReplaySession
 public import Bayn.Ledger

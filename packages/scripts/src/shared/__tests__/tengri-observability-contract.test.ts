@@ -28,7 +28,7 @@ const tengriRules = (): readonly MimirRule[] => {
   return group.rules
 }
 
-test('cluster Alloy collects bounded Tengri control-plane and supervisor metrics', () => {
+test('cluster Alloy collects bounded Tengri controller, supervisor, and run-worker metrics', () => {
   const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const deployment = YAML.parse(
     readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml'),
@@ -40,10 +40,14 @@ test('cluster Alloy collects bounded Tengri control-plane and supervisor metrics
   expect(alloy).toContain('prometheus.scrape "tengri"')
   expect(alloy).not.toContain('tengri-gateway.tengri.svc.cluster.local:8080')
   expect(alloy).toContain('discovery.kubernetes "tengri_controllers"')
-  expect(alloy).toContain('targets  = discovery.relabel.tengri_controllers.output')
+  expect(alloy).toMatch(/targets\s*=\s*discovery\.relabel\.tengri_controllers\.output/)
   expect(alloy).toContain('app.kubernetes.io/name=tengri,app.kubernetes.io/component=control-plane')
   expect(alloy).toContain('regex         = "tengri;gateway"')
-  expect(alloy).toContain('job_name = "tengri"')
+  expect(alloy).toMatch(/job_name\s*=\s*"tengri"/)
+  expect(alloy).toContain('discovery.kubernetes "tengri_run_workers"')
+  expect(alloy).toContain('app.kubernetes.io/name=tengri,app.kubernetes.io/component=run-worker')
+  expect(alloy).toContain('regex         = "tengri;health"')
+  expect(alloy).toMatch(/job_name\s*=\s*"tengri-run-worker"/)
   expect(alloy).toContain('discovery.kubernetes "tengri_slots"')
   expect(alloy).toContain('app.kubernetes.io/name=tengri-slot')
   expect(alloy).toContain('regex         = "supervisor;health"')
@@ -69,17 +73,28 @@ test('cluster Alloy collects bounded Tengri control-plane and supervisor metrics
     ],
     ports: [{ protocol: 'TCP', port: 8080 }],
   })
-  const slotPolicy = policies.find(
-    (policy) => policy.kind === 'NetworkPolicy' && policy.metadata?.name === 'tengri-slots',
+  for (const name of ['tengri-slots', 'tengri-run-worker']) {
+    const policy = policies.find((policy) => policy.kind === 'NetworkPolicy' && policy.metadata?.name === name)
+    expect(policy?.spec.ingress).toContainEqual({
+      from: [
+        {
+          namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'observability' } },
+          podSelector: { matchLabels: { 'app.kubernetes.io/name': 'observability-cluster-metrics-alloy' } },
+        },
+      ],
+      ports: [{ protocol: 'TCP', port: 8080 }],
+    })
+  }
+
+  const worker = YAML.parseAllDocuments(readRepoFile('argocd/applications/tengri/run-worker.yaml')).map((document) =>
+    document.toJSON(),
   )
-  expect(slotPolicy?.spec.ingress).toContainEqual({
-    from: [
-      {
-        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'observability' } },
-        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'observability-cluster-metrics-alloy' } },
-      },
-    ],
-    ports: [{ protocol: 'TCP', port: 8080 }],
+  const peer = worker.find((resource) => resource.kind === 'PeerAuthentication')
+  expect(peer.spec.mtls.mode).toBe('STRICT')
+  expect(peer.spec.portLevelMtls['8080'].mode).toBe('DISABLE')
+  const authorization = worker.find((resource) => resource.kind === 'AuthorizationPolicy')
+  expect(authorization.spec.rules).toContainEqual({
+    to: [{ operation: { ports: ['8080'], methods: ['GET'], paths: ['/healthz', '/metrics'] } }],
   })
 })
 
@@ -94,6 +109,8 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
     'TengriSlotPoolUnavailable',
     'TengriAgentFailed',
     'TengriGuestFailureBurst',
+    'TengriRunStatusFailures',
+    'TengriRunRecoveryBlocked',
     'TengriBootLatencyHigh',
     'TengriResumeLatencyHigh',
     'TengriInventoryStale',
@@ -103,7 +120,10 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
   ])
 
   const alerts = rules.filter((rule) => rule.alert !== undefined)
-  expect(alerts.every((rule) => rule.for === '5m')).toBe(true)
+  for (const rule of alerts) {
+    const recovery = rule.alert === 'TengriRunStatusFailures' || rule.alert === 'TengriRunRecoveryBlocked'
+    expect(rule.for).toBe(recovery ? '2m' : '5m')
+  }
   expect(alerts.every((rule) => rule.annotations?.runbook_url === 'docs/tengri/operations.md')).toBe(true)
 
   const expressions = Object.fromEntries(alerts.map((rule) => [rule.alert, rule.expr]))
@@ -113,6 +133,8 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
   expect(expressions.TengriSlotPoolUnavailable).toContain('kube_pod_status_ready')
   expect(expressions.TengriAgentFailed).toContain('state="failed"')
   expect(expressions.TengriGuestFailureBurst).toContain('tengri_guest_failures_total')
+  expect(expressions.TengriRunStatusFailures).toContain('tengri_run_read_failures_total')
+  expect(expressions.TengriRunRecoveryBlocked).toContain('tengri_run_recovery_observations_total')
   expect(expressions.TengriBootLatencyHigh).toContain('tengri_agent_boot_latency_seconds_count')
   expect(expressions.TengriResumeLatencyHigh).toContain('tengri_agent_resume_latency_seconds_count')
   expect(expressions.TengriBootLatencyHigh).toContain('histogram_quantile(0.95')
