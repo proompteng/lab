@@ -14,7 +14,7 @@ import { Effect, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { readForwardPerformanceInput } from '../forward-performance/program'
 import type { ForwardPerformanceConfig } from '../forward-performance/config'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { verifyInferenceExpenseCoverage } from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
@@ -69,7 +69,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           message: 'Source capture requires a registered candidate and broker identity',
         })
       const sql = yield* PgClient.PgClient
-      const cut = yield* sql.withTransaction(
+      const client = yield* makeTigerBeetleRequestClient(config)
+      const captured = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
           const times = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ asOf: UtcInstantSchema })))(
@@ -78,7 +79,6 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const asOf = times[0]?.asOf
           if (asOf === undefined)
             return yield* new SystemAssessmentError({ message: 'Database snapshot time is unavailable' })
-          const client = yield* makeTigerBeetleRequestClient(config)
           const accounts = []
           for (const definition of registration.policies) {
             const accountIdentity = yield* readRegisteredFinancialIdentity(definition)
@@ -182,19 +182,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                 }
               }),
             )
-            const store = makeInferenceExpenseStore(sql, accountIdentity.accountId)
-            const inferenceSnapshots = yield* Effect.forEach(registration.calendar.sessions, ({ sessionDate }) =>
-              Effect.gen(function* () {
-                const snapshot = yield* readInferenceExpenseSnapshot(sql, accountIdentity.accountId, sessionDate)
-                yield* Effect.fromResult(
-                  verifyInferenceExpenseCoverage(snapshot.evidence, accountIdentity.accountId, snapshot.quotes),
-                )
-                const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
-                return {
-                  ...captureInferenceSnapshot(snapshot, registration.program),
-                  ledger,
-                }
-              }),
+            const inferenceSources = yield* Effect.forEach(registration.calendar.sessions, ({ sessionDate }) =>
+              acquireInferenceExpenseSnapshot(sql, accountIdentity.accountId, sessionDate),
             )
             if (
               forward.transactions.some(
@@ -251,7 +240,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                   ),
                 ).values(),
               ],
-              inferenceSnapshots,
+              inferenceSources,
               financial,
             })
           }
@@ -306,59 +295,104 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               candidate.authorityGenerationHash,
             ),
           )
-          const sourceAccounts = accounts.map(({ inferenceSnapshots, ...account }) => ({
-            ...account,
-            inferenceSnapshots: inferenceSnapshots.map(({ source, ledger }) => ({ ...source, ledger })),
-          }))
-          const sourceMaterial = {
-            captureBuild: {
-              sourceRevision: config.build.sourceRevision,
-              imageRepository: config.build.imageRepository,
-              imageDigest: config.build.imageDigest,
-            },
-            runtimeConfiguration,
-            accounts: sourceAccounts,
-            decisions,
-            mutations,
-            orders,
-            protectionIntents,
-            accountMarks: accounts.flatMap((account) => account.accountMarks),
-            controllerPasses,
-            durableObservations,
-            decisionAdmissions,
-          }
-          return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema)({
-            schemaVersion: 'bayn.system-source-cut.v4',
-            decisionAdmissions,
-            registrationHash,
+          return {
+            accounts,
             asOf,
-            runtimeConfigurationHash,
-            financial: accounts.map((account) => account.financial),
-            inference: accounts.flatMap((account) =>
-              account.inferenceSnapshots.flatMap((snapshot) => (snapshot.evidence === null ? [] : [snapshot.evidence])),
-            ),
-            inferenceLedgerEvidenceHash: yield* Effect.fromResult(
-              canonicalHashV1Result(
-                sourceAccounts.map((account) => ({
-                  policy: account.policy,
-                  snapshots: account.inferenceSnapshots,
-                })),
-              ),
-            ),
             decisions,
-            batches,
             mutations,
-            fills,
             orders,
             protectionIntents,
-            accountMarks: accounts.flatMap((account) => account.accountMarks),
             controllerPasses,
             durableObservations,
-            sourceMaterial,
-            sourceMaterialHash: yield* Effect.fromResult(canonicalHashV1Result(sourceMaterial)),
-          })
+            decisionAdmissions,
+            batches,
+            fills,
+          }
         }),
       )
+      const {
+        asOf,
+        decisions,
+        mutations,
+        orders,
+        protectionIntents,
+        controllerPasses,
+        durableObservations,
+        decisionAdmissions,
+        batches,
+        fills,
+      } = captured
+      const accounts = yield* Effect.forEach(captured.accounts, ({ inferenceSources, ...account }) =>
+        Effect.gen(function* () {
+          const store = makeInferenceExpenseStore(sql, account.identity.accountId)
+          const inferenceSnapshots = yield* Effect.forEach(inferenceSources, ({ verify }) =>
+            Effect.gen(function* () {
+              const snapshot = yield* verify
+              yield* Effect.fromResult(
+                verifyInferenceExpenseCoverage(snapshot.evidence, account.identity.accountId, snapshot.quotes),
+              )
+              const ledger = yield* readInferenceExpenseLedger(
+                client,
+                snapshot,
+                store.currentSession(snapshot.evidence.sessionDate),
+              )
+              return { ...captureInferenceSnapshot(snapshot, registration.program), ledger }
+            }),
+          )
+          return { ...account, inferenceSnapshots }
+        }),
+      )
+      const sourceAccounts = accounts.map(({ inferenceSnapshots, ...account }) => ({
+        ...account,
+        inferenceSnapshots: inferenceSnapshots.map(({ source, ledger }) => ({ ...source, ledger })),
+      }))
+      const sourceMaterial = {
+        captureBuild: {
+          sourceRevision: config.build.sourceRevision,
+          imageRepository: config.build.imageRepository,
+          imageDigest: config.build.imageDigest,
+        },
+        runtimeConfiguration,
+        accounts: sourceAccounts,
+        decisions,
+        mutations,
+        orders,
+        protectionIntents,
+        accountMarks: accounts.flatMap((account) => account.accountMarks),
+        controllerPasses,
+        durableObservations,
+        decisionAdmissions,
+      }
+      const cut = yield* Schema.decodeUnknownEffect(SystemSourceCutSchema)({
+        schemaVersion: 'bayn.system-source-cut.v4',
+        decisionAdmissions,
+        registrationHash,
+        asOf,
+        runtimeConfigurationHash,
+        financial: accounts.map((account) => account.financial),
+        inference: accounts.flatMap((account) =>
+          account.inferenceSnapshots.flatMap((snapshot) => (snapshot.evidence === null ? [] : [snapshot.evidence])),
+        ),
+        inferenceLedgerEvidenceHash: yield* Effect.fromResult(
+          canonicalHashV1Result(
+            sourceAccounts.map((account) => ({
+              policy: account.policy,
+              snapshots: account.inferenceSnapshots,
+            })),
+          ),
+        ),
+        decisions,
+        batches,
+        mutations,
+        fills,
+        orders,
+        protectionIntents,
+        accountMarks: accounts.flatMap((account) => account.accountMarks),
+        controllerPasses,
+        durableObservations,
+        sourceMaterial,
+        sourceMaterialHash: yield* Effect.fromResult(canonicalHashV1Result(sourceMaterial)),
+      })
       const saved = yield* persistSystemSourceCut(cut)
       return {
         ...saved,
