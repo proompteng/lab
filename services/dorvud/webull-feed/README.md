@@ -17,6 +17,11 @@ verified concurrent delivering set was 100 symbols, despite 500 admissions. The 
 uses one active connection and discovers its capacity from provider responses instead of assuming a
 permanent total symbol cap. Additional idle connections do not count as delivered coverage.
 
+`WEBULL_PRIORITY_SYMBOLS` gives Bayn's equity universe first access to streaming slots and a separate completed-M1
+polling loop. Priority bar requests repeat five seconds after the previous round finishes, so they do not wait for
+the full catalog sweep. The remaining catalog continues in the background. Both loops share the same API client,
+per-endpoint request pacing and provider cooldowns; priority polling does not increase the aggregate request limit.
+
 Webull documents [five concurrent connections, a one-minute reconnect wait, and at most three pushes
 per second per connection](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/).
 The collector uses unique session IDs, reconnects after 60 seconds, and resubscribes explicitly.
