@@ -89,17 +89,24 @@ fn principal() -> Principal {
 #[tokio::test]
 async fn status_reads_accept_delayed_authorized_responses() {
     let service = Arc::new(fixture());
+    let connections = Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    let observed_connections = connections.clone();
     let router = axum::Router::new().route(
         "/restate/call/{service}/{key}/{handler}",
         axum::routing::post({
             let service = service.clone();
-            move |axum::extract::Path((name, key, handler)): axum::extract::Path<(
+            let connections = observed_connections.clone();
+            move |axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<
+                std::net::SocketAddr,
+            >,
+                  axum::extract::Path((name, key, handler)): axum::extract::Path<(
                 String,
                 String,
                 String,
             )>,
                   axum::Json(envelope): axum::Json<Envelope>| {
                 let service = service.clone();
+                connections.lock().unwrap().insert(peer);
                 async move {
                     let domain = if handler == "active" {
                         "active-query"
@@ -139,7 +146,14 @@ async fn status_reads_accept_delayed_authorized_responses() {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
     let output = tokio::time::timeout(
         Duration::from_secs(15),
         tokio::process::Command::new(std::env::current_exe().unwrap())
@@ -157,6 +171,11 @@ async fn status_reads_accept_delayed_authorized_responses() {
     .unwrap()
     .unwrap();
     server.abort();
+    assert_eq!(
+        connections.lock().unwrap().len(),
+        1,
+        "run reads must reuse the existing ingress connection"
+    );
     assert!(
         output.status.success(),
         "{}\n{}",
