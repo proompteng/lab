@@ -21,7 +21,7 @@ import { makeInferenceExpenseStore } from './inference-expense-postgres'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from './test-environment.test-support'
 import { runInferenceExpensePass } from './inference-expense-runtime'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
-import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeTigerBeetleRequestClient } from './tigerbeetle-client'
 import {
   readForwardInferenceExpenses,
@@ -507,7 +507,9 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
             yield* store.acknowledge(quotes)
             const { captured, report, sessionRows } = yield* forwardPerformanceSnapshot(sql).withTransaction(
               Effect.gen(function* () {
-                const captured = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
+                const captured = yield* acquireInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate).pipe(
+                  Effect.flatMap(({ verify }) => verify),
+                )
                 yield* Effect.gen(function* () {
                   yield* persistSource(expenseSourceFixture({ accountId: source.accountId, key: 'b', inputTokens: 2 }))
                   yield* runInferenceExpensePass(store, client, expenseRateFixture)
@@ -524,7 +526,9 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
                 return { captured, report, sessionRows: yield* store.session(source.sessionDate) }
               }),
             )
-            const current = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
+            const current = yield* acquireInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate).pipe(
+              Effect.flatMap(({ verify }) => verify),
+            )
             const next = yield* readInferenceExpenseLedger(client, current, store.currentSession(source.sessionDate))
             return {
               captured,
@@ -586,7 +590,11 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
             if (quote === undefined) return yield* Effect.die('synthetic frozen native quote is absent')
             const ledger = yield* readInferenceExpenseLedger(
               client,
-              yield* readInferenceExpenseSnapshot(yield* PgClient.PgClient, source.accountId, source.sessionDate),
+              yield* acquireInferenceExpenseSnapshot(
+                yield* PgClient.PgClient,
+                source.accountId,
+                source.sessionDate,
+              ).pipe(Effect.flatMap(({ verify }) => verify)),
               store.currentSession(source.sessionDate),
             )
             const url = new URL(testUrl)

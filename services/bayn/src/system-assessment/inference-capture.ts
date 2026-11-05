@@ -1,9 +1,9 @@
-import type { ForwardInferenceExpenseSnapshot } from '../forward-performance/inference-expenses'
+import type { InferenceCostSnapshot } from '../inference-costs-postgres'
 import type { OperationalRegistration } from './operational-period'
 import type { SystemRegistration } from './policy'
 
 export const captureInferenceSnapshot = (
-  snapshot: ForwardInferenceExpenseSnapshot,
+  snapshot: InferenceCostSnapshot,
   program: SystemRegistration['program'] | OperationalRegistration['program'],
 ) => {
   const { requests, ...scope } = snapshot.evidence

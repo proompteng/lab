@@ -6,7 +6,7 @@ import { openSnapshotRows } from '../db/snapshot-rows'
 import type { ForwardPerformanceConfig } from '../forward-performance/config'
 import { readForwardPerformanceInput } from '../forward-performance/program'
 import { canonicalHashV1Result } from '../hash'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { verifyInferenceExpenseCoverage } from '../inference-expense'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
@@ -110,7 +110,7 @@ export const captureOperationalSourceCut = (
       const { references, spool, persist } = yield* makeOperationalSourceSpool
       const sql = yield* PgClient.PgClient
       const client = yield* makeTigerBeetleRequestClient(config)
-      const cut = yield* sql.withTransaction(
+      const captured = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
           const times = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ asOf: UtcInstantSchema })))(
@@ -211,16 +211,8 @@ export const captureOperationalSourceCut = (
               fills,
             }),
           )
-          const store = makeInferenceExpenseStore(sql, identity.accountId)
-          const inferenceSnapshots = yield* Effect.forEach(registration.calendar.sessions, ({ sessionDate }) =>
-            Effect.gen(function* () {
-              const snapshot = yield* readInferenceExpenseSnapshot(sql, identity.accountId, sessionDate)
-              yield* Effect.fromResult(
-                verifyInferenceExpenseCoverage(snapshot.evidence, identity.accountId, snapshot.quotes),
-              )
-              const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
-              return { ...captureInferenceSnapshot(snapshot, registration.program).source, ledger }
-            }),
+          const inferenceSources = yield* Effect.forEach(registration.calendar.sessions, ({ sessionDate }) =>
+            acquireInferenceExpenseSnapshot(sql, identity.accountId, sessionDate),
           )
           const mutations = yield* readSystemMutationEvidence(
             identity.accountId,
@@ -253,35 +245,62 @@ export const captureOperationalSourceCut = (
               yield* spool(SystemSourceRecordKind.Controller, pass.receiptHash, pass)
             }),
           )
-          const sourceMaterial = {
-            captureBuild: {
-              sourceRevision: config.build.sourceRevision,
-              imageRepository: config.build.imageRepository,
-              imageDigest: config.build.imageDigest,
-            },
-            runtimeConfiguration,
-            accounts: [{ policy: JevResearchPolicy.Candidate, identity: accountIdentity, forward, inferenceSnapshots }],
-            mutations,
-          }
-          return yield* Schema.decodeUnknownEffect(
-            OperationalSourceCutSchema,
-            strictParseOptions,
-          )({
-            schemaVersion: 'bayn.operational-source-cut.v1',
-            registrationHash,
+          return {
             asOf,
-            runtimeConfigurationHash,
-            financial: [financial],
-            records: [...references.values()],
+            forward,
+            financial,
+            inferenceSources,
             protectionIntents,
             mutations,
             durableObservations,
             decisionAdmissions,
-            sourceMaterial,
-            sourceMaterialHash: yield* Effect.fromResult(canonicalHashV1Result(sourceMaterial)),
-          })
+          }
         }),
       )
+      const { asOf, forward, financial, protectionIntents, mutations, durableObservations, decisionAdmissions } =
+        captured
+      const store = makeInferenceExpenseStore(sql, identity.accountId)
+      const inferenceSnapshots = yield* Effect.forEach(captured.inferenceSources, ({ verify }) =>
+        Effect.gen(function* () {
+          const snapshot = yield* verify
+          yield* Effect.fromResult(
+            verifyInferenceExpenseCoverage(snapshot.evidence, identity.accountId, snapshot.quotes),
+          )
+          const ledger = yield* readInferenceExpenseLedger(
+            client,
+            snapshot,
+            store.currentSession(snapshot.evidence.sessionDate),
+          )
+          return { ...captureInferenceSnapshot(snapshot, registration.program).source, ledger }
+        }),
+      )
+      const sourceMaterial = {
+        captureBuild: {
+          sourceRevision: config.build.sourceRevision,
+          imageRepository: config.build.imageRepository,
+          imageDigest: config.build.imageDigest,
+        },
+        runtimeConfiguration,
+        accounts: [{ policy: JevResearchPolicy.Candidate, identity: accountIdentity, forward, inferenceSnapshots }],
+        mutations,
+      }
+      const cut = yield* Schema.decodeUnknownEffect(
+        OperationalSourceCutSchema,
+        strictParseOptions,
+      )({
+        schemaVersion: 'bayn.operational-source-cut.v1',
+        registrationHash,
+        asOf,
+        runtimeConfigurationHash,
+        financial: [financial],
+        records: [...references.values()],
+        protectionIntents,
+        mutations,
+        durableObservations,
+        decisionAdmissions,
+        sourceMaterial,
+        sourceMaterialHash: yield* Effect.fromResult(canonicalHashV1Result(sourceMaterial)),
+      })
       yield* persist
       return yield* persistOperationalSourceCut(cut)
     }),

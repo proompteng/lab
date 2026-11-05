@@ -47,14 +47,26 @@ const SnapshotSchema = Schema.Array(
   ]),
 )
 
-/** Session attribution includes every claimed request, even for blocked, unfilled, and no-trade cycles. */
-export const readInferenceExpenseSnapshot = (
+const inferenceSnapshotError = (cause: unknown) =>
+  cause instanceof InferenceCostError
+    ? cause
+    : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause })
+
+export interface InferenceCostSnapshot {
+  readonly evidence: DecodedInferenceCostEvidence
+  readonly quotes: readonly InferenceExpenseRecord[]
+}
+
+/** Acquire every source in the cut; verify it after the enclosing read snapshot releases its connection. */
+export const acquireInferenceExpenseSnapshot = (
   sql: PgClient.PgClient,
   accountId: string,
   sessionDate: string,
   writerFence?: WriterFenceService,
 ): Effect.Effect<
-  { readonly evidence: DecodedInferenceCostEvidence; readonly quotes: readonly InferenceExpenseRecord[] },
+  {
+    readonly verify: Effect.Effect<InferenceCostSnapshot, InferenceCostError>
+  },
   InferenceCostError
 > =>
   Effect.gen(function* () {
@@ -123,8 +135,8 @@ export const readInferenceExpenseSnapshot = (
         }),
       )
       .pipe(
-        Effect.flatMap((inputs) =>
-          Effect.gen(function* () {
+        Effect.map((inputs) => ({
+          verify: Effect.gen(function* () {
             const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
             const requests: DecodedInferenceCostRequest[] = []
             for (const input of inputs) {
@@ -171,12 +183,8 @@ export const readInferenceExpenseSnapshot = (
               },
               quotes,
             }
-          }),
-        ),
-        Effect.mapError((cause) =>
-          cause instanceof InferenceCostError
-            ? cause
-            : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause }),
-        ),
+          }).pipe(Effect.mapError(inferenceSnapshotError)),
+        })),
+        Effect.mapError(inferenceSnapshotError),
       )
   })
