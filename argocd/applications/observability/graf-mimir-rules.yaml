@@ -3746,8 +3746,13 @@ data:
               service: bayn
               notify: email
             annotations:
-              summary: Bayn autonomous cycle is failed
-              description: A durable blocked cycle or fail-closed authority, reconciliation, or mutation condition remains current.
+              summary: Bayn reported a fail-closed execution condition
+              description: |
+                Bayn observed a durable blocked cycle or a fail-closed authority,
+                reconciliation, or mutation condition. This does not necessarily mean
+                a terminal cycle failure. Check cycle.reason and the matching cycle/trace.
+                Firing is retained for 5 minutes after the condition clears; notification
+                time is not incident onset or duration. Follow the runbook to verify recovery.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
       - name: kafka-critical-service.rules
         rules:

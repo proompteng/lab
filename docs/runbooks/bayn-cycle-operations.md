@@ -292,13 +292,23 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` remains a hard deadline for an
   ACTIVE cycle until its immutable decision is bound. A decision-bound ACTIVE cycle may continue broker recovery and
   reconciliation through `executionCloseAt`; an unbound ACTIVE cycle at the cutoff is a missed-submission incident.
-- `BaynCycleFailed`: preserve `cycle.reason` and the terminal cycle identity. Resolve the underlying authority,
-  reconciliation, mutation, or durable-cycle state through its existing writer contract. When
+- `BaynCycleFailed`: this is an operational fail-closed condition, not necessarily a terminal cycle failure.
+  Preserve `cycle.reason` and the matching current or last cycle identity. Reconciliation that predates a mutation,
+  an unresolved mutation, or active kill state can trigger it while an ACTIVE cycle is safely recovering.
+  Resolve the underlying authority, reconciliation, mutation, or durable-cycle state through its existing writer contract. When
   `cycle.reason=LAST_CYCLE_BLOCKED`, branch on the exact persisted `cycle.last.terminalReason`; never clear the alert
   by editing monitoring state.
+  The rule evaluates every 15 seconds, requires one minute of failed-condition observations, aggregates across
+  replicas, and retains firing for five minutes after the expression clears. Projection age, scrape timing and
+  replica differences can extend the observed interval; email grouping can delay both firing and resolution messages.
+  Notification timestamps are not incident onset or duration. A firing email may arrive after automatic recovery.
+  Correlate the historical per-replica `bayn_cycle_reason`, `bayn_cycle_condition` and `ALERTS` samples with the
+  matching controller trace, then verify current authority, reconciliation, unresolved mutations, orders and positions.
+  A terminal COMPLETED cycle can include a canceled, unfilled entry. Neither that terminal state nor a resolved alert
+  proves a fill, profit, or permission to trade; preserve the existing broker and authority safeguards.
 
-An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms
-recovery.
+The underlying condition clears only when its source-of-truth state changes and the next bounded projection or
+health probe confirms recovery. Rule keep-firing periods and notification grouping can delay the resolved message.
 
 Missing telemetry is UNKNOWN, not a healthy input window. A stale runtime projection closes `bayn_runtime_ready`;
 an unavailable cycle projection and a failed scrape have their own alerts. This rule cannot diagnose the underlying
