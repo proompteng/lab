@@ -761,9 +761,10 @@ unusable. A consumed source window still waits for its next valid signal boundar
 inconsistent inference keeps the ordinary backoff. The same expiry classification applies when the source deadline
 passes during fresh reconciliation or pricing while the original lease is still open. A clock preceding the saved
 completion, missing reconciliation freshness, insufficient prospective quote coverage, or an expired admission
-keeps the ordinary backoff. After a durable observation, a missing input cut for a strictly later window retries
-within one second, bounded by the controller cadence and the original unused-entry expiry. Initial missing inputs and same-window retries
-retain the ordinary cadence. The readiness receipt retains the earlier window from this cycle's observation store.
+keeps the ordinary backoff. A missing initial input cut or a cut for a strictly later unconsumed window retries
+within one second, bounded by the controller cadence and the original unused-entry expiry. A captured snapshot query
+is required; source failures without that query and already consumed windows retain the ordinary cadence.
+The readiness receipt retains any earlier window from this cycle's observation store.
 Both inference readiness
 conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
 
@@ -1510,7 +1511,9 @@ The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` i
 `ledgerTimestampMax`, `verifiedSessionTransferCount` and `exactLedgerPrefix` identify the verified native prefix. `transferCount` and
 `knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
 timestamps belong to different systems and are never compared to infer ordering. Pending quotes remain explicitly
-unverified, and verification does not establish invoice reconciliation.
+unverified, and verification does not establish invoice reconciliation. Stage counters use only captured quotes: a
+validated priced quote resolves an earlier pending quote for the same stage, including proven zero-cost non-dispatch.
+A stage with no priced quote remains a gap; later owner quotes cannot resolve a gap in an earlier capture.
 
 ```sh
 node dist/inference-cost-command.js --ledger-session 2026-10-06
@@ -2264,9 +2267,13 @@ The release gate requires every shard and integration job to pass.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
-`bun run --filter @proompteng/bayn test:ledger`. CI runs its `runtime`, `backtest`, `frozen-control`, `restart`, and `inference`
-groups in separate jobs, each with its own disposable PostgreSQL and TigerBeetle. Append a group name to run it
+`bun run --filter @proompteng/bayn test:ledger`. CI runs `runtime`, `backtest`, `latency-jev`, `latency-ablation`,
+`latency-momentum`, `latency-momentum-trading`, `frozen-control`, `restart`, and `inference` in separate jobs, each with
+its own disposable PostgreSQL and TigerBeetle. The four twenty-session latency cases retain their native polling,
+assertions and ten-minute case budgets without sharing one fifteen-minute CI job. Append a group name to run it
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
+instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
 The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.

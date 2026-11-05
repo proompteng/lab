@@ -482,8 +482,59 @@ discovery.relabel "tengri_controllers" {
 }
 
 prometheus.scrape "tengri" {
-	job_name = "tengri"
-	targets  = discovery.relabel.tengri_controllers.output
+	job_name        = "tengri"
+	targets         = discovery.relabel.tengri_controllers.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.tengri_metrics.receiver]
+}
+
+discovery.kubernetes "tengri_run_workers" {
+	role = "pod"
+
+	namespaces {
+		names = ["tengri"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name=tengri,app.kubernetes.io/component=run-worker"
+	}
+}
+
+discovery.relabel "tengri_run_workers" {
+	targets = discovery.kubernetes.tengri_run_workers.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "tengri;health"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		target_label = "service"
+		replacement  = "tengri"
+	}
+}
+
+prometheus.scrape "tengri_run_workers" {
+	job_name        = "tengri-run-worker"
+	targets         = discovery.relabel.tengri_run_workers.output
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
 	forward_to      = [prometheus.relabel.tengri_metrics.receiver]

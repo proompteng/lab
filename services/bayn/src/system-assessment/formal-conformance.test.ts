@@ -1902,13 +1902,15 @@ formal('pinned Lean executable conformance', () => {
       ),
     ).toEqual(continuations)
     const pendingInputCases = lifecycleCases.flatMap((c) =>
-      [true, false].flatMap((pending) => [500, 30_000].map((normalDelay) => ({ ...c, pending, normalDelay }))),
+      (['INITIAL', 'LATER', 'CONSUMED', 'SOURCE_UNAVAILABLE'] as const).flatMap((inputState) =>
+        [500, 30_000].map((normalDelay) => ({ ...c, inputState, normalDelay })),
+      ),
     )
     expect(
       model(
         pendingInputCases.map((c) => ({
           operation: 'pendingMarketInputsContinuation',
-          pending: c.pending,
+          pending: c.inputState === 'INITIAL' || c.inputState === 'LATER',
           cycle: encodeCycle(c.cycle),
           now: String(c.now),
           normalDelay: c.normalDelay,
@@ -1926,12 +1928,18 @@ formal('pinned Lean executable conformance', () => {
               readiness: {
                 reason: DecisionReadinessReason.SnapshotUnavailable,
                 message: 'Awaiting raw inputs and their matching feature',
-                snapshotQuery: {
-                  rangeStartAt: instant(c.now - 60_000),
-                  rangeEndAt: instant(c.now),
-                  symbols: ['AAPL'],
-                  ...(c.pending ? { previousWindowEndAt: instant(c.now - 60_000) } : {}),
-                },
+                ...(c.inputState === 'SOURCE_UNAVAILABLE'
+                  ? {}
+                  : {
+                      snapshotQuery: {
+                        rangeStartAt: instant(c.now - 60_000),
+                        rangeEndAt: instant(c.now),
+                        symbols: ['AAPL'],
+                        ...(c.inputState === 'INITIAL'
+                          ? {}
+                          : { previousWindowEndAt: instant(c.now - (c.inputState === 'LATER' ? 60_000 : 0)) }),
+                      },
+                    }),
               },
             },
             c.normalDelay,
