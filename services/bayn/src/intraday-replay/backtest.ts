@@ -503,7 +503,16 @@ export const runBacktest = (
       return yield* new ReplayBrokerFailure({ message: 'Native replay requires an independent elapsed-time clock' })
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash, providerClock)
     const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
-      { advanceTo: (atMs) => clock.excludeSourceTime(source.advanceTo(atMs)) },
+      {
+        advanceTo: (atMs) =>
+          source.advanceTo(atMs, (work) =>
+            clock
+              .excludeSourceTime(work)
+              .pipe(
+                Effect.mapError((cause) => new ReplaySourceFailure({ message: 'Replay source clock failed', cause })),
+              ),
+          ),
+      },
       clock,
       prepared.closeMs + databases.operationTimeoutMs + 10_000,
     )
