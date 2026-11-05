@@ -54,7 +54,7 @@ export const reliabilityFraction = (good: bigint, scheduled: bigint): Reliabilit
       : ReliabilityStatus.MissesTarget
 
 /** The schedule includes work that never started; retries cannot alter its deadline or denominator. */
-export const measureReliability = (input: unknown, retainedPolicy = false) =>
+export const measureReliability = (input: unknown, retainedPolicy = false, recoveryEvidenceComplete = true) =>
   Schema.decodeUnknownResult(
     ReliabilityInputSchema,
     strictParseOptions,
@@ -96,7 +96,7 @@ export const measureReliability = (input: unknown, retainedPolicy = false) =>
           }
           const scheduled = BigInt(obligations.length)
           const status =
-            !retainedPolicy && kind === ObligationClass.Recovery && scheduled === 0n
+            !retainedPolicy && recoveryEvidenceComplete && kind === ObligationClass.Recovery && scheduled === 0n
               ? ReliabilityStatus.NotApplicable
               : pending > 0n
                 ? ReliabilityStatus.Undetermined

@@ -117,7 +117,8 @@ interface SqlFixture {
 }
 
 const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}): PgClient.PgClient => {
-  const query = ((strings: TemplateStringsArray) => {
+  const query = ((strings: TemplateStringsArray | string) => {
+    if (typeof strings === 'string') return strings
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
     if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {

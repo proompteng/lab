@@ -83,23 +83,26 @@ Missing series and no-traffic quantiles remain unknown. The dashboard does not r
 
 The `bayn-cache-performance.rules` Mimir group contains eight rules. They use the existing trading email route.
 
-| Alert                             | Trigger and next evidence                                                                                                                                                                                         |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BaynValkeyMetricsUnavailable`    | Fewer than two healthy exporter/server pairs for two minutes. Check discovery, scrape errors and both pods.                                                                                                       |
-| `BaynValkeyReplicaUnavailable`    | No connected replica, replica link down or missing replication observation for one minute. Publication requires WAIT; recover the peer.                                                                           |
-| `BaynValkeyMemoryPressure`        | More than 85% of configured cache memory for ten minutes. Inspect payload bytes and expiry; `noeviction` can reject writes.                                                                                       |
-| `BaynValkeyPublicationFailure`    | A failed replicated put in the last five minutes, held for one minute. Join failure category with the publication trace.                                                                                          |
-| `BaynValkeyLatencyHigh`           | Successful GET/PUT p99 above 250ms for five minutes, with at least twenty samples. Compare SET, WAIT and queueing. This diagnostic threshold is one quarter of the command deadline.                              |
-| `BaynOperationMetricsUnavailable` | A missing or more than ninety-second-old service heartbeat for two minutes while the API revision expects native metrics. Compare API/controller revisions and rollout progress before diagnosing export failure. |
-| `BaynGenerationIndexUnavailable`  | Missing, invalid or unready index observation for two minutes. Inspect migration 104 and CNPG query collection.                                                                                                   |
-| `BaynGenerationSettlementSlow`    | Statement p95 above 500ms for ten minutes, with at least twenty samples. Inspect waits, the statement trace and a bounded read-only plan.                                                                         |
+| Alert                             | Trigger and next evidence                                                                                                                                                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BaynValkeyMetricsUnavailable`    | Fewer than two healthy exporter/server pairs for two minutes. Check discovery, scrape errors and both pods.                                                                                                                              |
+| `BaynValkeyReplicaUnavailable`    | No connected replica, replica link down or missing replication observation for one minute. Publication requires WAIT; recover the peer.                                                                                                  |
+| `BaynValkeyMemoryPressure`        | More than 85% of configured cache memory for ten minutes. Inspect payload bytes and expiry; `noeviction` can reject writes.                                                                                                              |
+| `BaynValkeyPublicationFailure`    | A failed replicated put in the last five minutes, held for one minute. Join failure category with the publication trace.                                                                                                                 |
+| `BaynValkeyLatencyHigh`           | Successful GET/PUT p99 above 250ms for five minutes, with at least twenty samples. Compare SET, WAIT and queueing. This diagnostic threshold is one quarter of the command deadline.                                                     |
+| `BaynOperationMetricsUnavailable` | No service heartbeat within ninety seconds old and five seconds ahead for two minutes while the API revision expects native metrics. Compare API/controller revisions, clock skew and rollout progress before diagnosing export failure. |
+| `BaynGenerationIndexUnavailable`  | Missing, invalid or unready index observation for two minutes. Inspect migration 104 and CNPG query collection.                                                                                                                          |
+| `BaynGenerationSettlementSlow`    | Statement p95 above 500ms for ten minutes, with at least twenty samples. Inspect waits, the statement trace and a bounded read-only plan.                                                                                                |
 
 The API pull metric `bayn_operation_metrics_expected` gates native export and index telemetry absence alerts during
 the initial rollout, so the main-tracked observability app does not page before Kargo installs the application catalog
 queries and metric producers.
 This source-bound indicator remains available when the separate OTLP metrics path fails. Heartbeats must match
-each API-advertised source revision; neither retained older workers nor newer controllers can satisfy another revision. Within a revision, the newest exporter
-per service is observed; existing replica alerts cover missing workers/APIs. No notification test is sent by acceptance.
+each API-advertised source revision; neither retained older workers nor newer controllers can satisfy another revision.
+Heartbeats more than five seconds ahead of the evaluator clock are rejected before selecting the newest exporter
+per service and revision. This matches the dashboard's clock tolerance and lets a healthy peer satisfy the alert
+without a future-dated peer hiding stale telemetry. Existing replica alerts cover missing workers/APIs.
+No notification test is sent by acceptance.
 
 ### Distinguish revision skew from exporter failure
 
@@ -120,7 +123,8 @@ time() - max by (source_revision, service) (bayn_telemetry_heartbeat_timestamp_s
    and retained controllers. Read only the relevant status/condition fields; do not dump credentials or raw logs.
    If activation is blocked, identify its safe prerequisite evidence separately; do not reset authority, skip a hook,
    force a rollout, change network policy or relax freshness to clear this alert.
-3. If the expected revision is deployed but its heartbeat is missing/stale, inspect bounded sanitized export errors,
+3. If the heartbeat age is negative by more than five seconds, inspect producer/evaluator clock skew. A future
+   timestamp does not prove current telemetry. If the expected revision is deployed but its heartbeat is missing/stale, inspect bounded sanitized export errors,
    Mimir ingestion and the already-authorized gateway path. `up == 1` on the API does not prove the controller's
    separate OTLP exporter works. Do not create another access route to bypass a denied read.
 4. Verify fresh heartbeats for both services at each expected revision after normal reviewed reconciliation.

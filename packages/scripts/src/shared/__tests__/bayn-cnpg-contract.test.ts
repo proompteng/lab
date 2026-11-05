@@ -8,7 +8,7 @@ const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 const readManifest = (path: string): Record<string, any> => YAML.parse(readRepoFile(path))
 
-test('native market capture has separate WAL without weakening replication or exposing financial data', () => {
+test('native market capture keeps independent storage, required synchronous durability and financial isolation', () => {
   const [clusterDocument, backupDocument, policyDocument] = YAML.parseAllDocuments(
     readRepoFile('argocd/applications/bayn/native-arrival-postgres.yaml'),
   )
@@ -28,13 +28,15 @@ test('native market capture has separate WAL without weakening replication or ex
     'imageName',
     'enablePDB',
     'enableSuperuserAccess',
-    'minSyncReplicas',
-    'maxSyncReplicas',
     'affinity',
     'storage',
     'postgresql',
   ])
     expect(cluster.spec[key]).toEqual(financial.spec[key])
+  expect(cluster.spec.minSyncReplicas).toBeUndefined()
+  expect(cluster.spec.maxSyncReplicas).toBeUndefined()
+  expect(cluster.spec.postgresql.synchronous).toEqual({ method: 'any', number: 1, dataDurability: 'required' })
+  expect(cluster.spec.walStorage).toBeUndefined()
   expect(cluster.metadata.annotations['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
   expect(cluster.spec.managed).toBeUndefined()
   expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([{ name: 'cnpg-default-monitoring', key: 'queries' }])
@@ -98,8 +100,8 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     instances: 2,
     enablePDB: true,
     enableSuperuserAccess: false,
-    minSyncReplicas: 1,
-    maxSyncReplicas: 1,
+    postgresql: { synchronous: { method: 'any', number: 1, dataDurability: 'required' } },
+    walStorage: { storageClass: 'local-path-bayn-wal', size: '32Gi', resizeInUseVolumes: false },
     primaryUpdateMethod: 'switchover',
     primaryUpdateStrategy: 'unsupervised',
     affinity: {
@@ -133,7 +135,22 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
       },
     },
   })
-  expect(cluster.spec.walStorage).toBeUndefined()
+  expect(cluster.spec.minSyncReplicas).toBeUndefined()
+  expect(cluster.spec.maxSyncReplicas).toBeUndefined()
+  const walClass = readManifest('argocd/applications/local-path/storageclass-bayn-wal.yaml')
+  expect(walClass.metadata.name).toBe(cluster.spec.walStorage.storageClass)
+  expect(walClass.reclaimPolicy).toBe('Retain')
+  expect(walClass.volumeBindingMode).toBe('WaitForFirstConsumer')
+  const localPath = readManifest('argocd/applications/local-path/patches/local-path-config.patch.yaml')
+  const walPaths = JSON.parse(localPath.data['config.json']).storageClassConfigs[walClass.metadata.name].nodePathMap
+  expect(walPaths).toEqual([
+    { node: 'talos-192-168-1-85', paths: ['/var/mnt/local-path-provisioner/bayn-wal'] },
+    { node: 'turin', paths: ['/var/mnt/turin-nvme-intel/bayn-wal'] },
+    { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
+  ])
+  expect(walClass.allowedTopologies).toEqual([
+    { matchLabelExpressions: [{ key: 'kubernetes.io/hostname', values: ['talos-192-168-1-85', 'turin'] }] },
+  ])
   expect(cluster.spec.imageName).toBe(
     'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )

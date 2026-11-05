@@ -1,19 +1,26 @@
 # Bayn formal model
 
-This directory contains the offline Lean model and executable used to check Bayn's production decisions. It is excluded
+This directory contains the offline Lean model and executable used to check Bayn's production decisions, plus
+[TLA+ models](tla/README.md) for controller, entry recovery and mutation/ledger interleavings. It is excluded
 from the trading image. `lean-toolchain` pins Lean 4.35.0; `lake-manifest.json` pins Mathlib and its dependencies.
 
 From the repository root, run the same proof and conformance command as CI:
 
 ```sh
 bun run --filter @proompteng/bayn verify:formal
+bun run --filter @proompteng/bayn verify:tla
 ```
 
-This requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
+The Lean command requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
 sandboxing. On macOS, use a Linux VM or container. Missing tools, a different Lean version, build failures, checker
 rejections, and conformance failures return a nonzero exit code. The command builds the model and sets
 `BAYN_FORMAL_EXECUTABLE` itself, so a missing environment variable cannot skip conformance. Ordinary `bun test` skips
 this suite without that variable and is not a substitute for `verify:formal`.
+
+The TLA+ command also runs on macOS with Java 21 and curl. It checks safety and conditional liveness with pinned,
+checksum-verified TLC, verifies deliberate faults are detected, and compares every checked state with production
+TypeScript. Both commands are mandatory in formal CI and before exact-revision image publication. Neither checker
+runs in the trading runtime. See the [TLA+ model boundaries and assumptions](tla/README.md#bounds-assumptions-and-limits).
 
 The command runs `lake -q build`, `bash check.sh`, and the production conformance suite. The formal CI workflow also
 runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` exports the
@@ -143,6 +150,16 @@ The causal conclusion assumes PostgreSQL visibility and that the coordinator rou
 returns. The assessment exposes these assumptions and retains original producer routing timestamps as upper bounds,
 rather than claiming an exact physical commit time.
 
+`intentRiskClockRejection` in `DecisionPersistence.lean` maps to the current-risk trigger in migration 177 and its
+strict decoder in `src/execution/risk-clock.ts`. `current_intent_risk_clock_matches_gate` proves the decision is
+current at both the requested update and the database check. `expired_intent_risk_clock_cannot_admit`,
+`future_intent_risk_clock_cannot_refresh`, the strict expiry boundary and a reachable success cover its rejection
+classes. The actual PostgreSQL trigger is compared with the executable at microsecond boundaries. Full entry tests
+use the production cycle store, intent store and writer fence to verify successful admission and complete rollback
+when the risk expires during persistence, preserving authority and retained inference evidence. Runner tests retain
+the original cycle deadline and propagate rollback failures, defects and interruption. The model assumes PostgreSQL
+reports its actual clock and rolls back a failed transaction; these integration tests exercise those assumptions.
+
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
 `unapproved_risk_cannot_register` requires membership in the source-approved policy identities.
@@ -200,12 +217,25 @@ The production constructor also supports a local generation without a persisted 
 that path rather than asserting persisted validation always occurs. Grant issuance, hash authenticity, persisted
 admission and risk limits remain separate boundaries.
 
+`Reliability.lean` also maps to `operational-assessment.ts` and the native branch of `schedule.ts`. Operational success
+requires `MEETS_TARGET`, complete evidence and safety audit, and zero safety violations. Native deadlines retain
+their full original window even when it crosses the reporting boundary. The executable conformance checks exercise
+all gate combinations and the actual generated schedule. Source completeness and receipt authenticity remain
+separate evidence requirements; the theorem does not establish measured production reliability.
+
 `ControllerTiming.lean` maps to `src/system-assessment/controller-latency.ts`. It proves nonnegative ordered durations,
 that later durable visibility cannot improve the reported latency, rejection of invalid clocks, a valid empirical
 p95 rank for every nonempty sample, and an unknown empty sample. Executable conformance covers clock boundaries and
 seeded samples against the production functions. These proofs do not establish full-batch timing coverage or a
 portfolio stress result. Native controller and PostgreSQL tests separately check original command retention, replay
 after ambiguous commit, and capture of work that completes after its original window.
+
+The model also maps `controllerBuildBound` to `controllerBuildMatchesRegistration` in
+`src/system-assessment/decision-work.ts`. A registered activation repository must match the worker repository,
+independently of source and digest equality. Retained registrations without a repository commitment keep their
+source/digest comparison. Executable conformance covers both registration forms, missing builds and foreign
+source, digest or repository claims. These checks do not prove receipt authenticity or grant capital authority.
+The frozen operational v1 receipt matcher remains source/digest-only and is not changed by this current-build model.
 
 The same model maps `fullBatchDuration` to `fullBatchClockDuration` in `src/system-assessment/full-batch-latency.ts`.
 Its theorems prove that completion bounds inference and every retained stage, duration is nonnegative, an additional
@@ -258,6 +288,16 @@ Another 1,680 executable comparisons cover waiting classification, cycle state, 
 The native controller regression retains the captured late-commit work durations through scheduling and restart:
 the ordinary idle delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
 These proofs do not guarantee storage or provider latency; a retried response still has to pass the existing checks.
+
+`pending_inputs_retry_retains_original_admission` maps the query-bound `SNAPSHOT_UNAVAILABLE` continuation in the
+same function. It bounds each recheck by one second, the ordinary cadence and the remaining original admission;
+`pending_inputs_cannot_retry_after_original_deadline` excludes an expired lease. Another 3,360 executable comparisons
+cover the query marker, states, bindings, clocks and two ordinary cadences. A missing query does not accelerate an
+unclassified outage. The post-pass projection health check still replaces this hint with the source failure's backoff.
+Pending inputs remain operationally incomplete; neither waiting nor a timely recheck establishes a valid decision.
+The recovery driver publishes the absolute wake instant with the delay. Its composition regression exercises the
+real driver; native controller tests retain that instant across persistence work and projected replay, so durable
+publication cannot restart the source wait from a later clock.
 
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
@@ -496,3 +536,14 @@ matched controls or native prospective evidence collection are complete.
 Statistical bounds remain conditional on the registered sampling and market assumptions. Hashes establish content
 identity; source capture and provenance checks must establish which actual evidence the model receives. Neither a
 successful build nor independent kernel acceptance grants capital authority or establishes profitability.
+
+`TradingScope.lean` maps to `src/execution/trading-scope.ts`, enforced by the physical broker mutation guard.
+It proves crypto entries and crypto buys fail the current market scope while equity orders retain scope eligibility.
+Crypto sells still require every existing capital, ownership and risk check; scope eligibility is not execution authority.
+Executable conformance covers both markets and sides, and broker regressions verify zero crypto-buy transmissions.
+
+### Evidenced closed windows
+
+`Bayn/Reliability.lean` proves that closed-window timing requires causal calendar arrival and completion. Eligible entry work cannot be classified as a closed window. `decision-work.ts` reproduces the registered day's calendar, native execution policy, physical controller build and account/generation before using that timing predicate. `closed-entry-window.test.ts` verifies that omitted, late, future, foreign and substituted evidence cannot supply successful work. The actual discovery regression retains the original admission clock across a delayed calendar read.
+
+`reconciliation_batching_keeps_each_original_deadline` maps to `obligation-witnesses.ts`. Its conformance cases and native obligation regression retain fixed denominators and show that late observations leave expired checks missed.

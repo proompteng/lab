@@ -14,6 +14,15 @@ const metricAllowlist = (config: string, name: string): RegExp => {
   return new RegExp(`^(?:${JSON.parse(encoded)})$`)
 }
 
+test('kubelet retains available, used and capacity bytes for filesystem alert validity', () => {
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const allow = metricAllowlist(config, 'arc_resource_metrics')
+  for (const name of ['available', 'used', 'capacity']) {
+    expect(allow.test(`kubelet_volume_stats_${name}_bytes;tengri;`)).toBe(true)
+  }
+  expect(allow.test('kubelet_volume_stats_used_bytes_extra;tengri;')).toBe(false)
+})
+
 test('Ceph retains bounded metadata pressure and scrub progress without RocksDB tracing', () => {
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const allow = metricAllowlist(config, 'ceph_daemon_metrics')

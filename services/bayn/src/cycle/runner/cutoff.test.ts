@@ -105,6 +105,9 @@ test.each(
       ),
     ).toMatchObject({ action: 'BLOCK', reason: CycleTerminalReason.MissedSubmission })
     const forbidden = () => Effect.die(new Error('unexpected cutoff recovery side effect'))
+    const hours = native.query.calendar
+    if (hours.schemaVersion !== 'bayn.alpaca-market-calendar-observation.v2')
+      throw new Error('Expected an equity calendar')
     const broker: BrokerReadShape = {
       account: forbidden(),
       accountConfiguration: forbidden(),
@@ -115,7 +118,16 @@ test.each(
       orderByClientId: forbidden,
       fillActivities: forbidden,
       feeActivities: forbidden,
-      marketCalendar: forbidden,
+      marketCalendar: () =>
+        Effect.succeed({
+          value: hours,
+          evidence: {
+            requestId: 'cutoff-equity-calendar',
+            status: 200,
+            contentHash: hours.normalizedResponseHash,
+            observedAt: beforeCutoff,
+          },
+        }),
     }
     let latest: AutonomousCycle = cycle
     let acquisitions = 0
@@ -244,23 +256,13 @@ test.each(
         const prior = latest
         const { authorityGenerationHash: _, ...unapproved } = context
         yield* TestClock.setTime(Date.parse(bindAt) + 60_000)
-        expect((yield* discoverAutonomousCyclePass(unapproved)).outcome).toBe('ALREADY_TERMINAL')
+        expect((yield* discoverAutonomousCyclePass(unapproved)).outcome).toBe('WINDOW_CLOSED')
         yield* TestClock.setTime(Date.parse(bindAt) + 59_999)
-        expect((yield* discoverAutonomousCyclePass(context)).outcome).toBe('ALREADY_TERMINAL')
+        expect((yield* discoverAutonomousCyclePass(context)).outcome).toBe('WINDOW_CLOSED')
         yield* TestClock.setTime(Date.parse(bindAt) + 60_000)
-        const successor = yield* discoverAutonomousCyclePass(context)
-        expect(successor).toMatchObject({
-          outcome: 'ACQUIRED',
-          receipt: {
-            cycle: {
-              identity: { entryAttemptOrdinal: 2 },
-              window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
-              bindings: {},
-            },
-          },
-        })
+        expect((yield* discoverAutonomousCyclePass(context)).outcome).toBe('WINDOW_CLOSED')
         expect(prior.terminalReason).toBe(CycleTerminalReason.UnusedEntryExpired)
-        expect(latest.identity.cycleId).not.toBe(prior.identity.cycleId)
+        expect(latest).toBe(prior)
       }).pipe(
         Effect.provideService(BrokerRead, broker),
         Effect.provideService(CycleStore, store),
@@ -272,6 +274,6 @@ test.each(
         ? ['build', 'verify', 'bind', 'expire']
         : ['build', 'verify', 'bind'],
     )
-    expect(acquisitions).toBe(rollbackFailure === undefined ? 1 : 0)
+    expect(acquisitions).toBe(0)
   },
 )
