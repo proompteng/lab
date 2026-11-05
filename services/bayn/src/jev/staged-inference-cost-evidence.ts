@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, JevFailure } from './contract'
-import { decodeEntryHandoff, decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
+import { decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
 import { type EntryHandoff } from './entry-inference'
 import {
   decodeJevEvaluationRequest,
@@ -209,7 +209,7 @@ export const readStagedInferenceCostEvidence = (row: {
     const request = decoded.request
     const stages =
       decoded._tag === 'Current'
-        ? currentChartStages
+        ? currentChartStages.makeFinancialChartStageReplay()
         : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
             request.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
           ? observedChartStages
@@ -224,12 +224,18 @@ export const readStagedInferenceCostEvidence = (row: {
       observedAt: request.observedAt,
       expiresAt: request.expiresAt,
     }
+    // Both request decoders above reproduce the complete source and its input hash.
+    // Share only chart derivation; the independent handoff still passes every evidence check.
     const handoff =
       row.handoff === null
         ? null
-        : yield* decoded._tag === 'Retained'
-            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions, stages)
-            : decodeEntryHandoff({ ...source, input: decoded.request.request }, row.handoff)
+        : yield* decodeStagedEntryHandoff(
+            source,
+            row.handoff,
+            request.requestHash,
+            decoded._tag === 'Retained' ? retainedQuestions : makeEntryJudgmentRequest,
+            stages,
+          )
     const receipt =
       row.receipt === null
         ? null
