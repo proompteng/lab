@@ -304,7 +304,9 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
           ? undefined
           : webullSnapshotEvidence(
               state.webull,
-              symbols.filter((symbol) => !excluded.has(symbol)),
+              request.candidateEvidencePolicy === undefined
+                ? symbols.filter((symbol) => !excluded.has(symbol))
+                : symbols,
               Date.parse(request.rangeEndAt),
               observedAtMs,
             ),
