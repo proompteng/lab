@@ -455,6 +455,7 @@ test('historical candidate and ablation tariffs retain their original provider s
   const protocol = Schema.decodeUnknownSync(RetainedJevProtocolV36Schema)({
     ...defaultJevProtocolDocument,
     schemaVersion: 'bayn.jev.protocol.v36',
+    inputDefinition: 'bayn.jev-entry-state.v23',
     entrySignalPolicy: 'openai-decisions-then-jev',
     entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
   })
