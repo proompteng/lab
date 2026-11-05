@@ -2,9 +2,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
+import { decideExecutionControllerDeactivation, type ExecutionControllerState } from '../execution/controller'
+import { projectExecutionControllerState } from '../composition/native-execution-runtime'
+import { readSystemControllerPasses } from '../system-assessment/capture-queries'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import { ExecutionControllerStatusStoreLive } from './execution-controller-status-postgres'
@@ -149,6 +152,84 @@ describePostgres('PostgreSQL execution controller diagnostics', () => {
     expect(result.stale).toEqual({ _tag: 'Stale', status: completion })
     expect(result.stored).toEqual(completion)
   })
+
+  test.each([false, true])(
+    'replays deactivation without rewriting an existing projection (retained pass: %s)',
+    async (retainedPass) => {
+      const controllerKey = 'a'.repeat(64)
+      const completion = {
+        schemaVersion: 1 as const,
+        controllerKey,
+        planHash: 'f'.repeat(64),
+        active: true,
+        epoch: 3,
+        nextSequence: 9,
+        lastSequence: 8,
+        lastOutcome: ExecutionControllerOutcome.Waiting,
+        lastReceiptHash: 'b'.repeat(64),
+        completedAt: '2026-08-13T17:00:00.000Z',
+        nextDueAt: '2026-08-13T17:00:30.000Z',
+        lastPass: {
+          result: 'SUCCESS' as const,
+          observedAt: '2026-08-13T17:00:00.000Z',
+          outcome: 'WINDOW_CLOSED' as const,
+        },
+      }
+      const state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: completion.epoch,
+        planHash: completion.planHash,
+        sourceRevision: 'c'.repeat(40),
+        initialSequence: 8,
+        nextSequence: completion.nextSequence,
+        nextDueAt: completion.nextDueAt,
+        lastCompletion: {
+          sequence: completion.lastSequence,
+          outcome: completion.lastOutcome,
+          receiptHash: completion.lastReceiptHash,
+          completedAt: completion.completedAt,
+        },
+      }
+      const request = {
+        schemaVersion: 'bayn.execution-controller-deactivation.v1' as const,
+        controllerKey,
+        epoch: state.epoch,
+        planHash: state.planHash,
+        sourceRevision: state.sourceRevision,
+      }
+      const deactivated = Result.getOrThrow(decideExecutionControllerDeactivation(state, request))
+      const replayed = Result.getOrThrow(decideExecutionControllerDeactivation(deactivated.state, request))
+      expect(replayed._tag).toBe('Replayed')
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionControllerStatusStore
+          yield* store.project(completion)
+          if (retainedPass) {
+            const { nextDueAt: _nextDueAt, ...withoutDue } = completion
+            yield* store.project({ ...withoutDue, active: false, epoch: deactivated.state.epoch })
+          } else {
+            yield* projectExecutionControllerState(controllerKey, deactivated.state, store)
+          }
+          const before = yield* store.read(controllerKey)
+          expect(before).toMatchObject({ active: false, epoch: 4 })
+          if (retainedPass) expect(before).toHaveProperty('lastPass', completion.lastPass)
+          else expect(before).not.toHaveProperty('lastPass')
+          yield* projectExecutionControllerState(controllerKey, replayed.state, store)
+          expect(yield* store.read(controllerKey)).toEqual(before)
+          const passes = yield* readSystemControllerPasses(
+            controllerKey,
+            state.planHash,
+            '2026-08-13T16:59:00.000Z',
+            '2026-08-13T17:01:00.000Z',
+            '2026-08-13T17:02:00.000Z',
+          )
+          expect(passes).toHaveLength(1)
+          expect(passes[0]).toMatchObject({ epoch: state.epoch, receiptHash: completion.lastReceiptHash })
+        }),
+      )
+    },
+  )
 
   test('rotates plans only after the old controller is inactive and clears inherited completion evidence', async () => {
     const old = {
