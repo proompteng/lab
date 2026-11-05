@@ -291,8 +291,9 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       test(`counts a priced ${stage} terminal after its pending quote in ${reversed ? 'reverse' : 'forward'} order`, async () => {
         const pending = stagedExpenseQuote(stage, false)
         const priced = stagedExpenseQuote(stage, true)
+        const estimatedCost = priced.line.estimatedCostPicoUsd
+        if (estimatedCost === null) throw new Error('Expected a priced stage terminal')
         expect(pending.line.usageStatus).toBe(InferenceUsageStatus.Unknown)
-        expect(priced.line.estimatedCostPicoUsd).not.toBeNull()
         expect(pending.line.receiptHash).toBeNull()
         expect(priced.line.receiptHash).toBeNull()
         const quotes = reversed ? [priced, pending] : [pending, priced]
@@ -312,7 +313,7 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
         expect(report.pricedRequestCount).toBe(1)
         expect(report.gapRequestCount).toBe(0)
         expect(report.transferCount).toBe(1)
-        expect(report.knownEstimatedCostPicoUsd).toBe(priced.line.estimatedCostPicoUsd)
+        expect(report.knownEstimatedCostPicoUsd).toBe(estimatedCost)
       })
     }
   }
