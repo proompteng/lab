@@ -3,7 +3,7 @@ import argparse
 import json
 import re
 import subprocess
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 JWT_ISSUER = "https://oidc-discovery.proompteng.ai"
@@ -47,7 +47,8 @@ def verify_wif(context):
     documents = []
     for path in ("/.well-known/openid-configuration", "/keys"):
         url = JWT_ISSUER + path
-        with urlopen(url, timeout=15) as response:
+        request = Request(url, headers={"User-Agent": "lab-spire-verifier/1.0"})
+        with urlopen(request, timeout=15) as response:
             assert response.geturl() == url, "discovery must not redirect"
             documents.append(json.load(response))
     bundle = json.loads(
