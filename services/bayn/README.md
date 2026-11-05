@@ -471,7 +471,33 @@ controller handles without terminating its process. Reports retain typed operati
 exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
 error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
-## Webull research ingestion
+## Webull live ingestion
+
+`BAYN_KAFKA_WEBULL_BARS_TOPIC=dorvud.webull.raw.v1` adds native Webull captures to the existing equity Kafka
+consumer. The controller records completed M1 context in its immutable streaming snapshots. It does not query
+ClickHouse on this path. HTTP bars, MQTT messages and collector gaps retain their original identities. MQTT
+messages do not become bars or executable quotes.
+
+The consumer checks the native payload hash, exact decimal OHLCV, real-time entitlement marker, requested symbols,
+completed recovery window and producer clock. Only the latest completed minute is eligible. Its first consumer
+arrival must be within ten seconds of minute close and before the observation. Recovery polls cannot refresh that
+arrival; a late correction removes the current minute until a subsequent eligible observation. Scoped bar gaps and
+invalid captures withhold optional context without invalidating IEX inputs. Missing symbols remain explicit.
+Candidate snapshots retain independent Webull observations for IEX-excluded candidates so coverage comparisons
+include those cases. Their original IEX exclusions still prevent signal construction and trading.
+
+Snapshots retain each selected capture once, with native bytes, Kafka coordinate, consumer sequence and arrival.
+Recorded replay verifies that proof again. `Kafka Webull minute bars incorporated` logs measure the real consumer
+arrival delay, including late inputs. The existing streaming diagnostics command also reports Webull coverage.
+Historical diagnostic reads establish arrival at the diagnostic consumer only, not availability to an earlier decision.
+
+This ingestion does not change protocol v37, Jev numerical inputs, IEX execution pricing or capital authority.
+Webull context remains supplementary evidence pending point-in-time qualification and a separately versioned model
+input change. Nasdaq Basic and IEX have different coverage; Webull volume must not replace an IEX volume feature.
+The acceptance boundary is a deployed consumer receipt, regular-session completeness and latency measurements, then
+a comparison against IEX using recorded availability. Better returns require separate economic evidence.
+
+## Webull archive comparison
 
 `bayn-webull-research` reads the normalized Webull archive and compares completed M1 bars with the current Alpaca
 IEX archive. It is a read-only research/scanner input. Reports remain `UNQUALIFIED`; the command has no broker,
@@ -2099,6 +2125,10 @@ elapsed-time and PostgreSQL measurements. Native operation timers pause at that 
 remaining duration; provider request timers retain their independent wall clock. The database clock resumes even
 when parsing fails or is interrupted. Provider, persistence and clock-synchronization work remain measured. Completing
 the measured scope retains elapsed time and publishes arrivals through that timestamp before scheduling or valuation.
+The source reader excludes time only while reading a chunk or consuming due arrivals. Polls between cached future
+arrivals and after verified EOF retain their broker deadline ticks without pausing either measured clock. This avoids
+pause/resume database writes on empty source checks. Every native poll, causal arrival, reconciliation, financial
+record and original operation deadline remains required. A source clock failure prevents further advancement.
 Deferred exit deadlines therefore still include native work before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 Initialization starts one minute before the first registered open and retains its measured start, completion and
@@ -2274,6 +2304,11 @@ assertions and ten-minute case budgets without sharing one fifteen-minute CI job
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
 Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
 instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
+The disposable diagnostic executable also retains cumulative host-clock timings for seventeen fixed reconciliation,
+cycle and PostgreSQL stages. It emits a checkpoint every 1,024 reconciliations, with at most 31 checkpoints and one
+terminal summary. Counts distinguish completion, failure and interruption; totals and maxima are inclusive, so nested
+stages overlap. Only stage names and numeric aggregates are emitted, never span payloads. Checkpoints remain useful
+when the case deadline kills the child before its terminal summary. The production executable and polling are unchanged.
 The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.

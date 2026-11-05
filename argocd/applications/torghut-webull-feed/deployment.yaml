@@ -37,9 +37,9 @@ spec:
                 name: torghut-webull-feed-config
           env:
             - name: WEBULL_FEED_COMMIT
-              value: 0c744269ec373438c6320b4f1297c401fce68375
+              value: 7a1b7800a9770f227cf769ef2cc09158ce633935
             - name: WEBULL_FEED_IMAGE_DIGEST
-              value: sha256:bd74252a61a71d17d1e8d56ca20a55119c19e4a4f9b4fa94b282cea4117225cb
+              value: sha256:2a5f43388197544f3053e25a9737c3a384a6cfaf28eea7da187ffacb7681eb0c
             - name: WEBULL_APP_KEY
               valueFrom:
                 secretKeyRef:

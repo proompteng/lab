@@ -9,12 +9,11 @@ import {
   WebullResearchBarSchema,
   WebullResearchInputSchema,
   WebullResearchRequestSchema,
-  WebullRequestState,
-  WebullSession,
   makeWebullResearchReport,
   readWebullResearch,
   type WebullResearchRows,
 } from './webull-research'
+import { WebullRequestState, WebullSession } from './webull-contract'
 
 const input = Result.getOrThrow(
   Schema.decodeUnknownResult(WebullResearchInputSchema)({
