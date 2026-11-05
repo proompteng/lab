@@ -1,3 +1,4 @@
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import riskClockRejection from '../../migrations/0177_risk_clock_rejection'
 import operationalSourceRecords from '../../migrations/0176_operational_source_records'
 import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
@@ -179,6 +180,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '178_webull_entry_context': webullEntryContext,
   '176_operational_source_records': operationalSourceRecords,
   '177_risk_clock_rejection': riskClockRejection,
   '175_operational_controller_evidence': operationalControllerEvidence,
