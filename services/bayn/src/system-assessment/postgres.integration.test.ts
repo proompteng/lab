@@ -1,3 +1,15 @@
+import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
+import { readRegisteredFinancialIdentity } from './capital-identity'
+import { operationalRegistrationFixture } from './operational-period.test-support'
+import { makeOperationalSafetyAudit, verifyStoredOperationalAssessment } from './operational-assessment'
+import { registeredSchedule } from './schedule'
+import { ObligationClass } from './reliability'
+import {
+  registerOperationalPeriod,
+  readAssessmentRegistration,
+  assessAndPersistOperational,
+  readPersistedOperationalAssessment,
+} from './postgres'
 import { historicalRegistrationFixture } from './historical-registration.test-support'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { executionOrderPlans } from './execution-plans'
@@ -31,14 +43,20 @@ import {
 import { persistSystemSourceCut, readSystemSourceCut, SystemSourceCutSchema } from './source-cut'
 import { EdgeStatus, QualificationVerdict, evaluateSystemAssessment } from './assessment'
 import {
-  readRegisteredFinancialIdentity,
   readSystemCashObservations,
   readSystemControllerPasses,
   readSystemDurableObservations,
   readSystemDecisionAdmissions,
-} from './capture'
+  readSystemMutationEvidence,
+} from './capture-queries'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
-import { OrderStatus } from '../execution/contracts'
+import { OrderStatus, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import {
+  makeResearchCapitalActivationRequest,
+  makeResearchCapitalPlanHash,
+  researchCapitalGrantProof,
+} from '../execution/configuration'
+import { config } from '../testing/runtime-fixtures'
 import { bracketEvidenceFixture } from './bracket-evidence.test-support'
 import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
 import { makePostgresMutationStore } from '../execution/mutations/program'
@@ -48,6 +66,9 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
+import { qualificationDeadlines } from './configuration'
+import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
@@ -60,6 +81,17 @@ import {
 
 import { validateSystemRegistration } from './policy'
 import { emptySourceCutFixture } from './source-cut.test-support'
+import {
+  OperationalSourceCutSchema,
+  persistOperationalSourceCut,
+  readOperationalAssessmentSourceCut,
+} from './operational-source-cut'
+import {
+  makeSystemSourceRecord,
+  persistSystemSourceRecord,
+  readSystemSourceRecord,
+  SystemSourceRecordKind,
+} from './source-records'
 
 const postgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const role = 'bayn_assessment_test_app'
@@ -146,6 +178,369 @@ postgres('PostgreSQL prospective system qualification', () => {
         }),
       )
     })
+
+  test('retains source records once across concurrent archive writes and rejects every history mutation', async () => {
+    const payload = { schemaVersion: 'synthetic-retained-source.v1', evidence: 'complete source bytes '.repeat(1000) }
+    const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Decision, payload))
+    const stored = await runtime.runPromise(
+      Effect.all([asApplication(persistSystemSourceRecord(record)), asApplication(persistSystemSourceRecord(record))], {
+        concurrency: 2,
+      }),
+    )
+    expect(stored).toEqual([
+      { recordHash: record.recordHash, kind: record.kind, payload },
+      { recordHash: record.recordHash, kind: record.kind, payload },
+    ])
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_source_records`).toEqual([{ count: 1 }])
+        for (const mutation of [
+          sql`UPDATE system_source_records SET payload_text='{}' WHERE record_hash=${record.recordHash}`,
+          sql`DELETE FROM system_source_records WHERE record_hash=${record.recordHash}`,
+          sql`TRUNCATE system_source_records`,
+        ])
+          expect(Exit.isFailure(yield* asApplication(mutation).pipe(Effect.exit))).toBe(true)
+        expect(yield* readSystemSourceRecord(record.recordHash)).toEqual(stored[0])
+      }),
+    )
+  })
+
+  test('archive replay rejects missing, substituted and noncanonical records', async () => {
+    const record = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, { correct: false }))
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(Exit.isFailure(yield* readSystemSourceRecord(record.recordHash).pipe(Effect.exit))).toBe(true)
+        for (const substituted of [
+          { ...record, recordHash: sha256('substituted source') },
+          { ...record, kind: SystemSourceRecordKind.Decision },
+          { ...record, payloadText: '{ "correct": false }' },
+        ])
+          expect(Exit.isFailure(yield* asApplication(persistSystemSourceRecord(substituted)).pipe(Effect.exit))).toBe(
+            true,
+          )
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_source_records`).toEqual([{ count: 0 }])
+        expect(yield* asApplication(persistSystemSourceRecord(record))).toEqual({
+          recordHash: record.recordHash,
+          kind: record.kind,
+          payload: { correct: false },
+        })
+      }),
+    )
+  })
+
+  test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
+    const base = operationalRegistrationFixture()
+    const definition = base.policies[0]
+    const binding = definition.capitalAuthorization
+    if (binding === undefined) throw new Error('Missing existing capital fixture')
+    const { generation, request } = binding
+    const operationalHistory = {
+      ...history,
+      program: 'BAYN_OPERATIONAL_RELIABILITY',
+      historySourceHash: base.retainedIncidentSources[0]!,
+    }
+    const observedAt = await runtime.runPromise(databaseNow)
+    const open = new Date((Math.floor(Date.parse(observedAt) / 86_400_000) + 1) * 86_400_000).toISOString()
+    const value = {
+      ...base,
+      registeredAt: new Date(Date.parse(observedAt) - 1000).toISOString(),
+      priorAttemptHash: testHash(operationalHistory),
+      calendar: {
+        ...base.calendar,
+        sessions: [
+          {
+            sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(open.slice(0, 10)),
+            openAt: open,
+            closeAt: new Date(Date.parse(open) + 120_000).toISOString(),
+          },
+        ],
+      },
+    }
+    // The global schedule hashes depend on the prospective dates, not on registration wall time.
+    const schedule = Result.getOrThrow(registeredSchedule(value))
+    const prospective = {
+      ...value,
+      obligations: {
+        ...value.obligations,
+        decisionScheduleHash: schedule.find((row) => row.class === ObligationClass.Decision)!.scheduleEvidenceHash,
+        reconciliationScheduleHash: schedule.find((row) => row.class === ObligationClass.Reconciliation)!
+          .scheduleEvidenceHash,
+      },
+    }
+    const sources = new Set([
+      value.calendar.sourceHash,
+      ...value.retainedIncidentSources,
+      operationalHistory.historySourceHash,
+    ])
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+        VALUES (${generation.previousGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,clock_timestamp())`
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+        VALUES (${generation.reconciliationId},${legacyReconciliationSchemaVersion},${request.broker.accountId},${testHash('expected')},${testHash('expected')},${generation.reconciliationContentHash},'EXACT','[]'::jsonb,clock_timestamp())`
+        yield* sql`INSERT INTO authority_generations
+        (generation_hash,schema_version,maximum,authority_version,previous_generation_hash,activation_schema_version,
+        account_id,broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment,risk_policy_hash,
+        activated_at,activation_source_revision,activation_image_repository,activation_image_digest,strategy_name,
+        strategy_behavior_hash,strategy_parameter_hash,strategy_parameter_schema_version,strategy_protocol_hash,
+        proof_plan_hash,reconciliation_id,reconciliation_content_hash,research_plan_hash)
+        VALUES (${generation.generationHash},'bayn.authority-generation-history.v1','PAPER',2,${generation.previousGenerationHash},
+        'bayn.paper-authority-generation.v3',${request.broker.accountId},'bayn.broker-identity.v2',${request.broker.identityHash},'alpaca','sandbox',
+        ${request.riskPolicyHash},clock_timestamp(),${request.activation.sourceRevision},${request.activation.imageRepository},${request.activation.imageDigest},
+        'jev',${request.strategy.behaviorHash},${request.strategy.parameterHash},${request.strategy.parameterSchemaVersion},${request.strategy.protocolHash},
+        ${request.grant.planHash},${generation.reconciliationId},${generation.reconciliationContentHash},${request.grant.planHash})`
+        yield* initializeQualificationHistory(operationalHistory, sources)
+      }),
+    )
+    const authorityBefore = await runtime.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* PgClient.PgClient)`SELECT * FROM authority_generations ORDER BY authority_version`
+      }),
+    )
+    for (const controllerPlanHash of [null, testHash('unregistered controller plan')]) {
+      const configuration = { ...prospective.obligations.configuration, controllerPlanHash }
+      const unbound = {
+        ...prospective,
+        obligations: {
+          ...prospective.obligations,
+          ...Result.getOrThrow(qualificationDeadlines(configuration)),
+          configuration,
+        },
+      }
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(registerOperationalPeriod(unbound, sources)))),
+      ).toBe(true)
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                yield* sql`INSERT INTO system_qualification_registrations
+          (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
+          VALUES (${testHash(unbound)},${unbound.program},${unbound.attemptIndex},${unbound.priorAttemptHash},
+            ${unbound.registeredAt},${open},${unbound.calendar.sessions[0]!.closeAt},
+            ${Result.getOrThrow(canonicalJsonV1Result(unbound))})`
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
+    const saved = await runtime.runPromise(asApplication(registerOperationalPeriod(prospective, sources)))
+    expect(await runtime.runPromise(readAssessmentRegistration(saved.registrationHash))).toEqual(prospective)
+    expect(Exit.isFailure(await runtime.runPromiseExit(readSystemRegistration(saved.registrationHash)))).toBe(true)
+    expect(
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* PgClient.PgClient)`SELECT * FROM authority_generations ORDER BY authority_version`
+        }),
+      ),
+    ).toEqual(authorityBefore)
+    const { cut } = emptySourceCutFixture()
+    const asOf = await runtime.runPromise(databaseNow)
+    const savedCut = await runtime.runPromise(
+      persistSystemSourceCut({
+        ...cut,
+        registrationHash: saved.registrationHash,
+        asOf,
+        runtimeConfigurationHash: prospective.obligations.runtimeConfigurationHash,
+        financial: [],
+        inference: [],
+      }),
+    )
+    const safety = Result.getOrThrow(
+      makeOperationalSafetyAudit({
+        schemaVersion: 'bayn.operational-safety-audit.v1',
+        coverage: 'COMPLETE',
+        auditEvidenceHash: testHash('source-bound safety scan'),
+        registrationHash: saved.registrationHash,
+        asOf,
+        violations: [],
+      }),
+    )
+    sources.add(safety.sourceHash)
+    sources.add(safety.auditEvidenceHash)
+    const input = {
+      schemaVersion: 'bayn.operational-assessment-input.v2',
+      registration: prospective,
+      sourceCutHash: savedCut.sourceCutHash,
+      safety,
+    }
+    const result = await runtime.runPromise(asApplication(assessAndPersistOperational(input, sources)))
+    expect(result.verdict).toBe('INCONCLUSIVE')
+    expect(result.economicQualification).toBe('NOT_ASSESSED')
+    expect(result.evaluationPolicy).toBe('bayn.operational-build-binding.v1')
+    const assertLegacyReadback = async (sourceCutHash: string, currentAssessmentHash: string) => {
+      const legacyInput = { ...input, sourceCutHash, schemaVersion: 'bayn.operational-assessment-input.v1' }
+      const evidence = await runtime.runPromise(
+        readOperationalAssessmentSourceCut(sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
+      )
+      const legacy = {
+        ...Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, evidence, sources)),
+        verifiedSourceHashes: [...sources].sort(),
+      }
+      const legacyHash = testHash(legacy)
+      const legacyText = Result.getOrThrow(canonicalJsonV1Result(legacy))
+      const legacyInputText = Result.getOrThrow(canonicalJsonV1Result(legacyInput))
+      // Seed the immutable row as the old application wrote it; current admission must not accept its contract.
+      await runtime.runPromise(
+        asApplication(
+          Effect.gen(function* () {
+            yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
+            (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+            VALUES (${legacyHash}, ${legacy.registrationHash}, ${legacy.sourceCutHash}, ${legacy.asOf},
+              ${legacy.verdict}, ${legacyInputText}, ${legacyText})`
+          }),
+        ),
+      )
+      expect(await runtime.runPromise(readPersistedOperationalAssessment(legacyHash))).toEqual({
+        ...legacy,
+        assessmentHash: legacyHash,
+      })
+      expect(legacyHash).not.toBe(currentAssessmentHash)
+      expect(
+        Exit.isFailure(await runtime.runPromiseExit(asApplication(assessAndPersistOperational(legacyInput, sources)))),
+      ).toBe(true)
+    }
+    await assertLegacyReadback(savedCut.sourceCutHash, result.assessmentHash)
+    const compact = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
+      ...savedCut.cut,
+      schemaVersion: 'bayn.operational-source-cut.v1',
+      records: [],
+    })
+    const missing = {
+      kind: SystemSourceRecordKind.Controller,
+      sourceId: testHash('missing pass'),
+      recordHash: testHash('missing archive'),
+    }
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(asApplication(persistOperationalSourceCut({ ...compact, records: [missing] }))),
+      ),
+    ).toBe(true)
+    const record = Result.getOrThrow(
+      makeSystemSourceRecord(SystemSourceRecordKind.Controller, { retained: 'database scope check' }),
+    )
+    await runtime.runPromise(asApplication(persistSystemSourceRecord(record)))
+    const reference = { ...missing, recordHash: record.recordHash }
+    for (const records of [[{ ...reference, kind: SystemSourceRecordKind.Decision }], [reference, reference]])
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(asApplication(persistOperationalSourceCut({ ...compact, records }))),
+        ),
+      ).toBe(true)
+    const storedCompact = await runtime.runPromise(asApplication(persistOperationalSourceCut(compact)))
+    expect(await runtime.runPromise(readSystemSourceCut(savedCut.sourceCutHash))).toEqual(savedCut.cut)
+    expect(Exit.isFailure(await runtime.runPromiseExit(readSystemSourceCut(storedCompact.sourceCutHash)))).toBe(true)
+    const replayed = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(storedCompact.sourceCutHash, prospective),
+    )
+    expect('cut' in replayed && replayed.cut).toEqual(compact)
+    const compactResult = await runtime.runPromise(
+      asApplication(assessAndPersistOperational({ ...input, sourceCutHash: storedCompact.sourceCutHash }, sources)),
+    )
+    expect(compactResult.verdict).toBe('INCONCLUSIVE')
+    expect(compactResult.economicQualification).toBe('NOT_ASSESSED')
+    const unboundObservation = {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      executionIssuedAt: asOf,
+      observedAt: asOf,
+    }
+    const unboundPass = {
+      controllerKey: prospective.policies[0].capitalAuthorization!.request.broker.identityHash,
+      planHash: prospective.obligations.configuration.controllerPlanHash,
+      epoch: 1,
+      sequence: 1,
+      receiptHash: testHash(unboundObservation),
+      completedAt: asOf,
+      observation: unboundObservation,
+    }
+    const unboundRecord = Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, unboundPass))
+    await runtime.runPromise(asApplication(persistSystemSourceRecord(unboundRecord)))
+    const unboundCut = await runtime.runPromise(
+      asApplication(
+        persistOperationalSourceCut({
+          ...compact,
+          records: [
+            { kind: unboundRecord.kind, sourceId: unboundPass.receiptHash, recordHash: unboundRecord.recordHash },
+          ],
+        }),
+      ),
+    )
+    const unboundInput = { ...input, sourceCutHash: unboundCut.sourceCutHash }
+    const unboundResult = await runtime.runPromise(asApplication(assessAndPersistOperational(unboundInput, sources)))
+    expect(unboundResult.missing).toContain(`UNBOUND_CONTROLLER_BUILD:${unboundPass.receiptHash}`)
+    const retainedArchiveInput = { ...unboundInput, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    const retainedArchive = await runtime.runPromise(
+      readOperationalAssessmentSourceCut(unboundCut.sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
+    )
+    const retainedArchiveMaterial = {
+      ...Result.getOrThrow(verifyStoredOperationalAssessment(retainedArchiveInput, retainedArchive, sources)),
+      verifiedSourceHashes: [...sources].sort(),
+    }
+    expect(retainedArchiveMaterial.missing).not.toContain(`UNBOUND_CONTROLLER_BUILD:${unboundPass.receiptHash}`)
+    const retainedArchiveHash = testHash(retainedArchiveMaterial)
+    const retainedArchiveInputText = Result.getOrThrow(canonicalJsonV1Result(retainedArchiveInput))
+    const retainedArchiveText = Result.getOrThrow(canonicalJsonV1Result(retainedArchiveMaterial))
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          yield* (yield* PgClient.PgClient)`INSERT INTO operational_assessment_receipts
+        (assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+        VALUES (${retainedArchiveHash}, ${retainedArchiveMaterial.registrationHash}, ${retainedArchiveMaterial.sourceCutHash},
+          ${retainedArchiveMaterial.asOf}, ${retainedArchiveMaterial.verdict}, ${retainedArchiveInputText}, ${retainedArchiveText})`
+        }),
+      ),
+    )
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(retainedArchiveHash))).toEqual({
+      ...retainedArchiveMaterial,
+      assessmentHash: retainedArchiveHash,
+    })
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(asApplication(assessAndPersistOperational(retainedArchiveInput, sources))),
+      ),
+    ).toBe(true)
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(unboundResult.assessmentHash))).toEqual(
+      unboundResult,
+    )
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(result.assessmentHash))).toEqual(result)
+    expect(await runtime.runPromise(readPersistedOperationalAssessment(compactResult.assessmentHash))).toEqual(
+      compactResult,
+    )
+    await assertLegacyReadback(storedCompact.sourceCutHash, compactResult.assessmentHash)
+    const financialRegistration = await runtime.runPromise(asApplication(registerFixture(registration())))
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(
+          asApplication(
+            persistOperationalSourceCut({ ...compact, registrationHash: financialRegistration.registrationHash }),
+          ),
+        ),
+      ),
+    ).toBe(true)
+    for (const action of [
+      'UPDATE operational_assessment_receipts SET verdict=verdict',
+      'DELETE FROM operational_assessment_receipts',
+      'TRUNCATE operational_assessment_receipts',
+    ])
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                yield* (yield* PgClient.PgClient).unsafe(action)
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+  })
 
   test.each([1, 3, 21])('persists a %i-session registration with its actual closing boundary', async (sessionCount) => {
     const first = registration(sessionCount)
@@ -735,7 +1130,8 @@ postgres('PostgreSQL prospective system qualification', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        for (const [index, definition] of definitions.entries()) {
+        for (const [index, baseDefinition] of definitions.entries()) {
+          let definition = baseDefinition
           const identity = yield* Effect.fromResult(
             makeBrokerIdentity({
               schemaVersion: 'bayn.broker-identity.v2',
@@ -744,6 +1140,54 @@ postgres('PostgreSQL prospective system qualification', () => {
               accountId: `captured-financial-${definition.policy}`,
             }),
           )
+          const previous = testHash({ previous: definition.policy })
+          const reconciliation = {
+            ...nativeJevFixture(JevPurpose.Entry, undefined, identity.accountId).portfolio.brokerState.reconciliation,
+            reconciliationId: testHash({ financialReconciliation: identity.accountId }),
+          }
+          const mandateMaterial = {
+            activation: {
+              sourceRevision: definition.sourceRevision,
+              imageRepository: 'registry.example.test/lab/bayn',
+              imageDigest: `sha256:${definition.imageDigest}`,
+            },
+            strategy: {
+              name: 'jev',
+              behaviorHash: definition.strategyHash,
+              parameterHash: definition.parametersHash,
+              parameterSchemaVersion: defaultJevProtocolDocument.schemaVersion,
+              protocolHash: definition.protocolHash,
+            },
+            broker: {
+              environment: identity.environment,
+              accountId: identity.accountId,
+              identityHash: identity.identityHash,
+            },
+            riskPolicyHash: definition.riskPolicyHash,
+            limits: { maxOpenOrders: 0, maxPositions: 0 },
+          } as const
+          const planHash = Result.getOrThrow(
+            makeResearchCapitalPlanHash({ schemaVersion: 'bayn.research-execution-plan.v1', ...mandateMaterial }),
+          )
+          const request = Result.getOrThrow(
+            makeResearchCapitalActivationRequest({
+              schemaVersion: 'bayn.research-execution-mandate.v1',
+              grant: { _tag: 'Research', planHash },
+              ...mandateMaterial,
+            }),
+          )
+          const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(request)
+          const generation = Result.getOrThrow(
+            makeResearchCapitalGrantGenerationResult({
+              ...proof,
+              schemaVersion: 'bayn.paper-authority-generation.v3',
+              maximum: Authority.Execution,
+              previousGenerationHash: previous,
+              reconciliationId: reconciliation.reconciliationId,
+              reconciliationContentHash: reconciliation.contentHash,
+            }),
+          )
+          definition = { ...definition, authorityGenerationHash: generation.generationHash }
           const registered = {
             ...definition,
             accountBindingHash: testHash({
@@ -752,13 +1196,8 @@ postgres('PostgreSQL prospective system qualification', () => {
             }),
           }
           expect(yield* readRegisteredFinancialIdentity(registered)).toBeNull()
-          const previous = testHash({ previous: definition.policy })
           yield* sql`INSERT INTO authority_generations(generation_hash, schema_version, maximum, authority_version, activated_at)
           VALUES (${previous}, 'bayn.authority-generation-history.v1', 'OBSERVE', ${index * 2 + 1}, clock_timestamp())`
-          const reconciliation = {
-            ...nativeJevFixture(JevPurpose.Entry, undefined, identity.accountId).portfolio.brokerState.reconciliation,
-            reconciliationId: testHash({ financialReconciliation: identity.accountId }),
-          }
           yield* sql`INSERT INTO reconciliations
           (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
           VALUES (${reconciliation.reconciliationId}, ${reconciliation.schemaVersion}, ${identity.accountId},
@@ -776,9 +1215,59 @@ postgres('PostgreSQL prospective system qualification', () => {
             ${identity.environment}, ${definition.riskPolicyHash}, clock_timestamp(),
             ${definition.sourceRevision}, 'registry.example.test/lab/bayn', ${`sha256:${definition.imageDigest}`},
             'jev', ${definition.strategyHash}, ${definition.parametersHash}, ${defaultJevProtocolDocument.schemaVersion},
-            ${definition.protocolHash}, ${testHash('proof')}, ${reconciliation.reconciliationId},
-            ${reconciliation.contentHash}, ${testHash('research')})`
+            ${definition.protocolHash}, ${planHash}, ${reconciliation.reconciliationId},
+            ${reconciliation.contentHash}, ${planHash})`
           expect(yield* readRegisteredFinancialIdentity(registered)).toEqual(identity)
+          if (definition.policy === JevResearchPolicy.Candidate) {
+            const build = {
+              ...config.build,
+              sourceRevision: 'c'.repeat(40),
+              imageRepository: request.activation.imageRepository,
+              imageDigest: `sha256:${testHash('current physical worker')}`,
+            }
+            const current = {
+              ...registered,
+              sourceRevision: build.sourceRevision,
+              imageDigest: build.imageDigest.slice(7),
+            }
+            const lineage = {
+              schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
+              requestHash: request.requestHash,
+              authoredActivation: request.activation,
+              activation: {
+                sourceRevision: build.sourceRevision,
+                imageRepository: build.imageRepository,
+                imageDigest: build.imageDigest,
+              },
+            }
+            const authorized = { ...current, capitalAuthorization: { request, buildLineage: lineage, generation } }
+            expect(yield* readRegisteredFinancialIdentity(authorized)).toEqual(identity)
+            for (const invalid of [
+              current,
+              { ...authorized, sourceRevision: 'd'.repeat(40) },
+              {
+                ...authorized,
+                capitalAuthorization: {
+                  request,
+                  generation,
+                  buildLineage: { ...lineage, requestHash: testHash('wrong mandate') },
+                },
+              },
+              {
+                ...authorized,
+                capitalAuthorization: {
+                  request,
+                  generation,
+                  buildLineage: {
+                    ...lineage,
+                    activation: { ...lineage.activation, imageRepository: 'registry.example.test/foreign/bayn' },
+                  },
+                },
+              },
+            ])
+              expect(Exit.isFailure(yield* Effect.exit(readRegisteredFinancialIdentity(invalid)))).toBe(true)
+            expect(yield* readRegisteredFinancialIdentity(registered)).toEqual(identity)
+          }
           for (const changed of [
             { ...registered, accountBindingHash: testHash('other account') },
             { ...registered, riskPolicyHash: testHash('other risk policy') },
@@ -1098,8 +1587,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             )
             const definition = registered.registration.policies.find((p) => p.policy === selectedPolicy)
             if (definition === undefined) throw new Error('Missing selected policy')
-            yield* Effect.sleep('2 millis')
-            const asOf = new Date().toISOString()
+            const asOf = yield* databaseNow
             const cut = yield* persistSystemSourceCut({
               schemaVersion: 'bayn.system-source-cut.v4',
               protectionIntents: [],
@@ -1131,7 +1619,7 @@ postgres('PostgreSQL prospective system qualification', () => {
               sourceMaterialHash: testHash({}),
             })
             yield* Effect.sleep('2 millis')
-            const at = new Date().toISOString()
+            const at = yield* databaseNow
             const receipt = yield* Schema.decodeUnknownEffect(ReplayExecutionReceiptSchema)({
               schemaVersion: 'bayn.replay-execution-receipt.v1',
               registrationHash: registered.registrationHash,
@@ -1219,9 +1707,14 @@ postgres('PostgreSQL prospective system qualification', () => {
             { count: 0 },
           ])
           const at = new Date().toISOString()
+          const executionBuild = {
+            sourceRevision: config.build.sourceRevision,
+            imageRepository: config.build.imageRepository,
+            imageDigest: config.build.imageDigest,
+          }
           yield* sql`UPDATE execution_controller_status SET next_sequence = 1, last_sequence = 0, last_outcome = 'Waiting',
             last_receipt_hash = ${sha256('receipt')}, completed_at = ${at},
-            last_pass = jsonb_build_object('result', 'SUCCESS', 'outcome', 'WINDOW_CLOSED', 'observedAt', ${at}::text)
+            last_pass = jsonb_build_object('result', 'SUCCESS', 'outcome', 'WINDOW_CLOSED', 'observedAt', ${at}::text, 'executionBuild', ${JSON.stringify(executionBuild)}::jsonb)
             WHERE controller_key = ${controllerKey}`
           for (let epoch = 3; epoch < 23; epoch++)
             yield* sql`UPDATE execution_controller_status SET epoch = ${epoch} WHERE controller_key = ${controllerKey}`
@@ -1233,7 +1726,9 @@ postgres('PostgreSQL prospective system qualification', () => {
             WHERE controller_key = ${controllerKey}`
           const retained = yield* readSystemControllerPasses(controllerKey, planHash, at, at, at)
           expect(retained).toHaveLength(2)
+          expect(yield* readSystemControllerPasses(controllerKey, null, at, at, at)).toEqual([])
           expect(new Set(retained.map((pass) => pass.receiptHash)).size).toBe(1)
+          expect(retained.map((pass) => pass.observation.executionBuild)).toEqual([executionBuild, executionBuild])
           expect(
             new Set(
               retained.map((pass) => (pass.observation.result === 'SUCCESS' ? pass.observation.outcome : 'FAILURE')),
@@ -1296,6 +1791,66 @@ postgres('PostgreSQL prospective system qualification', () => {
     await runtime.runPromise(Effect.sleep(Math.max(0, opens - Date.now() + 10)))
     return { registered, definition, account, opens }
   }
+
+  test('projection witnesses its committed completion without waiting for the next controller tick', async () => {
+    const { registered } = await activeEvaluation()
+    const planHash = registered.registration.obligations.configuration.controllerPlanHash
+    if (planHash === null) throw new Error('Missing controller plan')
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ExecutionControllerStatusStore
+        const sql = yield* PgClient.PgClient
+        const at = yield* databaseNow
+        const status = {
+          schemaVersion: 1 as const,
+          controllerKey: sha256('identity'),
+          planHash,
+          active: true,
+          epoch: 1,
+          nextSequence: 1,
+          lastSequence: 0,
+          lastOutcome: ExecutionControllerOutcome.Waiting,
+          lastReceiptHash: sha256('independently witnessed completion'),
+          completedAt: at,
+          nextDueAt: new Date(Date.parse(at) + 30_000).toISOString(),
+          lastPass: { result: 'SUCCESS' as const, outcome: 'WINDOW_CLOSED' as const, observedAt: at },
+        }
+        expect((yield* store.project(status))._tag).toBe('Applied')
+        const first = yield* readSystemDurableObservations(registered.registrationHash)
+        const witness = first.find((row) => row.kind === 'CONTROLLER' && row.sourceHash === status.lastReceiptHash)
+        expect(witness).toBeDefined()
+        expect(witness?.sourceAt).toBe(at)
+        expect(Date.parse(witness?.witnessedAt ?? at)).toBeLessThanOrEqual(
+          Date.parse(at) + registered.registration.obligations.decisionWindowMs,
+        )
+        expect((yield* store.project(status))._tag).toBe('Replayed')
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+        expect(yield* store.read(status.controllerKey)).toEqual(status)
+        expect(
+          (yield* readSystemControllerPasses(status.controllerKey, planHash, at, at, yield* databaseNow)).map(
+            (pass) => pass.receiptHash,
+          ),
+        ).toEqual([status.lastReceiptHash])
+        const next = { ...status, nextSequence: 2, lastSequence: 1, lastReceiptHash: sha256('rolled back completion') }
+        const rolledBack = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* store.project(next)
+              expect(
+                (yield* readSystemDurableObservations(registered.registrationHash)).some(
+                  (row) => row.sourceHash === next.lastReceiptHash,
+                ),
+              ).toBe(false)
+              return yield* Effect.fail('rollback')
+            }),
+          ),
+        )
+        expect(Exit.isFailure(rolledBack)).toBe(true)
+        expect(yield* store.read(status.controllerKey)).toEqual(status)
+        expect(yield* readSystemDurableObservations(registered.registrationHash)).toEqual(first)
+      }).pipe(Effect.provide(ExecutionControllerStatusStoreLive)),
+    )
+  })
 
   test('an active evaluation witnesses only committed account evidence and retains the first durable observation', async () => {
     const { registered, definition, account, opens } = await activeEvaluation()
@@ -1543,6 +2098,12 @@ postgres('PostgreSQL prospective system qualification', () => {
       asOf: new Date(Date.now() + 1000).toISOString(),
     }
     const captured = await runtime.runPromise(readSystemDecisionAdmissions(scope))
+    const carryBoundary = await runtime.runPromise(databaseNow)
+    const carried = await runtime.runPromise(
+      readSystemMutationEvidence(account, definition.authorityGenerationHash, carryBoundary),
+    )
+    expect(carried.map(({ event }) => event.mutationId)).toContain(sha256('committed-admission'))
+    expect(carried.find(({ event }) => event.mutationId === sha256('committed-admission'))?.event.sequence).toBe(1)
     const previousDate = new Date(Date.parse(`${sessionDate}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10)
     expect(
       await runtime.runPromise(

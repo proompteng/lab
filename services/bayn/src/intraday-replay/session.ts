@@ -77,12 +77,17 @@ export const driveReplaySession = <E>(
           case DecisionReadinessReason.DecisionPending:
           case DecisionReadinessReason.InferenceUnavailable:
           case DecisionReadinessReason.InferenceExpired:
+          case DecisionReadinessReason.ExecutionRiskExpired:
           case DecisionReadinessReason.SnapshotUnavailable:
           case DecisionReadinessReason.SnapshotCoverage:
           case DecisionReadinessReason.SnapshotStale:
           case DecisionReadinessReason.ArchiveWatermark:
             unavailableDecisionPassCount++
             break
+          default: {
+            const unhandled: never = reason
+            return yield* new ReplayBrokerFailure({ message: `Unsupported decision readiness ${unhandled}` })
+          }
         }
       }
       const completedAtMs = yield* Clock.currentTimeMillis

@@ -41,19 +41,19 @@ def unusedEntryExpiry (cycle : CycleEvidence) : Int :=
 def expiredUnusedEntry (cycle : CycleEvidence) (now : Int) : Bool :=
   decide (cycle.snapshotId = none ∧ cycle.decisionHash = none ∧ unusedEntryExpiry cycle ≤ now)
 
-def expiredInferenceRetryAllowed (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) : Prop :=
+def unboundEntryRetryAllowed (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) : Prop :=
   expiredWaiting = true ∧ cycle.state = .active ∧ cycle.snapshotId = none ∧ cycle.decisionHash = none ∧
   max cycle.createdAt cycle.submissionOpenAt ≤ now ∧ now < unusedEntryExpiry cycle
 
 instance (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) :
-    Decidable (expiredInferenceRetryAllowed expiredWaiting cycle now) := inferInstanceAs (Decidable (_ ∧ _))
+    Decidable (unboundEntryRetryAllowed expiredWaiting cycle now) := inferInstanceAs (Decidable (_ ∧ _))
 
 def expiredInferenceContinuation (expiredWaiting : Bool) (cycle : CycleEvidence) (now : Int) : Option Nat :=
-  if expiredInferenceRetryAllowed expiredWaiting cycle now then some 1 else none
+  if unboundEntryRetryAllowed expiredWaiting cycle now then some 1 else none
 
 theorem expired_inference_retry_requires_original_window (expiredWaiting : Bool) (cycle : CycleEvidence)
     (now : Int) (delay : Nat) (retry : expiredInferenceContinuation expiredWaiting cycle now = some delay) :
-    expiredInferenceRetryAllowed expiredWaiting cycle now := by
+    unboundEntryRetryAllowed expiredWaiting cycle now := by
   unfold expiredInferenceContinuation at retry
   split at retry
   · assumption
@@ -62,10 +62,47 @@ theorem expired_inference_retry_requires_original_window (expiredWaiting : Bool)
 theorem expired_inference_cannot_retry_after_original_deadline (expiredWaiting : Bool) (cycle : CycleEvidence)
     (now : Int) (expired : unusedEntryExpiry cycle ≤ now) :
     expiredInferenceContinuation expiredWaiting cycle now = none := by
-  have unavailable : ¬expiredInferenceRetryAllowed expiredWaiting cycle now := by
+  have unavailable : ¬unboundEntryRetryAllowed expiredWaiting cycle now := by
     rintro ⟨_, _, _, _, _, before⟩
     omega
   simp [expiredInferenceContinuation, unavailable]
+
+/-- `pending` covers a captured query for initial inputs or a later unconsumed input cut. -/
+def pendingMarketInputsContinuation (pending : Bool) (cycle : CycleEvidence) (now : Int)
+    (normalDelay : Nat) : Option Nat :=
+  if unboundEntryRetryAllowed pending cycle now then
+    some (min (min 1000 normalDelay) (unusedEntryExpiry cycle - now).toNat)
+  else none
+
+theorem pending_inputs_retry_retains_original_admission (pending : Bool) (cycle : CycleEvidence)
+    (now : Int) (normalDelay delay : Nat)
+    (retry : pendingMarketInputsContinuation pending cycle now normalDelay = some delay) :
+    unboundEntryRetryAllowed pending cycle now ∧ delay ≤ 1000 ∧ delay ≤ normalDelay ∧
+      delay ≤ (unusedEntryExpiry cycle - now).toNat := by
+  unfold pendingMarketInputsContinuation at retry
+  split at retry
+  · rename_i admitted
+    cases retry
+    exact ⟨admitted, Nat.le_trans (Nat.min_le_left _ _) (Nat.min_le_left _ _),
+      Nat.le_trans (Nat.min_le_left _ _) (Nat.min_le_right _ _), Nat.min_le_right _ _⟩
+  · contradiction
+
+theorem pending_inputs_cannot_retry_after_original_deadline (pending : Bool) (cycle : CycleEvidence)
+    (now : Int) (normalDelay : Nat) (expired : unusedEntryExpiry cycle ≤ now) :
+    pendingMarketInputsContinuation pending cycle now normalDelay = none := by
+  have unavailable : ¬unboundEntryRetryAllowed pending cycle now := by
+    rintro ⟨_, _, _, _, _, before⟩
+    omega
+  simp [pendingMarketInputsContinuation, unavailable]
+
+theorem pending_inputs_wake_is_within_original_deadline (pending : Bool) (cycle : CycleEvidence)
+    (now : Int) (normalDelay delay : Nat)
+    (retry : pendingMarketInputsContinuation pending cycle now normalDelay = some delay) :
+    now + delay ≤ unusedEntryExpiry cycle := by
+  obtain ⟨admitted, _, _, remaining⟩ :=
+    pending_inputs_retry_retains_original_admission pending cycle now normalDelay delay retry
+  rcases admitted with ⟨_, _, _, _, _, before⟩
+  omega
 
 def cycleActivation (cycle : CycleEvidence) (now : Int) : String :=
   if cycle.state = .active then "Replay"
@@ -234,6 +271,12 @@ def reachableCycle : CycleEvidence :=
 theorem expired_inference_retry_is_reachable :
     expiredInferenceContinuation true reachableCycle 12548 = some 1 ∧
     expiredInferenceContinuation true reachableCycle 60000 = none := by decide
+
+theorem pending_inputs_retry_is_reachable :
+    pendingMarketInputsContinuation true reachableCycle 37171 30000 = some 1000 ∧
+    pendingMarketInputsContinuation true reachableCycle 59900 30000 = some 100 ∧
+    pendingMarketInputsContinuation true reachableCycle 60000 30000 = none ∧
+    pendingMarketInputsContinuation false reachableCycle 37171 30000 = none := by decide
 
 def reachableCycleDecision : CycleDecisionEvidence :=
   ⟨reachableCycle.identity, "decision", true, ⟨"snapshot", "content", 1⟩,

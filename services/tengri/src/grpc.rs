@@ -1171,6 +1171,31 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn recover_codex_run(
+        &self,
+        request: Request<InterruptCodexTurnRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RecoverCodexRun").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.run_id)?;
+        validate_codex_operation(&request.operation_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id,
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "tengri/recoverRun".into(),
+                params: serde_json::json!({}),
+            },
+        )
+        .await?;
+        Ok(Response::new(Empty {}))
+    }
+
     async fn interrupt_codex_turn(
         &self,
         request: Request<InterruptCodexTurnRequest>,
