@@ -225,7 +225,7 @@ async fn active_recovery_isolates_conversations_without_hiding_selected_failures
                                 Claim {
                                     workspace_uid: query.workspace_uid.clone(),
                                     owner_hash: "b".repeat(64),
-                                    thread_id: "thread-working".into(),
+                                    thread_id: "collaborator-thread".into(),
                                     run_id: "foreign-run".into(),
                                 },
                             ]),
@@ -298,6 +298,17 @@ async fn scoped_status_read_child() {
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].run_id, "run-working");
     assert!(matches!(snapshots[0].state, State::Running { .. }));
+    assert!(
+        thread_active(&principal, "collaborator-thread")
+            .await
+            .unwrap()
+    );
+    assert!(
+        active(&principal, "collaborator-thread")
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(
         active(&principal, "thread-with-no-claim")
             .await

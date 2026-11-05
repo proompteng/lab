@@ -551,7 +551,8 @@ Status reads use the private `run-reader` role in the Restate namespace. It expo
 reading fixed state keys through Restate's query API without invoking or journaling a workflow. There is no cache or
 second state store. Canonical UUIDs constrain the fixed SQL; responses are bounded to 16 MiB. Snapshots must match the
 owner, immutable workspace UID, run ID and optional input digest. The controller still obtains fresh Ofz authority
-before each public read. Strict mesh authentication and NetworkPolicy admit only controller Pods; controllers cannot
+before each public read. Workspace claims preserve collaborator activity for the archive guard; public active-run
+results remain owner-filtered. Strict mesh authentication and NetworkPolicy admit only controller Pods; controllers cannot
 reach Restate's admin API. The reader has its own proxy identity, no Kubernetes token, RBAC or application secrets.
 
 Reads share a pooled HTTP client and one fifteen-second recovery budget. The private reader admits each query within

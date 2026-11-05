@@ -189,9 +189,7 @@ impl Backend {
             .unwrap_or_default();
         Ok(active
             .into_values()
-            .filter(|claim| {
-                claim.workspace_uid == query.workspace_uid && claim.owner_hash == query.owner_hash
-            })
+            .filter(|claim| claim.workspace_uid == query.workspace_uid)
             .collect())
     }
 
@@ -407,6 +405,39 @@ mod tests {
             query.run_id
         );
         assert_eq!(*queries.lock().unwrap(), vec![expected; 4]);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn workspace_claims_preserve_collaborator_activity_for_archive_checks() {
+        let query = query();
+        let own = Claim {
+            workspace_uid: query.workspace_uid.clone(),
+            owner_hash: query.owner_hash.clone(),
+            thread_id: "own-thread".into(),
+            run_id: Uuid::new_v4().to_string(),
+        };
+        let collaborator = Claim {
+            owner_hash: "b".repeat(64),
+            thread_id: "collaborator-thread".into(),
+            run_id: Uuid::new_v4().to_string(),
+            ..own.clone()
+        };
+        let foreign = Claim {
+            workspace_uid: Uuid::new_v4().to_string(),
+            thread_id: "foreign-workspace".into(),
+            ..own.clone()
+        };
+        let state = BTreeMap::from([
+            (own.thread_id.clone(), own.clone()),
+            (collaborator.thread_id.clone(), collaborator.clone()),
+            (foreign.thread_id.clone(), foreign),
+        ]);
+        let (backend, _, task) = backend(Some(serde_json::to_value(state).unwrap())).await;
+        let claims = backend.claims(&query).await.unwrap();
+        assert_eq!(claims.len(), 2);
+        assert!(claims.contains(&own));
+        assert!(claims.contains(&collaborator));
         task.abort();
     }
 
