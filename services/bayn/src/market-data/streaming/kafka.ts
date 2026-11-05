@@ -1,4 +1,5 @@
 import { MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
 import { CaptureDisposition } from './transport-evidence'
@@ -11,7 +12,9 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import {
+  Base,
   Consumer,
+  findErrorBy,
   MessagesStreamFallbackModes,
   MessagesStreamModes,
   stringDeserializers,
@@ -98,8 +101,11 @@ export interface KafkaProjectionTransport {
     positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
   ) => Promise<KafkaProjectionStream>
-  readonly close: () => Promise<void>
+  readonly close: () => Promise<KafkaProjectionClosed>
 }
+export type KafkaProjectionClosed =
+  | { readonly _tag: 'Closed' }
+  | { readonly _tag: 'ClosedAfterCoordinatorFailure'; readonly cause: unknown }
 export type KafkaProjectionTransportFactory = (
   config: KafkaMarketConfig,
   epoch: string,
@@ -166,13 +172,31 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     retries: 2,
     retryDelay: 250,
   })
-  let closePromise: Promise<void> | undefined
+  let closePromise: Promise<KafkaProjectionClosed> | undefined
   let active: MessagesStream<string, Buffer, string, string> | undefined
-  const close = (): Promise<void> => {
+  const close = (): Promise<KafkaProjectionClosed> => {
     if (closePromise === undefined) {
       active?.destroy()
-      closePromise = new Promise<void>((resolve, reject) => {
-        consumer.close(true, (error) => (error !== null && error !== undefined ? reject(error) : resolve()))
+      closePromise = new Promise<KafkaProjectionClosed>((resolve, reject) => {
+        consumer.close(true, (error) => {
+          if (error === null || error === undefined) {
+            resolve({ _tag: 'Closed' })
+            return
+          }
+          // The SDK returns before closing its connection pool when LeaveGroup fails.
+          // A lost coordinator acknowledgement cannot keep this offset-free reader alive.
+          Base.prototype.close.call(consumer).then(
+            () => {
+              if (
+                findErrorBy(error, 'apiId', 'COORDINATOR_NOT_AVAILABLE') !== null &&
+                findErrorBy(error, 'canRetry', false) === null
+              )
+                resolve({ _tag: 'ClosedAfterCoordinatorFailure', cause: error })
+              else reject(error)
+            },
+            (closeError) => reject(new AggregateError([error, closeError], 'Kafka consumer teardown failed')),
+          )
+        })
       })
     }
     return closePromise
@@ -366,6 +390,14 @@ export const makeKafkaMarketProjection = (
               try: () => resource.close(),
               catch: (cause) => failure('close', 'Kafka client close failed', cause),
             }).pipe(
+              Effect.tap((closed) =>
+                closed._tag === 'ClosedAfterCoordinatorFailure'
+                  ? Effect.logWarning('Kafka reader closed locally after coordinator acknowledgement failed', {
+                      epoch,
+                      failureCodes: safeKafkaFailureCodes(closed.cause),
+                    })
+                  : Effect.void,
+              ),
               Effect.tapError((cause) =>
                 Effect.sync(() => {
                   closeFailure = cause
@@ -383,8 +415,12 @@ export const makeKafkaMarketProjection = (
             }),
           )
         const observedAtMs = yield* Clock.currentTimeMillis
-        const lowerTimestampMs =
-          diagnosticStartMs ?? Math.floor((observedAtMs - 2000) / 60_000) * 60_000 - 30 * 60_000 - 5000
+        const timestampForSource = (source: MarketSources[number]) =>
+          diagnosticStartMs ??
+          Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
+            marketHistoryMinutes[marketSourceKind(source)] * 60_000 -
+            5000
+        const lowerTimestampMs = Math.min(...universe.map(timestampForSource))
         const owners = new Map<string, string>()
         for (const source of universe) {
           const raw = [source.topics.bars, source.topics.quotes, source.topics.trades]
@@ -405,10 +441,31 @@ export const makeKafkaMarketProjection = (
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
           config.timestampPolicy === KafkaBootstrapTimestampPolicy.ProducerClock
-            ? yield* operation('bootstrap', () => transport.offsets(topics, BigInt(lowerTimestampMs)))
+            ? (yield* Effect.forEach(universe, (source) =>
+                operation('bootstrap', () =>
+                  transport.offsets(
+                    [...new Set(Object.values(source.topics).filter((topic) => topic !== undefined))],
+                    BigInt(timestampForSource(source)),
+                  ),
+                ),
+              )).flat()
             : starts
+        // Separate tick streams supply current prices, not chart history. Await new verified ticks instead of
+        // replaying millions of obsolete updates. Mixed crypto streams still contain required historical bars.
+        const currentTopics = new Set(
+          diagnosticStartMs === undefined
+            ? universe
+                .filter((source) => marketSourceKind(source) === MarketKind.Equity)
+                .flatMap((source) => [source.topics.quotes, source.topics.trades])
+            : [],
+        )
         const partitions = yield* Effect.try({
-          try: () => bootstrapKafkaPartitions(starts, ends, seek),
+          try: () =>
+            bootstrapKafkaPartitions(
+              starts,
+              ends,
+              seek.map((position) => (currentTopics.has(position.topic) ? { ...position, offset: '-1' } : position)),
+            ),
           catch: (cause) => failure('bootstrap', 'Invalid Kafka bootstrap bounds', cause),
         })
         bootstrap = {

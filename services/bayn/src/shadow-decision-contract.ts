@@ -1,3 +1,21 @@
+import {
+  entryAblationStrategyIdentity,
+  makeEntryAblationPolicy,
+  type EntryAblationPolicy,
+} from './jev/entry-ablation-policy'
+import {
+  isProtectedEntryTarget,
+  protectedEntryExpiresAtMs,
+  protectedEntryBuyPriceCeilings,
+} from './strategy/runtime-decision'
+import { MarketKind, instrumentMarket } from './instruments'
+import { reproduceJevCandidateObservation } from './jev/observation'
+import { JevContractError } from './jev/contract'
+import {
+  makeRepeatedMomentumPolicy,
+  repeatedMomentumStrategyIdentity,
+  type RepeatedMomentumPolicy,
+} from './strategy/repeated-momentum/policy'
 import { entryBracketProtection } from './execution/position-protection'
 import { jevProfitTargetLimitFloors } from './jev/exit'
 import { NativeProtectionSchema } from './execution/contracts'
@@ -15,8 +33,7 @@ import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { maximumFundedBuyQuantities } from './jev/entry-sizing'
-import { jevMaximumEntryAskMicros } from './jev/entry-economics'
-import { JevCandidatePlanStatus } from './jev/batch'
+import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './jev/entry-economics'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -522,6 +539,8 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   mode: Schema.Literal(legacyExecutionAuthorityToken),
   dispatchable: Schema.Boolean,
   bindings: ExecutionDecisionBindingsSchema,
+  /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
+  plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   /** Persist the pure strategy output that authorized the targets. */
@@ -529,8 +548,6 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   /** Exact archive rows reverified before a durable intraday entry is accepted. */
   decisionMarketDataRows: Schema.optionalKey(PersistedIntradaySnapshotRowsSchema),
   executionMarketDataRows: Schema.optionalKey(PersistedIntradaySnapshotRowsSchema),
-  /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
-  plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
   /** Persist the exact risk policy so durable decoding can reproduce every gate and derived metric. */
   riskPolicy: Schema.optionalKey(PolicySchema),
   entryLimitSlippageBps: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9_999 }))),
@@ -994,14 +1011,18 @@ const streamingPricingEvidenceIssues = (
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
     const target = document.strategyDecision
-    if (target?.schemaVersion === 'bayn.jev-entry-target.v6' && target.selectedSymbols.includes(symbol)) {
+    if (isProtectedEntryTarget(target) && target.selectedSymbols.includes(symbol)) {
       const plan = target.exitPolicy.plans[symbol]
       // Match compileJevEntry using the exact quote bid, before instrument-price quantization.
-      if (plan === undefined || bid <= BigInt(plan.levels.stopPriceMicros))
+      if (
+        plan === undefined ||
+        bid <= BigInt(plan.levels.stopPriceMicros) ||
+        bid >= BigInt(plan.levels.profitLimitPriceMicros)
+      )
         return [
           {
             path: ['executionMarketDataRows'],
-            issue: 'entry pricing must remain strictly above the selected protective stop',
+            issue: 'entry pricing must remain strictly between the selected stop and profit target',
           },
         ]
     }
@@ -1195,16 +1216,38 @@ export const jevProtocolIdentityMatches = (protocol: JevProtocol, strategyProtoc
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
+const ablationProtocolIdentityMatches = (policy: EntryAblationPolicy, strategyProtocolHash: string): boolean => {
+  const parameters = canonicalHashV1Result(policy.sharedProtocol)
+  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
+  if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
+    return false
+  const identity = entryAblationStrategyIdentity(policy)
+  return Result.isSuccess(identity) && identity.success.protocolHash === strategyProtocolHash
+}
+
+const momentumProtocolIdentityMatches = (policy: RepeatedMomentumPolicy, strategyProtocolHash: string): boolean => {
+  const parameters = canonicalHashV1Result(policy.sharedProtocol)
+  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
+  const identity = repeatedMomentumStrategyIdentity(policy)
+  return (
+    Result.isSuccess(parameters) &&
+    Result.isSuccess(expected) &&
+    parameters.success === expected.success &&
+    Result.isSuccess(identity) &&
+    identity.success.protocolHash === strategyProtocolHash
+  )
+}
+
 const jevEntryEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v6' || document.plannerInput === undefined)
+  if (!isProtectedEntryTarget(target) || document.plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
   const issues: Schema.FilterIssue[] = []
-  const { observation, batchPlan } = target.evidence
+  const { observation } = target.evidence
   if (
     document.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
     document.plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
@@ -1225,19 +1268,21 @@ const jevEntryEvidenceIssues = (
           'Jev entry quantity limits must reproduce the recorded capital, selected weights, funded strategy ceiling and instrument precision',
       })
     for (const symbol of target.selectedSymbols) {
-      const candidate = batchPlan.candidates.find((entry) => entry.symbol === symbol)
-      // The target schema has reproduced this exact request from its immutable source rows.
-      const quoted = Schema.decodeUnknownResult(
-        Schema.Struct({ candidate: Schema.Struct({ quote: Schema.Struct({ ask: Schema.Finite }) }) }),
-      )(candidate?.status === JevCandidatePlanStatus.Requested ? candidate.request.request.state : undefined)
-      const originalAsk = quoted.pipe(
-        Result.flatMap((state) => priceNumberToMicros(state.candidate.quote.ask, 'ask', 'UP')),
-      )
+      const originalAsk = Result.gen(function* () {
+        const source = yield* reproduceJevCandidateObservation(observation)
+        const quote = source.snapshot.latestQuotes[symbol]
+        if (quote === undefined)
+          return yield* Result.fail(
+            new JevContractError({ message: 'Selected entry lacks its original verified quote' }),
+          )
+        return yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
+      })
       const pricedAsk = document.plannerInput.referencePrices.askPriceMicros[symbol]
       if (
         Result.isFailure(originalAsk) ||
         pricedAsk === undefined ||
-        BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, originalAsk.success)
+        (instrumentMarket(symbol) === MarketKind.Crypto &&
+          BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, symbol, originalAsk.success))
       )
         issues.push({
           path: ['plannerInput', 'referencePrices'],
@@ -1245,7 +1290,12 @@ const jevEntryEvidenceIssues = (
         })
     }
   }
-  if ((document.entryLimitSlippageBps ?? 0) > observation.protocol.maximumEntryLimitSlippageBps)
+  if (
+    target.selectedSymbols.some(
+      (symbol) =>
+        (document.entryLimitSlippageBps ?? 0) > jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps,
+    )
+  )
     issues.push({
       path: ['entryLimitSlippageBps'],
       issue: 'entry limit allowance exceeds the inference-bound cost ceiling',
@@ -1266,14 +1316,18 @@ const jevEntryEvidenceIssues = (
     return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
   }
   if (
-    !jevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash) ||
+    !(target.schemaVersion === 'bayn.repeated-momentum-target.v1'
+      ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
+      : target.schemaVersion === 'bayn.entry-ablation-target.v1'
+        ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
+        : jevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
     observation.cycleId !== document.bindings.cycleId ||
     observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
     observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
     observation.portfolio.purpose !== 'ENTRY' ||
     observation.observedAt > target.decidedAt ||
     target.decidedAt > document.createdAt ||
-    document.createdAt >= batchPlan.expiresAt
+    Date.parse(document.createdAt) >= protectedEntryExpiresAtMs(target)
   )
     issues.push({
       path: ['strategyDecision', 'evidence'],
@@ -1327,7 +1381,7 @@ const jevEntryEvidenceIssues = (
 }
 
 const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
-  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+  isProtectedEntryTarget(document.strategyDecision)
     ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
     : limit
 
@@ -1343,7 +1397,17 @@ const jevExitEvidenceIssues = (
     input === undefined ||
     position === undefined ||
     evidence.portfolio.purpose !== 'MANAGE' ||
-    !jevProtocolIdentityMatches(evidence.protocol, document.bindings.strategyProtocolHash) ||
+    !(
+      jevProtocolIdentityMatches(evidence.protocol, document.bindings.strategyProtocolHash) ||
+      ablationProtocolIdentityMatches(
+        makeEntryAblationPolicy(evidence.protocol),
+        document.bindings.strategyProtocolHash,
+      ) ||
+      momentumProtocolIdentityMatches(
+        makeRepeatedMomentumPolicy(evidence.protocol),
+        document.bindings.strategyProtocolHash,
+      )
+    ) ||
     target.cycleId !== document.bindings.cycleId ||
     target.sessionDate !== document.executionSession?.executionSession.date ||
     evidence.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1779,6 +1843,7 @@ const executionMaterialIssues = (
   if (Result.isFailure(floorResult))
     issues.push({ path: ['strategyDecision'], issue: 'profit limits require the exact entry-bound exit plan' })
   const profitFloors: Readonly<Record<string, bigint>> = Result.isSuccess(floorResult) ? floorResult.success : {}
+  const buyCeilings = protectedEntryBuyPriceCeilings(document.strategyDecision)
   for (const [index, target] of targets.entries()) {
     if (
       target.strategyName !== document.bindings.strategyName ||
@@ -1796,7 +1861,7 @@ const executionMaterialIssues = (
       target.symbol,
       target.quantityAtoms,
       target.createdAt,
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+      isProtectedEntryTarget(document.strategyDecision)
         ? document.strategyDecision.exitPolicy.plans[target.symbol]
         : undefined,
     )
@@ -1838,6 +1903,7 @@ const executionMaterialIssues = (
       const expectedProposedPositions = proposedPositionSequence?.[index]
       const plannedTarget = document.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
       const minimumSellPriceMicros = profitFloors[target.symbol]
+      const maximumBuyPriceMicros = buyCeilings[target.symbol]
       const pricing =
         plannedTarget === undefined
           ? undefined
@@ -1850,6 +1916,7 @@ const executionMaterialIssues = (
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),
               ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+              ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)

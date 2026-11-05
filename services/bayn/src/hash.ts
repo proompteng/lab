@@ -256,6 +256,11 @@ const hashCanonicalJsonResult = (canonicalJson: string): Result.Result<string, C
 export const canonicalHashV1Result = (value: unknown): Result.Result<string, CanonicalHashFailure> =>
   pipe(canonicalJsonV1Result(value), Result.flatMap(hashCanonicalJsonResult))
 
+export const canonicalJsonWithHashV1Result = (value: unknown) =>
+  canonicalJsonV1Result(value).pipe(
+    Result.flatMap((body) => hashCanonicalJsonResult(body).pipe(Result.map((hash) => ({ body, hash })))),
+  )
+
 export const stableU128 = (...parts: readonly string[]): bigint => {
   const bytes = createHash('sha256').update(parts.join('\u001f')).digest().subarray(0, 16)
   let value = 0n

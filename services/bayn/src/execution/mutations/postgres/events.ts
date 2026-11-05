@@ -40,6 +40,7 @@ const selectLatest = (sql: PgClient.PgClient, intentId: string, operation: Mutat
     request_id,
     response_status::integer,
     response_content_hash,
+    routing,
     denial_reason,
     to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS occurred_at
   FROM mutation_events
@@ -138,6 +139,7 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
         request_id,
         response_status,
         response_content_hash,
+        routing,
         denial_reason,
         occurred_at
       )
@@ -156,6 +158,7 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
         ${event.requestId ?? null},
         ${event.responseStatus ?? null},
         ${event.responseContentHash ?? null},
+        ${event.routing === undefined ? null : sql.json(event.routing)},
         ${event.denialReason ?? null},
         ${event.occurredAt}
       WHERE ${!requireCurrentRisk}

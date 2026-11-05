@@ -52,7 +52,7 @@ extraEnvVars:
   - name: OPENAI_API_KEYS
     value: ";"
   - name: DEFAULT_MODELS
-    value: qwen36-flamingo
+    value: qwen38-flamingo
   - name: WEBUI_AUTH
     value: "false"
   - name: ENABLE_SIGNUP

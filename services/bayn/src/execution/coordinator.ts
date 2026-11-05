@@ -21,7 +21,6 @@ import {
   selectStoredIntent,
   validateActiveSubmitRiskDecision,
   validateRecovery,
-  validateStartedSubmitRiskDecision,
   type CancelPersistenceDecision,
   type DryRunSubmitDecision,
   type ExecutionDecisionFailure,
@@ -256,28 +255,22 @@ const submitToBroker = (
 
 const continueStartedSubmit = (
   services: MutationServices,
+  approved: StoredIntent,
   started: MutationEvent,
   request: DryRunSubmitDecision['request'],
-): Effect.Effect<
-  MutationEvent,
-  ExecutionError | IntentStoreError | MutationStoreError | WriterFenceError,
-  IntentStore
-> =>
-  readIntent(MutationOperation.Submit, started.intentId).pipe(
-    Effect.flatMap((startedIntent) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap(
-          (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
-            const validation = validateStartedSubmitRiskDecision(startedIntent, currentTimeMillis)
-            if (Result.isSuccess(validation)) {
-              return submitToBroker(services, validation.success, started, request)
-            }
-            return validation.failure._tag === 'ExpiredRiskDecision'
-              ? denyStartedSubmit(services.mutations, started, SubmissionDenialReason.ExpiredRiskDecision)
-              : Effect.fail(executionError(validation.failure))
-          },
-        ),
-      ),
+): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap(
+      (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
+        // Admission committed the exact request and APPROVED -> IO_STARTED transition. PostgreSQL makes the intent
+        // terms and bound decision immutable; only time needs rechecking here. The final broker guard still rereads
+        // live state under its own writer fence before transmission.
+        const validation = validateActiveSubmitRiskDecision(approved, currentTimeMillis, 'final submission')
+        if (Result.isSuccess(validation)) return submitToBroker(services, validation.success, started, request)
+        return validation.failure._tag === 'ExpiredRiskDecision'
+          ? denyStartedSubmit(services.mutations, started, SubmissionDenialReason.ExpiredRiskDecision)
+          : Effect.fail(executionError(validation.failure))
+      },
     ),
   )
 
@@ -306,30 +299,27 @@ const startSubmit = (
     ),
     Effect.flatMap((started) => {
       if (!started.started) return Effect.succeed(started.event)
-      return continueStartedSubmit(services, started.event, request)
+      return continueStartedSubmit(services, stored, started.event, request)
     }),
   )
 
 const runSubmit = (services: MutationServices, intentId: string, consistencyDelayMs: number, closeOnly: boolean) =>
-  services.mutations
-    .latest(intentId, MutationOperation.Submit)
-    .pipe(
-      Effect.flatMap((existing) =>
-        readIntent(MutationOperation.Submit, intentId).pipe(
-          Effect.flatMap((stored) =>
-            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent)).pipe(
-              Effect.flatMap(({ request, requestHash }) =>
-                existing === undefined
-                  ? startSubmit(services, stored, requestHash, request, consistencyDelayMs, closeOnly)
-                  : services.mutations
-                      .beginSubmit(intentId, requestHash, consistencyDelayMs, existing.occurredAt, closeOnly)
-                      .pipe(Effect.map(({ event }) => event)),
-              ),
-            ),
-          ),
-        ),
-      ),
-    )
+  Effect.gen(function* () {
+    // Own the complete decoded snapshot before admission yields. Reader aliases must not alter the encoded request
+    // or the risk decision retained across the independent durable-start commit.
+    const stored = structuredClone(yield* readIntent(MutationOperation.Submit, intentId))
+    const { request, requestHash } = yield* liftDecision(encodeOrder(MutationOperation.Submit, stored.intent))
+    if (stored.intent.state !== IntentState.Approved) {
+      const existing = yield* services.mutations.latest(intentId, MutationOperation.Submit)
+      if (existing !== undefined)
+        return yield* services.mutations
+          .beginSubmit(intentId, requestHash, consistencyDelayMs, existing.occurredAt, closeOnly)
+          .pipe(Effect.map(({ event }) => event))
+    }
+    // An APPROVED intent has no committed start. beginSubmit still checks replay under the writer fence, including
+    // a competing submission that commits after this read, before it can return started: true.
+    return yield* startSubmit(services, stored, requestHash, request, consistencyDelayMs, closeOnly)
+  })
 
 export const submit = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
   Effect.all({

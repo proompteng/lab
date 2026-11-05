@@ -54,6 +54,8 @@
             exact.kustomize
             exact.kubeconform
             exact.kubectl
+            exact.talosctl
+            exact.omnictl
             pkgs.kubeseal
             pkgs.curl
             pkgs.coreutils
@@ -203,6 +205,7 @@
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux ({
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
+            "relay-image" = import ./nix/images/relay.nix { inherit pkgs lib repoRevision; repoRoot = ./.; };
             "ofz-image" = import ./nix/images/ofz.nix {
               inherit pkgs lib repoRevision;
               repoRoot = ./.;
@@ -313,6 +316,10 @@
               repoRoot = ./.;
             };
             "torghut-hyperliquid-feed-image" = import ./nix/images/torghut-hyperliquid-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-webull-feed-image" = import ./nix/images/torghut-webull-feed.nix {
               inherit pkgs lib;
               repoRoot = ./.;
             };

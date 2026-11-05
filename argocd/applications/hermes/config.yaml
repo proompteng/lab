@@ -7,18 +7,18 @@ dashboard:
     - 10.244.0.0/16
 
 model:
-  default: qwen36-flamingo
+  default: qwen38-flamingo
   provider: flamingo
   context_length: 262144
 
 providers:
   flamingo:
-    model: qwen36-flamingo
+    model: qwen38-flamingo
     base_url: http://flamingo.flamingo.svc.cluster.local/v1
     api_mode: chat_completions
     context_length: 262144
     extra_body:
-      temperature: 0.6
+      temperature: 1.0
       top_p: 0.95
       top_k: 20
       min_p: 0.0

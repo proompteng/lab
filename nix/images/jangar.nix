@@ -199,8 +199,6 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.bash
     pkgs.curl
-    pkgs.docker-buildx
-    pkgs.docker-client
     pkgs.gh
     pkgs.git
     pkgs.go

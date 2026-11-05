@@ -43,6 +43,26 @@ data:
             }
           ]
         },
+        "local-path-bayn-wal": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-85",
+              "paths": [
+                "/var/mnt/local-path-provisioner/bayn-wal"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-intel/bayn-wal"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
         "local-path-ryzen": {
           "nodePathMap": [
             {

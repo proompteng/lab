@@ -63,29 +63,32 @@ output_dir="$(cd "$requested_output_dir" && pwd -P)"
 readonly output_dir
 readonly expected_output="$output_dir/installer-${arch}.tar"
 
-declare -a docker_config_mount=()
+declare context
+context="$(mktemp -d)"
+trap 'rm -rf "$context"' EXIT
+python3 - "$IMAGER_IMAGE" "$arch" "$kata_extension" "${official_extensions[@]}" > "$context/Dockerfile" <<'DOCKERFILE'
+import json
+import sys
+
+image, arch, *extensions = sys.argv[1:]
+args = ["/bin/imager", "installer", "--arch", arch, "--platform", "metal", "--output", "/out"]
+for extension in extensions:
+    args.extend(["--system-extension-image", extension])
+print("# syntax=docker/dockerfile:1.7")
+print(f"FROM {image} AS installer")
+print("RUN --mount=type=secret,id=registry_auth,target=/root/.docker/config.json " + json.dumps(args))
+print("FROM scratch")
+print(f"COPY --from=installer /out/installer-{arch}.tar /installer-{arch}.tar")
+DOCKERFILE
+
+declare -a auth=()
 readonly docker_config_dir="${DOCKER_CONFIG:-$HOME/.docker}"
 if [[ -f "$docker_config_dir/config.json" ]]; then
-  docker_config_mount=(-v "$docker_config_dir/config.json:/root/.docker/config.json:ro")
+  auth=(--secret "id=registry_auth,src=$docker_config_dir/config.json")
 fi
-
-declare -a imager_args=(
-  installer
-  --arch "$arch"
-  --platform metal
-  --output /out
-  --system-extension-image "$kata_extension"
-)
-
-for extension in "${official_extensions[@]}"; do
-  imager_args+=(--system-extension-image "$extension")
-done
-
-docker run --rm \
-  "${docker_config_mount[@]}" \
-  -v "$output_dir:/out" \
-  "$IMAGER_IMAGE" \
-  "${imager_args[@]}" >&2
+buildctl build --frontend dockerfile.v0 --progress plain \
+  --local "context=$context" --local "dockerfile=$context" \
+  "${auth[@]}" --output "type=local,dest=$output_dir" >&2
 
 if [[ ! -s "$expected_output" ]]; then
   echo "Talos imager did not create $expected_output" >&2

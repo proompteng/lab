@@ -25,12 +25,10 @@ export const transactionQuery = (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
     JOIN broker_events AS event ON event.event_id = snapshot.event_id
-    CROSS JOIN latest_reconciliation
-    CROSS JOIN first_cycle
+      AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
     WHERE snapshot.account_id = ${accountId}
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
       AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-      AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   )
@@ -123,12 +121,10 @@ export const receiptQuery = (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
     JOIN broker_events AS event ON event.event_id = snapshot.event_id
-    CROSS JOIN latest_reconciliation
-    CROSS JOIN first_cycle
+      AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
     WHERE snapshot.account_id = ${accountId}
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
       AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-      AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   ), selected_transactions AS (

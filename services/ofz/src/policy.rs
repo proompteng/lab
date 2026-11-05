@@ -11,20 +11,6 @@ pub struct Permission {
     pub diagnostic: bool,
 }
 
-/// Stage-one binaries ship connector contracts without activating their entry points.
-/// Only an exact server-side opt-in enables the later connector rollout.
-pub fn connectors_enabled() -> bool {
-    std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true")
-}
-
-pub fn require_connectors() -> Result<(), Status> {
-    if connectors_enabled() {
-        Ok(())
-    } else {
-        Err(Status::unimplemented("connectors are not enabled"))
-    }
-}
-
 impl Action {
     pub fn permission(self) -> Result<Permission, Status> {
         use Action::*;
@@ -61,17 +47,10 @@ impl Action {
             EditorOpen => (Workspace, "open_editor", false),
             PreviewObserve => (Workspace, "observe_preview", true),
             PreviewAccess => (Workspace, "access_preview", false),
-            KubeStatusRead => (KubeNamespace, "read_status", true),
-            KubeLogsRead => (KubeNamespace, "read_logs", true),
-            KubeEventsRead => (KubeNamespace, "read_events", true),
-            ConnectorRead => (ConnectorConnection, "read", true),
-            ConnectorCreate => (Platform, "create_connector", false),
-            ConnectorManage => (ConnectorConnection, "manage", false),
-            ConnectorInvoke => (ConnectorConnection, "invoke", false),
+
             SessionEstablish => (Platform, "establish_session", false),
             WorkspaceEnroll => (Platform, "enroll_workspace", false),
-            KubeExecute => (Platform, "execute_kube", false),
-            ConnectorExecute => (Platform, "execute_connector", false),
+
             PolicyCheck => (Platform, "check", false),
             PolicyCommand => (Platform, "command", false),
             SessionInspect => (Platform, "inspect_session", false),
@@ -97,20 +76,6 @@ impl Resource {
         match kind {
             ResourceKind::Platform if self.id == "lab" => Ok("platform"),
             ResourceKind::Workspace if canonical_uuid(&self.id) => Ok("workspace"),
-            ResourceKind::KubeNamespace => {
-                let Some((cluster, uid)) = self.id.split_once('/') else {
-                    return Err(Status::invalid_argument(
-                        "namespace requires cluster and UID",
-                    ));
-                };
-                if cluster != "galactic" || !canonical_uuid(uid) {
-                    return Err(Status::invalid_argument("invalid namespace identity"));
-                }
-                Ok("kube_namespace")
-            }
-            ResourceKind::ConnectorConnection if canonical_uuid(&self.id) => {
-                Ok("connector_connection")
-            }
             _ => Err(Status::invalid_argument("invalid resource identity")),
         }
     }
@@ -135,8 +100,6 @@ pub fn requires_fresh_mfa(action: Action) -> bool {
         Action::MembersManage
             | Action::QuotasManage
             | Action::TargetsManage
-            | Action::ConnectorCreate
-            | Action::ConnectorManage
             | Action::CollaboratorsManage
             | Action::GrantsManage
             | Action::WorkspaceTransfer
@@ -161,7 +124,6 @@ pub fn requires_mfa(action: Action) -> bool {
                 | Action::WorkspaceResume
                 | Action::WorkspaceSleep
                 | Action::WorkspacePowerConfigure
-                | Action::ConnectorInvoke
         )
 }
 
@@ -169,9 +131,6 @@ pub fn renews_session(action: Action) -> bool {
     matches!(
         action,
         Action::WorkspaceCreate
-            | Action::ConnectorCreate
-            | Action::ConnectorManage
-            | Action::ConnectorInvoke
             | Action::MembersManage
             | Action::QuotasManage
             | Action::TargetsManage
@@ -240,14 +199,9 @@ pub fn github_human_id(numeric_id: &str) -> Result<String, Status> {
 pub const BFF_ID: &str = "spiffe://proompteng.ai/ns/proompteng/sa/proompteng";
 pub const CONTROLLER_ID: &str = "spiffe://proompteng.ai/ns/tengri/sa/tengri";
 pub const OFZ_ID: &str = "spiffe://proompteng.ai/ns/ofz/sa/ofz-api";
-pub const KUBE_BROKER_ID: &str = "spiffe://proompteng.ai/ns/tengri/sa/tengri-kube-broker";
-pub const CONNECTOR_BROKER_ID: &str = "spiffe://proompteng.ai/ns/tengri/sa/tengri-connector-broker";
 
 pub fn allowed_workload(value: &str) -> bool {
-    matches!(
-        value,
-        BFF_ID | CONTROLLER_ID | OFZ_ID | KUBE_BROKER_ID | CONNECTOR_BROKER_ID
-    )
+    crate::registry::configured().is_ok_and(|registry| registry.service(value).is_some())
 }
 
 #[cfg(test)]
@@ -284,11 +238,6 @@ mod tests {
             Action::WorkspaceSleep,
             Action::MembersManage,
             Action::GrantsManage,
-            Action::KubeExecute,
-            Action::ConnectorExecute,
-            Action::ConnectorInvoke,
-            Action::ConnectorManage,
-            Action::ConnectorCreate,
         ] {
             assert!(!action.permission().unwrap().diagnostic, "{action:?}");
         }

@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 const network = resolve(import.meta.dir, '../../../../services/tengri/network.sh')
-const entry = resolve(import.meta.dir, '../../../../services/tengri/test-kvm-entry.sh')
 
 function configureNetwork(mtu: string) {
   const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-network-'))
@@ -28,33 +27,6 @@ function configureNetwork(mtu: string) {
     const output = (name: string) =>
       existsSync(resolve(fixture, name)) ? readFileSync(resolve(fixture, name), 'utf8') : ''
     return { exitCode: result.exitCode, links: output('links'), rules: output('rules') }
-  } finally {
-    rmSync(fixture, { recursive: true, force: true })
-  }
-}
-
-function configureFixture(mtu: string) {
-  const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-mtu-'))
-  try {
-    writeFileSync(
-      resolve(fixture, 'kvm-test'),
-      '#!/bin/sh\nprintf "%s\\n" "slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages: test"\n',
-      { mode: 0o755 },
-    )
-    writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_DIRECTORY/links"\nexit 42\n', {
-      mode: 0o755,
-    })
-    const script = readFileSync(entry, 'utf8').replaceAll('/fixture/kvm-test', resolve(fixture, 'kvm-test'))
-    const result = Bun.spawnSync(['sh', '-c', script], {
-      env: {
-        ...process.env,
-        PATH: `${fixture}:${process.env.PATH}`,
-        TENGRI_KVM_NETWORK_MTU: mtu,
-        FIXTURE_DIRECTORY: fixture,
-      },
-    })
-    const links = resolve(fixture, 'links')
-    return { exitCode: result.exitCode, links: existsSync(links) ? readFileSync(links, 'utf8') : '' }
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
@@ -85,17 +57,5 @@ describe('Tengri guest network MTU', () => {
     expect(result.exitCode).not.toBe(0)
     expect(result.links).toBe('')
     expect(result.rules).toBe('')
-  })
-
-  it('configures only the private fixture interface from the execution MTU', () => {
-    const result = configureFixture('1400')
-    expect(result.exitCode).toBe(42)
-    expect(result.links).toBe('link set dev eth0 mtu 1400\n')
-  })
-
-  it.each(['', '0', '575', '65536', 'invalid'])('rejects invalid fixture MTU %s before interface setup', (mtu) => {
-    const result = configureFixture(mtu)
-    expect(result.exitCode).not.toBe(0)
-    expect(result.links).toBe('')
   })
 })

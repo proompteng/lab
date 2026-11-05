@@ -6,7 +6,6 @@ import {
   buildAndPushDockerImage,
   inspectImageDigest,
   inspectImagePlatforms,
-  pushDockerImage,
   resolveBuildAttestations,
 } from '../docker'
 
@@ -25,53 +24,8 @@ afterEach(() => {
 
 const streamFromText = (text: string) => new Response(text).body!
 
-describe('pushDockerImage', () => {
-  it.each([
-    {
-      name: 'retries a response-header timeout and publishes the same tested image',
-      errors: ['net/http: timeout awaiting response headers', ''],
-      attempts: 2,
-      succeeds: true,
-    },
-    {
-      name: 'fails when the response-header timeout persists through the retry limit',
-      errors: ['net/http: timeout awaiting response headers'],
-      attempts: 2,
-      succeeds: false,
-    },
-    {
-      name: 'fails immediately on an authentication error',
-      errors: ['unauthorized: authentication required'],
-      attempts: 1,
-      succeeds: false,
-    },
-  ])('$name', async ({ errors, attempts, succeeds }) => {
-    const commands: string[][] = []
-    const image = 'registry.example/lab/restate:prepare-sha-tested-run-123-amd64'
-    process.env.DOCKER_COMMAND_RETRY_ATTEMPTS = '2'
-    process.env.DOCKER_COMMAND_RETRY_DELAY_SECONDS = '1'
-    Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
-    Bun.spawn = ((command: Parameters<typeof Bun.spawn>[0]) => {
-      const error = errors[Math.min(commands.length, errors.length - 1)]
-      commands.push(typeof command === 'string' ? [command] : [...command])
-      return {
-        exited: Promise.resolve(error ? 1 : 0),
-        stdout: streamFromText(''),
-        stderr: streamFromText(error ?? ''),
-      } as ReturnType<typeof Bun.spawn>
-    }) as typeof Bun.spawn
-
-    if (succeeds) {
-      await pushDockerImage(image)
-    } else {
-      await expect(pushDockerImage(image)).rejects.toThrow('Command failed (1): docker push')
-    }
-    expect(commands).toEqual(Array.from({ length: attempts }, () => ['docker', 'push', image]))
-  })
-})
-
 describe('inspectImageDigest', () => {
-  it('prefers the remote repo digest when both remote and local digests are available', () => {
+  it('reads the published repo digest without a local container engine', () => {
     const calls: string[] = []
     const spawnMock = ((command: Parameters<typeof Bun.spawnSync>[0], args, _opts) => {
       const commandString = typeof command === 'string' ? command : Array.prototype.join.call(command, ' ')
@@ -84,13 +38,6 @@ describe('inspectImageDigest', () => {
           typeof Bun.spawnSync
         >
       }
-      if (joined.startsWith('docker image inspect')) {
-        return {
-          exitCode: 0,
-          stdout: Buffer.from('["registry/repo@sha256:111"]'),
-          stderr: new Uint8Array(),
-        } as ReturnType<typeof Bun.spawnSync>
-      }
       return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
     }) as typeof Bun.spawnSync
 
@@ -98,31 +45,7 @@ describe('inspectImageDigest', () => {
 
     const digest = inspectImageDigest('registry/repo:tag')
     expect(digest).toBe('registry/repo@sha256:222')
-    expect(calls.some((call) => call.startsWith('docker image inspect'))).toBe(false)
-  })
-
-  it('falls back to the locally cached repo digest when the remote image is missing', () => {
-    const spawnMock = ((command: Parameters<typeof Bun.spawnSync>[0], args, _opts) => {
-      const commandString = typeof command === 'string' ? command : Array.prototype.join.call(command, ' ')
-      const argString = Array.isArray(args) ? args.join(' ') : args ? String(args) : ''
-      const joined = `${commandString} ${argString}`.trim()
-      if (joined.startsWith('docker buildx imagetools inspect')) {
-        return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
-      }
-      if (joined.startsWith('docker image inspect')) {
-        return {
-          exitCode: 0,
-          stdout: Buffer.from('["registry.example/froussard@sha256:111"]'),
-          stderr: new Uint8Array(),
-        } as ReturnType<typeof Bun.spawnSync>
-      }
-      return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
-    }) as typeof Bun.spawnSync
-
-    __private.setSpawnSync(spawnMock)
-
-    const digest = inspectImageDigest('registry.example/froussard:latest')
-    expect(digest).toBe('registry.example/froussard@sha256:111')
+    expect(calls).toHaveLength(1)
   })
 })
 

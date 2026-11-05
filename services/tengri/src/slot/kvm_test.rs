@@ -33,7 +33,7 @@ impl Drop for Authority {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires isolated KVM/TAP and real boot artifacts; run test-kvm.sh"]
+#[ignore = "requires independently provisioned KVM/TAP, SQL, and real boot artifacts"]
 async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages()
 -> anyhow::Result<()> {
     crate::install_rustls_crypto_provider()?;

@@ -33,3 +33,27 @@ export type TengriCodexRun = z.infer<typeof codexRunSchema>
 export function codexRunIsTerminal(run: TengriCodexRun) {
   return ['succeeded', 'failed', 'cancelled', 'rejected'].includes(run.state.phase)
 }
+
+export function codexRunCanStop(
+  run: TengriCodexRun | null,
+  identity: { agentId: string; threadId: string; runId: string },
+) {
+  return Boolean(
+    run &&
+    run.agentId === identity.agentId &&
+    run.threadId === identity.threadId &&
+    run.runId === identity.runId &&
+    !codexRunIsTerminal(run),
+  )
+}
+
+export function recoveredCodexRun(
+  runs: readonly TengriCodexRun[],
+  recovered: boolean,
+  agentId: string,
+  threadId: string,
+  runId: string,
+): TengriCodexRun | undefined {
+  if (!recovered) return undefined
+  return runs.find((run) => run.agentId === agentId && run.threadId === threadId && run.runId === runId)
+}

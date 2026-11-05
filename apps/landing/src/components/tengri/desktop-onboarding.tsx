@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { startSignIn } from '@/lib/platform/auth-client'
 import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '@/lib/tengri/desktop-gate'
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
@@ -208,8 +208,8 @@ function DesktopGate({
     return (
       <StatusWindow
         icon={<CircleAlert className="h-7 w-7 text-amber-200" />}
-        title="Authentication is not configured"
-        detail="GitHub OAuth and the Better Auth session secret must be configured before Tengri can accept sign-ins."
+        title="Sign-in is unavailable"
+        detail="Try again shortly."
       />
     )
   }
@@ -231,6 +231,17 @@ function DesktopGate({
         title="Session identity is unavailable"
         detail="Tengri received an agent without an authenticated user. Refresh the session before continuing."
         actionLabel="Refresh"
+        onAction={() => void onRefresh()}
+      />
+    )
+  }
+  if (gate.kind === 'paused') {
+    return (
+      <ActionWindow
+        icon={<Cloud className="h-7 w-7 text-zinc-300" />}
+        title={`${gate.agent.displayName} is temporarily paused`}
+        detail="Your workspace is saved. Tengri will reconnect automatically."
+        actionLabel="Try Again"
         onAction={() => void onRefresh()}
       />
     )
@@ -275,7 +286,7 @@ function SignInWindow() {
   function signIn() {
     setBusy(true)
     setError('')
-    void startTengriSignIn().catch((cause: unknown) => {
+    void startSignIn().catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
       setBusy(false)
     })

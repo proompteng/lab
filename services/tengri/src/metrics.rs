@@ -4,7 +4,7 @@ use std::{
         Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -14,9 +14,24 @@ use crate::{
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
 
-const LATENCY_BOUNDS_MICROS: [u64; 14] = [
-    1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 300_000, 500_000, 1_000_000, 2_500_000,
-    5_000_000, 10_000_000, 30_000_000,
+const LATENCY_BOUNDS_MICROS: [u64; 17] = [
+    1_000,
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000,
+    250_000,
+    300_000,
+    500_000,
+    1_000_000,
+    2_500_000,
+    5_000_000,
+    10_000_000,
+    30_000_000,
+    60_000_000,
+    120_000_000,
+    300_000_000,
 ];
 
 #[derive(Clone, Copy)]
@@ -27,15 +42,23 @@ pub enum Latency {
     TerminalAttach,
     TerminalFirstOutput,
     TerminalHeartbeat,
+    Boot,
+    Resume,
+    RunStatus,
+    ActiveRuns,
 }
 
 impl Latency {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 9] = [
         Self::GuestConnect,
         Self::SupervisorAdmission,
         Self::TerminalAttach,
         Self::TerminalFirstOutput,
         Self::TerminalHeartbeat,
+        Self::Boot,
+        Self::Resume,
+        Self::RunStatus,
+        Self::ActiveRuns,
     ];
 
     fn definition(self) -> (&'static str, &'static str) {
@@ -60,8 +83,52 @@ impl Latency {
                 "tengri_terminal_heartbeat_seconds",
                 "Terminal ping round trip from control plane through the guest; excludes browser transport.",
             ),
+            Self::Boot => (
+                "tengri_agent_boot_latency_seconds",
+                "Successful CR creation to guest readiness, including reconciliation retries; excludes BFF admission.",
+            ),
+            Self::Resume => (
+                "tengri_agent_resume_latency_seconds",
+                "Successful persisted resume intent to guest readiness, including retries; excludes BFF admission.",
+            ),
+            Self::RunStatus => (
+                "tengri_run_status_seconds",
+                "Restate run-status read duration including retries and failed or cancelled attempts; excludes authorization.",
+            ),
+            Self::ActiveRuns => (
+                "tengri_active_runs_seconds",
+                "Restate active-run enumeration and status fanout duration including failed or cancelled attempts; excludes authorization.",
+            ),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(crate) enum Dependency {
+    Authorization,
+    Database,
+    Kubernetes,
+}
+
+impl Dependency {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Authorization => "authorization",
+            Self::Database => "database",
+            Self::Kubernetes => "kubernetes",
+        }
+    }
+}
+
+struct Inventory {
+    active: u64,
+    sleeping: u64,
+    failed: u64,
+    pending_tickets: usize,
+    previews: usize,
+    updated: Instant,
+    timestamp: f64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -86,15 +153,14 @@ impl Drop for LatencyTimer<'_> {
 #[derive(Default)]
 pub struct Metrics {
     latency: [Mutex<Histogram>; Latency::ALL.len()],
-    boot_latency_millis: AtomicU64,
-    boot_latency_observations: AtomicU64,
+    inventory: Mutex<Option<Inventory>>,
+    readiness_errors: [AtomicU64; 3],
+    readiness_timeouts: [AtomicU64; 3],
     guest_failures: AtomicU64,
     preview_sessions_issued: AtomicU64,
     pty_sessions_active: Mutex<HashMap<String, HashSet<String>>>,
     pty_sessions_created: AtomicU64,
     quota_rejections: AtomicU64,
-    resume_latency_millis: AtomicU64,
-    resume_latency_observations: AtomicU64,
 }
 
 pub fn global() -> &'static Metrics {
@@ -150,17 +216,20 @@ impl Metrics {
     }
 
     pub fn observe_boot(&self, millis: u64) {
-        self.boot_latency_millis
-            .fetch_add(millis, Ordering::Relaxed);
-        self.boot_latency_observations
-            .fetch_add(1, Ordering::Relaxed);
+        self.observe_latency(Latency::Boot, Duration::from_millis(millis));
     }
 
     pub fn observe_resume(&self, millis: u64) {
-        self.resume_latency_millis
-            .fetch_add(millis, Ordering::Relaxed);
-        self.resume_latency_observations
-            .fetch_add(1, Ordering::Relaxed);
+        self.observe_latency(Latency::Resume, Duration::from_millis(millis));
+    }
+
+    pub(crate) fn readiness_failed(&self, dependency: Dependency, timed_out: bool) {
+        let counters = if timed_out {
+            &self.readiness_timeouts
+        } else {
+            &self.readiness_errors
+        };
+        counters[dependency as usize].fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_guest_failure(&self) {
@@ -217,7 +286,7 @@ impl Metrics {
         self.quota_rejections.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn render(&self, agents: &[MicroVM], tickets: TicketStats) -> String {
+    pub fn update_inventory(&self, agents: &[MicroVM], tickets: TicketStats) {
         let mut active = 0_u64;
         let mut sleeping = 0_u64;
         let mut failed = 0_u64;
@@ -229,21 +298,70 @@ impl Metrics {
                 _ => active += 1,
             }
         }
+        *self
+            .inventory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Inventory {
+            active,
+            sleeping,
+            failed,
+            pending_tickets: tickets.pending,
+            previews: tickets.previews,
+            updated: Instant::now(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64(),
+        });
+    }
+
+    pub fn render(&self) -> String {
+        use std::fmt::Write;
+
+        let mut inventory = String::new();
+        let mut last_success = 0.0;
+        if let Some(snapshot) = self
+            .inventory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            last_success = snapshot.timestamp;
+            writeln!(inventory, "# HELP tengri_agents Last successfully observed MicroVM counts; check inventory freshness.\n# TYPE tengri_agents gauge").unwrap();
+            for (state, count) in [
+                ("active", snapshot.active),
+                ("sleeping", snapshot.sleeping),
+                ("failed", snapshot.failed),
+            ] {
+                writeln!(inventory, "tengri_agents{{state=\"{state}\"}} {count}").unwrap();
+            }
+            writeln!(inventory, "# HELP tengri_ticket_records Last successfully observed ticket counts; check inventory freshness.\n# TYPE tengri_ticket_records gauge").unwrap();
+            writeln!(inventory, "tengri_ticket_records{{scope=\"pending\"}} {}\ntengri_ticket_records{{scope=\"preview\"}} {}", snapshot.pending_tickets, snapshot.previews).unwrap();
+            writeln!(inventory, "# HELP tengri_inventory_age_seconds Age of the last successful readiness inventory.\n# TYPE tengri_inventory_age_seconds gauge\ntengri_inventory_age_seconds {}", snapshot.updated.elapsed().as_secs_f64()).unwrap();
+        }
+        writeln!(inventory, "# HELP tengri_inventory_last_success_timestamp_seconds Unix time of the last successful readiness inventory, or zero before the first success.\n# TYPE tengri_inventory_last_success_timestamp_seconds gauge\ntengri_inventory_last_success_timestamp_seconds {last_success}").unwrap();
+        writeln!(inventory, "# HELP tengri_readiness_failures_total Readiness dependency failures by bounded dependency and outcome.\n# TYPE tengri_readiness_failures_total counter").unwrap();
+        for dependency in [
+            Dependency::Authorization,
+            Dependency::Database,
+            Dependency::Kubernetes,
+        ] {
+            for (outcome, count) in [
+                (
+                    "error",
+                    self.readiness_errors[dependency as usize].load(Ordering::Relaxed),
+                ),
+                (
+                    "timeout",
+                    self.readiness_timeouts[dependency as usize].load(Ordering::Relaxed),
+                ),
+            ] {
+                writeln!(inventory, "tengri_readiness_failures_total{{dependency=\"{}\",outcome=\"{outcome}\"}} {count}", dependency.name()).unwrap();
+            }
+        }
         format!(
             concat!(
-                "# HELP tengri_agents Current MicroVM agents by phase group.\n",
-                "# TYPE tengri_agents gauge\n",
-                "tengri_agents{{state=\"active\"}} {active}\n",
-                "tengri_agents{{state=\"sleeping\"}} {sleeping}\n",
-                "tengri_agents{{state=\"failed\"}} {failed}\n",
-                "# HELP tengri_agent_boot_latency_seconds Time from CR creation to guest readiness.\n",
-                "# TYPE tengri_agent_boot_latency_seconds summary\n",
-                "tengri_agent_boot_latency_seconds_sum {boot_sum}\n",
-                "tengri_agent_boot_latency_seconds_count {boot_count}\n",
-                "# HELP tengri_agent_resume_latency_seconds Time from authenticated wake to guest readiness.\n",
-                "# TYPE tengri_agent_resume_latency_seconds summary\n",
-                "tengri_agent_resume_latency_seconds_sum {resume_sum}\n",
-                "tengri_agent_resume_latency_seconds_count {resume_count}\n",
+                "{inventory}",
                 "# HELP tengri_guest_failures_total Guest API or readiness failures.\n",
                 "# TYPE tengri_guest_failures_total counter\n",
                 "tengri_guest_failures_total {guest_failures}\n",
@@ -259,19 +377,9 @@ impl Metrics {
                 "# HELP tengri_preview_sessions_issued_total Preview sessions issued.\n",
                 "# TYPE tengri_preview_sessions_issued_total counter\n",
                 "tengri_preview_sessions_issued_total {preview_issued}\n",
-                "# HELP tengri_ticket_records Current one-use tickets by scope.\n",
-                "# TYPE tengri_ticket_records gauge\n",
-                "tengri_ticket_records{{scope=\"pending\"}} {pending_tickets}\n",
-                "tengri_ticket_records{{scope=\"preview\"}} {preview_sessions}\n",
                 "{latencies}",
             ),
-            active = active,
-            sleeping = sleeping,
-            failed = failed,
-            boot_sum = self.boot_latency_millis.load(Ordering::Relaxed) as f64 / 1_000.0,
-            boot_count = self.boot_latency_observations.load(Ordering::Relaxed),
-            resume_sum = self.resume_latency_millis.load(Ordering::Relaxed) as f64 / 1_000.0,
-            resume_count = self.resume_latency_observations.load(Ordering::Relaxed),
+            inventory = inventory,
             guest_failures = self.guest_failures.load(Ordering::Relaxed),
             quota = self.quota_rejections.load(Ordering::Relaxed),
             pty_active = self
@@ -281,8 +389,6 @@ impl Metrics {
                 .unwrap_or_default(),
             pty_created = self.pty_sessions_created.load(Ordering::Relaxed),
             preview_issued = self.preview_sessions_issued.load(Ordering::Relaxed),
-            pending_tickets = tickets.pending,
-            preview_sessions = tickets.previews,
             latencies = self.render_latencies(),
         )
     }
@@ -293,17 +399,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn process_metrics_remain_available_without_inventory_and_do_not_invent_counts() {
+        let metrics = Metrics::default();
+        metrics.observe_resume(350);
+        metrics.readiness_failed(Dependency::Database, true);
+        metrics.readiness_failed(Dependency::Authorization, false);
+        let rendered = metrics.render();
+        assert!(!rendered.contains("tengri_agents{"));
+        assert!(!rendered.contains("tengri_ticket_records{"));
+        assert!(rendered.contains("tengri_agent_resume_latency_seconds_sum 0.35\n"));
+        assert!(rendered.contains("tengri_agent_resume_latency_seconds_bucket{le=\"0.5\"} 1\n"));
+        assert!(rendered.contains(
+            "tengri_readiness_failures_total{dependency=\"database\",outcome=\"timeout\"} 1\n"
+        ));
+        assert!(rendered.contains(
+            "tengri_readiness_failures_total{dependency=\"authorization\",outcome=\"error\"} 1\n"
+        ));
+        metrics.update_inventory(
+            &[],
+            TicketStats {
+                pending: 2,
+                previews: 1,
+            },
+        );
+        let observed = metrics.render();
+        assert!(observed.contains("tengri_agents{state=\"active\"} 0\n"));
+        assert!(observed.contains("tengri_ticket_records{scope=\"pending\"} 2\n"));
+        assert!(observed.contains("tengri_inventory_age_seconds "));
+        assert!(observed.contains("tengri_inventory_last_success_timestamp_seconds "));
+    }
+
+    #[test]
     fn exports_non_sensitive_prometheus_metrics() {
         let metrics = Metrics::default();
         metrics.observe_boot(1_250);
         metrics.record_pty_created("agent", "terminal");
-        let rendered = metrics.render(
+        metrics.update_inventory(
             &[],
             TicketStats {
                 pending: 1,
                 previews: 2,
             },
         );
+        let rendered = metrics.render();
         assert!(rendered.contains("tengri_agent_boot_latency_seconds_sum 1.25"));
         assert!(rendered.contains("tengri_pty_sessions_active 1"));
         assert!(!rendered.contains("owner_hash"));

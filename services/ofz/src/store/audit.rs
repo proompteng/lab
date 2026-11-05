@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use deadpool_postgres::Pool;
 use tokio::sync::{OnceCell, mpsc, oneshot};
@@ -14,6 +14,7 @@ struct Submission {
     target: String,
     response: oneshot::Sender<Outcome>,
     span: tracing::Span,
+    queued_at: Instant,
 }
 
 pub(super) struct AuditWriter {
@@ -45,6 +46,7 @@ impl AuditWriter {
                 target: target.into(),
                 response,
                 span: tracing::Span::current(),
+                queued_at: Instant::now(),
             })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => {
@@ -75,7 +77,13 @@ async fn run(pool: Pool, mut receiver: mpsc::Receiver<Submission>) {
                 }
             }
         }
-        match commit(&pool, &batch).await {
+        let span = tracing::info_span!(
+            parent: &batch[0].span,
+            "db.audit.batch",
+            batch_size = batch.len(),
+            queue_wait_ms = batch[0].queued_at.elapsed().as_secs_f64() * 1000.0,
+        );
+        match commit(&pool, &batch).instrument(span).await {
             Ok(outcomes) => {
                 for (submission, outcome) in batch.into_iter().zip(outcomes) {
                     let _ = submission.response.send(outcome);
@@ -93,9 +101,14 @@ async fn run(pool: Pool, mut receiver: mpsc::Receiver<Submission>) {
 async fn commit(pool: &Pool, batch: &[Submission]) -> Result<Vec<Outcome>, Status> {
     let mut client = pool
         .get()
+        .instrument(tracing::info_span!("db.audit.pool.acquire"))
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-    let mut transaction = client.transaction().await.map_err(super::sql_error)?;
+    let mut transaction = client
+        .transaction()
+        .instrument(tracing::info_span!("db.audit.begin"))
+        .await
+        .map_err(super::sql_error)?;
     transaction
         .batch_execute("SET LOCAL statement_timeout = 5000")
         .await
@@ -119,6 +132,10 @@ async fn commit(pool: &Pool, batch: &[Submission]) -> Result<Vec<Outcome>, Statu
         }
         outcomes.push(outcome);
     }
-    transaction.commit().await.map_err(super::sql_error)?;
+    transaction
+        .commit()
+        .instrument(tracing::info_span!("db.audit.commit"))
+        .await
+        .map_err(super::sql_error)?;
     Ok(outcomes)
 }

@@ -35,7 +35,7 @@ const user: TengriUser = {
 }
 
 describe('Tengri Settings', () => {
-  test('server-renders truthful runtime data with hydration-stable date placeholders', () => {
+  test('server-renders the General pane without mounting inactive settings', () => {
     const html = renderToString(
       createElement(SettingsApp, {
         active: false,
@@ -52,11 +52,12 @@ describe('Tengri Settings', () => {
       }),
     )
 
-    expect(html).toContain('Firecracker')
-    expect(html).toContain('Until you delete the agent')
-    expect(html).toContain('2 CPU · 4 GiB RAM')
-    expect(html).toContain('Checking login…')
-    expect(html).toContain('Sleep Agent')
+    expect(html).toContain('Settings sections')
+    expect(html).toContain('Search Settings')
+    expect(html).toContain('Open Power &amp; Sleep')
+    expect(html).toContain('Open About')
+    expect(html).not.toContain('Sleep when inactive')
+    expect(html).not.toContain('Checking login…')
     expect(html).not.toContain('2026-08-27')
   })
 })

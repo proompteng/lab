@@ -28,12 +28,14 @@ const successful = {
   BAYN_RELEVANT: 'true',
   IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
+  FORMAL_RESULT: 'success',
   GEPA_RESULT: 'success',
   UNIT_RESULT: 'success',
   ARCHIVE_RESULT: 'success',
   LEDGER_RESULT: 'success',
   POSTGRES_RESULT: 'success',
   MARKET_DATA_REPLAY_RESULT: 'success',
+  REPLAY_EXECUTION_RESULT: 'success',
   DEPENDENCY_INPUT_RESULT: 'success',
   IMAGE_RESULT: 'skipped',
 }
@@ -127,6 +129,8 @@ test('market-data fixture runs for Bayn changes and participates in the existing
     ['archive-integration', 'ARCHIVE_RESULT'],
     ['ledger-integration', 'LEDGER_RESULT'],
     ['postgres-integration', 'POSTGRES_RESULT'],
+    ['formal-verification', 'FORMAL_RESULT'],
+    ['replay-execution-observer', 'REPLAY_EXECUTION_RESULT'],
   ] as const) {
     expect(required.needs).toContain(job)
     expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
@@ -140,6 +144,8 @@ test.each([
   'ARCHIVE_RESULT',
   'LEDGER_RESULT',
   'POSTGRES_RESULT',
+  'FORMAL_RESULT',
+  'REPLAY_EXECUTION_RESULT',
 ])('a relevant change cannot pass without successful %s', async (resultName) => {
   expect((await run({})).exit).toBe(0)
   for (const outcome of ['failure', 'cancelled', 'skipped', '']) {

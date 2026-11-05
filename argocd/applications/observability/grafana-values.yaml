@@ -1,5 +1,12 @@
 adminUser: admin
 adminPassword: changeme
+grafana.ini:
+  users:
+    home_page: /d/ci-build-performance
+  auth.anonymous:
+    enabled: true
+    org_name: Main Org.
+    org_role: Viewer
 replicas: 1
 image:
   tag: 13.2.1
@@ -99,10 +106,8 @@ testFramework:
   enabled: false
 
 dashboardsConfigMaps:
-  graf-graf-dashboard: graf-graf-dashboard
+  ci-build-performance-dashboard: ci-build-performance-dashboard
   graf-bumba-dashboard: graf-bumba-dashboard
-  codex-pipeline-dashboard: codex-pipeline-dashboard
-  torghut-execution-recovery-dashboard: torghut-execution-recovery-dashboard
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
   bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
@@ -111,14 +116,14 @@ dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
     providers:
-      - name: graf-graf-dashboard
+      - name: ci-build-performance-dashboard
         orgId: 1
         folder: ''
         type: file
         disableDeletion: false
         editable: true
         options:
-          path: /var/lib/grafana/dashboards/graf-graf-dashboard
+          path: /var/lib/grafana/dashboards/ci-build-performance-dashboard
       - name: graf-bumba-dashboard
         orgId: 1
         folder: ''
@@ -127,22 +132,6 @@ dashboardProviders:
         editable: true
         options:
           path: /var/lib/grafana/dashboards/graf-bumba-dashboard
-      - name: codex-pipeline-dashboard
-        orgId: 1
-        folder: ''
-        type: file
-        disableDeletion: false
-        editable: true
-        options:
-          path: /var/lib/grafana/dashboards/codex-pipeline-dashboard
-      - name: torghut-execution-recovery-dashboard
-        orgId: 1
-        folder: ''
-        type: file
-        disableDeletion: false
-        editable: true
-        options:
-          path: /var/lib/grafana/dashboards/torghut-execution-recovery-dashboard
       - name: arc-runner-capacity-dashboard
         orgId: 1
         folder: ''

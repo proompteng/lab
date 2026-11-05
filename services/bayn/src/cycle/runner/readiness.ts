@@ -1,14 +1,19 @@
+import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
 import { Schema } from 'effect'
 
 import { UtcInstantSchema } from '../../schemas'
 import { Reason as RiskReason } from '../../risk'
 import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
+import type { JevPositionHold } from '../../jev/hold'
+import { ExpiredRiskClockEvidenceSchema } from '../../execution/risk-clock'
 
 export enum DecisionReadinessReason {
   AccountProtection = 'ACCOUNT_PROTECTION',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
+  InferenceExpired = 'INFERENCE_EXPIRED',
+  ExecutionRiskExpired = 'EXECUTION_RISK_EXPIRED',
   LookbackWarmup = 'LOOKBACK_WARMUP',
   SnapshotUnavailable = 'SNAPSHOT_UNAVAILABLE',
   SnapshotCoverage = 'SNAPSHOT_COVERAGE',
@@ -18,8 +23,7 @@ export enum DecisionReadinessReason {
   SignalWindowObserved = 'SIGNAL_WINDOW_OBSERVED',
 }
 
-export const DecisionReadinessSchema = Schema.Struct({
-  reason: Schema.Enum(DecisionReadinessReason),
+const readinessFields = {
   message: Schema.NonEmptyString,
   accountProtectionReasons: Schema.optionalKey(
     Schema.Array(Schema.Literals([RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded])).check(
@@ -36,10 +40,20 @@ export const DecisionReadinessSchema = Schema.Struct({
     Schema.Struct({
       rangeStartAt: UtcInstantSchema,
       rangeEndAt: UtcInstantSchema,
+      previousWindowEndAt: Schema.optionalKey(UtcInstantSchema),
       symbols: Schema.Array(Schema.NonEmptyString),
     }),
   ),
-}).check(
+} as const
+const { ExecutionRiskExpired: _executionRiskExpired, ...ordinaryReadinessReasons } = DecisionReadinessReason
+export const DecisionReadinessSchema = Schema.Union([
+  Schema.Struct({ reason: Schema.Enum(ordinaryReadinessReasons), ...readinessFields }),
+  Schema.Struct({
+    reason: Schema.Literal(DecisionReadinessReason.ExecutionRiskExpired),
+    ...readinessFields,
+    riskClockRejection: ExpiredRiskClockEvidenceSchema,
+  }),
+]).check(
   Schema.makeFilter(
     (readiness) =>
       readiness.accountProtectionReasons === undefined ||
@@ -115,6 +129,8 @@ export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
 export type CycleWaitingDetails = {
   readonly maximumHoldDueAt?: string
   readonly maximumHoldEvaluatedAt?: string
+  readonly positionHold?: JevPositionHold
+  readonly entryAbstention?: ProtectedEntryTarget
 } & (
   | { readonly waitReason: CycleWaitReason; readonly readiness?: never }
   | { readonly readiness: DecisionReadiness; readonly waitReason?: never }

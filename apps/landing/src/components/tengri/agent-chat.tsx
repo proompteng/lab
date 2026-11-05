@@ -4,6 +4,7 @@ import { watchTengriEvents } from './event-stream'
 
 import { reportBrowserFailure } from '@/lib/observability/client'
 import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
+import { TENGRI_UNARY_TIMEOUT_MS } from '@/lib/tengri/limits'
 
 import {
   Select,
@@ -57,6 +58,12 @@ import { cn } from '@/lib/utils'
 import { AgentSessionList } from './agent-session-list'
 import { CodexQuestionCard } from './codex-question-card'
 import { codexQuestionRequest } from './codex-question-model'
+import type { QuestionRequest } from './codex-question-model'
+import {
+  codexAnsweredAsyncQuestions,
+  codexAsyncQuestionReply,
+  codexEventAsyncQuestionRequest,
+} from './codex-async-questions'
 import { CodexEventCard } from './codex-event-card'
 import { groupCodexActivity } from './codex-activity'
 import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
@@ -95,6 +102,7 @@ import {
   reconcileCodexEventsWithRestoredHistory,
   reconcileSubmittedPrompts,
   retainSubmittedPromptImages,
+  retireCodexAsyncQuestions,
   type CodexApprovalDecision,
   type CodexBufferedEvent,
   type CodexTranscriptItem,
@@ -102,7 +110,7 @@ import {
 } from './codex-events'
 import { runTengriAction, TengriRequestError } from './client'
 import { completeCodexOperation, prepareCodexOperation } from '@/lib/tengri/codex-operation'
-import { codexRunIsTerminal, type TengriCodexRun } from '@/lib/tengri/codex-run'
+import { codexRunCanStop, codexRunIsTerminal, recoveredCodexRun, type TengriCodexRun } from '@/lib/tengri/codex-run'
 import { useModalFocus } from './modal-focus'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
@@ -182,8 +190,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [runId, setRunId] = useState('')
   const [runRecovered, setRunRecovered] = useState(false)
   const recoverInitialRun = useRef(true)
-  const [workspaceRun, setWorkspaceRun] = useState<TengriCodexRun | null>(null)
+  const [workspaceRuns, setWorkspaceRuns] = useState<TengriCodexRun[]>([])
+  const backgroundRunObservers = useRef(new Map<string, { stop: () => void }>())
+  const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
+  const recoveredRunRef = useRef<TengriCodexRun | undefined>(undefined)
+  const activeRunsRecoveryFailure = useRef<Error | undefined>(undefined)
+  const runRecoveryFailure = useRef<Error | undefined>(undefined)
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
@@ -192,6 +205,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>('ask')
   const autoApprovalAttempts = useRef(new Set<string>())
   const resolvedApprovals = useRef(new Set<string>())
+  const [resolvedAsyncQuestions, setResolvedAsyncQuestions] = useState<ReadonlyMap<string, ReadonlySet<string>>>(
+    new Map(),
+  )
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -255,14 +271,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const connectionInterrupted = eventStreamState === 'reconnecting' || error instanceof AgentConnectionError
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const runMatchesThread = Boolean(run && run.runId === runId && run.agentId === agentId && run.threadId === threadId)
+  const selectedRunTerminal = Boolean(runMatchesThread && run && codexRunIsTerminal(run))
+  const canStopRun = codexRunCanStop(run, { agentId, threadId, runId })
+  recoveredRunRef.current = recoveredCodexRun(workspaceRuns, runRecovered, agentId, threadId, runId)
   const runCanAcceptApprovals =
     runMatchesThread &&
     (run?.state.phase === 'running' || run?.state.phase === 'waiting_for_approval' || run?.state.phase === 'recovering')
-  const canStartTurn =
-    runRecovered &&
-    Boolean(selectedOptions) &&
-    (!run || codexRunIsTerminal(run)) &&
-    (!workspaceRun || codexRunIsTerminal(workspaceRun))
+  const canStartTurn = (!threadId || runRecovered) && Boolean(selectedOptions) && (!run || codexRunIsTerminal(run))
   const optionsRef = useRef<TengriCodexOptions>({})
   optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
@@ -276,12 +291,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       run.state.phase === 'needs_reconciliation' ||
       !(runTurnId && completedTurns.current.has(runTurnId))),
   )
-  const showStopAction = Boolean(activeTurnId || runPending) && !prompt.trim() && images.length === 0
+  const showStopAction = Boolean(activeTurnId || canStopRun) && !prompt.trim() && images.length === 0
   const runActivity = runPending && run ? codexRunActivity(run.state) : null
   const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
-
   useEffect(() => {
     if (!archivedThread || readingImages) return
     if (threadIdRef.current === archivedThread) newConversation()
@@ -312,27 +326,45 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [])
 
   useEffect(() => {
+    // Initial recovery selects the conversation and its run together. Keep that
+    // matching snapshot if the run finishes before the next active-run poll.
+    if (run?.agentId === agentId && run.threadId === threadId) return
     setRun(null)
     setRunId('')
-  }, [agentId, threadId])
+  }, [agentId, threadId, run])
 
   useEffect(() => {
     if (!account?.authenticated) return
+    // A new conversation has no existing run to recover. Initial discovery remains
+    // available after a reload, but cannot prevent creating an independent draft.
+    if (!threadId && !recoverInitialRun.current) {
+      setRunRecovered(true)
+      return
+    }
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
-    let lastRecoveryFailure: Error | undefined
     setRunRecovered(false)
     async function recover() {
       try {
-        const active = await runTengriAction<TengriCodexRun | null>(
-          { action: 'active-codex-run', agentId },
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId, ...(threadId ? { threadId } : {}) },
           controller.signal,
         )
         if (controller.signal.aborted) return
-        if (active && active.agentId !== agentId) throw new Error('Active run belongs to another workspace')
-        const recoveredFailure = lastRecoveryFailure
+        if (activeRuns.some((run) => run.agentId !== agentId))
+          throw new Error('Active run belongs to another workspace')
+        const selectedRuns = threadId ? activeRuns.filter((candidate) => candidate.threadId === threadId) : activeRuns
+        const active =
+          selectedRuns.find((run) => run.threadId === threadId) ??
+          (!threadId && recoverInitialRun.current ? selectedRuns[0] : undefined)
+        const recoveredFailure = activeRunsRecoveryFailure.current
+        activeRunsRecoveryFailure.current = undefined
         setError((current) => (current === recoveredFailure ? '' : current))
-        setWorkspaceRun(active)
+        setWorkspaceRuns((current) =>
+          threadId
+            ? [...current.filter((candidate) => candidate.threadId !== threadId), ...selectedRuns]
+            : selectedRuns,
+        )
         if (active && ((!threadId && recoverInitialRun.current) || active.threadId === threadId)) {
           if (!threadId) {
             resetTranscriptUi(active.threadId)
@@ -343,11 +375,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
         recoverInitialRun.current = false
         setRunRecovered(true)
-        if (active && active.threadId !== threadId) timer = setTimeout(() => void recover(), 2000)
+        if (selectedRuns.some((run) => !codexRunIsTerminal(run))) timer = setTimeout(() => void recover(), 2000)
       } catch (cause) {
         if (controller.signal.aborted) return
-        lastRecoveryFailure = runRecoveryError(cause, 'Active run recovery failed')
-        setError(lastRecoveryFailure)
+        activeRunsRecoveryFailure.current = runRecoveryError(cause, 'Active run recovery failed')
+        setRunRecovered(false)
+        setError(activeRunsRecoveryFailure.current)
         timer = setTimeout(() => void recover(), 3000)
       }
     }
@@ -356,21 +389,118 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [account?.authenticated, agentId, threadId])
+  }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
 
   useEffect(() => {
-    if (!runId || !threadId) return
+    const observers = backgroundRunObservers.current
+    const backgroundRuns = new Map(
+      workspaceRuns
+        .filter(
+          (candidate) =>
+            account?.authenticated &&
+            candidate.agentId === agentId &&
+            candidate.threadId !== threadId &&
+            !codexRunIsTerminal(candidate),
+        )
+        .map((candidate) => [JSON.stringify([candidate.agentId, candidate.threadId, candidate.runId]), candidate]),
+    )
+    for (const [key, observer] of observers) {
+      if (backgroundRuns.has(key)) continue
+      observer.stop()
+      observers.delete(key)
+    }
+    for (const [key, candidate] of backgroundRuns) {
+      // Preserve in-flight reads and retry timers when the selected conversation polls.
+      if (observers.has(key)) continue
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const observer = {
+        stop: () => {
+          controller.abort()
+          if (timer) clearTimeout(timer)
+        },
+      }
+      observers.set(key, observer)
+      const current = () =>
+        !controller.signal.aborted && observers.get(key) === observer && threadIdRef.current !== candidate.threadId
+      async function refresh() {
+        try {
+          const next = await runTengriAction<TengriCodexRun | null>(
+            { action: 'codex-run', agentId: candidate.agentId, runId: candidate.runId },
+            AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)]),
+          )
+          if (!current()) return
+          if (
+            next?.agentId === candidate.agentId &&
+            next.threadId === candidate.threadId &&
+            next.runId === candidate.runId &&
+            codexRunIsTerminal(next)
+          ) {
+            setWorkspaceRuns((runs) =>
+              current()
+                ? runs.filter(
+                    (run) =>
+                      run.agentId !== candidate.agentId ||
+                      run.threadId !== candidate.threadId ||
+                      run.runId !== candidate.runId,
+                  )
+                : runs,
+            )
+            return
+          }
+        } catch {
+          // Keep the last confirmed busy state. A background outage must never
+          // change recovery, admission, or errors in the selected conversation.
+        }
+        if (current()) timer = setTimeout(() => void refresh(), 5_000)
+      }
+      void refresh()
+    }
+  }, [account?.authenticated, agentId, threadId, workspaceRuns])
+
+  useEffect(() => {
+    const observers = backgroundRunObservers.current
+    return () => {
+      for (const observer of observers.values()) observer.stop()
+      observers.clear()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!runMatchesThread || !run || !codexRunIsTerminal(run)) return
+    // A claim can finish between active-run enumeration and snapshot readback.
+    // Apply terminal bookkeeping regardless of which endpoint supplied the run.
+    const recoveredFailure = runRecoveryFailure.current
+    runRecoveryFailure.current = undefined
+    if ('turnId' in run.state && run.state.turnId) completedTurns.current.add(run.state.turnId)
+    setWorkspaceRuns((current) =>
+      current.some((candidate) => candidate.runId === run.runId)
+        ? current.filter((candidate) => candidate.runId !== run.runId)
+        : current,
+    )
+    setCurrentActiveTurnId('')
+    const reason = 'reason' in run.state ? run.state.reason : undefined
+    setError((current) => reason ?? (current === recoveredFailure ? '' : current))
+  }, [run, runMatchesThread, setCurrentActiveTurnId])
+
+  useEffect(() => {
+    if (!runId || !threadId || selectedRunTerminal) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
-    let lastRecoveryFailure: Error | undefined
     async function refresh() {
       try {
-        const next = await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, controller.signal)
+        // The workspace poll already fetched this exact snapshot. Only fetch separately
+        // during recovery or when the run leaves the active set and needs its final result.
+        const recovered = recoveredRunRef.current
+        const next =
+          recovered ??
+          (await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, controller.signal))
         if (controller.signal.aborted) return
         if (next.threadId !== threadId || next.agentId !== agentId || next.runId !== runId) {
           throw new Error('Agent run recovery returned a different conversation')
         }
-        const recoveredFailure = lastRecoveryFailure
+        const recoveredFailure = runRecoveryFailure.current
+        runRecoveryFailure.current = undefined
         setError((current) => (current === recoveredFailure ? '' : current))
         setRun(next)
         if (next.state.phase === 'waiting_for_approval' && !completedTurns.current.has(next.state.turnId)) {
@@ -406,17 +536,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         ) {
           setCurrentActiveTurnId(next.state.turnId)
         }
-        if (codexRunIsTerminal(next)) {
-          setWorkspaceRun((current) => (current?.runId === next.runId ? null : current))
-          setCurrentActiveTurnId('')
-          if ('reason' in next.state) setError(next.state.reason)
-          return
-        }
+        if (codexRunIsTerminal(next)) return
       } catch (cause) {
         if (controller.signal.aborted) return
-        lastRecoveryFailure = runRecoveryError(cause, 'Agent run could not be recovered')
-        setError(lastRecoveryFailure)
+        runRecoveryFailure.current = runRecoveryError(cause, 'Agent run could not be recovered')
+        setError(runRecoveryFailure.current)
       }
+      // Recheck the latest workspace snapshot locally. Keeping this effect stable
+      // lets a slow final-status request finish while other conversations update.
       timer = setTimeout(() => void refresh(), 2000)
     }
     void refresh()
@@ -424,11 +551,17 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [agentId, threadId, runId, runPending, setCurrentActiveTurnId])
+  }, [agentId, threadId, runId, runPending, selectedRunTerminal, setCurrentActiveTurnId])
 
   useEffect(() => {
     const prompt = promptRef.current
-    if (active && prompt && !prompt.disabled && document.activeElement === prompt.closest('[data-window-id]')) {
+    if (
+      !window.matchMedia('(pointer:coarse)').matches &&
+      active &&
+      prompt &&
+      !prompt.disabled &&
+      document.activeElement === prompt.closest('[data-window-id]')
+    ) {
       prompt.focus({ preventScroll: true })
     }
   }, [account?.authenticated, active, replayRecovering, threadReady])
@@ -526,7 +659,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
 
   useEffect(() => {
     recoverInitialRun.current = true
-    setWorkspaceRun(null)
+    setWorkspaceRuns([])
     setAccount(null)
     setModels(null)
     setModelError('')
@@ -591,7 +724,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   useEffect(() => {
     if (!focusComposerRequested.current || !active || compactDrawerOpen || promptRef.current?.disabled) return
     focusComposerRequested.current = false
-    requestAnimationFrame(() => promptRef.current?.focus())
+    requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }))
   }, [active, compactDrawerOpen, replayRecovering, submitting, threadId, threadReady])
 
   useEffect(() => {
@@ -845,7 +978,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           setError(completionError || 'Codex device login did not complete. Start a new login.')
         })
       } else if (event.method === 'tengri/replayWarning') {
-        void recoverThreadState()
+        recoverThreadState()
       } else if (event.method === 'turn/started' && event.turnId && !completedTurns.current.has(event.turnId)) {
         lastTurnLifecycleSequence.current = Math.max(lastTurnLifecycleSequence.current, event.sequence)
         setCurrentActiveTurnId(event.turnId)
@@ -929,10 +1062,19 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     () =>
       events
         .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredHistorySequence))
-        .map((event) => ({ event, text: codexEventDisplayText(event), activityTitle: codexEventActivityTitle(event) }))
+        .map((event) => ({
+          event,
+          text: codexEventDisplayText(event),
+          activityTitle: codexEventActivityTitle(event),
+          questionRequest: codexEventAsyncQuestionRequest(event),
+        }))
         .filter(
-          ({ event, text }) =>
-            Boolean(text) || event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error',
+          ({ event, text, questionRequest }) =>
+            Boolean(text) ||
+            Boolean(questionRequest) ||
+            event.kind === 'approval' ||
+            event.kind === 'warning' ||
+            event.kind === 'error',
         ),
     [events, historyIds, restoredHistorySequence, threadId],
   )
@@ -948,6 +1090,34 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     [historyById, renderedEvents, restoredHistorySequence],
   )
 
+  const questionItems = useMemo(
+    () => [
+      ...historyItems.map((item) => {
+        const update = restoredItemUpdates.get(item.id)
+        return update ? { kind: update.event.kind, text: update.text, questionRequest: update.questionRequest } : item
+      }),
+      ...renderedEvents
+        .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
+        .map(({ event, text, questionRequest }) => ({ kind: event.kind, text, questionRequest })),
+    ],
+    [historyItems, renderedEvents, restoredItemUpdates],
+  )
+  const answeredAsyncQuestions = useMemo(
+    () => new Set([...(resolvedAsyncQuestions.get(threadId) ?? []), ...codexAnsweredAsyncQuestions(questionItems)]),
+    [resolvedAsyncQuestions, threadId, questionItems],
+  )
+  useEffect(() => {
+    if (!answeredAsyncQuestions.size) return
+    setEvents((current) => retireCodexAsyncQuestions(current, threadId, answeredAsyncQuestions))
+    setResolvedAsyncQuestions((current) => {
+      if ([...answeredAsyncQuestions].every((key) => current.get(threadId)?.has(key))) return current
+      return new Map(current).set(threadId, new Set([...(current.get(threadId) ?? []), ...answeredAsyncQuestions]))
+    })
+  }, [answeredAsyncQuestions, threadId])
+  const asyncInputPending = questionItems.some((item) =>
+    item.questionRequest?.fields.some((field) => !answeredAsyncQuestions.has(field.key)),
+  )
+
   const transcriptCards = [
     ...historyItems.map((item) => {
       const update = restoredItemUpdates.get(item.id)
@@ -957,6 +1127,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         text: update?.text ?? item.text,
         card: update ? (
           renderEvent(update)
+        ) : item.questionRequest ? (
+          renderAsyncQuestions(item.id, item.questionRequest, item.text)
         ) : (
           <CodexEventCard
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
@@ -1047,7 +1219,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     })
   }
 
-  function renderEvent({ event, text, activityTitle }: (typeof renderedEvents)[number]) {
+  function renderEvent({ event, text, activityTitle, questionRequest }: (typeof renderedEvents)[number]) {
+    if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest, text)
     const question = codexQuestionRequest(event)
     if (question)
       return (
@@ -1079,6 +1252,43 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         resolvingApproval={resolvingApprovals.has(event.approvalId)}
         text={text}
       />
+    )
+  }
+
+  function renderAsyncQuestions(itemId: string, request: QuestionRequest, text: string) {
+    const fields = request.fields.filter((field) => !answeredAsyncQuestions.has(field.key))
+    if (!fields.length)
+      return (
+        <CodexEventCard
+          key={`answered-${itemId}`}
+          kind="assistant-text"
+          agentId={agentId}
+          text={text || request.fields.map((field) => field.title).join('\n\n')}
+        />
+      )
+    const pending = { ...request, fields }
+    return (
+      <div key={`${threadId}:${itemId}:${fields.map((field) => field.key).join(',')}`} className="space-y-3">
+        {text ? <CodexEventCard agentId={agentId} kind="assistant-text" text={text} /> : null}
+        <CodexQuestionCard
+          agentId={agentId}
+          runId=""
+          approvalId=""
+          request={pending}
+          disabled={submitting || !threadReady || replayRecovering || !runRecovered || (!activeTurnId && !canStartTurn)}
+          onRespond={async (response) => {
+            if ('answers' in response && Object.keys(response.answers).length === 0) return
+            await send({ text: codexAsyncQuestionReply(pending, response) })
+          }}
+          onAnswered={() => retireAsyncQuestions(fields.map((field) => field.key))}
+        />
+      </div>
+    )
+  }
+
+  function retireAsyncQuestions(keys: string[]) {
+    setResolvedAsyncQuestions((current) =>
+      new Map(current).set(threadId, new Set([...(current.get(threadId) ?? []), ...keys])),
     )
   }
 
@@ -1121,14 +1331,15 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     )
   }
 
-  async function send() {
-    const text = prompt.trim()
-    const draftImages = imagesRef.current
+  async function send(answer?: { text: string }) {
+    const text = (answer?.text ?? prompt).trim()
+    const draftImages = answer ? [] : imagesRef.current
     const inputImages = draftImages.flatMap((image) => (image.input ? [image.input] : []))
     if (
       (!text && !inputImages.length) ||
       run?.state.phase === 'needs_reconciliation' ||
       inputImages.length !== draftImages.length ||
+      (Boolean(threadId) && !runRecovered) ||
       submitting ||
       replayRecovering ||
       replayRecoveryRef.current ||
@@ -1136,11 +1347,20 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       (!activeTurnIdRef.current &&
         !canStartTurn &&
         !(run && 'turnId' in run.state && run.state.turnId && completedTurns.current.has(run.state.turnId)))
-    )
+    ) {
+      if (answer) throw new Error('Wait for the conversation to be ready before sending your answer.')
       return
-    if (activeTurnIdRef.current && !runMatchesThread) return
+    }
+    if (activeTurnIdRef.current && !runMatchesThread) {
+      if (answer) throw new Error('The active run has not been recovered yet. Try your answer again shortly.')
+      return
+    }
     const selectedConversation = conversationSelection.current
-    if (!threadId) creatingDraftRef.current = { selection: selectedConversation }
+    if (!threadId) {
+      // A late initial workspace discovery must not steal a newly submitted draft.
+      recoverInitialRun.current = false
+      creatingDraftRef.current = { selection: selectedConversation }
+    }
     submission.current = { threadId, operation: null }
     let submittedThread = threadId
     setSubmitting(true)
@@ -1158,9 +1378,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         previousItemIds,
       },
     ])
-    setPrompt('')
-    commitImages([])
-    draftsRef.current.delete(threadId)
+    if (!answer) {
+      setPrompt('')
+      commitImages([])
+      draftsRef.current.delete(threadId)
+    }
     let sentOperation: { key: string; id: string } | undefined
     try {
       if (!activeTurnIdRef.current && run && !codexRunIsTerminal(run)) {
@@ -1247,7 +1469,10 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           completeCodexOperation(operationKey, operation.id)
           throw new Error(accepted.state.reason)
         }
-        setWorkspaceRun(accepted)
+        setWorkspaceRuns((current) => [...current.filter((run) => run.threadId !== accepted.threadId), accepted])
+        // An idle workspace has no polling timer. A local acknowledgement is not
+        // proof that its snapshot will be refreshed, especially before turn/start.
+        setRunRecoveryRevision((current) => current + 1)
         if (threadIdRef.current === currentThread.id) {
           setRun(accepted)
           setRunId(accepted.runId)
@@ -1262,10 +1487,18 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
       }
       completeCodexOperation(operationKey, operation.id)
+      if (!answer)
+        retireAsyncQuestions(
+          questionItems.flatMap((item) => item.questionRequest?.fields.map((field) => field.key) ?? []),
+        )
       setSessionRevision((current) => current + 1)
     } catch (cause) {
       if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && sentOperation)
         completeCodexOperation(sentOperation.key, sentOperation.id)
+      if (answer) {
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+        throw cause
+      }
       const stillSelected =
         (submittedThread && threadIdRef.current === submittedThread) ||
         conversationSelection.current === selectedConversation
@@ -1408,7 +1641,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }
 
   async function interruptTurn() {
-    if (!runMatchesThread || interrupting) return
+    if (!canStopRun || interrupting) return
     const interruptedThread = threadId
     setInterrupting(true)
     setError('')
@@ -1421,6 +1654,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         operationId: op.id,
       })
       completeCodexOperation(`tengri-stop:${runId}`, op.id)
+      setRunRecoveryRevision((current) => current + 1)
     } catch (cause) {
       if (threadIdRef.current === interruptedThread)
         setError(cause instanceof Error ? cause.message : 'Turn could not be interrupted')
@@ -1473,6 +1707,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     lastScrollTop.current = 0
     threadResumeGeneration.current += 1
     setThreadId(nextThreadId)
+    activeRunsRecoveryFailure.current = undefined
+    runRecoveryFailure.current = undefined
+    setRunRecovered(!nextThreadId)
     setThreadReady(false)
     setCurrentActiveTurnId('')
     setHistoryItems([])
@@ -1498,7 +1735,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     requestAnimationFrame(() => {
       if (promptRef.current?.disabled) return
       focusComposerRequested.current = false
-      promptRef.current?.focus()
+      promptRef.current?.focus({ preventScroll: true })
     })
   }
 
@@ -1513,13 +1750,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   function switchConversation(nextThreadId: string) {
     if (!canChangeConversation) return
     showChat()
-    if (nextThreadId === threadIdRef.current) {
-      focusComposerAfterConversationChange()
-      return
+    if (nextThreadId !== threadIdRef.current) {
+      writeStoredThread(agentId, nextThreadId)
+      resetTranscriptUi(nextThreadId)
     }
-    writeStoredThread(agentId, nextThreadId)
-    resetTranscriptUi(nextThreadId)
-    focusComposerAfterConversationChange()
+    if (window.matchMedia('(pointer:coarse)').matches) {
+      focusComposerRequested.current = false
+      setSidebarOpen(false)
+    } else focusComposerAfterConversationChange()
   }
 
   function selectOptions(next: TengriCodexSelection) {
@@ -1579,19 +1817,22 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const conversationLoading = Boolean(
     threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
   )
-  const agentStatus = connectionNotice
-    ? 'Reconnecting'
-    : replayRecovering
-      ? 'Recovering'
-      : renderedEvents.some(({ event }) => codexQuestionRequest(event))
-        ? 'Input requested'
-        : approvalPending
-          ? 'Approval needed'
-          : responsePending
-            ? 'Working'
-            : eventStreamState !== 'connected'
-              ? 'Connecting'
-              : 'Ready'
+  const runObservationUnavailable = Boolean(activeRunsRecoveryFailure.current || runRecoveryFailure.current)
+  const agentStatus = runObservationUnavailable
+    ? 'Status unavailable'
+    : connectionNotice
+      ? 'Reconnecting'
+      : replayRecovering
+        ? 'Recovering'
+        : asyncInputPending || renderedEvents.some(({ event }) => codexQuestionRequest(event))
+          ? 'Input requested'
+          : approvalPending
+            ? 'Approval needed'
+            : responsePending
+              ? 'Working'
+              : eventStreamState !== 'connected'
+                ? 'Connecting'
+                : 'Ready'
   return (
     <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
@@ -1648,12 +1889,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           enabled={account.authenticated}
           selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
-          busyThreadId={
-            workspaceRun && !codexRunIsTerminal(workspaceRun)
-              ? workspaceRun.threadId
-              : activeTurnId || submittingHere
-                ? threadId
-                : ''
+          busyThreadIds={
+            new Set([
+              ...workspaceRuns.filter((run) => !codexRunIsTerminal(run)).map((run) => run.threadId),
+              ...(activeTurnId || submittingHere ? [threadId] : []),
+            ])
           }
           canSelect={canChangeConversation}
           revision={sessionRevision}
@@ -1724,7 +1964,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                   <button
                     type="button"
                     className="rounded-md px-2.5 py-1.5 text-label-13 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400"
-                    onClick={() => void recoverThreadState()}
+                    onClick={() => recoverThreadState()}
                   >
                     Retry
                   </button>
@@ -1736,7 +1976,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     setPrompt(text)
                     requestAnimationFrame(() => {
                       const textarea = promptRef.current
-                      textarea?.focus()
+                      textarea?.focus({ preventScroll: true })
                       textarea?.setSelectionRange(text.length, text.length)
                     })
                   }}
@@ -1760,19 +2000,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     group.items[0].card
                   ),
                 )}
-                {workspaceRun && workspaceRun.threadId !== threadId && !codexRunIsTerminal(workspaceRun) ? (
-                  <p role="status" className="text-copy-14 text-zinc-400">
-                    Another conversation has an active run.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => switchConversation(workspaceRun.threadId)}
-                    >
-                      Open it to continue or stop it
-                    </button>
-                    .
-                  </p>
-                ) : null}
                 {runActivity ? (
                   <p role="status" aria-label="Agent activity" className="text-copy-14 text-zinc-400">
                     {runActivity}
@@ -1843,7 +2070,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                 <button
                   type="button"
                   className="mb-2 rounded px-1 text-label-12 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
-                  onClick={() => void recoverThreadState()}
+                  onClick={() => recoverThreadState()}
                 >
                   Retry
                 </button>
@@ -1976,19 +2203,32 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     onRetry={() => setModelReload((version) => version + 1)}
                     selection={selection}
                   />
+                  {canStopRun && !showStopAction ? (
+                    <button
+                      type="button"
+                      aria-label="Stop response"
+                      disabled={interrupting}
+                      onClick={() => void interruptTurn()}
+                      className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full text-zinc-400 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+                    >
+                      <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <button
                     type={showStopAction ? 'button' : 'submit'}
                     aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
                     disabled={
-                      (showStopAction && !runMatchesThread) ||
-                      (Boolean(activeTurnId) && !runMatchesThread) ||
-                      (!showStopAction && !prompt.trim() && !images.length) ||
-                      readingImages ||
-                      submitting ||
-                      interrupting ||
-                      replayRecovering ||
-                      (!showStopAction && !activeTurnId && !canStartTurn) ||
-                      Boolean(threadId && !threadReady)
+                      showStopAction
+                        ? !canStopRun || interrupting
+                        : (Boolean(activeTurnId) && !runMatchesThread) ||
+                          (!prompt.trim() && !images.length) ||
+                          readingImages ||
+                          (Boolean(threadId) && !runRecovered) ||
+                          submitting ||
+                          interrupting ||
+                          replayRecovering ||
+                          (!activeTurnId && !canStartTurn) ||
+                          Boolean(threadId && !threadReady)
                     }
                     onClick={showStopAction ? () => void interruptTurn() : undefined}
                     className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-zinc-100 text-zinc-900 outline-none transition-colors hover:bg-white focus-visible:ring-1 focus-visible:ring-blue-400 disabled:bg-zinc-800 disabled:text-zinc-500 motion-reduce:transition-none"

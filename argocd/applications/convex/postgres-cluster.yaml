@@ -4,6 +4,9 @@ metadata:
   name: convex-db
 spec:
   instances: 1
+  postgresql:
+    parameters:
+      wal_buffers: 16MB
   primaryUpdateStrategy: unsupervised
   storage:
     size: 30Gi

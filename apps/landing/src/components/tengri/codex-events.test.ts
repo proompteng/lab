@@ -22,6 +22,7 @@ import {
   reconcileCodexEventsWithRestoredHistory,
   reconcileSubmittedPrompts,
   retainSubmittedPromptImages,
+  retireCodexAsyncQuestions,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -37,6 +38,37 @@ const event: TengriCodexEvent = {
 }
 
 describe('Accepted prompt retention', () => {
+  test('restores textless async questions with their choices instead of dropping them', () => {
+    const items = codexTranscriptFromThread(
+      JSON.stringify({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  id: 'question-call',
+                  type: 'agentMessage',
+                  text: '',
+                  delivery: 'async',
+                  questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      id: 'question-call',
+      questionRequest: {
+        fields: [
+          { title: 'Which environment?', freeText: true, choices: [{ label: 'Staging' }, { label: 'Production' }] },
+        ],
+      },
+    })
+  })
+
   const prompt = {
     id: 'sent-1',
     threadId: 'thread-1',
@@ -136,6 +168,45 @@ describe('Accepted prompt retention', () => {
 })
 
 describe('Codex event replay', () => {
+  test('retains unanswered async questions until they are retired, then restores ordinary eviction', () => {
+    const question = {
+      ...event,
+      itemId: 'async-call',
+      text: '',
+      rawJson: JSON.stringify({
+        params: {
+          item: {
+            id: 'async-call',
+            type: 'agentMessage',
+            text: '',
+            questions: [{ title: 'Which environment?', options: ['Staging'] }],
+          },
+        },
+      }),
+    }
+    let events = appendCodexEvent([], question)
+    const fill = (start: number) => {
+      for (let sequence = start; sequence < start + 501; sequence++)
+        events = appendCodexEvent(events, {
+          ...event,
+          sequence,
+          kind: 'tool-output',
+          itemId: `tool-${sequence}`,
+          text: 'Working',
+          rawJson: '{}',
+        })
+    }
+    fill(10)
+    expect(events.some((item) => item.itemId === 'async-call')).toBe(true)
+    const answered = new Set(['["request_user_input_async","async-call",0]'])
+    expect(retireCodexAsyncQuestions(events, 'another-thread', answered)).toBe(events)
+    events = retireCodexAsyncQuestions(events, event.threadId, answered)
+    expect(events.find((item) => item.itemId === 'async-call')?.asyncQuestionResolved).toBe(true)
+    fill(600)
+    expect(events.some((item) => item.itemId === 'async-call')).toBe(false)
+    expect(events).toHaveLength(500)
+  })
+
   test('keeps one pending request when an approval is replayed with a newer sequence', () => {
     const approval = {
       ...event,

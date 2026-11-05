@@ -23,6 +23,38 @@ pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_t
 
 mod audit;
 
+const PLATFORM_MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/0002_platform.sql")),
+    (2, include_str!("../migrations/0003_connections.sql")),
+    (
+        3,
+        include_str!("../migrations/0004_session_credentials.sql"),
+    ),
+    (4, include_str!("../migrations/0005_session_gateways.sql")),
+    (5, include_str!("../migrations/0006_sign_in_attempts.sql")),
+    (
+        6,
+        include_str!("../migrations/0007_workspace_onboarding.sql"),
+    ),
+    (7, include_str!("../migrations/0008_access_requests.sql")),
+    (
+        8,
+        include_str!("../migrations/0009_provider_connections.sql"),
+    ),
+];
+
+fn known_platform_migrations(rows: &[tokio_postgres::Row]) -> bool {
+    !rows.is_empty()
+        && rows.len() <= PLATFORM_MIGRATIONS.len()
+        && rows
+            .iter()
+            .zip(PLATFORM_MIGRATIONS)
+            .all(|(row, (version, body))| {
+                row.get::<_, i32>(0) == *version
+                    && row.get::<_, Vec<u8>>(1) == Sha256::digest(body.as_bytes()).to_vec()
+            })
+}
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
@@ -131,6 +163,18 @@ impl Database {
                 "control database schema mismatch",
             ));
         }
+        let rows = client
+            .query(
+                "SELECT version,checksum FROM ofz.platform_schema_version ORDER BY version",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?;
+        if rows.len() != PLATFORM_MIGRATIONS.len() || !known_platform_migrations(&rows) {
+            return Err(Status::failed_precondition(
+                "platform database schema mismatch",
+            ));
+        }
         Ok(())
     }
 
@@ -175,6 +219,46 @@ impl Database {
                 "control schema migration checksum mismatch",
             ));
         }
+        let platform_exists: bool = tx
+            .query_one(
+                "SELECT to_regclass('ofz.platform_schema_version') IS NOT NULL",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        if !platform_exists {
+            tx.batch_execute(include_str!("../migrations/0002_platform.sql"))
+                .await
+                .map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO ofz.platform_schema_version(version,checksum) VALUES(1,$1)",
+                &[&Sha256::digest(PLATFORM_MIGRATIONS[0].1.as_bytes()).to_vec()],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
+        let rows = tx
+            .query(
+                "SELECT version,checksum FROM ofz.platform_schema_version ORDER BY version",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?;
+        if !known_platform_migrations(&rows) {
+            return Err(Status::failed_precondition(
+                "platform migration checksum mismatch",
+            ));
+        }
+        for (version, body) in &PLATFORM_MIGRATIONS[rows.len()..] {
+            tx.batch_execute(body).await.map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO ofz.platform_schema_version(version,checksum) VALUES($1,$2)",
+                &[version, &Sha256::digest(body.as_bytes()).to_vec()],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
         tx.commit().await.map_err(sql_error)?;
         Ok(())
     }
@@ -215,6 +299,10 @@ impl Database {
             (
                 7,
                 include_str!("../../tengri/migrations/0007_ephemeral_oauth.sql"),
+            ),
+            (
+                8,
+                include_str!("../../tengri/migrations/0008_platform_sign_in.sql"),
             ),
         ];
         let mut client = self
@@ -302,6 +390,14 @@ impl Database {
 
     #[tracing::instrument(name = "db.command_connection", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn command_connection(&self) -> Result<CommandConnection, Status> {
+        self.locked_connection(None).await
+    }
+
+    pub(crate) async fn provider_connection(&self, id: Uuid) -> Result<CommandConnection, Status> {
+        self.locked_connection(Some(id)).await
+    }
+
+    async fn locked_connection(&self, provider: Option<Uuid>) -> Result<CommandConnection, Status> {
         let permit = self
             .command_slots
             .clone()
@@ -324,11 +420,21 @@ impl Database {
         };
         let start = tokio::time::Instant::now();
         loop {
-            let row = connection
-                .client
-                .query_one("SELECT pg_try_advisory_lock(726635522918)", &[])
-                .await
-                .map_err(sql_error)?;
+            let row = if let Some(id) = provider {
+                connection
+                    .client
+                    .query_one(
+                        "SELECT pg_try_advisory_lock(726635,hashtext($1))",
+                        &[&id.to_string()],
+                    )
+                    .await
+            } else {
+                connection
+                    .client
+                    .query_one("SELECT pg_try_advisory_lock(726635522918)", &[])
+                    .await
+            }
+            .map_err(sql_error)?;
             if row.get::<_, bool>(0) {
                 return Ok(connection);
             }
@@ -547,6 +653,11 @@ pub fn receipt(
         recovery_generation: 0,
         policy_command: None,
         revision: String::new(),
+        platform_action: String::new(),
+        platform_resources: Vec::new(),
+        platform_client: String::new(),
+        platform_request_hash: Vec::new(),
+        platform_workspace_id: String::new(),
     }
 }
 

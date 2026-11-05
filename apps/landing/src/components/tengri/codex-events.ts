@@ -1,6 +1,8 @@
 import { codexToolText } from './codex-tool-text'
 import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
+import { codexAsyncQuestionRequest, codexEventAsyncQuestionRequest } from './codex-async-questions'
+import type { QuestionRequest } from './codex-question-model'
 
 const MAX_CODEX_EVENTS = 500
 const MAX_EVENT_TEXT_BYTES = 512 << 10
@@ -39,6 +41,7 @@ export type CodexTranscriptItem = {
   text: string
   eventSequence?: number
   activityTitle?: string
+  questionRequest?: QuestionRequest
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
@@ -50,7 +53,23 @@ type CodexTextSegment = {
   bytes: number
   previous?: CodexTextSegment
 }
-export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
+export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment; asyncQuestionResolved?: true }
+
+export function retireCodexAsyncQuestions(
+  current: CodexBufferedEvent[],
+  threadId: string,
+  answered: ReadonlySet<string>,
+) {
+  let changed = false
+  const next = current.map((event) => {
+    if (event.threadId !== threadId || event.asyncQuestionResolved) return event
+    const request = codexEventAsyncQuestionRequest(event)
+    if (!request || !request.fields.every((field) => answered.has(field.key))) return event
+    changed = true
+    return { ...event, asyncQuestionResolved: true as const }
+  })
+  return changed ? next : current
+}
 
 export type SubmittedPrompt = {
   images?: readonly TengriCodexImage[]
@@ -185,13 +204,20 @@ export function appendCodexEvent(
     const next = [...current]
     next[itemIndex] = isDeltaEvent(event)
       ? appendTextSegment(previous, event, eventText)
-      : { ...event, text: truncateEventText(eventText || previous.text) }
+      : {
+          ...event,
+          ...(previous.asyncQuestionResolved ? { asyncQuestionResolved: true } : {}),
+          text: truncateEventText(eventText || previous.text),
+        }
     return next
   }
 
   return [
     ...current.filter(
-      (candidate, index) => index >= current.length - MAX_CODEX_EVENTS + 1 || candidate.kind === 'approval',
+      (candidate, index) =>
+        index >= current.length - MAX_CODEX_EVENTS + 1 ||
+        candidate.kind === 'approval' ||
+        (!candidate.asyncQuestionResolved && Boolean(codexEventAsyncQuestionRequest(candidate))),
     ),
     isDeltaEvent(event)
       ? {
@@ -619,7 +645,12 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
     const content = Array.isArray(item.content) ? item.content : []
     return transcript(id, 'user-message', content.map(userInputText).filter(Boolean).join('\n'))
   }
-  if (type === 'agentMessage') return transcript(id, 'assistant-text', string(item.text))
+  if (type === 'agentMessage') {
+    const questionRequest = codexAsyncQuestionRequest(item)
+    return questionRequest
+      ? { id, kind: 'assistant-text', text: truncateEventText(string(item.text)), questionRequest }
+      : transcript(id, 'assistant-text', string(item.text))
+  }
   if (type === 'plan') return transcript(id, 'plan', string(item.text))
   if (type === 'reasoning') {
     const summary = stringArray(item.summary).join('\n')

@@ -374,12 +374,19 @@ describe('complete operational activity export', () => {
 
   it('does not export delegated model log bodies through lower-level process mirroring', async () => {
     const { records } = captureAudit()
-    const { client, config } = await connect()
-    writeFileSync(join(config.workspaceRoot, 'kubectl'), '#!/bin/sh\nprintf "synthetic-protected-model-log"\n', {
-      mode: 0o755,
-    })
-    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
-    await client.callTool({ name: 'agent_read', arguments: { agentRunName: 'fixture' } })
+    const { client } = await connect()
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(Response.json({ ok: true, logs: 'synthetic-protected-model-log', pods: [] }))
+    try {
+      const response = await client.callTool({
+        name: 'get_agent_run_logs',
+        arguments: { name: 'fixture', namespace: 'agents' },
+      })
+      expect(response.isError).not.toBe(true)
+    } finally {
+      fetchMock.mockRestore()
+    }
     expect(JSON.stringify(records())).not.toContain('synthetic-protected-model-log')
   })
 

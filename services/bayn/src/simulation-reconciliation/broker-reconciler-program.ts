@@ -7,7 +7,11 @@ import { withObservedSpan, withObservedStage } from '../telemetry'
 import { containRuntimeFailure } from './broker-containment'
 import { readStableBrokerSnapshot } from './broker-history'
 import { persistStableSnapshot } from './broker-persistence'
-import type { ReconciliationError, ReconciliationPassError, ReconciliationPassResult } from './broker-reconciler-model'
+import {
+  ReconciliationError,
+  type ReconciliationPassError,
+  type ReconciliationPassResult,
+} from './broker-reconciler-model'
 
 export interface ReconciliationDependencies {
   readonly read: BrokerReadShape
@@ -32,6 +36,21 @@ const run = (
 export const runReconciliation = (
   dependencies: ReconciliationDependencies,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError> =>
-  containRuntimeFailure(run(dependencies), dependencies.store, dependencies.fence, dependencies.now).pipe(
-    withObservedSpan('bayn.reconciliation.run', { 'bayn.component': 'reconciliation' }),
-  )
+  containRuntimeFailure(
+    run(dependencies).pipe(
+      Effect.catchIf(
+        (error) =>
+          error instanceof ReconciliationError &&
+          error.failure?._tag === 'Snapshot' &&
+          error.failure.reason === 'TradingDayChanged',
+        () =>
+          Effect.andThen(
+            dependencies.read.projection?.invalidate ?? Effect.void,
+            run({ ...dependencies, read: dependencies.read.projection?.fresh ?? dependencies.read }),
+          ),
+      ),
+    ),
+    dependencies.store,
+    dependencies.fence,
+    dependencies.now,
+  ).pipe(withObservedSpan('bayn.reconciliation.run', { 'bayn.component': 'reconciliation' }))

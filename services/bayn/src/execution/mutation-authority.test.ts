@@ -399,13 +399,13 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 test.each([
-  [4, 18, 1],
+  [4, 18, 0],
   [3, 18, 0],
   [null, 18, 0],
-  [5, 18, 1],
+  [5, 18, 0],
   [4, null, 0],
-  [null, 25, 1],
-] as const)('final crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
+  [null, 25, 0],
+] as const)('disabled crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
   const result = await runLiveSubmit({
     maximumCryptoEntryTakerFeeBps: ceiling,
     brokerAccount: account({
@@ -422,10 +422,10 @@ test.each([
     }),
   })
   expect(result.submits).toBe(expected)
-  expect(Exit.isSuccess(result.exit)).toBe(expected === 1)
+  expect(Exit.isSuccess(result.exit)).toBe(false)
 })
 
-test('a cached crypto fee discount cannot cross the daily tier reset into transmission', async () => {
+test('a cached crypto fee discount cannot re-enable crypto entries', async () => {
   const result = await runLiveSubmit({
     maximumCryptoEntryTakerFeeBps: 18,
     brokerAccount: account({
@@ -444,8 +444,7 @@ test('a cached crypto fee discount cannot cross the daily tier reset into transm
   })
   expect(result.submits).toBe(0)
   expect(Exit.isFailure(result.exit)).toBe(true)
-  if (Exit.isFailure(result.exit))
-    expect(Cause.pretty(result.exit.cause)).toContain('exceeds the sealed entry estimate')
+  if (Exit.isFailure(result.exit)) expect(Cause.pretty(result.exit.cause)).toContain('crypto entries are disabled')
 })
 
 test('final submission admits a covered crypto protective stop through all capital and instrument checks', async () => {
@@ -533,8 +532,9 @@ describe('final broker mutation authority', () => {
               BrokerEnvironment.Sandbox,
             ),
           })
-          expect(atCap.exit._tag).toBe('Success')
-          expect(atCap.submits).toBe(1)
+          const entryAllowed = !symbol.includes('/') || side === OrderSide.Sell
+          expect(atCap.exit._tag).toBe(entryAllowed ? 'Success' : 'Failure')
+          expect(atCap.submits).toBe(entryAllowed ? 1 : 0)
           const overCap = await runLiveSubmit({
             ...common,
             grant: persistedGrantRecord(
@@ -542,7 +542,7 @@ describe('final broker mutation authority', () => {
               BrokerEnvironment.Sandbox,
             ),
           })
-          expect(failureTag(overCap.exit)).toBe('OrderNotionalLimitExceeded')
+          expect(failureTag(overCap.exit)).toBe(entryAllowed ? 'OrderNotionalLimitExceeded' : 'InstrumentError')
           expect(overCap.submits).toBe(0)
         },
       ),
@@ -550,7 +550,7 @@ describe('final broker mutation authority', () => {
   })
 
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'])
-    test(`${symbol} uses the common PAPER submission guard with native precision and cash authority`, async () => {
+    test(`${symbol} cannot enter despite valid native precision and PAPER cash authority`, async () => {
       const cryptoAccount = account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' })
       const proposedIntent = intent({
         symbol,
@@ -561,9 +561,9 @@ describe('final broker mutation authority', () => {
       })
       const common = { environment: BrokerEnvironment.Sandbox, brokerAccount: cryptoAccount, proposedIntent }
       const submitted = await runLiveSubmit(common)
-      if (Exit.isFailure(submitted.exit)) throw new Error(Cause.pretty(submitted.exit.cause))
-      expect(Exit.isSuccess(submitted.exit)).toBe(true)
-      expect(submitted.submits).toBe(1)
+      expect(Exit.isFailure(submitted.exit)).toBe(true)
+      expect(failureTag(submitted.exit)).toBe('InstrumentError')
+      expect(submitted.submits).toBe(0)
       for (const changed of [
         { brokerAccount: { ...cryptoAccount, cryptoStatus: 'INACTIVE' } },
         { brokerAccount: { ...cryptoAccount, nonMarginableBuyingPowerMicros: '1' } },

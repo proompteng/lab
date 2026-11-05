@@ -88,7 +88,7 @@ The AgentProvider ships the prompt through the versioned runner contract, execut
 
 - `./gradlew test` (Graf module) runs the new unit tests for the MinIO fetcher and artifact parser.
 - `curl -X POST http://localhost:8080/v1/codex-research -H Content-Type: application/json -d '{"prompt":"validate","metadata":{"source":"inspect"}}'` should return a JSON payload with `workflowId`.
-- Confirm the Graf metrics panels (request rate, Neo4j latency, Codex workflows) render after syncing `argocd/applications/observability/graf-graf-dashboard-configmap.yaml`.
+- Graf has no provisioned dashboard. Confirm fresh request, Neo4j latency and workflow metrics in Grafana Explore before creating a replacement.
 
 ## Telemetry
 

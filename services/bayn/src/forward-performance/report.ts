@@ -5,6 +5,8 @@ import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } f
 import type { ForwardPerformanceEvidenceInput, ForwardPerformanceReceipt } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
+import type { SystemAssessment } from '../system-assessment/assessment'
+import { JevResearchPolicy } from '../jev/acceptance'
 
 export enum ForwardPerformanceScopeKind {
   Account = 'ACCOUNT',
@@ -19,13 +21,19 @@ export type ForwardPerformanceReportScope =
     }
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v5'
+  readonly schemaVersion: 'bayn.forward-performance-report.v6'
   /** Requested query scope; this does not supply missing financial source or strategy evidence. */
   readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
   readonly positionEpisodes: PositionEpisodeEvidence
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
-  readonly operatingCostCoverage: 'INCOMPLETE'
+  readonly operatingCostCoverage: 'COMPLETE' | 'INCOMPLETE'
+  readonly operatingCostScope: {
+    readonly registrationHash: string
+    readonly sourceCutHash: string
+    readonly asOf: string
+  } | null
+  readonly systemAssessment: SystemAssessment | null
   readonly reportHash: string
 }
 
@@ -33,6 +41,7 @@ export const makeForwardPerformanceReport = (
   input: ForwardPerformanceEvidenceInput,
   inferenceExpenses: readonly ForwardInferenceExpenseSession[],
   authorityGenerationHash?: string,
+  systemAssessment: SystemAssessment | null = null,
 ): Result.Result<ForwardPerformanceReport, ForwardPerformanceDomainFailure> =>
   Result.gen(function* () {
     const receipt = yield* makeForwardPerformanceReceipt(input)
@@ -50,12 +59,26 @@ export const makeForwardPerformanceReport = (
         ? { kind: ForwardPerformanceScopeKind.Account }
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v5' as const,
+      schemaVersion: 'bayn.forward-performance-report.v6' as const,
       scope,
       receipt,
       positionEpisodes,
       inferenceExpenses,
-      operatingCostCoverage: 'INCOMPLETE' as const,
+      operatingCostCoverage:
+        systemAssessment?.policies
+          .find((p) => p.policy === JevResearchPolicy.Candidate)
+          ?.sessions.every((session) => session.costs?.fullyCosted === true) === true
+          ? ('COMPLETE' as const)
+          : ('INCOMPLETE' as const),
+      operatingCostScope:
+        systemAssessment === null
+          ? null
+          : {
+              registrationHash: systemAssessment.registrationHash,
+              sourceCutHash: systemAssessment.sourceCutHash,
+              asOf: systemAssessment.asOf,
+            },
+      systemAssessment,
     }
     const reportHash = yield* canonicalHashV1Result(material).pipe(
       Result.mapError(

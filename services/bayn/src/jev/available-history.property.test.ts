@@ -1,3 +1,4 @@
+import { jevProfitTargetBid } from './profit-target'
 import { JevPurpose } from './portfolio'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -5,7 +6,7 @@ import fc from 'fast-check'
 
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { checkProperty } from '../testing/property-test-support'
-import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { jevStreamingFixture as streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { jevObservationForSnapshot, nativeJevBatchResult, nativeJevFixture } from './native.test-support'
 import { decideJevEntry } from './decision'
 import { JevBatchPlanVersion } from './batch'
@@ -25,7 +26,7 @@ const requestFor = (snapshot: VerifiedStrategyMarketSnapshot, symbol: string) =>
 const endMs = Date.parse(base.query.rangeEndAt)
 const iso = (ms: number) => new Date(ms).toISOString()
 
-test('property: a valid chosen model action controls entry without an additional probability floor', () => {
+test('property: supported atomic judgments control entry within the unchanged allocation cap', () => {
   const fixture = nativeJevFixture(undefined, undefined, 'jev-native-test', {
     ...defaultJevProtocolDocument,
     candidateSymbols: ['AAPL'],
@@ -36,24 +37,24 @@ test('property: a valid chosen model action controls entry without an additional
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   checkProperty(
-    'jev-chosen-entry-action',
-    fc.property(fc.constantFrom('enter', 'wait', 'avoid'), fc.integer({ min: 334, max: 649 }), (action, score) => {
+    'jev-supported-entry-judgments',
+    fc.property(fc.boolean(), fc.integer({ min: 701, max: 999 }), (supportsEntry, score) => {
       const target = Result.getOrThrow(
         decideJevEntry({
           observation,
           batchPlan,
-          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => action, score / 1000),
+          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => supportsEntry, score / 1000),
           decidedAt,
         }),
       )
-      expect(target.selectedSymbols).toEqual(action === 'enter' ? ['AAPL'] : [])
+      expect(target.selectedSymbols).toEqual(supportsEntry ? ['AAPL'] : [])
       const weight = Object.values(target.targetWeights).reduce((sum, value) => sum + value, 0)
       expect(weight).toBeLessThanOrEqual(0.2)
-      expect(action === 'enter' ? weight > 0 : weight === 0).toBe(true)
+      expect(supportsEntry ? weight > 0 : weight === 0).toBe(true)
     }),
   )
 }, 150_000)
@@ -73,7 +74,7 @@ const history: fc.Arbitrary<History> = fc.record({
 const sparseFixture = (input: History) => {
   const query = {
     ...base.query,
-    symbols: ['AAPL', 'AMZN', 'SPY'],
+    symbols: ['AAPL', 'AMZN'],
     candidateSymbols: ['AAPL', 'AMZN'],
   }
   const bars = base.archive.bars
@@ -116,12 +117,9 @@ test('property: sparse observed history admits actual completed bars and reprodu
         }
       }
       const request = Result.getOrThrow(requestFor(snapshot, 'AAPL'))
-      const state = JSON.parse(request.body).state
-      const common = raw.bars.find(
-        (bar) =>
-          bar.symbol === 'AAPL' && raw.bars.some((other) => other.symbol === 'SPY' && other.eventAt === bar.eventAt),
-      )
-      expect(state.relativeSignals.referenceAt).toBe(common?.eventAt)
+      const state = JSON.parse(request.body).numericalState
+      expect(state).not.toHaveProperty('relativeSignals')
+      expect(state.candidate.priceWindow.referenceAt).toBe(raw.bars.find((bar) => bar.symbol === 'AAPL')?.eventAt)
       const replay = Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))
       expect(replay.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
       expect(replay.bars).toEqual(snapshot.bars)
@@ -129,7 +127,7 @@ test('property: sparse observed history admits actual completed bars and reprodu
   )
 })
 
-test('property: historical coverage never substitutes for the latest completed candidate or benchmark minute', () => {
+test('property: historical coverage never substitutes for the latest completed candidate minute', () => {
   checkProperty(
     'jev-available-history-current-minute',
     fc.property(history, (input) => {
@@ -141,7 +139,7 @@ test('property: historical coverage never substitutes for the latest completed c
       const { snapshot } = streamingFixtureFromRaw(withoutLatest('AAPL'), query)
       expect(snapshot.manifest.candidateExclusions?.map((entry) => entry.symbol)).toEqual(['AAPL'])
       expect(Result.isFailure(requestFor(snapshot, 'AAPL'))).toBe(true)
-      expect(() => streamingFixtureFromRaw(withoutLatest('SPY'), query)).toThrow()
+      expect(Result.isSuccess(requestFor(snapshot, 'AMZN'))).toBe(true)
     }),
   )
 })
@@ -193,11 +191,11 @@ test('property: exchange queries admit the first completed minute and clamp cont
   )
 })
 
-test('property: settled entry cash fees cannot alter a future management judgment', () => {
+test('property: settled entry cash fees cannot change the bound exit policy or enable model management', () => {
   const fixture = nativeJevFixture(JevPurpose.Manage)
   const portfolio = fixture.portfolio
   if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a held position')
-  const baseline = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  const baseline = Result.getOrThrow(jevProfitTargetBid(portfolio))
   checkProperty(
     'jev-management-sunk-cost-independence',
     fc.property(fc.integer({ min: 0, max: 100_000_000 }), (feeMicros) => {
@@ -210,9 +208,11 @@ test('property: settled entry cash fees cannot alter a future management judgmen
           },
         }),
       )
-      const actual = Result.getOrThrow(makeJevTradingSignalRequest(observation.payload, 'AAPL'))
-      expect(actual.requestHash).toBe(baseline.requestHash)
-      expect(actual.body).toBe(baseline.body)
+      expect(Result.isFailure(makeJevTradingSignalRequest(observation.payload, 'AAPL'))).toBe(true)
+      const actual = observation.payload.portfolio
+      if (actual.purpose !== JevPurpose.Manage) throw Error('Expected a held position')
+      expect(Result.getOrThrow(jevProfitTargetBid(actual))).toBe(baseline)
+      expect(actual.exitPolicy).toEqual(portfolio.exitPolicy)
       expect(observation.payload.portfolio).toMatchObject({
         entryFills: portfolio.entryFills.map((fill) => ({ ...fill, feeMicros: String(feeMicros) })),
       })

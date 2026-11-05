@@ -60,8 +60,6 @@
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "build:attic": "bun run packages/scripts/src/attic/build-image.ts",
     "build:headlamp": "bun run packages/scripts/src/headlamp/build-image.ts",
-    "build:arc-runner": "bun run packages/scripts/src/arc-runner/build-image.ts",
-    "arc-runner:deploy": "bun run packages/scripts/src/arc-runner/deploy-service.ts",
     "attic:deploy": "bun run packages/scripts/src/attic/deploy-service.ts",
     "headlamp:deploy": "bun run packages/scripts/src/headlamp/deploy-service.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
@@ -141,6 +139,7 @@
     "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
     "@platformatic/kafka@2.12.1": "patches/@platformatic%2Fkafka@2.12.1.patch",
     "effect@4.0.0": "patches/effect@4.0.0.patch",
-    "@effect/sql-pg@4.0.0": "patches/@effect%2Fsql-pg@4.0.0.patch"
+    "@effect/sql-pg@4.0.0": "patches/@effect%2Fsql-pg@4.0.0.patch",
+    "@redis/client@6.3.0": "patches/@redis%2Fclient@6.3.0.patch"
   }
 }

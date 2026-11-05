@@ -50,6 +50,50 @@ spec:
               "${client[@]}" --multiquery --query "
                 CREATE DATABASE IF NOT EXISTS signal ON CLUSTER default;
 
+                CREATE TABLE IF NOT EXISTS signal.webull_market_events_v1 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  feed LowCardinality(String),
+                  capture_id UUID,
+                  channel LowCardinality(String),
+                  received_at DateTime64(9, 'UTC'),
+                  archived_at DateTime64(9, 'UTC') DEFAULT now64(9),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  payload_sha256 FixedString(64),
+                  symbols Array(String),
+                  source_times Array(String),
+                  validation_status LowCardinality(String),
+                  validation_error LowCardinality(String),
+                  capture String CODEC(ZSTD(3)),
+                  minute_bars Array(Tuple(symbol String, start_ms Int64, session String, open String, high String, low String, close String, volume String)),
+                  bar_requests Array(Tuple(symbol String, state String, observations UInt32, excluded UInt32))
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_webull_market_events_v1',
+                  '{replica}'
+                )
+                PARTITION BY toYYYYMM(received_at)
+                ORDER BY (source_topic, source_partition, source_offset)
+                TTL toDateTime(received_at) + INTERVAL 30 DAY DELETE;
+
+                ALTER TABLE signal.webull_market_events_v1 ON CLUSTER default
+                  ADD COLUMN IF NOT EXISTS minute_bars Array(Tuple(symbol String, start_ms Int64, session String, open String, high String, low String, close String, volume String)),
+                  ADD COLUMN IF NOT EXISTS bar_requests Array(Tuple(symbol String, state String, observations UInt32, excluded UInt32));
+
+                CREATE OR REPLACE VIEW signal.webull_research_events_v1 ON CLUSTER default
+                DEFINER = CURRENT_USER SQL SECURITY DEFINER AS
+                SELECT provider, feed, capture_id, channel, received_at, archived_at,
+                  source_topic, source_partition, source_offset, payload_sha256,
+                  validation_status, validation_error, minute_bars, bar_requests,
+                  if(channel = 'gap', JSONExtractString(base64Decode(JSONExtractString(capture, 'payloadBase64')), 'channel'), '') AS gap_channel,
+                  if(channel = 'gap', JSONExtractString(base64Decode(JSONExtractString(capture, 'payloadBase64')), 'reason'), '') AS gap_reason,
+                  if(channel = 'gap', JSONExtractString(base64Decode(JSONExtractString(capture, 'payloadBase64')), 'errorClass'), '') AS gap_error,
+                  if(channel = 'gap', JSONExtractString(base64Decode(JSONExtractString(capture, 'payloadBase64')), 'from'), '') AS gap_from,
+                  if(channel = 'gap', JSONExtractString(base64Decode(JSONExtractString(capture, 'payloadBase64')), 'to'), '') AS gap_to
+                FROM signal.webull_market_events_v1 FINAL;
+
                 CREATE TABLE IF NOT EXISTS signal.crypto_market_features_v1 ON CLUSTER default
                 (
                   feature_id FixedString(64),

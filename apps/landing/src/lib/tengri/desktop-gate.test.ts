@@ -65,6 +65,26 @@ describe('Tengri desktop lifecycle gate', () => {
     }
   })
 
+  test('distinguishes a temporary authorization pause from an intentional sleep', () => {
+    const paused: TengriAgent = {
+      ...agent,
+      phase: 'sleeping',
+      conditions: [
+        {
+          type: 'Ready',
+          status: 'False',
+          reason: 'AuthorizationPaused',
+          message: 'Authorization is recovering',
+          lastTransitionAt: '2026-08-26T00:01:00Z',
+        },
+      ],
+    }
+    const gate = resolveDesktopGate({ ...snapshot, agents: [paused] }, '')
+    expect(gate).toEqual({ kind: 'paused', agent: paused })
+    expect(desktopRefreshDelay(gate, Date.now())).toBe(2_000)
+    expect(resolveDesktopGate({ ...snapshot, agents: [{ ...paused, conditions: [] }] }, '').kind).toBe('sleeping')
+  })
+
   test('normalizes valid agent names and rejects empty or oversized names', () => {
     expect(createAgentFormSchema.parse({ displayName: '  Tengri  ' })).toEqual({ displayName: 'Tengri' })
     expect(createAgentFormSchema.safeParse({ displayName: '   ' }).success).toBe(false)

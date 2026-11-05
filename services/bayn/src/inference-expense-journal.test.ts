@@ -3,7 +3,21 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { ConnectionError, SqlError } from 'effect/sql/SqlError'
 import { CreateAccountStatus, CreateTransferStatus } from 'tigerbeetle-node'
 
-import { buildInferenceExpensePlan, makeInferenceExpenseQuote, type InferenceExpenseQuote } from './inference-expense'
+import {
+  buildInferenceExpensePlan,
+  makeInferenceExpenseQuote,
+  makeInferenceExpenseQuotes,
+  inferenceExpenseBatchSize,
+  inferenceExpenseRateCard,
+  type InferenceExpenseQuote,
+} from './inference-expense'
+import {
+  entryEvaluationRequestFixture,
+  entryCompletionFixture,
+  makeConditionalEvaluationReceipt,
+} from './jev/conditional-entry.test-support'
+import { JevOutcome } from './jev/evidence'
+import { makeJevResolution, JevResolutionStatus } from './jev/resolution'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { runInferenceExpensePass } from './inference-expense-runtime'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
@@ -33,11 +47,11 @@ const expectFailure = async <A, E>(operation: Effect.Effect<A, E>, message: stri
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain(message)
 }
-const memoryLedger = () => {
+const memoryLedger = (initialTimestamp = 0n) => {
   const accounts = new Map<bigint, LedgerAccountRecord>()
   const transfers = new Map<bigint, LedgerTransferRecord>()
   const history = new Map<bigint, LedgerAccountBalance[]>()
-  let timestamp = 0n
+  let timestamp = initialTimestamp
   let loseAck = false
   const match = (record: LedgerAccountRecord | LedgerTransferRecord, filter: LedgerQueryFilter) =>
     record.ledger === filter.ledger &&
@@ -71,7 +85,9 @@ const memoryLedger = () => {
           for (const id of [debit.id, credit.id]) {
             const updated = accounts.get(id)
             if (updated === undefined) throw new Error('synthetic account is absent')
-            history.set(id, [...(history.get(id) ?? []), { ...updated, timestamp }])
+            const balances = history.get(id) ?? []
+            balances.push({ ...updated, timestamp })
+            history.set(id, balances)
           }
         }
         return {
@@ -145,6 +161,97 @@ const memoryLedger = () => {
 }
 
 describe('inference expense TigerBeetle posting and reconciliation', () => {
+  test('reconciles a complete native expense prefix beyond ten thousand quotes', async () => {
+    const quotes = Array.from({ length: 10_002 }, (_, index) =>
+      Result.getOrThrow(
+        makeInferenceExpenseQuote(
+          expenseSourceFixture({ observedAt: new Date(index).toISOString() }),
+          expenseRateFixture,
+        ),
+      ),
+    )
+    const expected = Result.getOrThrow(buildInferenceExpensePlan(quotes))
+    const ledger = memoryLedger(59_000_000_000n)
+    await Effect.runPromise(postInferenceExpenses(ledger.client, expected))
+    const boundedClient: TigerBeetleRequestClient = {
+      request: (operation, execute) =>
+        ledger.client.request(operation, (active) =>
+          execute({
+            ...active,
+            lookupTransfers: async (ids) => {
+              expect(ids.length).toBeLessThanOrEqual(inferenceExpenseBatchSize)
+              return active.lookupTransfers(ids)
+            },
+          }),
+        ),
+    }
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(boundedClient, snapshot(quotes), Effect.succeed(rows(quotes))),
+    )
+    expect(report.exactLedgerPrefix).toBe(true)
+    expect(report.verifiedSessionTransferCount).toBe(quotes.length)
+    expect(report.transferCount).toBe(quotes.length)
+    expect(report.knownEstimatedCostPicoUsd).toBe(
+      expected.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString(),
+    )
+  }, 30_000)
+
+  test('reconciles both provider stages as separate expenses for the same entry request', async () => {
+    const request = entryEvaluationRequestFixture()
+    const completion = entryCompletionFixture(request)
+    const receipt = Result.getOrThrow(
+      makeConditionalEvaluationReceipt(request, {
+        startedAt: request.observedAt,
+        completedAt: request.observedAt,
+        outcome: { status: JevOutcome.Completed, completion },
+      }),
+    )
+    const resolution = Result.getOrThrow(
+      makeJevResolution(request, receipt, {
+        schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+        requestId: request.requestId,
+        status: JevResolutionStatus.Recorded,
+        receiptHash: receipt.receiptHash,
+      }),
+    )
+    const quotes = Result.getOrThrow(
+      makeInferenceExpenseQuotes(
+        {
+          accountId: 'stage-expense-ledger-test',
+          sessionDate: '2026-10-25',
+          asOf: request.expiresAt,
+          requestId: request.requestId,
+          cycleId: request.cycleId,
+          authorityGenerationHash: request.authorityGenerationHash,
+          request,
+          receipt,
+          resolution,
+          handoff: completion.handoff,
+        },
+        inferenceExpenseRateCard,
+      ),
+    )
+    const first = quotes[0]
+    if (first === undefined) throw new Error('Missing staged expense')
+    const records = quotes.map((quote) => ({ quote, verifiedAt: request.expiresAt }))
+    const captured = {
+      evidence: {
+        accountBindingHash: first.accountBindingHash,
+        sessionDate: first.sessionDate,
+        asOf: request.expiresAt,
+      },
+      quotes: records,
+    }
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(quotes))))
+    const report = await Effect.runPromise(readInferenceExpenseLedger(ledger.client, captured, Effect.succeed(records)))
+    expect(report.quotedRequestCount).toBe(2)
+    expect(report.claimedRequestCount).toBe(1)
+    expect(report.gapRequestCount).toBe(0)
+    expect(report.transferCount).toBe(2)
+    expect(report.knownEstimatedCostPicoUsd).toBe('18400000')
+    expect(report.exactLedgerPrefix).toBe(true)
+  })
   test('reports a captured quote set while later valid requests extend the session ledger', async () => {
     const ledger = memoryLedger()
     const later = Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture({ key: 'b' }), expenseRateFixture))
@@ -249,9 +356,23 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       })
       await expectFailure(
         readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
-        oversized ? 'oversized page' : 'not ordered',
+        oversized ? 'requested page size' : 'strictly increasing timestamps',
       )
     }
+  })
+
+  test('rejects a native transfer beyond the pinned ledger head', async () => {
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, plan))
+    const original = [...ledger.transfers.values()][0]
+    if (original === undefined) throw new Error('synthetic transfer is absent')
+    Object.assign(ledger.native, {
+      queryTransfers: async () => [{ ...original, timestamp: original.timestamp + 1n }],
+    })
+    await expectFailure(
+      readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
+      'after its pinned timestamp',
+    )
   })
 
   test('recovers a committed transfer with a lost acknowledgement before marking the quote verified', async () => {

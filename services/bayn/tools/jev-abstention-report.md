@@ -25,7 +25,7 @@ not proof of target-before-stop. Target paths remain UNKNOWN/censored, including
 exit; missing native market-path coverage cannot be repaired by a closed trade. BLOCKED may include executions
 that stopped during recovery; those transactions remain visible, not mislabeled as no-entry. An open/partial execution without
 an outcome remains UNKNOWN_OR_OPEN. The supplied denominator is retained but does not prove an independent
-complete opportunity schedule. Setup/plan choice mass remains categorical, not target-hit or profit probability.
+complete opportunity schedule. Atomic judgment support is retained as supplied; it is not a calibrated target-hit or profit probability.
 
 # Sealed Jev abstention diagnostics
 
@@ -66,7 +66,8 @@ execution. Existing plan-path and coverage reports are not recalculated or upgra
 From `services/bayn`, run:
 
 ```sh
-bun tools/jev-abstention-report.ts /private/path/decision.json
+bun run build:research
+node dist/research/jev-abstention-report.js /private/path/decision.json
 ```
 
 The input is an existing persisted PAPER decision document containing `bindings.cycleId`
@@ -75,25 +76,23 @@ one local file and prints JSON. It makes no model, database, broker, or network 
 Keep input and output private: output includes source identifiers and position-sized
 hypothetical profit/loss estimates. Do not commit production evidence.
 
-The current source must reproduce the decision, including its sealed requests and
-model receipts, before diagnostics are emitted. Unsupported historical contracts or
-tampered evidence fail rather than being silently reinterpreted. Protocol version
-`bayn.jev.protocol.v22` is distinct from input state version
-`bayn.jev-trading-signal-state.v20`; both appear in report v2.
+Use the pinned Node runtime that produces native chart receipts. Bun's PNG compression produces different image bytes
+and cannot reproduce retained production request hashes.
 
-Each requested candidate reports funded-plan count, minimum/maximum target rise from
-the observed bid, minimum/maximum net reward/risk, per-plan estimated gains/losses,
-holding horizon, existing entry economics and fees, bar/trade coverage, chosen setup and action,
-the setup distribution and conditional plan-choice masses. The action evaluates an actual complete trade after costs; the independent setup answer must also support entry. Excluded candidates retain their exclusion reason.
-Missing model answers, unavailable latest-trade age, and empty plan ranges are null,
-not zero. Reported masses remain unnormalized, preserving provider rounding.
+The current source must reproduce the decision, including the sealed chart handoff and both provider stages,
+before diagnostics are emitted. Unsupported historical contracts and tampered evidence fail. Protocol
+`bayn.jev.protocol.v25` is distinct from numerical state `bayn.jev-entry-state.v22`; both appear in report v3.
 
-Funding establishes accounting validity, not likely target attainment. Reward/risk
-uses conservative target gain divided by conservative stop loss; it is not expected
-value and excludes unmodeled operating costs. Choice mass is not a calibrated profit
-probability. Summed plan mass can exceed the largest individual option without
-changing the provider's argmax. This report never changes selection, fees, horizons,
-authority, or admission guards, and does not supply a model rationale or prove edge.
+Each requested candidate reports the handoff and provider status, exact proposal IDs and source anchors, raw atomic
+Jev judgments, code-owned selection or rejection, funded-plan count, target rise from the observed bid, net reward/risk,
+holding horizon, entry economics, fees and bar/trade coverage. Excluded candidates retain their exclusion reason.
+If the chart or funding stage was never evaluated, its funded count remains null. Missing judgments, latest-trade age
+and empty plan ranges remain null. No aggregate choice mass or compound model action is reconstructed.
+
+Funding establishes accounting validity. Reward/risk divides conservative target gain by conservative stop loss;
+it excludes unmodeled operating costs and is not expected value. Judgment support is not a calibrated probability of
+profit. The report preserves selection, fees, horizons, authority and admission controls; it supplies no model rationale
+or profitability qualification.
 
 ## Exact-plan quote paths
 
@@ -101,9 +100,9 @@ Historical protocol v16 / input v15 / entry-target v5 evidence requires the
 version-pinned offline source `d285f01c1fe2c5815dbb54b44aaae3dc0ab4af2b`.
 That revision reproduced the retained historical PAPER cohort with its original
 native source bundle. Use a separate checkout of that exact commit for historical
-reproduction, never the live deployment. Current protocol v17 / input v16 /
-entry-target v6 source rejects the older envelope; do not rewrite version tags or
-reinterpret old one-stage choices as new setup/conditional-plan judgments. Neither
+reproduction, never the live deployment. Current protocol v25 / numerical state v22 /
+entry-target v7 source rejects the older envelope; do not rewrite version tags or
+reinterpret old model choices as current sequential chart evidence and atomic judgments. Neither
 historical observations nor this source pin grant current execution authority.
 The historical pin predates the additional full bootstrap/source-identity binding
 below. Its result is not a substitute for the current provenance checks. For the
@@ -112,7 +111,7 @@ separately against the original sealed manifest; they matched. Do not generalize
 that one-cohort readback to other historical inputs.
 
 ```sh
-bun tools/jev-abstention-report.ts /private/decision.json /private/assumptions.json /private/native-bundle.json
+node dist/research/jev-abstention-report.js /private/decision.json /private/assumptions.json /private/native-bundle.json
 ```
 
 The optional two-file extension invokes `auditNativeArrivalCoverage` directly on
@@ -131,8 +130,8 @@ output. This is a repository-checkout tool, not a deployed trading command.
 
 The research-only `reportJevPlanPath` function reproduces the sealed decision and
 describes original quote deliveries against one explicitly declared funded plan.
-It does not replace the original model choice. The assumption manifest binds the
-decision hash and source-bundle SHA256, plan choice, quantity, instrument rules,
+It preserves the original code-owned selection. The assumption manifest binds the
+decision hash and source-bundle SHA256, source-bound proposal ID, quantity, instrument rules,
 entry latency, fee stress, and observation or hypothetical first-fill clock.
 Quantities must fit the sealed funded maximum and declared instrument increments.
 Instrument rules are declared assumptions, not independently verified broker terms.

@@ -10,7 +10,7 @@ import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { canonicalHashV1Result } from '../hash'
 import { incorporateMarketRecord } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from '../market-data/streaming/snapshot'
-import { streamingFixture } from '../testing/streaming-market-fixture'
+import { jevStreamingFixture as streamingFixture } from '../testing/streaming-market-fixture'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { decodeJevResponse, jevModel, prepareJevRequest } from './contract'
 
@@ -99,7 +99,7 @@ const snapshotWithTechnical = (candidateTradeMissing = false) => {
         },
       },
       candidateTradeMissing
-        ? { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade }
+        ? { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2 }
         : query,
     ),
   )
@@ -118,8 +118,13 @@ describe('Jev trading signal input', () => {
   })
   test('reproduces the recorded simulated source before constructing the same signal input', () => {
     const fixture = simulationFixture()
-    const snapshot = Result.getOrThrow(constructSimulatedSnapshot(fixture.cursor, fixture.source, fixture.query))
-    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).state
+    const snapshot = Result.getOrThrow(
+      constructSimulatedSnapshot(fixture.cursor, fixture.source, {
+        ...fixture.query,
+        symbols: fixture.query.candidateSymbols ?? [],
+      }),
+    )
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).numericalState
     expect(state.session.observedAt).toBe(snapshot.manifest.observedAt)
     expect(state.candidate.bars1m).toHaveLength(30)
     expect(state.candidate.quote.ask).toBe(snapshot.latestQuotes['AAPL']?.askPrice)
@@ -129,40 +134,37 @@ describe('Jev trading signal input', () => {
     }
     expect(Result.isFailure(jevRequestForSnapshot(altered, 'AAPL'))).toBe(true)
   })
-  test('sends snapshot prices, volume, liquidity and computed relative signals without old strategy decisions', () => {
+  test('sends snapshot candidate prices, volume and liquidity without old strategy decisions', () => {
     const { snapshot } = streamingFixture({ AAPL: 0.02, SPY: 0.005 })
     const request = Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL'))
-    const state = JSON.parse(request.body).state
+    const state = JSON.parse(request.body).numericalState
     expect(state.candidate.bars1m).toHaveLength(30)
-    expect(state.benchmark.bars1m).toHaveLength(30)
+    expect(state).not.toHaveProperty('benchmark')
     expect(state.candidate.quote.ask).toBe(snapshot.latestQuotes['AAPL']?.askPrice)
     expect(state.candidate.quote.bidSize).toBe(snapshot.latestQuotes['AAPL']?.bidSize)
     expect(state.candidate.bars1m[0].volume).toBe(snapshot.bars.find((bar) => bar.symbol === 'AAPL')?.volume)
-    expect(state.relativeSignals.lookbackReturnBps).toBe(200)
-    expect(state.relativeSignals.benchmarkReturnBps).toBe(50)
-    expect(state.relativeSignals.excessReturnBps).toBe(150)
+    expect(state.candidate.quote.ask).toBeGreaterThan(state.candidate.bars1m.at(-1).close)
+    expect(state).not.toHaveProperty('relativeSignals')
     expect(state.candidate.technicalAvailability).toBe('UNAVAILABLE')
     expect(state.candidate.technicalIndicators).toBeNull()
     expect(state.candidate.eligible).toBeUndefined()
     expect(state.candidate.rank).toBeUndefined()
     expect(state.news).toBeUndefined()
-    expect(Object.keys(request.request.questions)).toEqual(['action', 'setup'])
-    expect(request.request.questions['action']?.type).toBe('choice')
+    expect(request.input).not.toHaveProperty('questions')
+    expect(request.input.chartSource.symbol).toBe('AAPL')
+    expect(request.input.chartSource.bars).toHaveLength(state.candidate.bars1m.length)
     expect(state.task.horizonMinutes).toBe(15)
-    expect(state.relativeSignals.lookbackMinutes).toBeGreaterThan(0)
-    expect(state.relativeSignals.horizonMinutes).toBeUndefined()
   })
 
-  test('retains contradictory signals for Jev instead of filtering through the old momentum policy', () => {
+  test('retains falling candidate prices for Jev instead of filtering through the old momentum policy', () => {
     const { snapshot } = streamingFixture({ AAPL: -0.02, SPY: 0.005 })
-    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).state
-    expect(state.relativeSignals.lookbackReturnBps).toBe(-200)
-    expect(state.relativeSignals.excessReturnBps).toBe(-250)
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).numericalState
+    expect(state.candidate.quote.ask).toBeLessThan(state.candidate.bars1m.at(-1).close)
   })
 
   test('transmits technical values in explicit units and preserves individual readiness', () => {
     const request = Result.getOrThrow(jevRequestForSnapshot(snapshotWithTechnical(), 'AAPL'))
-    const state = JSON.parse(request.body).state
+    const state = JSON.parse(request.body).numericalState
     expect(state.candidate.technicalAvailability).toBe('RECORDED')
     expect(state.candidate.technicalIndicators.ema12PriceUsd).toEqual({ status: 'READY', value: 123.45 })
     expect(state.candidate.technicalIndicators.rsi14).toEqual({ status: 'READY', value: 62.5 })
@@ -171,7 +173,6 @@ describe('Jev trading signal input', () => {
       status: 'WARMING',
       value: null,
     })
-    expect(state.benchmark.technicalAvailability).toBe('UNAVAILABLE')
     expect(state.session.completedBarWindowAgeMs).toBe(2000)
   })
 

@@ -3,6 +3,7 @@ const nanosPerMillisecond = 1_000_000n
 export const intradayInstantNanos = (value: string): bigint => {
   const withoutZulu = value.slice(0, -1)
   const separator = withoutZulu.lastIndexOf('.')
+  if (separator === -1) return BigInt(Date.parse(value)) * nanosPerMillisecond
   const seconds = withoutZulu.slice(0, separator)
   const fractional = withoutZulu.slice(separator + 1).padEnd(9, '0')
   return BigInt(Date.parse(`${seconds}.000Z`)) * nanosPerMillisecond + BigInt(fractional)

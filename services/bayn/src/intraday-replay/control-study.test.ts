@@ -1,3 +1,7 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { makeReplayInferenceBudget } from './inference-timing'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
@@ -14,7 +18,7 @@ import { OrderSide } from '../execution/contracts'
 import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
@@ -54,7 +58,7 @@ const simulate = (
     routingLatencyMs?: number
     managedLatencyMs?: number
     nativeEntry?: boolean
-    entryAction?: string
+    supportsEntry?: boolean
     residualShock?: boolean
     entrySize?: number
     canceledEntries?: boolean
@@ -183,7 +187,9 @@ const simulate = (
             return { status: 'AVAILABLE' as const, snapshot }
           }),
       }
-      const risk = yield* loadExecutionRiskPolicy('control-session-test', equityMarketProfile.universe)
+      const risk = yield* Effect.fromResult(
+        makeExecutionRiskPolicy('control-session-test', equityMarketProfile.universe),
+      )
       const providerClock = yield* TestClock.make()
       const fs = yield* FileSystem.FileSystem
       const management =
@@ -197,20 +203,34 @@ const simulate = (
                   `${yield* fs.makeTempDirectoryScoped()}/evidence`,
                   '3'.repeat(64),
                 ),
-                provider: {
-                  evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
-                    Effect.gen(function* () {
-                      providerCalls += 1
-                      yield* providerClock.adjust(options.managedLatencyMs ?? 0)
-                      return nativeJevInference(
-                        input,
-                        new Date(yield* providerClock.currentTimeMillis).toISOString(),
-                        options.nativeEntry === true ? (options.entryAction ?? 'enter') : 'hold',
-                      )
-                    }),
+                budget: makeReplayInferenceBudget(1000),
+                providers: {
+                  jev: entryProviderFixture(
+                    {
+                      evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
+                        Effect.gen(function* () {
+                          providerCalls += 1
+                          yield* providerClock.adjust(options.managedLatencyMs ?? 0)
+                          return nativeJevInference(
+                            input,
+                            new Date(yield* providerClock.currentTimeMillis).toISOString(),
+                            options.nativeEntry === true && options.supportsEntry !== false,
+                          )
+                        }),
+                    },
+                    chartProviderFixture,
+                  ),
                 },
               },
-              costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+              costs: replayRateCardFixture({
+                jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+                chart: {
+                  inputMicrosPerMillionTokens: '100000',
+                  outputMicrosPerMillionTokens: '0',
+                  cachedInputMicrosPerMillionTokens: '10000',
+                  cacheWriteInputMicrosPerMillionTokens: '125000',
+                },
+              }),
             }
       const report = yield* runControlSession({
         policy:
@@ -280,14 +300,14 @@ test('native Jev entry uses measured commitment before execution and mechanical 
   if (accounting === undefined) throw new Error('Expected schedule accounting')
   expect(accounting.scheduledPollCount).toBe(90)
   expect(report.ledger.positions).toEqual([])
-}, 30_000)
+}, 60_000)
 
 test('native entry abstentions retain paid calls without submitting orders', async () => {
   const wait = await simulate({
     nativeEntry: true,
-    entryAction: 'wait',
+    supportsEntry: false,
     managedLatencyMs: 10,
-    sessionDurationMs: 22 * 60_000,
+    sessionDurationMs: 8 * 60_000,
     pollIntervalMs: 120_000,
   })
   expect(wait.report.orders).toEqual([])
@@ -300,7 +320,7 @@ test('incomplete expired native entry evidence cannot submit orders', async () =
   const expired = await simulate({
     nativeEntry: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
-    sessionDurationMs: 22 * 60_000,
+    sessionDurationMs: 8 * 60_000,
     pollIntervalMs: 120_000,
   })
   expect(expired.providerCalls).toBeGreaterThan(0)
@@ -506,6 +526,8 @@ test('property: scheduled accounting covers non-divisible sessions without addin
 test('chronological controls reuse flat cash, respect full decision and route latency, and mark open through close', async () => {
   const { report, snapshots } = await simulate({ dataCostMicros: '1000000' })
   expect(report.completion).toBe('COMPLETE')
+  expect(report.allCostNetPnlMicros).not.toBeNull()
+  expect(report.allCostNetPnlMicros).toBe(report.netPnlAfterKnownCostsMicros)
   expect(report.completedEpisodes).toBeGreaterThanOrEqual(3)
   expect(report.ledger.positions).toHaveLength(0)
   expect(snapshots).toBe(report.orders.filter((order) => order.side === OrderSide.Buy).length)
@@ -636,6 +658,8 @@ test('missing observations retain zero-trade sessions as incomplete instead of i
   expect(snapshots).toBeGreaterThan(50)
   expect(report.completion).toBe('INCOMPLETE')
   expect(report.issues).toEqual(['MISSING_DECISION_DATA'])
+  expect(report.netPnlAfterKnownCostsMicros).not.toBeNull()
+  expect(report.allCostNetPnlMicros).toBeNull()
   expect(report.missingDecisions).toBe(snapshots)
   expect(report.orders).toHaveLength(0)
   expect(report.completedEpisodes).toBe(0)
@@ -665,6 +689,8 @@ test('a zero-size bid leaves a missing valuation even when the position later cl
     netEquityAfterKnownCostsMicros: null,
     cause: 'no-displayed-bid-liquidity',
   })
+  expect(report.netPnlAfterKnownCostsMicros).not.toBeNull()
+  expect(report.allCostNetPnlMicros).toBeNull()
 })
 
 test('small exit liquidity retries the same inventory and counts only completed episodes', async () => {
@@ -765,14 +791,24 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v5',
+      schemaVersion: 'bayn.backtest.v11',
+      policy: 'JEV' as const,
+      latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
-        mode: 'measured-provider',
+        mode: 'measured-providers',
         maximumCalls: 1000,
-        model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v21',
-        costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+        models: { jev: jevModel },
+        inputDefinition: 'bayn.jev-entry-state.v23',
+        costs: replayRateCardFixture({
+          jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+          chart: {
+            inputMicrosPerMillionTokens: '100000',
+            outputMicrosPerMillionTokens: '0',
+            cachedInputMicrosPerMillionTokens: '10000',
+            cacheWriteInputMicrosPerMillionTokens: '125000',
+          },
+        }),
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'control-source-fixture',

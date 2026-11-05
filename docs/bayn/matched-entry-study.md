@@ -154,12 +154,16 @@ Tempo trace query response and the exact committed native execution-decision doc
 the current native decision and momentum selection, and has no database, broker or model client.
 
 ```sh
-bun services/bayn/tools/entry-timing-export.ts \
+bun run --filter @proompteng/bayn build:research
+node services/bayn/dist/research/entry-timing-export.js \
   --trace /private/tempo-trace.json --trace-sha256 <pinned-original-trace-sha256> \
   --decision /private/native-decision.json --decision-sha256 <pinned-original-decision-sha256> \
   --source-revision <instrumented-worker-source-revision> \
   --output /private/new-timing-directory
 ```
+
+Run the compiled exporter with the pinned Node runtime that produces native chart receipts. Bun's PNG compression
+produces different image bytes, so direct Bun execution cannot reproduce retained production request hashes.
 
 The trace must be the original JSON returned by Tempo's `/api/traces/<traceId>` query endpoint: a `batches` envelope,
 canonical protobuf base64 trace/span identifiers and string enums. This is a Tempo query representation, not the
@@ -203,7 +207,8 @@ comparison is blocked until complete source and timing witnesses are available. 
 those witnesses or make an invalidated legacy capture eligible. From the reviewed checkout:
 
 ```sh
-bun services/bayn/tools/matched-entry-study.ts \
+bun run --filter @proompteng/bayn build:research
+node services/bayn/dist/research/matched-entry-study.js \
   --input /private/matched-input.json --input-sha256 <pinned-input-sha256> \
   --registration /private/registration.json --registration-sha256 <independently-pinned-registration-sha256> \
   --arrivals /private/arrivals.ndjson.gz \

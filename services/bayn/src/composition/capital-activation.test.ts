@@ -27,7 +27,7 @@ import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import {
   configuredCapitalActivation,
   prepareOrRecoverResearchCapitalActivation,
@@ -127,7 +127,7 @@ test('retains the exact compatible mandate without changing its account or risk 
 test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {
   for (const environment of [BrokerEnvironment.Sandbox, BrokerEnvironment.Live]) {
     const policy = await Effect.runPromise(
-      loadExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment),
+      Effect.fromResult(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment)),
     )
     const hash = Result.getOrThrow(canonicalHashV1Result(policy))
     const outcome = await Effect.runPromise(
@@ -255,7 +255,7 @@ test('pre-activation retains a typed nonexact reconciliation failure until a lat
 test('a cutover mandate rearms through current proof and exact reconciliation before activation', async () => {
   const at = '2026-10-23T10:50:00.000Z'
   const policy = await Effect.runPromise(
-    loadExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe),
+    Effect.fromResult(makeExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe)),
   )
   const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
   const retired = request({ behaviorHash: 'f'.repeat(64), parameterSchemaVersion: 'bayn.jev.protocol.v18' })

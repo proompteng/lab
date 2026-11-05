@@ -79,10 +79,14 @@ allocations remain unknown. Retain rejected, late and no-trade call spending in 
 Keep inputs, witness files, archives and reports private, outside Git and CI artifacts. From the clean reviewed checkout:
 
 ```sh
-bun services/bayn/tools/capital-study.ts \
+bun run --filter @proompteng/bayn build:research
+node services/bayn/dist/research/capital-study.js \
   --input /private/capital-input.json --input-sha256 <pinned-input-sha256> \
   --output /private/new-capital-report.json
 ```
+
+Use the pinned Node runtime for native evidence. Node produces the chart PNG bytes in retained production handoffs;
+Bun's PNG compression differs, so running the source tool directly under Bun cannot reproduce those request hashes.
 
 The output must be a new file. No credentials, network access, paid data, production recorder changes or external
 telemetry uploads are required. The report binds evaluator revision, registered source revisions, input/definition/

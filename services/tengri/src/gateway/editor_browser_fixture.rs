@@ -282,7 +282,7 @@ async fn editor_fixture_models_control_activity_and_idle_sleep_cas() {
     let tracker = ActivityTracker::new(client.clone(), "tengri".into());
     let claim = crate::slot::client::claim_for(&before).unwrap();
     tracker
-        .admit_control(&claim)
+        .admit_control(&claim, crate::activity::ControlActivity::Interaction)
         .await
         .expect("real preview control admission must work in the fixture");
     let current = api.get("editor-fixture").await.unwrap();
@@ -301,7 +301,11 @@ async fn editor_fixture_models_control_activity_and_idle_sleep_cas() {
         .await
         .unwrap();
     assert_eq!(
-        tracker.admit_control(&claim).await.unwrap_err().code(),
+        tracker
+            .admit_control(&claim, crate::activity::ControlActivity::Interaction)
+            .await
+            .unwrap_err()
+            .code(),
         tonic::Code::FailedPrecondition
     );
 }

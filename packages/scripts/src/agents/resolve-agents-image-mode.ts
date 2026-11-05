@@ -48,6 +48,7 @@ const STATIC_EXACT_PATHS = new Set([
 
 const ALL_IMAGE_EXACT_PATHS = new Set([
   'services/agents/package.json',
+  'services/agents/scripts/apply_patch.py',
   'flake.lock',
   'flake.nix',
   'nix/images/agents.nix',
@@ -56,7 +57,11 @@ const ALL_IMAGE_EXACT_PATHS = new Set([
   'packages/scripts/src/shared/nix-oci-deploy.ts',
 ])
 
-const RUNNER_IMAGE_EXACT_PATHS = new Set(['nix/images/openai-codex-cli.nix'])
+const RUNNER_IMAGE_EXACT_PATHS = new Set([
+  'nix/images/openai-codex-cli.nix',
+  'nix/images/agentrun-tools.nix',
+  'services/agents/scripts/runner-acceptance.sh',
+])
 
 const CONTROL_PLANE_IMAGE_PREFIXES = [
   'packages/agent-contracts/',
@@ -86,7 +91,6 @@ const isStaticPath = (path: string) =>
 const imageTargetsForPath = (path: string): AgentsImageTarget[] => {
   if (isDocumentationPath(path) || isTestPath(path)) return []
   if (ALL_IMAGE_EXACT_PATHS.has(path)) return [...AGENTS_IMAGE_TARGETS]
-  if (path === 'nix/verify-agents-shell-image-lifecycle.sh') return ['agents-shell']
   if (RUNNER_IMAGE_EXACT_PATHS.has(path)) return ['runner']
   if (path.startsWith('packages/codex/')) return [...AGENTS_IMAGE_TARGETS]
   if (LINEAR_MCP_RUNNER_SHARED_PATHS.has(path)) return ['control-plane', 'controller', 'runner']

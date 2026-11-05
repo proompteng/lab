@@ -47,7 +47,8 @@ original batch. Verify export counts against the preserved database.
 From the repository root:
 
 ```sh
-bun services/bayn/tools/jev-signal-study.ts \
+bun run --filter @proompteng/bayn build:research
+node services/bayn/dist/research/jev-signal-study.js \
   --input study-input.json --input-sha256 <pinned-input-sha256> \
   --arrivals arrivals.ndjson.gz \
   --source-receipt source-receipt.json --source-receipt-sha256 <pinned-receipt-sha256> \
@@ -56,6 +57,9 @@ bun services/bayn/tools/jev-signal-study.ts \
 
 The output path must be new. The tool needs no broker credentials, model credentials, or database connection.
 It does not make model calls or place broker orders.
+
+Use the pinned Node runtime to reproduce native chart receipts. Bun's PNG compression produces different image bytes
+and cannot reproduce the original production request hashes.
 
 Each available candidate gets an independent hypothetical USD 10,000 cash budget. Instrument-quantized sizing fits both
 entry notional and cash fees within that budget, using the decision quote with a 10 bp limit allowance.

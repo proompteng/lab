@@ -59,8 +59,10 @@ impl AgentWorkMonitor {
 }
 
 const ACTIVITY_WRITE_INTERVAL: Duration = Duration::from_secs(20);
+const CONTROL_ADMISSION_RETRY_BUDGET: Duration = Duration::from_secs(1);
 pub const LAST_AGENT_WORK_ANNOTATION: &str = "runtime.proompteng.ai/last-agent-work-at";
 pub const LAST_ACTIVITY_ANNOTATION: &str = "runtime.proompteng.ai/last-activity-at";
+pub(crate) const CONTROL_ADMISSION_ANNOTATION: &str = "runtime.proompteng.ai/control-admitted-at";
 pub const RESUME_STARTED_AT_ANNOTATION: &str = "runtime.proompteng.ai/resume-started-at";
 pub const ACTIVE_RUN_ANNOTATION: &str = "runtime.proompteng.ai/active-run";
 const IDLE_SLEEP_PREFIX: &str = "idle-sleep/";
@@ -94,6 +96,12 @@ pub async fn claim_idle_sleep(
     Ok(api.patch(&microvm.name_any(),&PatchParams::default(),&Patch::Merge(json!({"metadata":{"uid":uid,"resourceVersion":version,"annotations":{ACTIVE_RUN_ANNOTATION:format!("{IDLE_SLEEP_PREFIX}{}",microvm.spec.runtime_epoch)}}}))).await?)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ControlActivity {
+    Interaction,
+    Observation,
+}
+
 #[derive(Clone)]
 pub struct ActivityTracker {
     client: Client,
@@ -113,10 +121,12 @@ impl ActivityTracker {
     }
 
     // Control admission and idle sleep contend on the same resource version.
-    // Record activity before issuing guest authority, including on cached clients.
+    // Admit against the sleep fence before issuing authority, including on cached clients.
+    // Background observers contend on that fence without resetting the idle clock.
     pub(crate) async fn admit_control(
         &self,
         claim: &crate::slot::Claim,
+        activity: ControlActivity,
     ) -> Result<DateTime<Utc>, tonic::Status> {
         // Browser module loads and other parallel controls must not exhaust the
         // CAS retries by racing each other. Serialize only this workspace's
@@ -135,7 +145,9 @@ impl ActivityTracker {
         };
         let _admission = admission.lock().await;
         let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        for _ in 0..3 {
+        let retry_deadline = tokio::time::Instant::now() + CONTROL_ADMISSION_RETRY_BUDGET;
+        let mut backoff_ms = 10;
+        loop {
             let agent = agents.get(&claim.microvm_id).await.map_err(|_| {
                 tonic::Status::unavailable("workspace control admission unavailable")
             })?;
@@ -158,7 +170,12 @@ impl ActivityTracker {
                 tonic::Status::unavailable("workspace control admission has no resource version")
             })?;
             let now = Utc::now();
-            let mut patch = activity_metadata_patch(now);
+            let mut patch = match activity {
+                ControlActivity::Interaction => activity_metadata_patch(now),
+                ControlActivity::Observation => json!({"metadata": {"annotations": {
+                    CONTROL_ADMISSION_ANNOTATION: now.to_rfc3339()
+                }}}),
+            };
             patch["metadata"]["uid"] = json!(claim.microvm_uid);
             patch["metadata"]["resourceVersion"] = json!(version);
             match agents
@@ -170,7 +187,16 @@ impl ActivityTracker {
                 .await
             {
                 Ok(_) => return Ok(now),
-                Err(kube::Error::Api(error)) if error.code == 409 => continue,
+                Err(kube::Error::Api(error)) if error.code == 409 => {
+                    // Other replicas and reconcilers do not share the local lock.
+                    // Jitter breaks repeated collisions; each retry rechecks sleep.
+                    let delay = Duration::from_millis(rand::random_range(5..=backoff_ms));
+                    if tokio::time::Instant::now() + delay >= retry_deadline {
+                        break;
+                    }
+                    tokio::time::sleep(delay).await;
+                    backoff_ms = (backoff_ms * 2).min(100);
+                }
                 Err(_) => {
                     return Err(tonic::Status::unavailable(
                         "workspace control activity could not be recorded",
@@ -421,6 +447,208 @@ mod tests {
                 panic!("activity heartbeat must not race the controller on the status subresource")
             }
         }
+    }
+
+    #[tokio::test]
+    async fn observer_admission_preserves_idle_expiry_and_sleep_exclusion() {
+        let now = Utc::now();
+        let mut agent = test_microvm(now);
+        agent.spec.power.idle_timeout_minutes = 1;
+        agent.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        agent.metadata.resource_version = Some("1".into());
+        let claim = crate::slot::Claim {
+            microvm_id: agent.name_any(),
+            microvm_uid: agent.uid().unwrap(),
+            runtime_epoch: agent.spec.runtime_epoch.clone(),
+            epoch: 1,
+        };
+        let state = Arc::new(Mutex::new(agent));
+        let api_state = state.clone();
+        let service = tower::service_fn(move |request: Request<KubeBody>| {
+            let state = api_state.clone();
+            async move {
+                if request.method() == http::Method::PATCH {
+                    let patch: serde_json::Value =
+                        serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                            .unwrap();
+                    let mut agent = state.lock().unwrap();
+                    assert_eq!(
+                        patch["metadata"]["resourceVersion"],
+                        agent.resource_version().unwrap()
+                    );
+                    assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+                    for (key, value) in patch["metadata"]["annotations"].as_object().unwrap() {
+                        agent
+                            .metadata
+                            .annotations
+                            .get_or_insert_default()
+                            .insert(key.clone(), value.as_str().unwrap().into());
+                    }
+                    agent.metadata.resource_version = Some("2".into());
+                }
+                let response = serde_json::to_vec(&*state.lock().unwrap()).unwrap();
+                Ok::<_, std::convert::Infallible>(
+                    Response::builder()
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(response))
+                        .unwrap(),
+                )
+            }
+        });
+        let tracker = ActivityTracker::new(Client::new(service, "tengri"), "tengri".into());
+        for _ in 0..3 {
+            tracker
+                .admit_control(&claim, ControlActivity::Observation)
+                .await
+                .unwrap();
+            assert!(
+                idle_deadline_passed(&state.lock().unwrap(), Utc::now()),
+                "background observation must not reset idle expiry"
+            );
+        }
+        tracker
+            .admit_control(&claim, ControlActivity::Interaction)
+            .await
+            .unwrap();
+        assert!(
+            !idle_deadline_passed(&state.lock().unwrap(), Utc::now()),
+            "user work must reset idle expiry"
+        );
+        state
+            .lock()
+            .unwrap()
+            .metadata
+            .annotations
+            .get_or_insert_default()
+            .insert(
+                ACTIVE_RUN_ANNOTATION.into(),
+                format!("idle-sleep/{}", claim.runtime_epoch),
+            );
+        assert_eq!(
+            tracker
+                .admit_control(&claim, ControlActivity::Observation)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn control_admission_survives_conflicts_from_another_controller() {
+        let mut agent = test_microvm(Utc::now());
+        agent.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        agent.metadata.resource_version = Some("1".into());
+        let claim = crate::slot::Claim {
+            microvm_id: agent.name_any(),
+            microvm_uid: agent.uid().unwrap(),
+            runtime_epoch: agent.spec.runtime_epoch.clone(),
+            epoch: 1,
+        };
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let tracker = ActivityTracker::new(Client::new(service, "tengri"), "tengri".into());
+        let admission = tokio::spawn(async move {
+            tracker
+                .admit_control(&claim, ControlActivity::Interaction)
+                .await
+        });
+        let mut writes = 0;
+        let mut recorded = None;
+        while let Some((request, response)) = handle.next_request().await {
+            let mut status = StatusCode::OK;
+            let body = if request.method() == http::Method::GET {
+                json!(agent)
+            } else {
+                assert_eq!(request.method(), http::Method::PATCH);
+                let patch: serde_json::Value =
+                    serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                        .unwrap();
+                assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+                assert_eq!(
+                    patch["metadata"]["resourceVersion"],
+                    agent.resource_version().unwrap()
+                );
+                writes += 1;
+                agent.metadata.resource_version = Some((writes + 1).to_string());
+                if writes <= 3 {
+                    // Another replica updates the workspace after each GET.
+                    status = StatusCode::CONFLICT;
+                    json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"another controller admitted activity","code":409})
+                } else {
+                    recorded = Some(
+                        DateTime::parse_from_rfc3339(
+                            patch["metadata"]["annotations"][LAST_ACTIVITY_ANNOTATION]
+                                .as_str()
+                                .unwrap(),
+                        )
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    );
+                    json!(agent)
+                }
+            };
+            response.send_response(
+                Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(body.to_string().into_bytes()))
+                    .unwrap(),
+            );
+        }
+        assert_eq!(Some(admission.await.unwrap().unwrap()), recorded);
+        assert_eq!(writes, 4, "the request must win its own fresh admission");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn control_admission_bounds_continuous_conflict_retries() {
+        let mut agent = test_microvm(Utc::now());
+        agent.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        agent.metadata.resource_version = Some("1".into());
+        let claim = crate::slot::Claim {
+            microvm_id: agent.name_any(),
+            microvm_uid: agent.uid().unwrap(),
+            runtime_epoch: agent.spec.runtime_epoch.clone(),
+            epoch: 1,
+        };
+        let service = tower::service_fn(move |request: Request<KubeBody>| {
+            let (status, body) = if request.method() == http::Method::GET {
+                (StatusCode::OK, json!(agent))
+            } else {
+                assert_eq!(request.method(), http::Method::PATCH);
+                (
+                    StatusCode::CONFLICT,
+                    json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"workspace remains busy","code":409}),
+                )
+            };
+            async move {
+                Ok::<_, std::convert::Infallible>(
+                    Response::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(body.to_string().into_bytes()))
+                        .unwrap(),
+                )
+            }
+        });
+        let tracker = ActivityTracker::new(Client::new(service, "tengri"), "tengri".into());
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            tracker
+                .admit_control(&claim, ControlActivity::Interaction)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unavailable,
+        );
+        assert!(
+            started.elapsed() >= Duration::from_millis(500),
+            "conflicts must back off"
+        );
+        assert!(
+            started.elapsed() <= Duration::from_secs(1),
+            "conflict retries must remain bounded"
+        );
     }
 
     #[test]

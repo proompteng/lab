@@ -241,12 +241,78 @@ describe('Codex GitHub events v1 API', () => {
     })
   })
 
-  it('rejects unsupported GitHub events before opening storage', async () => {
+  it.each(['ping', 'push', 'workflow_run', 'workflow_job'])(
+    'acknowledges irrelevant %s events without opening storage',
+    async (event) => {
+      const storeFactory = vi.fn(() => createStore())
+
+      const response = await postCodexGithubEventsHandler(request({ event, payload: {} }), { storeFactory })
+
+      expect(response.status).toBe(202)
+      await expect(response.json()).resolves.toMatchObject({ ok: true, event, ignored: true, updatedRunIds: [] })
+      expect(storeFactory).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['workflow_run', 'workflow_job'])(
+    'recognizes raw %s events when Kafka event headers are absent',
+    async (event) => {
+      const storeFactory = vi.fn(() => createStore())
+
+      const response = await postCodexGithubEventsHandler(
+        request({ action: 'in_progress', [event]: { id: 1 }, repository: { full_name: 'owner/repo' } }),
+        { storeFactory },
+      )
+
+      expect(response.status).toBe(202)
+      await expect(response.json()).resolves.toMatchObject({ ok: true, event, ignored: true })
+      expect(storeFactory).not.toHaveBeenCalled()
+    },
+  )
+
+  it('recognizes raw push events without confusing them with missing event metadata', async () => {
     const storeFactory = vi.fn(() => createStore())
+    const response = await postCodexGithubEventsHandler(
+      request({ ref: 'refs/heads/main', before: 'abcdef0', after: 'abcdef1', commits: [] }),
+      { storeFactory },
+    )
 
-    const response = await postCodexGithubEventsHandler(request({ event: 'ping', payload: {} }), { storeFactory })
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, event: 'push', ignored: true })
+    expect(storeFactory).not.toHaveBeenCalled()
+  })
 
-    expect(response.status).toBe(422)
+  it.each([{ event: 'unrecognized_event', payload: {} }, {}, { ref: 'refs/heads/main' }])(
+    'rejects unrecognized or missing event metadata before opening storage: %j',
+    async (payload) => {
+      const storeFactory = vi.fn(() => createStore())
+      const response = await postCodexGithubEventsHandler(request(payload), { storeFactory })
+
+      expect(response.status).toBe(422)
+      expect(storeFactory).not.toHaveBeenCalled()
+    },
+  )
+
+  it('recognizes workflow events wrapped in a structured CloudEvent', async () => {
+    const storeFactory = vi.fn(() => createStore())
+    const response = await postCodexGithubEventsHandler(
+      request({ specversion: '1.0', type: 'dev.knative.kafka.event', data: { workflow_run: { id: 1 } } }),
+      { storeFactory },
+    )
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, event: 'workflow_run', ignored: true })
+    expect(storeFactory).not.toHaveBeenCalled()
+  })
+
+  it('normalizes qualified workflow event names', async () => {
+    const storeFactory = vi.fn(() => createStore())
+    const response = await postCodexGithubEventsHandler(request({ event: 'github.workflow_run', payload: {} }), {
+      storeFactory,
+    })
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, event: 'workflow_run', ignored: true })
     expect(storeFactory).not.toHaveBeenCalled()
   })
 })

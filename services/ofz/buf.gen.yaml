@@ -4,4 +4,3 @@ plugins:
     out: apps/landing/src/lib/tengri/generated
     opt:
       - target=ts
-      - import_extension=ts

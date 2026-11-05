@@ -5,7 +5,7 @@ import { EntryTimingExportFailure, exportEntryTiming } from '../src/intraday-rep
 import { Sha256Schema, SourceRevisionSchema } from '../src/schemas'
 
 export const entryTimingExportUsage =
-  'Usage: bun tools/entry-timing-export.ts --trace <tempo-json> --trace-sha256 <sha256> --decision <native-json> --decision-sha256 <sha256> --source-revision <revision> --output <new-private-directory> | --help'
+  'Usage: node dist/research/entry-timing-export.js --trace <tempo-json> --trace-sha256 <sha256> --decision <native-json> --decision-sha256 <sha256> --source-revision <revision> --output <new-private-directory> | --help'
 
 type EntryTimingExportArgs =
   | { readonly _tag: 'Help' }

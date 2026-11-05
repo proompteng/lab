@@ -1,14 +1,6 @@
 import {
   AGENTS_SHELL_VERSION,
-  DEFAULT_AGENT_BASE_BRANCH,
-  DEFAULT_AGENT_NAME,
-  DEFAULT_AGENT_NAMESPACE,
-  DEFAULT_AGENT_REPOSITORY,
-  DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT,
-  DEFAULT_AGENT_SECRETS,
-  DEFAULT_AGENT_TOKEN_BUDGET,
-  DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED,
-  DEFAULT_AGENT_VCS_REF,
+  DEFAULT_REPO_BASE_BRANCH,
   DEFAULT_ISSUER,
   DEFAULT_OUTPUT_BYTES,
   DEFAULT_RESOURCE,
@@ -38,15 +30,7 @@ export type AgentsShellConfig = {
   auditLogPath: string | null
   allowedK8sNamespaces: Set<string>
   k8sApplyEnabled: boolean
-  agentNamespace: string
-  agentName: string
-  agentRepository: string
-  agentBaseBranch: string
-  agentVcsRef: string
-  agentRuntimeServiceAccount: string
-  agentSecrets: string[]
-  agentDefaultTokenBudget: number
-  agentDefaultTtlSecondsAfterFinished: number
+  repoBaseBranch: string
   port: number
   host: string
 }
@@ -58,11 +42,6 @@ const parseList = (value: string | undefined) =>
       .map((item) => item.trim())
       .filter(Boolean),
   )
-
-const parseArray = (value: string | undefined, fallback: string[]) => {
-  const parsed = Array.from(parseList(value))
-  return parsed.length > 0 ? parsed : fallback
-}
 
 const parseListenPort = (env: NodeJS.ProcessEnv) => {
   const raw = env.PORT ?? env.AGENTS_SHELL_LISTEN_PORT ?? '8080'
@@ -132,17 +111,7 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH || null,
     allowedK8sNamespaces: parseList(env.AGENTS_SHELL_ALLOWED_K8S_NAMESPACES ?? 'agents'),
     k8sApplyEnabled: env.AGENTS_SHELL_ENABLE_K8S_APPLY === 'true',
-    agentNamespace: env.AGENTS_SHELL_AGENT_NAMESPACE ?? DEFAULT_AGENT_NAMESPACE,
-    agentName: env.AGENTS_SHELL_AGENT_NAME ?? DEFAULT_AGENT_NAME,
-    agentRepository: env.AGENTS_SHELL_AGENT_REPOSITORY ?? DEFAULT_AGENT_REPOSITORY,
-    agentBaseBranch: env.AGENTS_SHELL_AGENT_BASE_BRANCH ?? DEFAULT_AGENT_BASE_BRANCH,
-    agentVcsRef: env.AGENTS_SHELL_AGENT_VCS_REF ?? DEFAULT_AGENT_VCS_REF,
-    agentRuntimeServiceAccount: env.AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT ?? DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT,
-    agentSecrets: parseArray(env.AGENTS_SHELL_AGENT_SECRETS, DEFAULT_AGENT_SECRETS),
-    agentDefaultTokenBudget: Number(env.AGENTS_SHELL_AGENT_DEFAULT_TOKEN_BUDGET ?? DEFAULT_AGENT_TOKEN_BUDGET),
-    agentDefaultTtlSecondsAfterFinished: Number(
-      env.AGENTS_SHELL_AGENT_DEFAULT_TTL_SECONDS_AFTER_FINISHED ?? DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED,
-    ),
+    repoBaseBranch: env.AGENTS_SHELL_REPO_BASE_BRANCH ?? DEFAULT_REPO_BASE_BRANCH,
     port: parseListenPort(env),
     host: env.HOST ?? env.AGENTS_SHELL_HOST ?? '0.0.0.0',
   }

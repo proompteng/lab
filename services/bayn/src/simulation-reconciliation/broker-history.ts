@@ -362,8 +362,10 @@ export const decideStableHistory = (
       filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
     if (
-      after.orders.rows.some(
-        ({ value: order }) => BigInt(order.filledQuantityAtoms) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+      after.orders.rows.some(({ value: order }) =>
+        [order, ...(order.legs ?? [])].some(
+          (member) => BigInt(member.filledQuantityAtoms) !== (filledByOrder.get(member.brokerOrderId) ?? 0n),
+        ),
       )
     ) {
       return yield* Result.fail(
@@ -373,7 +375,7 @@ export const decideStableHistory = (
     return after
   })
 
-export const readStableBrokerSnapshot = (
+export const readBrokerSnapshotOnce = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
@@ -386,13 +388,24 @@ export const readStableBrokerSnapshot = (
     const after = yield* readHistory(read, afterUntil)
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
-  }).pipe(
-    Effect.retry({
-      times: 2,
-      schedule: Schedule.spaced(500),
-      while: (cause) =>
-        cause instanceof ReconciliationError &&
-        cause.failure?._tag === 'Snapshot' &&
-        (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
-    }),
+  })
+
+export const readStableBrokerSnapshot = (
+  read: BrokerReadShape,
+  now: Effect.Effect<string, ReconciliationError>,
+  waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
+): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  readBrokerSnapshotOnce(read, now).pipe(
+    Effect.retry(
+      Schedule.recurs(2).pipe(
+        Schedule.while(({ input: cause }) =>
+          Effect.succeed(
+            cause instanceof ReconciliationError &&
+              cause.failure?._tag === 'Snapshot' &&
+              (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
+          ),
+        ),
+        Schedule.tap(() => waitForRetry(500)),
+      ),
+    ),
   )

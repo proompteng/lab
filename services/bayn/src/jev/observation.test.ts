@@ -89,7 +89,7 @@ describe('bounded Jev observation diagnostics', () => {
       failure({ ...payload, observedAt: new Date(Date.parse(payload.observedAt) + 1).toISOString() }).observationCheck,
     ).toBe(JevObservationCheck.ObservationTime)
     const { candidateEvidencePolicy: _policy, ...protocol } = payload.protocol
-    expect(failure({ ...payload, protocol }).observationCheck).toBe(JevObservationCheck.Feed)
+    expect(failure({ ...payload, protocol }).observationCheck).toBe(JevObservationCheck.Schema)
   })
 })
 

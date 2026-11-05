@@ -8,7 +8,9 @@ contracts are removed. Historical registrations and receipts remain immutable re
 
 Jev is the native typed System One decision model. GEPA's explicitly selected Flamingo or OpenCode free editor proposes a complete JSON
 instruction document containing only one `entry` string, bounded to 2,000 characters. The editor cannot alter
-state, the independent setup question, plan construction, arithmetic, quantities, risk, protection or authority.
+state, chart questions, atomic judgment definitions or thresholds, proposal construction, arithmetic, quantities, risk, protection or authority.
+The `entry` string supplies evidence instructions shared by every proposal-specific Noul. It cannot ask Jev to choose an action or plan.
+The protocol hash binds that string and the fixed question policy; compiled variant tests verify the actual outgoing questions.
 Question editing does not train Jev's weights.
 
 GEPA receives an explicit numeric objective and native failure diagnostics. Its evaluator uses the ordinary
@@ -166,9 +168,9 @@ through the existing identity, authority and Kargo delivery contracts.
 
 ## Shared proposal model
 
-The editor uses Flamingo's `qwen36-flamingo`, backed by `unsloth/Qwen3.6-35B-A3B-NVFP4`, through
+The editor uses Flamingo's `qwen38-flamingo`, backed by `nvidia/Qwen3.8-27B-NVFP4`, through
 `http://flamingo.flamingo.svc.cluster.local/v1/chat/completions`. The model and tokenizer revisions are pinned to
-`739af1e7aac320af1682ed1e0cce369af4c5265d`. Every accepted response must contain Flamingo's loaded serving identity
+`482ca0f3832238542f8f5295dde86b5f22711d80`. Every accepted response must contain Flamingo's loaded serving identity
 and the matching model name in the stream. The registered policy enables thinking with a 4,096-token output cap,
 temperature 0.6, top-p 0.95 and top-k 20. The complete wire response and actual usage remain in the immutable receipt.
 

@@ -34,6 +34,7 @@ import {
   jevProfitTargetStopCrossed,
 } from '../jev/exit'
 import { jevPricingQuery } from '../jev/runtime'
+import { protectedEntryBuyPriceCeilings } from '../strategy/runtime-decision'
 import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -221,6 +222,7 @@ const validateCurrentMutationExecutionTerms = (
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
   minimumSellPriceMicros: bigint | undefined,
+  maximumBuyPriceMicros: bigint | undefined,
 ): Result.Result<void, CycleRunnerError> => {
   const pricing = deriveExecutionIntentPricing({
     symbol: targetIntent.symbol,
@@ -231,6 +233,7 @@ const validateCurrentMutationExecutionTerms = (
     referencePriceMicros: BigInt(target.referencePriceMicros),
     limitSlippageBps: BigInt(limitSlippageBps),
     ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+    ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -604,6 +607,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     if (allowSubmit) {
+      const buyCeilings = protectedEntryBuyPriceCeilings(document.strategyDecision)
       const profitFloors = yield* Effect.fromResult(
         jevProfitTargetLimitFloors(profitTarget, document.createdAt, document.targetPlan.targets),
       ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -619,6 +623,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             prepared.target,
             prepared.riskBinding,
             profitFloors[prepared.targetIntent.symbol],
+            buyCeilings[prepared.targetIntent.symbol],
           ),
         )
       }

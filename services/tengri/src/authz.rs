@@ -194,7 +194,7 @@ impl WorkspaceAuthorization {
             }
             #[cfg(test)]
             Self::ControlledFixture(mode)
-                if (6..=9).contains(&mode.load(std::sync::atomic::Ordering::SeqCst)) =>
+                if (6..=12).contains(&mode.load(std::sync::atomic::Ordering::SeqCst)) =>
             {
                 let mode = mode.load(std::sync::atomic::Ordering::SeqCst);
                 let slot = agent.spec.slot.as_ref().expect("bound runtime fixture");
@@ -209,9 +209,14 @@ impl WorkspaceAuthorization {
                     } else {
                         agent.spec.runtime_epoch.clone()
                     },
-                    running: mode != 7,
-                    state: if mode == 7 { "quarantined" } else { "active" }.into(),
-                    runtime_allowed: mode != 7,
+                    running: !matches!(mode, 7 | 11),
+                    state: if matches!(mode, 7 | 12) {
+                        "quarantined"
+                    } else {
+                        "active"
+                    }
+                    .into(),
+                    runtime_allowed: !matches!(mode, 7 | 10 | 11 | 12),
                     recovery_generation: 1,
                     valid_until_unix_ms: if mode == 9 {
                         ofz::now_ms()? - 1
@@ -321,6 +326,18 @@ impl WorkspaceAuthorization {
     pub(crate) async fn stop_runtime(&self, agent: &MicroVM) -> anyhow::Result<()> {
         let client = match self {
             Self::Ofz(client) => client,
+            #[cfg(test)]
+            Self::ControlledFixture(mode) => {
+                for expected in [6, 10, 12] {
+                    let _ = mode.compare_exchange(
+                        expected,
+                        11,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                }
+                return Ok(());
+            }
             #[cfg(test)]
             _ => return Ok(()),
         };

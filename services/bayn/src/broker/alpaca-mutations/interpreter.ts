@@ -1,4 +1,4 @@
-import { Cause, Effect, identity } from 'effect'
+import { Cause, Effect, Result, identity } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
@@ -21,6 +21,7 @@ import {
   invalidRequest,
   unknownOutcome,
   type BrokerMutationShape,
+  type MutationEvidence,
 } from './model'
 import { withObservedStage } from '../../telemetry'
 
@@ -33,28 +34,55 @@ const credentials = (key: string, secret: string) => ({
   'APCA-API-SECRET-KEY': secret,
 })
 
-const withDeadline = <A, E>(
+const withDeadline = <A extends { readonly evidence: MutationEvidence }, E>(
   operation: MutationOperation,
   requestHash: string,
   timeoutMs: number,
-  effect: Effect.Effect<A, E>,
+  effect: (markRequest: Effect.Effect<void>) => Effect.Effect<A, E>,
 ): Effect.Effect<A, BrokerMutationError> =>
-  effect.pipe(
-    Effect.timeout(`${timeoutMs} millis`),
-    Effect.mapError((cause) =>
-      cause instanceof BrokerMutationError
-        ? cause
-        : unknownOutcome({
-            operation,
-            message: Cause.isTimeoutError(cause)
-              ? `Alpaca ${operation.toLowerCase()} exceeded its ${timeoutMs}ms deadline`
-              : `Alpaca ${operation.toLowerCase()} outcome is unknown because no valid response was available`,
-            requestHash,
-            cause,
-          }),
-    ),
-    withObservedStage('bayn.alpaca.mutation', { dependency: 'alpaca', operation }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* currentUtcInstant
+    let requestDispatchedAt: string | null = null
+    const markRequest = currentUtcInstant.pipe(
+      Effect.map((at) => {
+        requestDispatchedAt = at
+      }),
+    )
+    const result = yield* effect(markRequest).pipe(
+      Effect.timeout(`${timeoutMs} millis`),
+      Effect.mapError((cause) =>
+        cause instanceof BrokerMutationError
+          ? cause
+          : unknownOutcome({
+              operation,
+              message: Cause.isTimeoutError(cause)
+                ? `Alpaca ${operation.toLowerCase()} exceeded its ${timeoutMs}ms deadline`
+                : `Alpaca ${operation.toLowerCase()} outcome is unknown because no valid response was available`,
+              requestHash,
+              cause,
+            }),
+      ),
+      Effect.result,
+    )
+    const completedAt = yield* currentUtcInstant
+    const routing = { startedAt, requestDispatchedAt, completedAt }
+    if (Result.isFailure(result)) {
+      const error = result.failure
+      return yield* new BrokerMutationError({
+        operation: error.operation,
+        failure: error.failure,
+        outcome: error.outcome,
+        message: error.message,
+        ...(error.requestHash === undefined ? {} : { requestHash: error.requestHash }),
+        ...(error.brokerOrderId === undefined ? {} : { brokerOrderId: error.brokerOrderId }),
+        ...(error.brokerCode === undefined ? {} : { brokerCode: error.brokerCode }),
+        ...(error.denialReason === undefined ? {} : { denialReason: error.denialReason }),
+        ...(error.cause === undefined ? {} : { cause: error.cause }),
+        evidence: { ...error.evidence, observedAt: completedAt, routing },
+      })
+    }
+    return { ...result.success, evidence: { ...result.success.evidence, observedAt: completedAt, routing } }
+  }).pipe(withObservedStage('bayn.alpaca.mutation', { dependency: 'alpaca', operation }))
 
 const responseHeaders = (
   operation: MutationOperation,
@@ -150,21 +178,23 @@ export const makeMutation = (
           MutationOperation.Submit,
           prepared.requestHash,
           runtime.operationTimeoutMs,
-          Effect.gen(function* () {
-            const response = yield* client.execute(request)
-            const headers = yield* responseHeaders(MutationOperation.Submit, prepared.requestHash, response)
-            const body = yield* readSubmitBody(prepared.requestHash, response, headers)
-            const observedAt = yield* currentUtcInstant
-            return yield* Effect.fromResult(
-              classifySubmitResponse({
-                ...prepared,
-                status: response.status,
-                requestId: headers['x-request-id'],
-                body,
-                observedAt,
-              }),
-            )
-          }).pipe(withMutation),
+          (markRequest) =>
+            Effect.gen(function* () {
+              yield* markRequest
+              const response = yield* client.execute(request)
+              const headers = yield* responseHeaders(MutationOperation.Submit, prepared.requestHash, response)
+              const body = yield* readSubmitBody(prepared.requestHash, response, headers)
+              const observedAt = yield* currentUtcInstant
+              return yield* Effect.fromResult(
+                classifySubmitResponse({
+                  ...prepared,
+                  status: response.status,
+                  requestId: headers['x-request-id'],
+                  body,
+                  observedAt,
+                }),
+              )
+            }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
@@ -182,21 +212,23 @@ export const makeMutation = (
           MutationOperation.Cancel,
           prepared.requestHash,
           runtime.operationTimeoutMs,
-          Effect.gen(function* () {
-            const response = yield* client.execute(request)
-            const headers = yield* responseHeaders(MutationOperation.Cancel, prepared.requestHash, response)
-            const body = yield* readCancelBody(prepared.requestHash, response, headers)
-            const observedAt = yield* currentUtcInstant
-            return yield* Effect.fromResult(
-              classifyCancelResponse({
-                ...prepared,
-                status: response.status,
-                requestId: headers['x-request-id'],
-                ...(body === undefined ? {} : { body }),
-                observedAt,
-              }),
-            )
-          }).pipe(withMutation),
+          (markRequest) =>
+            Effect.gen(function* () {
+              yield* markRequest
+              const response = yield* client.execute(request)
+              const headers = yield* responseHeaders(MutationOperation.Cancel, prepared.requestHash, response)
+              const body = yield* readCancelBody(prepared.requestHash, response, headers)
+              const observedAt = yield* currentUtcInstant
+              return yield* Effect.fromResult(
+                classifyCancelResponse({
+                  ...prepared,
+                  status: response.status,
+                  requestId: headers['x-request-id'],
+                  ...(body === undefined ? {} : { body }),
+                  observedAt,
+                }),
+              )
+            }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),

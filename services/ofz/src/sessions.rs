@@ -9,24 +9,123 @@ use uuid::Uuid;
 use crate::{
     decision,
     native::{Check, Native},
-    policy::{self, BFF_ID},
+    policy,
     proto::{
-        Action, Actor, CommandReceipt, CommandState, EstablishSessionRequest,
-        InspectSessionRequest, RequestContext, RevokeSessionRequest, Session, actor::Identity,
+        Action, Actor, BeginSignInRequest, CommandReceipt, CommandState, ConsumeSignInRequest,
+        ConsumeSignInResponse, EstablishSessionRequest, InspectSessionRequest, RequestContext,
+        RevokeSessionRequest, Session, actor::Identity,
     },
+    registry,
     store::{self, Database, sql_error},
 };
+
+fn opaque_hash(value: &str) -> Result<Vec<u8>, Status> {
+    if value.len() != 43
+        || !URL_SAFE_NO_PAD
+            .decode(value)
+            .is_ok_and(|bytes| bytes.len() == 32)
+    {
+        return Err(Status::invalid_argument("256-bit sign-in value required"));
+    }
+    Ok(Sha256::digest(value.as_bytes()).to_vec())
+}
+
+pub async fn begin_sign_in(
+    database: &Database,
+    peer: &str,
+    request: BeginSignInRequest,
+) -> Result<(), Status> {
+    let (gateway, _) = registry::configured()?.session_gateway(peer)?;
+    if !request.return_path.starts_with('/')
+        || request.return_path.starts_with("//")
+        || request.return_path.len() > 2048
+        || request.return_path.contains(['\\', '\0', '\r', '\n', '#'])
+    {
+        return Err(Status::invalid_argument(
+            "local sign-in return path required",
+        ));
+    }
+    let state_hash = opaque_hash(&request.state)?;
+    let binding_hash = opaque_hash(&request.binding)?;
+    opaque_hash(&request.verifier)?;
+    opaque_hash(&request.nonce)?;
+    let operation = decision::parse_uuid(&request.operation_id)?;
+    let mut client = database
+        .pool
+        .get()
+        .await
+        .map_err(|_| Status::unavailable("sign-in database unavailable"))?;
+    let tx = client.transaction().await.map_err(sql_error)?;
+    // Only disposable sign-in state changes here; failover discards this unlogged table.
+    tx.batch_execute("SET LOCAL synchronous_commit='local'")
+        .await
+        .map_err(sql_error)?;
+    tx.query_one(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+        &[&format!("ofz.sign-in:{gateway}")],
+    )
+    .await
+    .map_err(sql_error)?;
+    tx.execute(
+        "DELETE FROM ofz.sign_in_attempts WHERE gateway_service=$1 AND expires_at_ms<=ofz.now_ms()",
+        &[&gateway],
+    )
+    .await
+    .map_err(sql_error)?;
+    let count: i64 = tx
+        .query_one(
+            "SELECT count(*) FROM ofz.sign_in_attempts WHERE gateway_service=$1",
+            &[&gateway],
+        )
+        .await
+        .map_err(sql_error)?
+        .get(0);
+    if count >= 2000 {
+        return Err(Status::resource_exhausted(
+            "sign-in attempt capacity exhausted",
+        ));
+    }
+    tx.execute("INSERT INTO ofz.sign_in_attempts(gateway_service,state_hash,binding_hash,verifier,nonce,operation_id,expires_at_ms,return_path) VALUES($1,$2,$3,$4,$5,$6,ofz.now_ms()+300000,$7)", &[&gateway,&state_hash,&binding_hash,&request.verifier,&request.nonce,&operation,&request.return_path]).await.map_err(sql_error)?;
+    tx.commit().await.map_err(sql_error)
+}
+
+pub async fn consume_sign_in(
+    database: &Database,
+    peer: &str,
+    request: ConsumeSignInRequest,
+) -> Result<ConsumeSignInResponse, Status> {
+    let (gateway, _) = registry::configured()?.session_gateway(peer)?;
+    let state_hash = opaque_hash(&request.state)?;
+    let binding_hash = opaque_hash(&request.binding)?;
+    let mut client = database
+        .pool
+        .get()
+        .await
+        .map_err(|_| Status::unavailable("sign-in database unavailable"))?;
+    let tx = client.transaction().await.map_err(sql_error)?;
+    tx.batch_execute("SET LOCAL synchronous_commit='local'")
+        .await
+        .map_err(sql_error)?;
+    let row = tx.query_opt("DELETE FROM ofz.sign_in_attempts WHERE gateway_service=$1 AND state_hash=$2 AND binding_hash=$3 AND expires_at_ms>ofz.now_ms() RETURNING verifier,nonce,operation_id,return_path", &[&gateway,&state_hash,&binding_hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("sign-in attempt expired or consumed"))?;
+    tx.commit().await.map_err(sql_error)?;
+    Ok(ConsumeSignInResponse {
+        verifier: row.get(0),
+        nonce: row.get(1),
+        operation_id: row.get::<_, Uuid>(2).to_string(),
+        return_path: row.get(3),
+    })
+}
 
 #[derive(Clone)]
 pub struct Issuer {
     url: String,
-    audience: String,
     client: reqwest::Client,
 }
 
 #[derive(Clone, Deserialize)]
 struct Claims {
     sub: String,
+    azp: String,
     sid: String,
     nonce: String,
     exp: u64,
@@ -44,16 +143,15 @@ struct Claims {
 }
 
 impl Issuer {
-    pub fn new(url: String, audience: String) -> anyhow::Result<Self> {
+    pub fn new(url: String) -> anyhow::Result<Self> {
         let parsed = reqwest::Url::parse(&url)?;
         anyhow::ensure!(
             parsed.scheme() == "https"
                 && parsed.username().is_empty()
                 && parsed.password().is_none()
                 && parsed.query().is_none()
-                && parsed.fragment().is_none()
-                && !audience.is_empty(),
-            "OIDC requires a fixed HTTPS issuer and audience"
+                && parsed.fragment().is_none(),
+            "OIDC requires a fixed HTTPS issuer"
         );
         let mut builder = reqwest::Client::builder()
             .timeout(crate::DECISION_TIMEOUT)
@@ -77,12 +175,17 @@ impl Issuer {
         let client = builder.build()?;
         Ok(Self {
             url: url.trim_end_matches('/').into(),
-            audience,
             client,
         })
     }
 
-    async fn verify(&self, token: &str, nonce: &str, now: u64) -> Result<Claims, Status> {
+    async fn verify(
+        &self,
+        token: &str,
+        nonce: &str,
+        now: u64,
+        audience: &str,
+    ) -> Result<Claims, Status> {
         if token.len() > 16384
             || nonce.len() < 32
             || nonce.len() > 128
@@ -129,7 +232,7 @@ impl Issuer {
             .map_err(|_| Status::unauthenticated("invalid identity signing key"))?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.url]);
-        validation.set_audience(&[&self.audience]);
+        validation.set_audience(&[audience]);
         validation.leeway = 0;
         validation.validate_nbf = true;
         validation.set_required_spec_claims(&["exp", "iat", "iss", "aud", "sub"]);
@@ -146,6 +249,7 @@ impl Issuer {
             .claims;
         for field in [
             "sub",
+            "azp",
             "sid",
             "nonce",
             "acr",
@@ -176,7 +280,8 @@ impl Issuer {
                 "verified passkey assurance required",
             ));
         }
-        if claims.nonce != nonce
+        if claims.azp != audience
+            || claims.nonce != nonce
             || claims.identity_provider != "github"
             || !policy::canonical_uuid(&claims.sub)
             || claims.sid.is_empty()
@@ -186,7 +291,7 @@ impl Issuer {
             || claims.exp <= now
             || claims.auth_time > now + 30
             || claims.auth_time > claims.iat + 30
-            || claims.auth_time + 120 < now
+            || claims.auth_time + 28_800 <= now
         {
             return Err(Status::unauthenticated("identity claim binding failed"));
         }
@@ -220,7 +325,7 @@ async fn established<C: tokio_postgres::GenericClient + Sync>(
 ) -> Result<bool, Status> {
     let Some(row) = client
         .query_opt(
-            "SELECT establishment_fingerprint,token_hash FROM ofz.sessions WHERE operation_id=$1",
+            "SELECT establishment_fingerprint,token_hash FROM ofz.session_credentials WHERE operation_id=$1",
             &[&operation],
         )
         .await
@@ -266,6 +371,11 @@ async fn recover_session(
                 identity: Some(Identity::HumanId(session.human_id.clone())),
             }),
             session_id: session.id.clone(),
+            origin: registry::configured()?
+                .session_gateway(peer)?
+                .1
+                .origin
+                .clone(),
             ..Default::default()
         },
         Action::SessionInspect,
@@ -325,12 +435,7 @@ async fn establish_verified(
     peer: &str,
     request: EstablishSessionRequest,
 ) -> Result<Session, Status> {
-    if peer != BFF_ID {
-        return Err(Status::permission_denied(
-            "session establishment caller denied",
-        ));
-    }
-    decision::workload(native, peer, Action::SessionEstablish).await?;
+    let (gateway_service, gateway) = registry::configured()?.session_gateway(peer)?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     if !URL_SAFE_NO_PAD
         .decode(&request.credential)
@@ -369,7 +474,12 @@ async fn establish_verified(
         return recover_session(database, native, peer, &request.credential, &state).await;
     }
     let claims = issuer
-        .verify(&request.identity_token, &request.nonce, state.now_ms / 1000)
+        .verify(
+            &request.identity_token,
+            &request.nonce,
+            state.now_ms / 1000,
+            &gateway.oidc_client_id,
+        )
         .await?;
     let human = policy::github_human_id(&claims.github_id)?;
     if !native
@@ -380,7 +490,6 @@ async fn establish_verified(
         return Err(Status::permission_denied("platform admission required"));
     }
     let nonce_hash = Sha256::digest(request.nonce.as_bytes()).to_vec();
-    let id = Uuid::new_v4();
     let mut client = database
         .pool
         .get()
@@ -404,6 +513,19 @@ async fn establish_verified(
     )
     .await
     .map_err(sql_error)?;
+    let previous = if request.previous_credential.is_empty() {
+        None
+    } else {
+        let previous_hash = Sha256::digest(request.previous_credential.as_bytes()).to_vec();
+        tx.query_opt(
+            "SELECT s.id,s.human_id,s.identity_subject,s.revoked,s.expires_at_ms,s.idle_deadline_ms,s.recovery_generation \
+             FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id \
+             WHERE c.token_hash=$1 AND s.gateway_service=$2 AND NOT c.revoked FOR UPDATE OF s,c",
+            &[&previous_hash,&gateway_service],
+        )
+        .await
+        .map_err(sql_error)?
+    };
     let current = store::state(&*tx).await?;
     if current.version != state.version
         || current.recovery_generation != state.recovery_generation
@@ -427,11 +549,63 @@ async fn establish_verified(
         return Err(Status::permission_denied("platform admission required"));
     }
     if tx.execute("INSERT INTO ofz.replay(domain,nonce_hash,expires_at_ms) VALUES('oidc',$1,$2) ON CONFLICT DO NOTHING", &[&nonce_hash,&((state.now_ms+600_000) as i64)]).await.map_err(sql_error)? != 1 { return Err(Status::unauthenticated("identity response already used")); }
+    // Fresh verification rotates the browser secret, not the authority of an authorized run.
+    // A revoked/expired session or a different broker identity cannot inherit that authority.
+    let retained = previous.as_ref().filter(|row| {
+        row.get::<_, String>(1) == human
+            && row.get::<_, String>(2) == claims.sub
+            && !row.get::<_, bool>(3)
+            && row.get::<_, i64>(4) > state.now_ms as i64
+            && row.get::<_, i64>(5) > state.now_ms as i64
+            && row.get::<_, i64>(6) == state.recovery_generation as i64
+    });
+    let id = retained.map_or_else(Uuid::new_v4, |row| row.get(0));
+    if let Some(previous) = &previous {
+        let previous_id: Uuid = previous.get(0);
+        tx.execute(
+            "UPDATE ofz.session_credentials SET revoked=true WHERE session_id=$1 AND NOT revoked",
+            &[&previous_id],
+        )
+        .await
+        .map_err(sql_error)?;
+        if retained.is_none() && !previous.get::<_, bool>(3) {
+            tx.execute(
+                "UPDATE ofz.sessions SET revoked=true WHERE id=$1",
+                &[&previous_id],
+            )
+            .await
+            .map_err(sql_error)?;
+            let context = RequestContext {
+                actor: Some(Actor {
+                    identity: Some(Identity::HumanId(previous.get(1))),
+                }),
+                session_id: previous_id.to_string(),
+                origin: gateway.origin.clone(),
+                contract_version: crate::CONTRACT_VERSION,
+                ..Default::default()
+            };
+            store::record_audit(
+                &*tx,
+                &store::receipt(
+                    &context,
+                    peer,
+                    policy::platform(),
+                    Action::SessionRevoke,
+                    true,
+                    &request.operation_id,
+                    "browser authority replaced",
+                ),
+                "",
+            )
+            .await?;
+        }
+    }
+    let expires_at = (claims.auth_time * 1000 + 28_800_000).min(state.now_ms + 28_800_000);
     let session = Session {
         id: id.to_string(),
         human_id: human.clone(),
-        expires_at_unix_ms: state.now_ms + 28_800_000,
-        idle_deadline_unix_ms: state.now_ms + 1_800_000,
+        expires_at_unix_ms: expires_at,
+        idle_deadline_unix_ms: expires_at.min(state.now_ms + 1_800_000),
         mfa_at_unix_ms: claims.auth_time * 1000,
         recovery_generation: state.recovery_generation,
         credential: request.credential.clone(),
@@ -440,24 +614,23 @@ async fn establish_verified(
         email: claims.email.unwrap_or_default(),
         image_url: claims.picture.unwrap_or_default(),
     };
-    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url,establishment_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&session.display_name,&session.email,&session.image_url,&fingerprint]).await.map_err(sql_error)?;
-    if !request.previous_credential.is_empty() {
-        let previous_hash = Sha256::digest(request.previous_credential.as_bytes()).to_vec();
-        if let Some(previous) = tx.query_opt("UPDATE ofz.sessions SET revoked=true WHERE token_hash=$1 AND NOT revoked RETURNING id,human_id", &[&previous_hash]).await.map_err(sql_error)? {
-            let context = RequestContext {
-                actor: Some(Actor { identity: Some(Identity::HumanId(previous.get(1))) }),
-                session_id: previous.get::<_,Uuid>(0).to_string(),
-                contract_version: crate::CONTRACT_VERSION,
-                ..Default::default()
-            };
-            store::record_audit(&*tx, &store::receipt(&context, peer, policy::platform(), Action::SessionRevoke, true, &request.operation_id, "browser session replaced"), "").await?;
-        }
-    }
+    tx.execute(
+        "INSERT INTO ofz.sessions(id,human_id,identity_subject,identity_session,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url,gateway_service) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
+         ON CONFLICT(id) DO UPDATE SET identity_session=EXCLUDED.identity_session,expires_at_ms=EXCLUDED.expires_at_ms,\
+         idle_deadline_ms=EXCLUDED.idle_deadline_ms,mfa_at_ms=EXCLUDED.mfa_at_ms,display_name=EXCLUDED.display_name,email=EXCLUDED.email,image_url=EXCLUDED.image_url",
+        &[&id,&human,&claims.sub,&claims.sid,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&session.display_name,&session.email,&session.image_url,&gateway_service],
+    ).await.map_err(sql_error)?;
+    tx.execute(
+        "INSERT INTO ofz.session_credentials(token_hash,session_id,operation_id,establishment_fingerprint) VALUES($1,$2,$3,$4)",
+        &[&hash,&id,&operation,&fingerprint],
+    ).await.map_err(sql_error)?;
     let context = RequestContext {
         actor: Some(Actor {
             identity: Some(Identity::HumanId(human)),
         }),
         session_id: id.to_string(),
+        origin: gateway.origin.clone(),
         grant_id: String::new(),
         trace_id: String::new(),
         deadline_unix_ms: state.now_ms + 2000,
@@ -488,7 +661,7 @@ pub async fn inspect(
     peer: &str,
     request: InspectSessionRequest,
 ) -> Result<Session, Status> {
-    decision::workload(native, peer, Action::SessionInspect).await?;
+    let (gateway_service, _) = registry::configured()?.session_gateway(peer)?;
     if request.session_id.len() != 43 {
         return Err(Status::unauthenticated("invalid session credential"));
     }
@@ -498,7 +671,7 @@ pub async fn inspect(
         .get()
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-    let row = client.query_opt("SELECT s.id,s.human_id,s.expires_at_ms,s.idle_deadline_ms,s.mfa_at_ms,s.recovery_generation,s.github_id,s.display_name,s.email,s.image_url FROM ofz.sessions s JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 CROSS JOIN ofz.platform_state p WHERE token_hash=$1 AND NOT revoked AND s.expires_at_ms>ofz.now_ms() AND s.idle_deadline_ms>ofz.now_ms() AND s.recovery_generation=p.recovery_generation", &[&hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
+    let row = client.query_opt("SELECT s.id,s.human_id,s.expires_at_ms,s.idle_deadline_ms,s.mfa_at_ms,s.recovery_generation,s.github_id,s.display_name,s.email,s.image_url FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 CROSS JOIN ofz.platform_state p WHERE c.token_hash=$1 AND s.gateway_service=$2 AND NOT c.revoked AND NOT s.revoked AND s.expires_at_ms>ofz.now_ms() AND s.idle_deadline_ms>ofz.now_ms() AND s.recovery_generation=p.recovery_generation", &[&hash,&gateway_service]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
     let human: String = row.get(1);
     if !native
         .check(&[Check::new("platform", "lab", "admit", "human", &human)])
@@ -525,14 +698,15 @@ pub async fn inspect(
 
 pub async fn revoke(
     database: &Database,
-    native: &Native,
     peer: &str,
     request: RevokeSessionRequest,
 ) -> Result<CommandReceipt, Status> {
-    if peer != BFF_ID || request.credential.len() != 43 {
-        return Err(Status::unauthenticated("BFF session credential required"));
+    let (gateway_service, gateway) = registry::configured()?.session_gateway(peer)?;
+    if request.credential.len() != 43 || request.origin != gateway.origin {
+        return Err(Status::unauthenticated(
+            "gateway session credential and origin required",
+        ));
     }
-    decision::workload(native, peer, Action::SessionRevoke).await?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     let state = database.state().await?;
     let hash = Sha256::digest(request.credential.as_bytes()).to_vec();
@@ -544,8 +718,8 @@ pub async fn revoke(
     let tx = client.transaction().await.map_err(sql_error)?;
     let session = tx
         .query_opt(
-            "SELECT id,human_id FROM ofz.sessions WHERE token_hash=$1 FOR UPDATE",
-            &[&hash],
+            "SELECT s.id,s.human_id,c.revoked FROM ofz.sessions s JOIN ofz.session_credentials c ON c.session_id=s.id WHERE c.token_hash=$1 AND s.gateway_service=$2 FOR UPDATE OF s,c",
+            &[&hash,&gateway_service],
         )
         .await
         .map_err(sql_error)?
@@ -568,6 +742,15 @@ pub async fn revoke(
         }
         return store::decode(row.get(2));
     }
+    if session.get::<_, bool>(2) {
+        return Err(Status::unauthenticated("session credential replaced"));
+    }
+    tx.execute(
+        "UPDATE ofz.session_credentials SET revoked=true WHERE session_id=$1 AND NOT revoked",
+        &[&id],
+    )
+    .await
+    .map_err(sql_error)?;
     tx.execute("UPDATE ofz.sessions SET revoked=true WHERE id=$1", &[&id])
         .await
         .map_err(sql_error)?;

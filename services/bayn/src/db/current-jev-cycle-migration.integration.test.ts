@@ -35,6 +35,8 @@ const insertRetired = (native: ReturnType<typeof nativeJevFixture>, binding: str
       schema_version: `bayn.autonomous-cycle.${version}`,
       identity_schema_version: identity.schemaVersion,
       strategy_name: identity.strategyName,
+      state: 'PENDING',
+      state_version: 1,
     }
     yield* sql`INSERT INTO autonomous_cycles SELECT (jsonb_populate_record(NULL::autonomous_cycles, to_jsonb(c) || ${sql.json(changed)})).*
     FROM autonomous_cycles c WHERE cycle_id = ${native.draft.identity.cycleId}`

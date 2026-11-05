@@ -39,12 +39,13 @@ import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
+import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
+import { executionControllerPlanHash } from '../execution/controller'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
-  executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionProjectionRuntime,
   makePublishedExecutionCycleDriverLive,
@@ -58,6 +59,12 @@ import {
   type RecoveryFirstCycleDriverSlot,
   type RecoveryFirstCycleDriverSlotState,
 } from './native-execution-runtime'
+
+const executionBuild = {
+  sourceRevision: 'a'.repeat(40),
+  imageRepository: 'registry.example.test/lab/bayn',
+  imageDigest: `sha256:${'1'.repeat(64)}`,
+}
 
 const hash = (character: string): string => character.repeat(64)
 const sourceRevision = 'a'.repeat(40)
@@ -248,12 +255,14 @@ describe('native execution runtime', () => {
       payload: { schemaVersion: 'bayn.jev-observation.v1' },
     } as CandidateObservation
     const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
+    const momentum = makeRepeatedMomentumPolicy(fixtureRuntime.definition.parameters)
+    const retainedPolicies: Array<typeof momentum | undefined> = []
     let advances = 0
     const currentDriver = {
       ...driver,
       advance: Effect.gen(function* () {
         if (++advances === 1) {
-          yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+          yield* (yield* CandidateObservationStore).record(candidate, momentum).pipe(Effect.orDie)
           yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
           yield* (yield* JevBatchStore).finish(hash('c')).pipe(Effect.orDie)
         }
@@ -261,13 +270,17 @@ describe('native execution runtime', () => {
       }),
     }
     const context = Context.make(CandidateObservationStore, {
-      record: () => Effect.void,
+      record: (_source, policy) =>
+        Effect.sync(() => {
+          retainedPolicies.push(policy)
+        }),
       latestJevWindowEnd: () => Effect.succeed(Option.none()),
     }).pipe(
       Context.add(JevBatchStore, {
         read: () => Effect.succeed(batch),
         pending: () => Effect.succeed([]),
         begin: () => Effect.succeed({ ...batch, dispatches: [] }),
+        complete: () => Effect.succeed(batch),
         finish: () => Effect.succeed(batch),
       }),
     ) as Context.Context<RecoveryFirstRuntime>
@@ -278,10 +291,10 @@ describe('native execution runtime', () => {
             state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
             ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
           }
-          yield* captureRecoveryFirstCycleDriver(slot)(currentDriver).pipe(
-            Effect.provideContext(context),
-            Effect.forkScoped,
-          )
+          yield* captureRecoveryFirstCycleDriver(
+            slot,
+            executionBuild,
+          )(currentDriver).pipe(Effect.provideContext(context), Effect.forkScoped)
           yield* Deferred.await(slot.ready)
           const bound = yield* readRecoveryFirstCycleDriverSlot(slot)
           return [yield* bound.advance, yield* bound.advance]
@@ -290,12 +303,15 @@ describe('native execution runtime', () => {
     )
     expect(results[0]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
     })
     expect(results[1]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [], complete: true },
     })
+    expect(retainedPolicies).toEqual([momentum, undefined])
   })
 
   test.each([false, true])(
@@ -314,6 +330,7 @@ describe('native execution runtime', () => {
           read: () => Effect.succeed(null),
           pending: () => Effect.succeed([]),
           begin: () => Effect.fail(failure),
+          complete: () => Effect.fail(failure),
           finish: () => Effect.fail(failure),
         }),
       ) as Context.Context<RecoveryFirstRuntime>
@@ -324,7 +341,10 @@ describe('native execution runtime', () => {
               state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
               ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
             }
-            yield* captureRecoveryFirstCycleDriver(slot)({
+            yield* captureRecoveryFirstCycleDriver(
+              slot,
+              executionBuild,
+            )({
               ...driver,
               advance: Effect.gen(function* () {
                 if (retainEarlier)
@@ -366,6 +386,7 @@ describe('native execution runtime', () => {
           read: () => Effect.succeed(null),
           pending: () => Effect.succeed([]),
           begin: () => Effect.die('unused'),
+          complete: () => Effect.die('unused'),
           finish: () => Effect.die('unused'),
         }),
       ) as Context.Context<RecoveryFirstRuntime>
@@ -377,7 +398,10 @@ describe('native execution runtime', () => {
               state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
               ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
             }
-            yield* captureRecoveryFirstCycleDriver(slot)({
+            yield* captureRecoveryFirstCycleDriver(
+              slot,
+              executionBuild,
+            )({
               ...driver,
               advance: Effect.gen(function* () {
                 const store = yield* CandidateObservationStore
@@ -404,6 +428,7 @@ describe('native execution runtime', () => {
       expect(result.nextDelayMs).toBe(1_000)
       expect(result.observation).toEqual({
         ...windowClosedObservation,
+        executionBuild,
         jevObservationReferences: {
           hashes:
             mode === 'overflow'
@@ -626,9 +651,10 @@ describe('native execution runtime', () => {
       }),
     }
     const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(capturedDriver).pipe(
-        Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>),
-      ),
+      captureRecoveryFirstCycleDriver(
+        slot,
+        executionBuild,
+      )(capturedDriver).pipe(Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>)),
     )
 
     await Effect.runPromise(Deferred.await(slot.ready))
@@ -663,7 +689,11 @@ describe('native execution runtime', () => {
             Effect.sync(() => {
               released += 1
             }),
-        ).pipe(Effect.andThen(captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context))))
+        ).pipe(
+          Effect.andThen(
+            captureRecoveryFirstCycleDriver(slot, executionBuild)(driver).pipe(Effect.provideContext(context)),
+          ),
+        )
       }),
       Layer.succeed(
         ExecutionControllerStatusStore,
@@ -911,7 +941,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
-    expect(result.observation).toEqual(windowClosedObservation)
+    expect(result.observation).toEqual({ ...windowClosedObservation, executionIssuedAt: command.issuedAt })
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
       planHash: controllerPlanHash,
@@ -920,7 +950,7 @@ describe('native execution runtime', () => {
       lastSequence: command.sequence,
       lastOutcome: 'Waiting',
       lastReceiptHash: result.outcome.receiptHash,
-      lastPass: windowClosedObservation,
+      lastPass: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
     })
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
@@ -1066,6 +1096,50 @@ describe('native execution runtime', () => {
     })
   })
 
+  test.each([false, true])(
+    'retains a pass only in its existing projection epoch (stored inactive: %s)',
+    async (storedInactive) => {
+      const retained = status({
+        lastPass: windowClosedObservation,
+        active: !storedInactive,
+        epoch: storedInactive ? command.epoch + 1 : command.epoch,
+      })
+      if (!executionControllerStatusHasCompletion(retained)) throw new Error('Expected a retained completion')
+      let projected: ExecutionControllerStatus | undefined
+      await Effect.runPromise(
+        projectExecutionControllerState(
+          command.controllerKey,
+          {
+            schemaVersion: 1,
+            active: false,
+            epoch: command.epoch + 1,
+            planHash: controllerPlanHash,
+            sourceRevision,
+            initialSequence: command.sequence,
+            nextSequence: command.sequence + 1,
+            lastCompletion: {
+              sequence: retained.lastSequence,
+              outcome: retained.lastOutcome,
+              receiptHash: retained.lastReceiptHash,
+              completedAt: retained.completedAt,
+            },
+          },
+          {
+            read: () => Effect.succeed(retained),
+            project: (candidate) =>
+              Effect.sync(() => {
+                projected = candidate
+                return { _tag: 'Applied' as const, status: candidate }
+              }),
+          },
+        ),
+      )
+      expect(projected).toMatchObject({ epoch: command.epoch + 1, lastReceiptHash: retained.lastReceiptHash })
+      if (storedInactive) expect(projected).toHaveProperty('lastPass', windowClosedObservation)
+      else expect(projected).not.toHaveProperty('lastPass')
+    },
+  )
+
   test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
     let projected: ExecutionControllerStatus | undefined
     await Effect.runPromise(
@@ -1178,7 +1252,7 @@ describe('native execution runtime', () => {
       }
       expect(replay).toEqual({
         completedAt: committed.completedAt,
-        observation: retainedObservation,
+        observation: { ...retainedObservation, executionIssuedAt: command.issuedAt },
         outcome: {
           _tag: committed.lastOutcome,
           receiptHash: committed.lastReceiptHash,
@@ -1514,7 +1588,7 @@ describe('native execution runtime', () => {
     )
     const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context)),
+      captureRecoveryFirstCycleDriver(slot, executionBuild)(driver).pipe(Effect.provideContext(context)),
     )
 
     await Effect.runPromise(Deferred.await(slot.ready))

@@ -449,6 +449,7 @@ describe('Tengri desktop window manager', () => {
       children: createElement('div'),
       dispatch: () => undefined,
       stageRef: createRef<HTMLDivElement>(),
+      viewport: () => viewport,
       window: minimized,
     })
 

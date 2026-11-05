@@ -19,7 +19,10 @@ build without a root daemon. Project files, sessions and credentials persist on 
 additional tools built into the container layer reset on rollout. The research container
 keeps its read-only root filesystem.
 
-Flamingo (`flamingo/qwen36-flamingo`) is the default. Native tools remain enabled.
+Flamingo (`flamingo/qwen38-flamingo`) is the default. Native tools remain enabled.
+Its reasoning picker uses Qwen3.8's native `low`, `medium`, and `xhigh` efforts.
+The generic OpenAI-compatible `high` effort is invalid for this checkpoint.
+After refreshing an existing browser session, select `Medium` or `Xhigh`.
 The full native integration catalog remains available through Connect and Models.
 For remote sign-in, choose OpenAI > Codex device code (legacy) to use a supported ChatGPT plan. Other
 providers need their own credentials or credits; a catalog entry does not grant
@@ -43,6 +46,22 @@ browser's **Connect to a server** screen. Keep passwords and pairing links out o
 logs and commits. Unauthenticated API and pairing requests must fail. Tailnet
 membership and the scoped Ingress NetworkPolicy provide a separate network
 boundary; Funnel is disabled.
+
+## Platform connectors
+
+The development pod is an independent Relay client with service account `opencode` and SPIFFE identity
+`spiffe://proompteng.ai/ns/opencode/sa/opencode`. The image includes the `relay-client` MCP stdio bridge. The native
+OpenCode 2.1.3 configuration uses `mcp.servers.relay`, with separate startup/catalog/execution timeouts, matching
+[its pinned MCP schema](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/schema/src/config/mcp.ts).
+
+Tools come from Relay's registered operation catalog. Kubernetes pod status, bounded logs and events execute through
+Relay and Ofz; the OpenCode container receives no cluster credential. An Ofz administrator must explicitly assign
+namespace relationships to the workload before tools can succeed. Each invocation checks current authority and
+returns durable authorization/execution receipts. It does not impersonate a Tengri workspace or browser user.
+
+The research pod has no Relay workload identity, socket mount, MCP configuration or allowed network path. Personal
+sessions and provider credentials remain in the existing development PVC. See
+[policy onboarding](../ofz/platform/README.md) and [the platform guide](../../docs/platform/ofz-relay.md).
 
 ## Connect ChatGPT from a remote browser
 

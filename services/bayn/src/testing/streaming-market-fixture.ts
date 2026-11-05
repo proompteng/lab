@@ -34,7 +34,7 @@ import {
   intradayMomentumFeatureTopic,
 } from '../strategy/intraday-momentum/protocol'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../market-data/intraday/model'
 
 type EquityFixtureSnapshot = Omit<StreamingVerifiedMarketSnapshot, 'manifest'> & {
   readonly manifest: Omit<StreamingVerifiedMarketSnapshot['manifest'], 'calendar' | 'streaming'> & {
@@ -87,15 +87,19 @@ const rawPricingRequest: IntradaySnapshotRequest & { readonly calendar: MarketCa
     })),
 }
 
-export const streamingFixture = (returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 }) => {
+export const streamingFixture = (
+  returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
+  includeBenchmark = true,
+) => {
   const { purpose: _purpose, ...baseRequest } = rawPricingRequest
   const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
     ...baseRequest,
     rangeStartAt: '2026-09-04T14:00:00.000Z',
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: 2000,
-    symbols: [...protocol.candidateSymbols, 'SPY'].sort(),
+    symbols: [...protocol.candidateSymbols, ...(includeBenchmark ? ['SPY'] : [])].sort(),
     candidateSymbols: protocol.candidateSymbols,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   }
   const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
   const { cut, query, snapshot, rows } = streamingFixtureFromRaw(raw, request)
@@ -242,3 +246,5 @@ export const fixtureStreamingReference: IntradayMarketDataService['verifyReferen
       manifest: snapshot.manifest,
     } as StreamingVerifiedSnapshotReference
   })
+
+export const jevStreamingFixture = (returns?: Readonly<Record<string, number>>) => streamingFixture(returns, false)

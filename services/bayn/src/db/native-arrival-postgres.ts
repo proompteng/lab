@@ -1,5 +1,6 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { Effect, Schedule, Schema } from 'effect'
+import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import {
@@ -20,6 +21,8 @@ const PersistedChunk = Schema.Struct({
 })
 const error = (cause: unknown) =>
   new NativeArrivalCaptureError({ message: 'Native arrival PostgreSQL evidence write failed', cause })
+const retryableAppendFailure = (cause: unknown): cause is SqlError =>
+  isSqlError(cause) && (cause.reason._tag === 'ConnectionError' || cause.reason._tag === 'StatementTimeoutError')
 const matches = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
   strictParseOptions,
@@ -97,9 +100,35 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
             bytes += addition.compressed.byteLength
           }
           if (batch.length > 0) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
+          if (additions.length === 0) {
+            // A visible prior COMMIT may still be waiting for its synchronous standby. Transactional WAL
+            // makes this acknowledgement wait for the configured durability even when no rows are new.
+            yield* matches(
+              yield* sql`SELECT pg_logical_emit_message(true,'bayn.native-arrival-ack.v1',
+                ${sha256(chunks.map((chunk) => chunk.contentHash).join(''))}) > '0/0'::pg_lsn AS matches`,
+            )
+          }
         }),
       )
-    }).pipe(Effect.mapError(error)),
+    }).pipe(
+      // A lost or timed-out COMMIT acknowledgement may follow a committed write. Reconcile the same immutable
+      // ordinals before retrying, including the synchronous durability barrier when every ordinal already exists.
+      Effect.catchCause((cause) => {
+        const errors = cause.reasons.map((reason) =>
+          reason._tag === 'Fail' ? reason.error : reason._tag === 'Die' ? reason.defect : undefined,
+        )
+        const first = errors[0]
+        return retryableAppendFailure(first) && errors.every(retryableAppendFailure)
+          ? Effect.fail(first)
+          : Effect.failCause(cause)
+      }),
+      Effect.retry({
+        times: 2,
+        schedule: Schedule.spaced('100 millis'),
+        while: retryableAppendFailure,
+      }),
+      Effect.mapError(error),
+    ),
   end: (end) =>
     sql
       .withTransaction(

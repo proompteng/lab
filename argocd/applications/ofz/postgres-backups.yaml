@@ -19,7 +19,7 @@ spec:
         memory: 512Mi
   configuration:
     destinationPath: s3://ofz-database-backups/
-    endpointURL: https://nuc.ide-newton.ts.net:9444
+    endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
     s3Credentials:
       accessKeyId:
         name: ofz-database-backup
@@ -28,11 +28,9 @@ spec:
         name: ofz-database-backup
         key: AWS_SECRET_ACCESS_KEY
     data:
-      encryption: AES256
       compression: snappy
       jobs: 1
     wal:
-      encryption: AES256
       compression: snappy
       maxParallel: 2
 ---
@@ -56,7 +54,7 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: ofz-db-nuc-cutover-primary
+  name: ofz-db-ceph-cutover-primary
   annotations:
     argocd.argoproj.io/sync-wave: "-6"
     argocd.argoproj.io/sync-options: Prune=false,Delete=false

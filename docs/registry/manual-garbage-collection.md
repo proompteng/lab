@@ -23,7 +23,10 @@ skipped. This start deadline is separate from the two-hour execution deadline.
 
 `scheduled.py` resumes receipted quarantine purges, prepares online, refreshes
 protected references immediately before collection, then purges with uploads open.
-It skips collection when the plan is empty. The controller's four-minute collection
+It skips collection when the plan is empty. Online maintenance first uses the existing
+five-minute singleton Deployment rollout contract, then requires exactly one
+non-terminating Pod with every container ready. Missing container statuses, extra
+Pods and an expired readiness deadline still fail closed; this is not a phase retry. The controller's four-minute collection
 ceiling, helper deletion and upload-restoration checks also apply to scheduled runs.
 Interrupted collections retain their receipt for the next run after writes are restored;
 an unresolved maintenance hold requires operator recovery.
@@ -116,7 +119,10 @@ cannot be selected by editing the plan.
 Eligible tag directories and verified orphan blobs move atomically into
 `docker/registry/v2/_gc_quarantine/<batch>/<digest-prefix>/<digest>` on the same
 claim; tag metadata uses `tags/<hash-of-repository-and-tag>` inside that batch.
-A durable receipt records the selected tags and original blob file identities.
+A durable version 3 receipt binds the batch name and directory inode to the prepared
+PVC UID/PV. It records original blob signatures and an inventory of every quarantined
+tag metadata file (signature and SHA-256) and directory inode before any rename.
+Preparation and collection retain their full device/inode/size/mtime checks.
 
 Renaming keeps the allocated blocks intact. Neither blob payloads nor tag metadata
 are physically deleted while uploads are disabled. Empty CAS directories and historical
@@ -157,14 +163,91 @@ so a registry restart cannot leave the claim held by a separate maintenance Pod.
 Reuploading the same digest
 creates a new live file; deleting the quarantined inode cannot remove it.
 
-The Job verifies each receipt's inode, size and timestamp before deleting blobs,
-and validates quarantined tag links before deleting their metadata.
-Absent quarantined files are safe to skip on retry. A failed or interrupted purge
-preserves the receipt and remaining files. Retry the same batch after inspecting
-the saved output; do not delete live blobs or change the claim. A kernel lock
+The runner reads the Bound claim's UID/PV and passes them to the quarantine-only
+process. Purge requires those identities to match the receipt, along with its batch
+name and directory inode. Only in this persisted quarantine phase does comparison
+ignore `st_dev`: Linux device numbers can change across volume remounts. Inode,
+size, nanosecond mtime and SHA-256 content must still match. Blob content is checked
+against its CAS digest; tag files against the frozen inventory. Symlinked paths,
+new metadata, changed files, invalid receipts and the wrong claim/PV fail closed.
+The live CAS stays read-only to the purge container.
+
+Absent receipted files are safe to skip on retry, including an interrupted tag
+metadata deletion that already removed `current/link`. Remaining files and directory
+inodes must still match; a missing link is not authority to recursively delete a tag.
+A failed or interrupted purge preserves the receipt and remaining files. Finalization
+atomically renames an emptied batch to `.purged-<batch>` before removing its receipt;
+the scheduler also resumes these receipt-only or empty finalizers. Unexpected contents
+are never recursively deleted. No reclamation is credited for files absent on retry.
+
+Failed purge logs include phase, exit status (or timeout), and the final 8 KiB of
+stderr in the CronJob log, not only the ephemeral `/work` log. Script cleanup failure
+on a replaced Pod does not mask the original purge error. Do not delete live blobs
+or change the claim. A kernel lock
 prevents overlapping purges. A one-hour process deadline and the registry Pod's
 lifecycle bound the purge. The runner removes its temporary script; interrupted
 receipts remain resumable after the Pod is replaced.
+
+### Version 2 recovery gate
+
+Version 2 is not accepted for deletion by the version 3 implementation. It did not
+persist a PVC UID/PV, batch directory inode or complete tag metadata inventory.
+Those facts cannot safely be invented by copying current metadata into a receipt.
+There is no parallel legacy purge path or automatic receipt upgrade.
+
+Batch `registry-collect-071cdc9382ed` encountered this gate. The 2026-11-02
+scheduled run reported 2,000 quarantined blobs and 596 tags before purge failed.
+The supplied readback found unchanged inode/size/mtime but changed device numbers
+on five blobs. Version 2 compares device numbers for tags first, then blobs; an
+isolated remount regression reproduces `Quarantined tag changed`. The original
+remote stderr was only in the terminated Job's emptyDir, so the exact first live
+file/error cannot be recovered from its available stdout. Preserve the original
+receipt as recovery evidence.
+
+If collection-time provenance is unavailable, do not manufacture a version 3 receipt.
+An explicitly authorized recovery can restore the data first, then let the current
+retention protocol create a new collection-time receipt. Use the reviewed recovery
+tool from the repository root:
+
+```sh
+python3 packages/scripts/src/registry/recover.py \
+  --context galactic-tailscale --batch registry-collect-071cdc9382ed \
+  --plan /tmp/registry-restore.json
+python3 packages/scripts/src/registry/recover.py \
+  --context galactic-tailscale --plan /tmp/registry-restore.json --apply
+```
+
+The first command is read-only. It verifies every remaining blob's original
+inode/size/mtime and full content digest, the recorded tag links and supported tag
+metadata. It binds the restoration plan to the current Bound claim/PV, batch inode
+and original receipt hash. This authorizes restoration only, never deletion.
+
+Apply shares the existing four-minute maintenance hold, helper and write-restoration
+protocol. It rechecks the complete plan before moving data, restores missing CAS
+entries with durable hard links, and restores tag directories without replacing
+current tags. Existing destinations stay intact; old conflicting copies are retained
+under `.restored-<batch>`. The original receipt, recovery plan and emptied batch are
+also archived there. No legacy receipt becomes valid purge input. Audit reports must
+distinguish restored data, archived conflicts and bytes later reclaimed by normal GC.
+
+Preparation occurs with uploads open; apply causes the existing singleton read-only
+and write-enabled rollouts. Keep its plan for retry. After interruption, helper
+deletion is confirmed before uploads reopen; rerun the same plan to resume verified
+remaining moves. Changed files, missing data, new destinations, unexpected files,
+symlinks or a different claim stop recovery. Never discard or rebaseline the evidence.
+After restoration, run the existing scheduled cleanup protocol and verify its actual
+prepare/collect/purge results. The archive remains evidence, outside automatic purge.
+
+The source repair is a generated ConfigMap change delivered by the registry
+Application's existing GitOps path; it changes no images, PVC, RBAC, retention,
+worker counts or timeouts. Verify the CronJob's new `registry-cleanup-scripts-*`
+reference after reconciliation. Rollback is the reviewed source revert through
+GitOps; preserve every receipt and stop rather than trying to consume a newer
+receipt with older code. A successful run of the **scheduled cleanup protocol**, with resume-purge,
+prepare/collect and completion results as applicable, is the live reclamation gate.
+Serving readiness alone is not that proof. If the next schedule or required
+inspection is unavailable, report it. An explicitly authorized recovery may retry the
+existing CronJob template outside its cadence after confirming no other run is active.
 
 After deletion, audit protected references and blob sizes, pull a retained image,
 and read filesystem free space. If the mount lacks `discard`, trim only this

@@ -7,7 +7,13 @@ import type { TechnicalMarketFeature } from '../features/technical-contract'
 
 import type { KafkaPartitionPosition } from './bootstrap'
 import { RequiredMarketFeatureSchema } from '../features/contract'
-import { observedBarsAt, topicPartitionKey, type ObservedFeature, type StreamingProjection } from './projection'
+import {
+  observedBarsAt,
+  observedQuoteAt,
+  topicPartitionKey,
+  type ObservedFeature,
+  type StreamingProjection,
+} from './projection'
 import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
 import { UtcInstantSchema, UtcOrderTimestampSchema } from '../../schemas'
 import { intradayInstantNanos } from '../intraday/time'
@@ -216,8 +222,8 @@ export const projectionCoverageMeasurements = (
         const matches = nativeFeatureMatchesBars(entry.value, bars)
         return Result.isSuccess(matches) && matches.success
       }).length
-      const quote = projection.quotes.get(symbol)
-      const trade = projection.trades.get(symbol)
+      const quote = observedQuoteAt(projection, symbol, observedAtMs)
+      const trade = projection.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
       return {
         symbol,
         expectedBars: 30,

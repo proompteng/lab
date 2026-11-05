@@ -12,8 +12,13 @@ import tempfile
 import time
 import unittest
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import psycopg
 import urllib3
@@ -22,9 +27,9 @@ from minio.error import S3Error
 from minio.objectlockconfig import ObjectLockConfig
 from minio.retention import COMPLIANCE, GOVERNANCE, Retention
 from minio.sseconfig import Rule, SSEConfig
+from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
-from psycopg import sql
 
 module = importlib.util.spec_from_file_location(
     "audit_export", Path(__file__).resolve().parents[1] / "audit_export.py"
@@ -35,7 +40,7 @@ module.loader.exec_module(archive)
 
 initializer_spec = importlib.util.spec_from_file_location(
     "nuc_archive_initialize",
-    Path(__file__).resolve().parents[3] / "devices/nuc/ofz-recovery/initialize.py",
+    Path(__file__).resolve().parent / "fixtures/initialize.py",
 )
 initialize = importlib.util.module_from_spec(initializer_spec)
 initializer_spec.loader.exec_module(initialize)
@@ -58,6 +63,187 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_slow_retention_response_uses_production_transport_budget(self):
+        until = datetime.now(UTC) + timedelta(days=90)
+        payload = (
+            '<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+            f"<Mode>COMPLIANCE</Mode><RetainUntilDate>{until.isoformat()}</RetainUntilDate>"
+            "</Retention>"
+        ).encode()
+
+        class SlowRetention(BaseHTTPRequestHandler):
+            def do_GET(self):
+                time.sleep(6)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                except BrokenPipeError:
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowRetention)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        environment = {
+            "OFZ_DATABASE_DSN": "dbname=ofz_control user=ofz_archiver sslmode=require",
+            "OFZ_DATABASE_PASSWORD_FILE": "fixture-password",
+            "OFZ_DATABASE_CA_FILE": "fixture-ca",
+            "OFZ_ARCHIVE_ACCESS_KEY_FILE": "fixture-access",
+            "OFZ_ARCHIVE_SECRET_KEY_FILE": "fixture-secret",
+        }
+        try:
+            with (
+                patch.dict(os.environ, environment),
+                patch.object(archive, "ENDPOINT", f"127.0.0.1:{server.server_port}"),
+                patch.object(archive, "credential", return_value="fixture"),
+                patch.object(archive.psycopg, "connect"),
+            ):
+                exporter = archive.from_environment()
+                retention = exporter.storage.get_object_retention(
+                    archive.BUCKET, "fixture", version_id="version"
+                )
+                self.assertEqual(retention.mode, COMPLIANCE)
+                self.assertEqual(retention.retain_until_date, until)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_transient_transport_repeats_full_verification_before_fencing(self):
+        database = Mock()
+        exporter = archive.Exporter(database, Mock())
+        failure = urllib3.exceptions.ReadTimeoutError(None, None, "PRIVATE_SENTINEL")
+        with patch.object(exporter, "_tick", side_effect=[failure, 0]) as verify:
+            self.assertEqual(exporter.tick(), 0)
+        self.assertEqual(verify.call_count, 2)
+        database.execute.assert_not_called()
+
+    def test_persistent_transport_failure_fences_after_one_retry(self):
+        database = Mock()
+        exporter = archive.Exporter(database, Mock())
+        failure = urllib3.exceptions.ReadTimeoutError(None, None, "PRIVATE_SENTINEL")
+        with (
+            patch.object(exporter, "_tick", side_effect=failure) as verify,
+            self.assertRaises(urllib3.exceptions.ReadTimeoutError),
+        ):
+            exporter.tick()
+        self.assertEqual(verify.call_count, 2)
+        database.execute.assert_called_once_with(
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=0 "
+            "WHERE acknowledged_at_ms<>0"
+        )
+
+    def test_integrity_failure_fences_without_retry(self):
+        database = Mock()
+        exporter = archive.Exporter(database, Mock())
+        with (
+            patch.object(
+                exporter, "_tick", side_effect=archive.ArchiveError("hash mismatch")
+            ) as verify,
+            self.assertRaises(archive.ArchiveError),
+        ):
+            exporter.tick()
+        self.assertEqual(verify.call_count, 1)
+        database.execute.assert_called_once()
+
+    def test_worker_recovers_from_transport_timeout_without_restart(self):
+        tick = Mock(
+            side_effect=[
+                urllib3.exceptions.ReadTimeoutError(None, None, "PRIVATE_SENTINEL"),
+                0,
+                KeyboardInterrupt,
+            ]
+        )
+        exporter = SimpleNamespace(
+            database=nullcontext(), acquire=lambda: True, tick=tick
+        )
+        with (
+            patch.object(archive, "from_environment", return_value=exporter),
+            patch.object(sys, "argv", ["ofz-audit-export"]),
+            patch.object(archive.time, "sleep") as sleep,
+            patch.object(sys, "stderr", io.StringIO()) as errors,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            archive.main()
+        self.assertEqual(tick.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertIn('"event": "audit_archive_retry"', errors.getvalue())
+        self.assertNotIn("PRIVATE_SENTINEL", errors.getvalue())
+
+    def test_once_reports_transport_failure_without_worker_retry(self):
+        timeout = urllib3.exceptions.ReadTimeoutError(None, None, "fixture timeout")
+        tick = Mock(side_effect=timeout)
+        exporter = SimpleNamespace(
+            database=nullcontext(), acquire=lambda: True, tick=tick
+        )
+        with (
+            patch.object(archive, "from_environment", return_value=exporter),
+            patch.object(sys, "argv", ["ofz-audit-export", "--once"]),
+            patch.object(archive.time, "sleep") as sleep,
+            self.assertRaises(urllib3.exceptions.ReadTimeoutError),
+        ):
+            archive.main()
+        self.assertEqual(tick.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_ceph_retention_uses_rfc3339_nanosecond_precision(self):
+        storage = archive.CephArchive(
+            "localhost:9000",
+            access_key="fixture",
+            secret_key="fixture-secret",
+            secure=False,
+        )
+        response = SimpleNamespace(
+            data=b'<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Mode>COMPLIANCE</Mode><RetainUntilDate>2030-01-02T03:04:05.934000000Z</RetainUntilDate></Retention>'
+        )
+        with patch.object(storage, "_execute", return_value=response):
+            retention = storage.get_object_retention(
+                "ofz-audit", "batches/fixture", version_id="ceph-version"
+            )
+        self.assertEqual(retention.mode, COMPLIANCE)
+        self.assertEqual(
+            retention.retain_until_date, datetime(2030, 1, 2, 3, 4, 5, 934000, UTC)
+        )
+
+    def test_ceph_archive_verifies_bytes_and_retention_without_sse(self):
+        payload = b"Ceph archive payload"
+        digest = hashlib.sha256(payload).hexdigest()
+        until = datetime.now(UTC) + timedelta(days=90)
+
+        class Response(io.BytesIO):
+            headers = {}
+
+            def release_conn(self):
+                pass
+
+        class Storage:
+            data = payload
+            deadline = until
+
+            def get_object_retention(self, *args, **kwargs):
+                return SimpleNamespace(mode=COMPLIANCE, retain_until_date=self.deadline)
+
+            def get_object(self, *args, **kwargs):
+                return Response(self.data)
+
+        storage = Storage()
+        exporter = archive.Exporter(None, storage)
+        receipt = archive.Receipt(
+            f"batches/1-1-{digest}.json", "ceph-version", digest, until.isoformat()
+        )
+        exporter.verify_object(receipt)
+        storage.data = b"changed"
+        with self.assertRaisesRegex(archive.ArchiveError, "readback mismatch"):
+            exporter.verify_object(receipt)
+        storage.data = payload
+        storage.deadline = until - timedelta(seconds=1)
+        with self.assertRaisesRegex(archive.ArchiveError, "retention mismatch"):
+            exporter.verify_object(receipt)
+
     def test_database_writer_identity_cannot_be_replaced(self):
         with tempfile.TemporaryDirectory(prefix="ofz-database-writers-") as temporary:
             directory = Path(temporary)
@@ -270,6 +456,44 @@ class ArchivePolling(unittest.TestCase):
             exporter.tick()
         self.assertEqual(self.checkpoint_version(), failed)
 
+    def test_transport_timeout_fences_until_verified_retry(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+        with (
+            patch.object(
+                exporter,
+                "verify_destination",
+                side_effect=urllib3.exceptions.ReadTimeoutError(
+                    None, None, "fixture timeout"
+                ),
+            ),
+            self.assertRaises(urllib3.exceptions.ReadTimeoutError),
+        ):
+            exporter.tick()
+        self.assertEqual(self.checkpoint_version()["acknowledged_at_ms"], 0)
+        self.assertEqual(exporter.tick(), 0)
+        self.assertGreater(self.checkpoint_version()["acknowledged_at_ms"], 0)
+
+    def test_transient_read_reverifies_without_invalidating_fresh_checkpoint(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+        checkpoint = self.checkpoint_version()
+        verify_object = exporter.verify_object
+        attempts = 0
+
+        def interrupted_read(receipt):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise urllib3.exceptions.ReadTimeoutError(None, None, "fixture timeout")
+            return verify_object(receipt)
+
+        with patch.object(exporter, "verify_object", side_effect=interrupted_read):
+            self.assertEqual(exporter.tick(), 0)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(self.checkpoint_version(), checkpoint)
+        self.assertEqual(exporter.verifications, 5)
+
     def test_bounded_order_preserves_late_commits_and_missing_outboxes(self):
         self.database.execute("DELETE FROM ofz.audit_outbox WHERE audit_sequence=5")
         self.database.execute(
@@ -337,10 +561,7 @@ class RealArchive(unittest.TestCase):
             )
             filer_config = root / "filer.toml"
             filer_config.write_text(
-                (
-                    Path(__file__).resolve().parents[3]
-                    / "devices/nuc/ofz-recovery/filer.toml"
-                ).read_text()
+                (Path(__file__).resolve().parent / "fixtures/filer.toml").read_text()
             )
             filer_config.chmod(0o444)
             docker("volume", "create", name)
@@ -425,7 +646,7 @@ class RealArchive(unittest.TestCase):
                     timeout=urllib3.Timeout(total=8, connect=2, read=5), retries=False
                 ),
             )
-            storage = Minio(
+            storage = archive.CephArchive(
                 endpoint,
                 access_key=archive.credential(str(credentials / "archive_access_key")),
                 secret_key=archive.credential(str(credentials / "archive_secret_key")),
@@ -680,6 +901,30 @@ class RealArchive(unittest.TestCase):
             self.assertEqual(exporter.tick(), 1)
             self.assertEqual(exporter.tick(), 0)
 
+            archive_environment = dict(
+                environment,
+                OFZ_DATABASE_DSN=make_conninfo(**dict(owner, user="ofz_archiver")),
+                OFZ_ARCHIVE_ACCESS_KEY_FILE=str(credentials / "archive_access_key"),
+                OFZ_ARCHIVE_SECRET_KEY_FILE=str(credentials / "archive_secret_key"),
+            )
+            with patch.dict(os.environ, archive_environment):
+                slow_exporter = archive.from_environment()
+            with slow_exporter.database:
+                slow_exporter.storage = storage
+                readback = storage.get_object
+
+                def slow_readback(*args, **kwargs):
+                    time.sleep(17)
+                    return readback(*args, **kwargs)
+
+                with patch.object(storage, "get_object", side_effect=slow_readback):
+                    slow_exporter.verify_object(receipt)
+                self.assertTrue(
+                    slow_exporter.database.execute(
+                        "SELECT acknowledged_at_ms>0 AS healthy FROM ofz.archive_state"
+                    ).fetchone()["healthy"]
+                )
+
             plaintext = b"qualification payload with valid hash and retention"
             plaintext_hash = hashlib.sha256(plaintext).hexdigest()
             plaintext_key = f"batches/1-1-{plaintext_hash}.json"
@@ -699,12 +944,20 @@ class RealArchive(unittest.TestCase):
                 administrator.set_bucket_encryption(
                     archive.BUCKET, SSEConfig(Rule.new_sse_s3_rule())
                 )
-            with self.assertRaisesRegex(archive.ArchiveError, "encrypted"):
+            exporter.verify_object(
+                archive.Receipt(
+                    plaintext_key,
+                    unencrypted.version_id,
+                    plaintext_hash,
+                    until.isoformat(),
+                )
+            )
+            with self.assertRaisesRegex(archive.ArchiveError, "readback mismatch"):
                 exporter.verify_object(
                     archive.Receipt(
                         plaintext_key,
                         unencrypted.version_id,
-                        plaintext_hash,
+                        "0" * 64,
                         until.isoformat(),
                     )
                 )
@@ -985,7 +1238,7 @@ class RealArchive(unittest.TestCase):
             finally:
                 archive.MAX_BATCH_BYTES = original_budget
             print(
-                "PASS: independent versioned compliance archive; encrypted multipart and ciphertext backing-store proof; unencrypted versions rejected; stable recovery key; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
+                "PASS: versioned compliance archive; fixture encrypted multipart and ciphertext proof; Ceph-compatible versions verified by hash and retention; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
             )
 
 

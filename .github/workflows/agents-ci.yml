@@ -23,8 +23,8 @@ on:
       - 'nix/images/agents.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/openai-codex-cli.nix'
+      - 'nix/images/agentrun-tools.nix'
       - 'nix/packages.nix'
-      - 'nix/verify-agents-shell-image-lifecycle.sh'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
@@ -523,11 +523,6 @@ jobs:
                 _ "${archive_path}" "${load_archive}"
             fi
             load_archives+=("${load_archive}")
-            if [[ "${target}" == 'agents-shell' ]]; then
-              IMAGE_LABEL="${target}"
-              run_with_progress 'Agents Shell process lifecycle' 3 \
-                bash nix/verify-agents-shell-image-lifecycle.sh "${load_archive}"
-            fi
           done
 
           IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"
@@ -571,6 +566,36 @@ jobs:
             esac
           done
           echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Preload published Agents runner
+        if: ${{ !contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test -n "${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" crictl pull \
+            "${BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY}:${BUILT_AGENTS_RUNNER_IMAGE_TAG}@${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+
+      - name: Verify runner toolchain in a fresh Pod
+        if: ${{ contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          image="${BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY}:${BUILT_AGENTS_RUNNER_IMAGE_TAG}"
+          if [ -n "${BUILT_AGENTS_RUNNER_IMAGE_DIGEST:-}" ]; then
+            image="${image}@${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+          fi
+          kubectl create namespace agents-runner-ci --dry-run=client -o yaml | kubectl apply -f -
+          cleanup() {
+            kubectl -n agents-runner-ci logs runner-toolchain-smoke || true
+            kubectl -n agents-runner-ci delete pod runner-toolchain-smoke --ignore-not-found --wait=false
+          }
+          trap cleanup EXIT
+          kubectl -n agents-runner-ci run runner-toolchain-smoke \
+            --image="${image}" --image-pull-policy=IfNotPresent --restart=Never \
+            --command -- agentrun-acceptance --smoke
+          kubectl -n agents-runner-ci wait --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/runner-toolchain-smoke --timeout=180s
 
       - name: Run Agents integration smoke test
         env:

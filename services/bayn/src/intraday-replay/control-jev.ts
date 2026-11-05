@@ -2,6 +2,7 @@ import { Clock, Effect } from 'effect'
 import { TestClock } from 'effect/testing'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
+import { EntryInferenceJournal } from '../jev/entry-inference'
 import { decideJevEntry } from '../jev/decision'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { evaluateJevObservation } from '../jev/runtime'
@@ -9,11 +10,16 @@ import { CandidateObservationStore } from '../observe-composition/candidate-obse
 import { ReplayBrokerFailure } from './broker'
 import { type ControlJevJournal } from './control-jev-journal'
 import { ControlStudyFailure } from './control-portfolio'
-import { makeReplayJevTiming } from './jev-timing'
+import {
+  makeReplayInferenceTiming,
+  type ReplayInferenceProviders,
+  type ReplayInferenceBudget,
+} from './inference-timing'
 import { makeControlEntryObservation } from './control-entry'
 
 export interface ControlJevBinding {
-  readonly provider: JevClient['Service']
+  readonly providers: ReplayInferenceProviders
+  readonly budget: ReplayInferenceBudget
   readonly providerClock: Clock.Clock
   readonly journal: ControlJevJournal
 }
@@ -24,8 +30,9 @@ export const makeControlJev = (
 ) =>
   Effect.gen(function* () {
     const marketClock = yield* TestClock.testClockWith(Effect.succeed)
-    const timing = yield* makeReplayJevTiming({
-      provider: binding.provider,
+    const timing = yield* makeReplayInferenceTiming({
+      providers: binding.providers,
+      budget: binding.budget,
       providerClock: binding.providerClock,
       advanceTo: (atMs) => marketClock.setTime(atMs),
       advanceDeadlineTo: (atMs) => marketClock.setTime(atMs),
@@ -91,7 +98,8 @@ export const makeControlJev = (
             Effect.provideService(CandidateObservationStore, binding.journal.observations),
             Effect.provideService(JevBatchStore, binding.journal.batches),
             Effect.provideService(JevEvaluationStore, binding.journal.evaluations),
-            Effect.provideService(JevClient, timing.client),
+            Effect.provideService(JevClient, timing.clients.jev),
+            Effect.provideService(EntryInferenceJournal, binding.journal.handoffs),
             Effect.catchTags({
               JevAwaitingFreshWindow: (cause) => Effect.succeed({ status: 'ALREADY_OBSERVED' as const, cause }),
               JevAwaitingEvidence: (cause) => Effect.succeed({ status: 'UNAVAILABLE' as const, cause }),

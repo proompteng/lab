@@ -6,6 +6,17 @@ import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../time'
 import type { JevProtocol } from './protocol'
 
+export const jevSignalIntervalMs = 60_000
+
+export const jevSignalWindowEndMs = (observedAtMs: number, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+  Math.floor((observedAtMs - protocol.decisionDelaySeconds * 1000) / jevSignalIntervalMs) * jevSignalIntervalMs
+
+export const jevSignalDueAtMs = (windowEndMs: number, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+  windowEndMs + protocol.decisionDelaySeconds * 1000
+
+export const jevFirstSignalDueMs = (openMs: number, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+  jevSignalDueAtMs((Math.floor(openMs / jevSignalIntervalMs) + 1) * jevSignalIntervalMs, protocol)
+
 export const jevHistoryStartMs = (
   calendar: MarketHours,
   sessionDate: string,
@@ -29,26 +40,25 @@ export const makeJevEntryQuery = (input: {
 }): IntradaySnapshotQuery => {
   const { protocol, candidates } = input
   const market = jevMarketForSymbol(candidates[0] ?? 'SPY')
-  const rangeEndMs = Math.floor((input.observedAtMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
+  const rangeEndMs = jevSignalWindowEndMs(input.observedAtMs, protocol)
   return {
     sessionDate: input.sessionDate,
     calendar: input.calendar,
     observedAt: utcInstantFromEpochMillis(input.observedAtMs),
     rangeStartAt: utcInstantFromEpochMillis(
-      jevHistoryStartMs(input.calendar, input.sessionDate, rangeEndMs, protocol.lookbackMinutes),
+      jevHistoryStartMs(
+        input.calendar,
+        input.sessionDate,
+        rangeEndMs,
+        isContinuousMarket(input.calendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+      ),
     ),
     rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
     universeId: market.universeId,
     universeSymbolHash: market.universeSymbolHash,
     universe: market.universe,
-    symbols: [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort(),
+    symbols: [...candidates].sort(),
     candidateSymbols: candidates,
-    ...('benchmarkEvidencePolicy' in market
-      ? {
-          benchmarkEvidencePolicy: market.benchmarkEvidencePolicy,
-          benchmarkSymbols: [...new Set(candidates.map(jevBenchmarkSymbol))].sort(),
-        }
-      : {}),
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
@@ -57,5 +67,19 @@ export const makeJevEntryQuery = (input: {
     sourceTopics: market.sourceTopics,
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
+  }
+}
+
+/** Independent momentum qualification requires its actual reference series. */
+export const makeMomentumEntryQuery = (input: Parameters<typeof makeJevEntryQuery>[0]): IntradaySnapshotQuery => {
+  const query = makeJevEntryQuery(input)
+  const market = jevMarketForSymbol(input.candidates[0] ?? 'SPY')
+  const benchmarkSymbols = [...new Set(input.candidates.map(jevBenchmarkSymbol))].sort()
+  return {
+    ...query,
+    symbols: [...new Set([...input.candidates, ...benchmarkSymbols])].sort(),
+    ...('benchmarkEvidencePolicy' in market
+      ? { benchmarkEvidencePolicy: market.benchmarkEvidencePolicy, benchmarkSymbols }
+      : {}),
   }
 }
