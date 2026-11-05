@@ -37,6 +37,7 @@ service MicroVMControlPlane {
   rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
   rpc SendCodexInput(SendCodexInputRequest) returns (CodexRun);
   rpc GetCodexRun(GetCodexRunRequest) returns (CodexRun);
+  rpc RecoverCodexRun(InterruptCodexTurnRequest) returns (Empty);
   rpc GetActiveCodexRuns(GetActiveCodexRunsRequest) returns (CodexRuns);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);

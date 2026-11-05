@@ -886,6 +886,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       }
+      case 'recover-run': {
+        const run = runs.get(String(action.runId))
+        if (run) run.state = { phase: 'recovering', turnId: run.state.turnId, reason: 'Checking the accepted turn' }
+        result = null
+        break
+      }
       case 'codex-run':
         result = runs.get(String(action.runId)) || null
         break
@@ -4346,6 +4352,29 @@ test('retire a turn completed in recovered history after its live start arrived 
   }
 })
 
+test('uses the current session to recover the accepted run without another send', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '88888888-8888-4888-8888-888888888888',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovery',
+    state: { phase: 'authorization_required', turnId: 'turn-recovery', reason: 'Use your current session.' },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-recovery', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await chat.getByRole('button', { name: 'Resume recovery', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'recover-run').length).toBe(1)
+  const recovery = mock.actions.find((action) => action.action === 'recover-run')
+  expect(recovery).toMatchObject({ runId: run.runId, agentId: run.agentId })
+  expect(recovery?.operationId).toMatch(/^[a-f0-9-]{36}$/)
+  expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(0)
+})
+
 for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
   test(`keeps ${phase} visible until the durable cleanup outcome is confirmed`, async ({ page }) => {
     const run: TengriCodexRun = {
@@ -4355,7 +4384,7 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
       state:
         phase === 'cancelling'
           ? { phase, turnId: 'turn-cleanup', reason: 'Waiting for process cleanup' }
-          : { phase, reason: 'The last action could not be confirmed' },
+          : { phase, turnId: 'turn-cleanup', reason: 'The last action could not be confirmed' },
     }
     await mockTengri(page, {
       durableRun: run,
@@ -4374,11 +4403,16 @@ for (const phase of ['cancelling', 'needs_reconciliation'] as const) {
     await page.goto('/')
     const chat = page.getByRole('region', { name: 'Tengri window' })
     const activity = chat.getByRole('status', { name: 'Agent activity' })
-    await expect(activity).toHaveText(
-      phase === 'cancelling'
-        ? 'Stopping'
-        : "The agent's last action could not be confirmed. Check the conversation before continuing.",
-    )
+    await expect(
+      activity.getByText(
+        phase === 'cancelling'
+          ? 'Stopping'
+          : "The agent's last action could not be confirmed. Check the conversation before continuing.",
+        { exact: true },
+      ),
+    ).toBeVisible()
+    if (phase === 'needs_reconciliation')
+      await expect(activity.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
     run.state = { phase: 'cancelled', turnId: 'turn-cleanup' }
     await expect(activity).toHaveCount(0)
   })

@@ -393,7 +393,7 @@ export const executionEvidenceContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
-/** Recheck usable entry admissions without sleeping through late inputs; projection failures retain their backoff. */
+/** Recheck missing entry inputs inside their original admission; consumed windows retain their backoff. */
 export const decisionReadinessContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
@@ -403,8 +403,8 @@ export const decisionReadinessContinuationDelayMs = (
   const query = result.readiness.snapshotQuery
   const pendingSnapshot =
     result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
-    query?.previousWindowEndAt !== undefined &&
-    Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt)
+    query !== undefined &&
+    (query.previousWindowEndAt === undefined || Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt))
   if (
     result.readiness.reason === DecisionReadinessReason.InferenceExpired ||
     result.readiness.reason === DecisionReadinessReason.ExecutionRiskExpired ||

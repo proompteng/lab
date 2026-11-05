@@ -8,14 +8,18 @@ use std::{
 };
 
 fn fixture() -> ControlPlane {
+    let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
+    agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
+    agent.status = Some(crate::crd::MicroVMStatus {
+        phase: crate::crd::MicroVMPhase::Sleeping,
+        ..Default::default()
+    });
+    fixture_with_agent(agent)
+}
+
+fn fixture_with_agent(mut agent: crate::crd::MicroVM) -> ControlPlane {
     let (service, mut handle) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
     tokio::spawn(async move {
-        let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
-        agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
-        agent.status = Some(crate::crd::MicroVMStatus {
-            phase: crate::crd::MicroVMPhase::Sleeping,
-            ..Default::default()
-        });
         agent.metadata.resource_version = Some("1".into());
         let mut version = 1;
         while let Some((request, response)) = handle.next_request().await {
@@ -89,17 +93,24 @@ fn principal() -> Principal {
 #[tokio::test]
 async fn status_reads_accept_delayed_authorized_responses() {
     let service = Arc::new(fixture());
+    let connections = Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    let observed_connections = connections.clone();
     let router = axum::Router::new().route(
         "/restate/call/{service}/{key}/{handler}",
         axum::routing::post({
             let service = service.clone();
-            move |axum::extract::Path((name, key, handler)): axum::extract::Path<(
+            let connections = observed_connections.clone();
+            move |axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<
+                std::net::SocketAddr,
+            >,
+                  axum::extract::Path((name, key, handler)): axum::extract::Path<(
                 String,
                 String,
                 String,
             )>,
                   axum::Json(envelope): axum::Json<Envelope>| {
                 let service = service.clone();
+                connections.lock().unwrap().insert(peer);
                 async move {
                     let domain = if handler == "active" {
                         "active-query"
@@ -139,7 +150,14 @@ async fn status_reads_accept_delayed_authorized_responses() {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
     let output = tokio::time::timeout(
         Duration::from_secs(15),
         tokio::process::Command::new(std::env::current_exe().unwrap())
@@ -157,6 +175,11 @@ async fn status_reads_accept_delayed_authorized_responses() {
     .unwrap()
     .unwrap();
     server.abort();
+    assert_eq!(
+        connections.lock().unwrap().len(),
+        1,
+        "run reads must reuse the existing ingress connection"
+    );
     assert!(
         output.status.success(),
         "{}\n{}",
@@ -639,6 +662,64 @@ async fn snapshot_sleep_keeps_stop_pending_until_the_preserved_turn_is_interrupt
     );
 }
 
+#[tokio::test]
+async fn stop_keeps_denied_authority_visible_without_losing_the_accepted_turn() {
+    let service = fixture();
+    let input = input();
+    let mut denied = principal();
+    denied.context.workspace_uid = Uuid::new_v4().to_string();
+    let control = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: denied,
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    for known in [None, Some("preserved-turn".to_owned())] {
+        let result = service
+            .stop_durable_run(
+                &control,
+                &input,
+                &State::NeedsReconciliation {
+                    turn_id: known.clone(),
+                    reason: "outcome unknown".into(),
+                },
+            )
+            .await;
+        assert!(matches!(result, State::AuthorizationRequired { turn_id, .. } if turn_id == known));
+    }
+}
+
+#[tokio::test]
+async fn renewed_stop_rechecks_an_existing_authorization_wait() {
+    let service = fixture_with_agent(crate::grpc::tests::provisional_terminal_test_agent(
+        Utc::now(),
+    ));
+    let input = input();
+    let control = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: principal(),
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    let observed = service
+        .stop_durable_run(
+            &control,
+            &input,
+            &State::AuthorizationRequired {
+                turn_id: Some("preserved-turn".into()),
+                reason: "old session expired".into(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(observed, State::Cancelling { turn_id: Some(id), .. } if id == "preserved-turn")
+    );
+}
+
 #[derive(Serialize, Deserialize)]
 struct StopAuthorityProofInput {
     claim: Claim,
@@ -1023,32 +1104,44 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let stale_steer = Control {
-        id: Uuid::new_v4().to_string(),
-        run_id: input.id.clone(),
-        agent_id: input.agent_id.clone(),
-        principal: principal(),
-        method: "turn/steer".into(),
-        params: serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
-    };
-    let stale_client =
-        TengriRunControlIngressClient::from_client(ingress.clone(), stale_steer.id.clone());
-    let error = match control_receipt(
-        &workspace,
-        &stale_client,
-        seal(&service, "control", &stale_steer).await.unwrap(),
-    )
-    .await
-    {
-        Ok(_) => panic!("an unstarted run cannot receive native steering"),
-        Err(error) => error,
-    };
-    let rejected_status = client_error(error);
-    assert_eq!(rejected_status.code(), tonic::Code::FailedPrecondition);
-    assert_eq!(
-        rejected_status.message(),
-        "Codex control was not dispatched"
-    );
+    for (method, params) in [
+        (
+            "turn/steer",
+            serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
+        ),
+        ("tengri/recoverRun", serde_json::json!({})),
+    ] {
+        let control = Control {
+            id: Uuid::new_v4().to_string(),
+            run_id: input.id.clone(),
+            agent_id: input.agent_id.clone(),
+            principal: principal(),
+            method: method.into(),
+            params,
+        };
+        let control_client =
+            TengriRunControlIngressClient::from_client(ingress.clone(), control.id.clone());
+        let error = match control_receipt(
+            &workspace,
+            &control_client,
+            seal(&service, "control", &control).await.unwrap(),
+        )
+        .await
+        {
+            Ok(_) => panic!("an unready run cannot receive this control"),
+            Err(error) => error,
+        };
+        let rejected_status = client_error(error);
+        assert_eq!(
+            rejected_status.code(),
+            tonic::Code::FailedPrecondition,
+            "{method} must pass signed admission and reach the run handler"
+        );
+        assert_eq!(
+            rejected_status.message(),
+            "Codex control was not dispatched"
+        );
+    }
     let query = Query {
         run_id: String::new(),
         owner_hash: owner.clone(),
@@ -1491,7 +1584,12 @@ async fn snapshot_resume_rechecks_authority_without_losing_the_accepted_turn() {
             )
             .await;
         if replaced_workspace {
-            assert!(matches!(observed, State::NeedsReconciliation { .. }));
+            assert!(matches!(observed, State::AuthorizationRequired { .. }));
+            assert_eq!(
+                turn_id(&observed),
+                Some("preserved-turn"),
+                "an authorization failure must not erase the accepted turn identity"
+            );
         } else {
             assert_eq!(
                 observed,
@@ -1540,4 +1638,25 @@ async fn refreshed_run_context_still_requires_current_ofz_authority() {
         access.require().await.unwrap_err().code(),
         tonic::Code::PermissionDenied
     );
+}
+
+#[test]
+fn identifying_an_old_turn_does_not_revive_its_dead_process() {
+    let history = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"inProgress"}]}});
+    for _ in 0..3 {
+        let recovered =
+            bind_native_generation(observed_turn(&history, "accepted"), false, "accepted");
+        assert!(matches!(recovered, State::NeedsReconciliation { .. }));
+        assert_eq!(turn_id(&recovered), Some("accepted"));
+        assert!(!recovered.terminal());
+    }
+    let completed = State::Succeeded {
+        turn_id: "accepted".into(),
+    };
+    assert_eq!(
+        bind_native_generation(completed.clone(), false, "accepted"),
+        completed
+    );
+    let live = observed_turn(&history, "accepted");
+    assert_eq!(bind_native_generation(live.clone(), true, "accepted"), live);
 }
