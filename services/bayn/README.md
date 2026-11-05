@@ -1500,6 +1500,12 @@ transfer and the history-enabled account balances at that cut. A subsequent quot
 while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
 contribute to the report subtotal. Trading and expense posting continue throughout the read.
 
+Current staged financial evidence shares initial and selected chart preparation only within one synchronous request
+decode. Reuse binds the complete canonical chart, protocol, funding and response material, including response bytes,
+not merely claimed hashes. Every checkpoint, handoff, receipt, original clock and completion check remains in force.
+Retained protocols keep their original readers. This reduces repeated source reconstruction without narrowing complete-session
+coverage or treating booked trading results or estimated model costs as fully loaded profit.
+
 The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` identifies the PostgreSQL capture;
 `ledgerTimestampMax`, `verifiedSessionTransferCount` and `exactLedgerPrefix` identify the verified native prefix. `transferCount` and
 `knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
