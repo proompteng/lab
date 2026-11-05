@@ -198,6 +198,12 @@ and missing detail telemetry cannot suppress it. Its notification lists the acti
 crash with `ceph crash info <id>` before acknowledging that exact report with `ceph crash archive <id>`;
 archiving preserves the crash evidence and leaves new-crash detection enabled.
 
+PVC free-space alerts retain the 15% warning for thirty minutes and 5% critical for ten minutes.
+The critical rule excludes capacity-only block-device observations with both available and used bytes zero.
+Alloy retains kubelet used bytes alongside available and capacity bytes. Missing used-byte telemetry leaves
+critical detection enabled, and any positive used-byte observation preserves detection of a completely full filesystem.
+Raw block-device capacity does not establish free space inside a VM; that requires guest filesystem telemetry.
+
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
 and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace

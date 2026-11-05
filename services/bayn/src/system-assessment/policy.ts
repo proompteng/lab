@@ -1,4 +1,11 @@
+import type { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import { Result, Schema } from 'effect'
+import { ResearchCapitalGrantGenerationSchema } from '../execution/contracts'
+import {
+  ResearchCapitalActivationRequestSchema,
+  ResearchCapitalBuildLineageSchema,
+  researchCapitalGenerationIsBoundToBuildLineage,
+} from '../execution/configuration'
 import {
   makeRepeatedMomentumPolicy,
   repeatedMomentumStrategyIdentity,
@@ -71,6 +78,13 @@ export const PolicyDefinitionSchema = Schema.Struct({
   policy: Schema.Enum(JevResearchPolicy),
   accountBindingHash: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
+  capitalAuthorization: Schema.optionalKey(
+    Schema.Struct({
+      request: ResearchCapitalActivationRequestSchema,
+      buildLineage: ResearchCapitalBuildLineageSchema,
+      generation: ResearchCapitalGrantGenerationSchema,
+    }),
+  ),
   riskPolicyHash: Sha256Schema,
   riskPolicy: PolicySchema,
   sourceRevision: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
@@ -123,6 +137,11 @@ const registrationFields = {
   statisticalAssumptions: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isMinLength(1)),
 }
 
+export const scheduledEvaluationFields = {
+  calendar: registrationFields.calendar,
+  obligations: registrationFields.obligations,
+}
+
 const RetainedSystemRegistrationSchema = Schema.Struct({
   ...registrationFields,
   schemaVersion: Schema.Literal('bayn.system-registration.v2'),
@@ -139,6 +158,22 @@ export const SystemRegistrationSchema = Schema.Union([
 ])
 
 export type SystemRegistration = typeof SystemRegistrationSchema.Type
+
+export type ScheduledEvaluation = Pick<SystemRegistration, 'obligations' | 'policies'> & {
+  readonly program: string
+  readonly attemptIndex: number
+  readonly schemaVersion: string
+  readonly calendar: Pick<SystemRegistration['calendar'], 'sessions' | 'tradingMarkets'> &
+    (
+      | {
+          readonly operatingHours: 'REGULAR_SESSION'
+        }
+      | {
+          readonly operatingHours: 'NATIVE'
+          readonly marketCalendar: typeof MarketCalendarObservationSchema.Type
+        }
+    )
+}
 
 export const systemQualificationPolicyHash = (version = JevAcceptanceVersion.Current) =>
   Result.gen(function* () {
@@ -231,21 +266,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     const tariffFloor = yield* jevAcceptanceInferenceRateFloor(version)
     const riskCeilings = jevAcceptanceExecutionRiskLimits(version)
     for (const policy of registration.policies) {
-      if (
-        policy.riskPolicyHash !== (yield* canonicalHashV1Result(policy.riskPolicy)) ||
-        policy.accountBindingHash !==
-          (yield* canonicalHashV1Result({
-            schemaVersion: 'bayn.inference-cost-account.v1',
-            accountId: policy.riskPolicy.accountId,
-          }))
-      )
-        return yield* invalid('Registered risk policy must bind its exact material and economic account')
-      const approvedHashes = yield* approvedExecutionRiskPolicyHashes(
-        policy.riskPolicy.accountId,
-        policy.riskPolicy.allowedSymbols,
-      )
-      if (!approvedHashes.includes(policy.riskPolicyHash))
-        return yield* invalid('Registered risk limits must preserve an existing source-approved execution policy')
+      yield* validateRegisteredPolicyIdentity(policy)
       for (const key of [
         'maxOrderNotionalMicros',
         'maxSymbolExposureMicros',
@@ -364,6 +385,51 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
     return { registration, registrationHash: yield* canonicalHashV1Result(registration), candidatePolicy }
   })
 
+export const validateRegisteredPolicyIdentity = (policy: typeof PolicyDefinitionSchema.Type) =>
+  Result.gen(function* () {
+    const invalid = (message: string) => Result.fail(new SystemAssessmentError({ message }))
+    if (policy.capitalAuthorization !== undefined) {
+      const { request, buildLineage, generation } = policy.capitalAuthorization
+      const binding = researchCapitalGenerationIsBoundToBuildLineage(
+        buildLineage,
+        request,
+        {
+          sourceRevision: policy.sourceRevision,
+          imageRepository: buildLineage.activation.imageRepository,
+          imageDigest: `sha256:${policy.imageDigest}`,
+        },
+        generation.previousGenerationHash,
+        generation,
+      )
+      if (
+        Result.isFailure(binding) ||
+        generation.generationHash !== policy.authorityGenerationHash ||
+        buildLineage.activation.imageRepository !== request.activation.imageRepository ||
+        request.broker.accountId !== policy.riskPolicy.accountId ||
+        request.riskPolicyHash !== policy.riskPolicyHash ||
+        request.strategy.behaviorHash !== policy.strategyHash ||
+        request.strategy.parameterHash !== policy.parametersHash ||
+        request.strategy.protocolHash !== policy.protocolHash
+      )
+        return yield* invalid('Registered physical build must retain its original mandate, strategy and risk identity')
+    }
+    if (
+      policy.riskPolicyHash !== (yield* canonicalHashV1Result(policy.riskPolicy)) ||
+      policy.accountBindingHash !==
+        (yield* canonicalHashV1Result({
+          schemaVersion: 'bayn.inference-cost-account.v1',
+          accountId: policy.riskPolicy.accountId,
+        }))
+    )
+      return yield* invalid('Registered risk policy must bind its exact material and economic account')
+    const approvedHashes = yield* approvedExecutionRiskPolicyHashes(
+      policy.riskPolicy.accountId,
+      policy.riskPolicy.allowedSymbols,
+    )
+    if (!approvedHashes.includes(policy.riskPolicyHash))
+      return yield* invalid('Registered risk limits must preserve an existing source-approved execution policy')
+  })
+
 export const verifyStoredSystemRegistration = (input: unknown) =>
   Result.gen(function* () {
     const decoded = yield* Schema.decodeUnknownResult(
@@ -398,8 +464,8 @@ export const verifyStoredSystemRegistration = (input: unknown) =>
 export const registeredAllocationMicros = (registration: SystemRegistration): string =>
   registration.schemaVersion === 'bayn.system-registration.v3' ? registration.allocationMicros : '100000000000'
 
-export const registeredMarkIntervalMs = (registration: SystemRegistration): number =>
-  registration.schemaVersion === 'bayn.system-registration.v3' ? registration.obligations.decisionIntervalMs : 60_000
+export const registeredMarkIntervalMs = (registration: ScheduledEvaluation): number =>
+  registration.schemaVersion === 'bayn.system-registration.v2' ? 60_000 : registration.obligations.decisionIntervalMs
 
 export const registeredAssessmentTerms = (
   registration: SystemRegistration,

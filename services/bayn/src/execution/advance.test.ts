@@ -50,6 +50,32 @@ describe('advanceExecutionOnce', () => {
       expect(replay).toEqual(first)
     }
   })
+  test('the durable receipt binds the physical worker build independently of the mandate', async () => {
+    const executionBuild = {
+      sourceRevision: command.sourceRevision,
+      imageRepository: 'registry.example.test/lab/bayn',
+      imageDigest: `sha256:${'1'.repeat(64)}`,
+    }
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      observedAt: command.issuedAt,
+      executionBuild,
+    } as const
+    const first = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const replay = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    expect(replay).toEqual(first)
+    for (const build of [
+      { ...executionBuild, sourceRevision: 'b'.repeat(40) },
+      { ...executionBuild, imageRepository: 'registry.example.test/foreign/bayn' },
+      { ...executionBuild, imageDigest: `sha256:${'2'.repeat(64)}` },
+    ]) {
+      const changed = await Effect.runPromise(
+        advanceExecutionOnce(command, driver({ ...observation, executionBuild: build })),
+      )
+      expect(changed.receiptHash).not.toBe(first.receiptHash)
+    }
+  })
   for (const failure of ['typed', 'defect', 'interruption'] as const) {
     test(`reports the final stage profile once after ${failure} failure`, async () => {
       const records: Readonly<Record<string, unknown>>[] = []

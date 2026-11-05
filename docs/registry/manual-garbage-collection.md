@@ -195,34 +195,59 @@ persist a PVC UID/PV, batch directory inode or complete tag metadata inventory.
 Those facts cannot safely be invented by copying current metadata into a receipt.
 There is no parallel legacy purge path or automatic receipt upgrade.
 
-Batch `registry-collect-071cdc9382ed` remains behind this gate. The 2026-11-02
+Batch `registry-collect-071cdc9382ed` encountered this gate. The 2026-11-02
 scheduled run reported 2,000 quarantined blobs and 596 tags before purge failed.
 The supplied readback found unchanged inode/size/mtime but changed device numbers
 on five blobs. Version 2 compares device numbers for tags first, then blobs; an
 isolated remount regression reproduces `Quarantined tag changed`. The original
 remote stderr was only in the terminated Job's emptyDir, so the exact first live
-file/error cannot be recovered from its available stdout. No live bytes have been
-reclaimed by this repair, and the original receipt must remain intact.
+file/error cannot be recovered from its available stdout. Preserve the original
+receipt as recovery evidence.
 
-Before this batch can resume, an operator with existing authorized inspection access
-must preserve the original receipt and establish collection-time claim/PV provenance,
-verify every remaining blob's recorded inode/size/mtime and digest, and reconcile
-all tag metadata against independent collection evidence (including partial deletions).
-A reviewed, atomic, data-preserving migration must account for every original row
-and retain the original evidence; absent provenance is a stop condition, not permission
-to rebaseline. This task does not authorize a manual purge, ad hoc deletion Job or
-receipt removal. Until that verified migration is approved and delivered, the normal
-scheduler deliberately stops at resume-purge before taking a maintenance hold.
+If collection-time provenance is unavailable, do not manufacture a version 3 receipt.
+An explicitly authorized recovery can restore the data first, then let the current
+retention protocol create a new collection-time receipt. Use the reviewed recovery
+tool from the repository root:
+
+```sh
+python3 packages/scripts/src/registry/recover.py \
+  --context galactic-tailscale --batch registry-collect-071cdc9382ed \
+  --plan /tmp/registry-restore.json
+python3 packages/scripts/src/registry/recover.py \
+  --context galactic-tailscale --plan /tmp/registry-restore.json --apply
+```
+
+The first command is read-only. It verifies every remaining blob's original
+inode/size/mtime and full content digest, the recorded tag links and supported tag
+metadata. It binds the restoration plan to the current Bound claim/PV, batch inode
+and original receipt hash. This authorizes restoration only, never deletion.
+
+Apply shares the existing four-minute maintenance hold, helper and write-restoration
+protocol. It rechecks the complete plan before moving data, restores missing CAS
+entries with durable hard links, and restores tag directories without replacing
+current tags. Existing destinations stay intact; old conflicting copies are retained
+under `.restored-<batch>`. The original receipt, recovery plan and emptied batch are
+also archived there. No legacy receipt becomes valid purge input. Audit reports must
+distinguish restored data, archived conflicts and bytes later reclaimed by normal GC.
+
+Preparation occurs with uploads open; apply causes the existing singleton read-only
+and write-enabled rollouts. Keep its plan for retry. After interruption, helper
+deletion is confirmed before uploads reopen; rerun the same plan to resume verified
+remaining moves. Changed files, missing data, new destinations, unexpected files,
+symlinks or a different claim stop recovery. Never discard or rebaseline the evidence.
+After restoration, run the existing scheduled cleanup protocol and verify its actual
+prepare/collect/purge results. The archive remains evidence, outside automatic purge.
 
 The source repair is a generated ConfigMap change delivered by the registry
 Application's existing GitOps path; it changes no images, PVC, RBAC, retention,
 worker counts or timeouts. Verify the CronJob's new `registry-cleanup-scripts-*`
 reference after reconciliation. Rollback is the reviewed source revert through
 GitOps; preserve every receipt and stop rather than trying to consume a newer
-receipt with older code. A successful **normal scheduled run**, with resume-purge,
+receipt with older code. A successful run of the **scheduled cleanup protocol**, with resume-purge,
 prepare/collect and completion results as applicable, is the live reclamation gate.
 Serving readiness alone is not that proof. If the next schedule or required
-inspection is unavailable, report it rather than launching manual deletion.
+inspection is unavailable, report it. An explicitly authorized recovery may retry the
+existing CronJob template outside its cadence after confirming no other run is active.
 
 After deletion, audit protected references and blob sizes, pull a retained image,
 and read filesystem free space. If the mount lacks `discard`, trim only this
