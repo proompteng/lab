@@ -38,6 +38,15 @@ settles the prior generation and requires fresh exact reconciliation before crea
 Existing operator holds, v38 grants and immutable financial history remain intact. Removing the sealed request alone
 does not change durable authority and cannot complete this handoff.
 
+The native OBSERVE cutover completed on 2026-11-05 against source
+`42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e` and image
+`sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a`.
+Migration 179, clear OBSERVE authority, advancing controller passes, flat inventory and fresh exact reconciliation
+were verified after Kargo promotion. The sealed v38 PAPER request
+`588976a7a41ea2b4d64d65597411634e0517cf31869c9051205c739add4c57ed` is authored against that verified build.
+It retains the existing sandbox account, broker credentials and risk policy. Its sealed identity, activation
+generation and all three runtime lineages move together; native PAPER activation still requires runtime verification.
+
 Both stages require the reviewed protocol-cutover approval. Do not merge this source cutover before that approval.
 After PAPER restoration, verify natural model requests contain source-bound Webull context, exact reconciliation,
 unchanged limits and successful native receipts. OBSERVE alone does not complete integration. Rollback follows the
