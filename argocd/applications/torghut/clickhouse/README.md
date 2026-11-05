@@ -11,7 +11,17 @@ before the next stage is merged:
 1. Enable native reconfiguration on the existing singleton, retain its PVC and take `keeper-pre-nvme-20261105`.
    Verify the snapshot is ready, the original server ID is still 0, and existing ClickHouse replicas remain active.
 2. Add only replica 1 on `local-path-keeper`, on a different host. Verify `/keeper/config` includes IDs 0 and 1
-   and that the new replica has caught up before starting another replica.
+   and that the new replica has caught up before starting another replica. After its peer Service and process
+   are running, add it through the original Keeper's native API:
+
+   ```sh
+   kubectl -n torghut exec chk-torghut-keeper-default-0-0-0 -- clickhouse-keeper-client \
+     --host 127.0.0.1 --port 2181 \
+     --query 'reconfig add "server.1=chk-torghut-keeper-default-0-1:9444;participant;1"'
+   ```
+
+   Re-read `/keeper/config` before retrying an uncertain result. A new Pod or changed configuration file alone
+   does not prove native membership or catch-up.
 3. Add replica 2 on the third host. Verify all three members agree on membership and serve the existing state.
    Native membership changes must be incremental. Re-read `/keeper/config` after an uncertain response.
 4. Only after both new members are caught up, move replica 0 to its own local claim, retaining its original ID,
