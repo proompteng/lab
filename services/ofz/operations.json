@@ -182,6 +182,11 @@
   },
   {
     "surface": "controller",
+    "operation": "RecoverCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "InterruptCodexTurn",
     "action": "ACTION_CODEX_CONTROL"
   },

@@ -658,6 +658,35 @@ async fn snapshot_sleep_keeps_stop_pending_until_the_preserved_turn_is_interrupt
     );
 }
 
+#[tokio::test]
+async fn stop_keeps_denied_authority_visible_without_losing_the_accepted_turn() {
+    let service = fixture();
+    let input = input();
+    let mut denied = principal();
+    denied.context.workspace_uid = Uuid::new_v4().to_string();
+    let control = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: denied,
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    for known in [None, Some("preserved-turn".to_owned())] {
+        let result = service
+            .stop_durable_run(
+                &control,
+                &input,
+                &State::NeedsReconciliation {
+                    turn_id: known.clone(),
+                    reason: "outcome unknown".into(),
+                },
+            )
+            .await;
+        assert!(matches!(result, State::AuthorizationRequired { turn_id, .. } if turn_id == known));
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct StopAuthorityProofInput {
     claim: Claim,
@@ -1510,7 +1539,7 @@ async fn snapshot_resume_rechecks_authority_without_losing_the_accepted_turn() {
             )
             .await;
         if replaced_workspace {
-            assert!(matches!(observed, State::NeedsReconciliation { .. }));
+            assert!(matches!(observed, State::AuthorizationRequired { .. }));
             assert_eq!(
                 turn_id(&observed),
                 Some("preserved-turn"),
@@ -1564,4 +1593,25 @@ async fn refreshed_run_context_still_requires_current_ofz_authority() {
         access.require().await.unwrap_err().code(),
         tonic::Code::PermissionDenied
     );
+}
+
+#[test]
+fn identifying_an_old_turn_does_not_revive_its_dead_process() {
+    let history = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"inProgress"}]}});
+    for _ in 0..3 {
+        let recovered =
+            bind_native_generation(observed_turn(&history, "accepted"), false, "accepted");
+        assert!(matches!(recovered, State::NeedsReconciliation { .. }));
+        assert_eq!(turn_id(&recovered), Some("accepted"));
+        assert!(!recovered.terminal());
+    }
+    let completed = State::Succeeded {
+        turn_id: "accepted".into(),
+    };
+    assert_eq!(
+        bind_native_generation(completed.clone(), false, "accepted"),
+        completed
+    );
+    let live = observed_turn(&history, "accepted");
+    assert_eq!(bind_native_generation(live.clone(), true, "accepted"), live);
 }

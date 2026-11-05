@@ -100,10 +100,14 @@ spec:
           failureThreshold: 3
           periodSeconds: 15
           timeoutSeconds: 2
-          tcpSocket:
-            port: restate
+          httpGet:
+            path: /healthz
+            port: health
         name: tengri
         ports:
+        - containerPort: 8080
+          name: health
+          protocol: TCP
         - containerPort: 9080
           name: restate
           protocol: TCP
@@ -111,8 +115,9 @@ spec:
           failureThreshold: 3
           periodSeconds: 5
           timeoutSeconds: 5
-          tcpSocket:
-            port: restate
+          httpGet:
+            path: /healthz
+            port: health
         resources:
           requests:
             cpu: 100m
@@ -132,8 +137,9 @@ spec:
           failureThreshold: 30
           periodSeconds: 2
           timeoutSeconds: 2
-          tcpSocket:
-            port: restate
+          httpGet:
+            path: /healthz
+            port: health
         volumeMounts:
         - mountPath: /spiffe-workload-api
           name: workload-api
