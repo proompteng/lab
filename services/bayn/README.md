@@ -2099,6 +2099,10 @@ elapsed-time and PostgreSQL measurements. Native operation timers pause at that 
 remaining duration; provider request timers retain their independent wall clock. The database clock resumes even
 when parsing fails or is interrupted. Provider, persistence and clock-synchronization work remain measured. Completing
 the measured scope retains elapsed time and publishes arrivals through that timestamp before scheduling or valuation.
+The source reader excludes time only while reading a chunk or consuming due arrivals. Polls between cached future
+arrivals and after verified EOF retain their broker deadline ticks without pausing either measured clock. This avoids
+pause/resume database writes on empty source checks. Every native poll, causal arrival, reconciliation, financial
+record and original operation deadline remains required. A source clock failure prevents further advancement.
 Deferred exit deadlines therefore still include native work before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 Initialization starts one minute before the first registered open and retains its measured start, completion and

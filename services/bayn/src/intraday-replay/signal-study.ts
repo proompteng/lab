@@ -609,7 +609,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
     }
     tasks.sort((a, b) => a.atMs - b.atMs)
     for (const task of tasks) {
-      yield* source.advanceTo(task.atMs)
+      yield* source.advanceTo(task.atMs, (work) => work)
       yield* task.run
     }
     yield* source.finish
