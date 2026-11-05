@@ -5,6 +5,37 @@ import Lean.Elab.Tactic.Omega
 
 namespace Bayn
 
+def intentRiskClockRejection (decided expires updated checked : Int) : String :=
+  if updated < decided ∨ checked < decided then "NOT_YET_VALID"
+  else if expires ≤ updated ∨ expires ≤ checked then "EXPIRED"
+  else "CURRENT"
+
+theorem current_intent_risk_clock_matches_gate (decided expires updated checked : Int) :
+    intentRiskClockRejection decided expires updated checked = "CURRENT" ↔
+      decided ≤ updated ∧ updated < expires ∧ decided ≤ checked ∧ checked < expires := by
+  by_cases future : updated < decided ∨ checked < decided
+  · simp [intentRiskClockRejection, future]
+    omega
+  · by_cases expired : expires ≤ updated ∨ expires ≤ checked
+    · simp [intentRiskClockRejection, future, expired]
+      omega
+    · simp [intentRiskClockRejection, future, expired]
+      omega
+
+theorem expired_intent_risk_clock_cannot_admit (decided expires updated checked : Int)
+    (expired : expires ≤ checked) : intentRiskClockRejection decided expires updated checked ≠ "CURRENT" := by
+  intro current
+  have gate := (current_intent_risk_clock_matches_gate decided expires updated checked).mp current
+  omega
+
+theorem future_intent_risk_clock_cannot_refresh (decided expires updated checked : Int)
+    (future : updated < decided ∨ checked < decided) :
+    intentRiskClockRejection decided expires updated checked = "NOT_YET_VALID" := by
+  simp [intentRiskClockRejection, future]
+
+theorem intent_risk_expiry_boundary_is_strict : intentRiskClockRejection 0 10 1 10 = "EXPIRED" := by decide
+theorem intent_risk_clock_has_reachable_success : intentRiskClockRejection 0 10 1 9 = "CURRENT" := by decide
+
 def decisionAdmissionEligible (sourceCommitted sourceMatches : Bool) : Bool := sourceCommitted && sourceMatches
 
 theorem admitted_source_is_committed_and_owned (committed owned : Bool)

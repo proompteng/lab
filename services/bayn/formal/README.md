@@ -143,6 +143,16 @@ The causal conclusion assumes PostgreSQL visibility and that the coordinator rou
 returns. The assessment exposes these assumptions and retains original producer routing timestamps as upper bounds,
 rather than claiming an exact physical commit time.
 
+`intentRiskClockRejection` in `DecisionPersistence.lean` maps to the current-risk trigger in migration 177 and its
+strict decoder in `src/execution/risk-clock.ts`. `current_intent_risk_clock_matches_gate` proves the decision is
+current at both the requested update and the database check. `expired_intent_risk_clock_cannot_admit`,
+`future_intent_risk_clock_cannot_refresh`, the strict expiry boundary and a reachable success cover its rejection
+classes. The actual PostgreSQL trigger is compared with the executable at microsecond boundaries. Full entry tests
+use the production cycle store, intent store and writer fence to verify successful admission and complete rollback
+when the risk expires during persistence, preserving authority and retained inference evidence. Runner tests retain
+the original cycle deadline and propagate rollback failures, defects and interruption. The model assumes PostgreSQL
+reports its actual clock and rolls back a failed transaction; these integration tests exercise those assumptions.
+
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
 `unapproved_risk_cannot_register` requires membership in the source-approved policy identities.

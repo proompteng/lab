@@ -67,7 +67,7 @@ test('status identifies an ordinary holding wait in both pass projections', () =
 
 test('status exposes missing feature evidence without publishing free-form readiness text', () => {
   const readiness = {
-    reason: DecisionReadinessReason.SnapshotUnavailable,
+    reason: DecisionReadinessReason.SnapshotUnavailable as const,
     symbol: 'SPY',
     eventAt: observedAt,
     availableAt: '2026-09-17T14:31:00.000Z',
