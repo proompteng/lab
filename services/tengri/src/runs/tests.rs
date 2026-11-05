@@ -1492,6 +1492,11 @@ async fn snapshot_resume_rechecks_authority_without_losing_the_accepted_turn() {
             .await;
         if replaced_workspace {
             assert!(matches!(observed, State::NeedsReconciliation { .. }));
+            assert_eq!(
+                turn_id(&observed),
+                Some("preserved-turn"),
+                "an authorization failure must not erase the accepted turn identity"
+            );
         } else {
             assert_eq!(
                 observed,
