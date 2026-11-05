@@ -26,7 +26,7 @@ internal suspend fun pollWebullBars(
           for (batch in priority.chunked(MAX_WEBULL_BAR_SYMBOLS)) {
             collect(batch, Instant.now().truncatedTo(ChronoUnit.MINUTES))
           }
-          pause(5_000)
+          pause(1_000)
         }
       }
     }
