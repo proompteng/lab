@@ -18,7 +18,6 @@ import { decodeStagedCheckpoint, stageResponseIdentity } from '../jev/staged-che
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
-import { intradayEntryRearmDelayMs } from '../cycle/runner/calendar-decisions'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
@@ -1139,7 +1138,7 @@ durableTest.each(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
             { state: 'ACTIVE', count: 1 },
-            { state: 'BLOCKED', count: 1 },
+            { state: 'BLOCKED', count: 2 },
           ])
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
@@ -1148,8 +1147,11 @@ durableTest.each(
           yield* runtime.advance
           yield* advanceMarketTo(initialMs + 2)
           yield* runtime.advance
-          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+          expect(
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles ORDER BY created_at`,
+          ).toEqual([
             { state: 'NO_TRADE', bound: true },
+            { state: 'ACTIVE', bound: false },
           ])
           yield* advanceMarketTo(finalizationAtMs)
           const schedule = yield* driveReplaySession(
@@ -1171,10 +1173,12 @@ durableTest.each(
           expect(state.fills).toEqual([])
           expect(state.ledger.positions).toEqual([])
           expect(
-            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2'`,
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2' ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', bound: true },
+            { state: 'BLOCKED', bound: false },
             { state: 'NO_TRADE', bound: true },
+            { state: 'BLOCKED', bound: false },
           ])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
@@ -1182,19 +1186,21 @@ durableTest.each(
             result: 'SUCCESS',
             outcome: 'WINDOW_CLOSED',
           })
-          yield* advanceMarketTo(finalizationAtMs + 180_001 + intradayEntryRearmDelayMs - 1)
+          yield* advanceMarketTo(finalizationAtMs + 240_000)
           expect((yield* runtime.advance).observation).toMatchObject({
             result: 'SUCCESS',
             outcome: 'WINDOW_CLOSED',
           })
-          yield* advanceMarketTo(finalizationAtMs + 180_001 + intradayEntryRearmDelayMs)
+          yield* advanceMarketTo(finalizationAtMs + 240_001)
           const successor = yield* runtime.advance
           expect(successor.observation).toMatchObject({ result: 'SUCCESS', outcome: 'WINDOW_CLOSED' })
           expect(
             yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'NO_TRADE', ordinal: 1 },
-            { state: 'NO_TRADE', ordinal: 2 },
+            { state: 'BLOCKED', ordinal: 2 },
+            { state: 'NO_TRADE', ordinal: 3 },
+            { state: 'BLOCKED', ordinal: 4 },
           ])
           expect(
             yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles WHERE execution_calendar_schema_version='bayn.continuous-market-hours.v1'`,
@@ -1812,8 +1818,12 @@ durableTest.each(
           expect(final.ledger.positions).toHaveLength(0)
           expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
             { state: 'COMPLETED' },
+            { state: 'BLOCKED' },
             { state: 'COMPLETED' },
           ])
+          expect(
+            yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE state='BLOCKED'`,
+          ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
           yield* createRuntime
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
@@ -1936,10 +1946,9 @@ durableTest.each(
             ])
             expect(repeated.ledger.positions).toHaveLength(0)
             expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
-            expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
-              { state: 'COMPLETED' },
-              { state: 'COMPLETED' },
-            ])
+            expect(
+              yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'COMPLETED' }])
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
@@ -2026,10 +2035,12 @@ durableTest.each(
             expect(final.brokerState.account.cashMicros).toBe(repeated.ledger.cashMicros)
             expect(final.riskContext.unknownMutationCount).toBe(0)
             expect(final.brokerState.unknownOrderCount).toBe(0)
-            expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
-              { state: 'COMPLETED' },
-              { state: 'COMPLETED' },
-            ])
+            expect(
+              yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId} ORDER BY created_at`,
+            ).toEqual([{ state: 'COMPLETED' }, { state: 'BLOCKED' }, { state: 'COMPLETED' }])
+            expect(
+              yield* sql`SELECT terminal_reason, decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE account_id=${accountId} AND state='BLOCKED'`,
+            ).toEqual([{ terminal_reason: CycleTerminalReason.UnusedEntryExpired, unbound: true }])
             expect(
               yield* sql`
                 SELECT payload #>> '{manifest,rangeEndAt}' AS window_end

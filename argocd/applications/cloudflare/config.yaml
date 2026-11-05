@@ -9,6 +9,10 @@ ingress:
     service: https://traefik.traefik.svc.cluster.local:443
     originRequest:
       originServerName: auth.proompteng.ai
+  - hostname: oidc-discovery.proompteng.ai
+    service: https://traefik.traefik.svc.cluster.local:443
+    originRequest:
+      originServerName: oidc-discovery.proompteng.ai
   - hostname: "*.proompteng.ai"
     service: https://traefik.traefik.svc.cluster.local:443
     originRequest:
