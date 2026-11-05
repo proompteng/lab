@@ -187,6 +187,8 @@ spec:
                   key: password
             - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
               value: torghut.technical-features.v1
+            - name: BAYN_KAFKA_WEBULL_BARS_TOPIC
+              value: dorvud.webull.raw.v1
             - name: BAYN_KAFKA_TIMESTAMP_POLICY
               value: dorvud.producer-clock.v1
             - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS

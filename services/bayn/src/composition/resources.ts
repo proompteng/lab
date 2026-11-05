@@ -93,6 +93,7 @@ const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
       ...(plan.config.kafka?.technicalFeaturesTopic === undefined
         ? {}
         : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+      ...(plan.config.kafka?.webullBarsTopic === undefined ? {} : { webullBars: plan.config.kafka.webullBarsTopic }),
     },
   },
   {
