@@ -40,6 +40,7 @@ import {
 import { marketSourceForTopic, marketSourceKind, type KafkaMarketRecord, type MarketSources } from './raw-events'
 
 export interface KafkaMarketConfig {
+  readonly webullBarsTopic?: string | undefined
   readonly technicalFeaturesTopic?: string | undefined
   readonly brokers: readonly string[]
   readonly username: string
@@ -137,13 +138,18 @@ export const decodeKafkaTransportValue = (
 }
 
 export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
-  if (next.rejections !== previous.rejections || next.technicalRejections !== previous.technicalRejections)
+  if (
+    next.rejections !== previous.rejections ||
+    next.technicalRejections !== previous.technicalRejections ||
+    next.webull.rejections !== previous.webull.rejections
+  )
     return CaptureDisposition.Rejected
   return next.bars !== previous.bars ||
     next.quotes !== previous.quotes ||
     next.trades !== previous.trades ||
     next.features !== previous.features ||
-    next.technicalFeatures !== previous.technicalFeatures
+    next.technicalFeatures !== previous.technicalFeatures ||
+    next.webull.bars !== previous.webull.bars
     ? CaptureDisposition.Accepted
     : CaptureDisposition.Ignored
 }
@@ -342,6 +348,7 @@ export const makeKafkaMarketProjection = (
     let projection = emptyStreamingProjection(
       'starting',
       universe.find((source) => source.topics.technicalFeatures !== undefined)?.topics.technicalFeatures,
+      universe.find((source) => source.topics.webullBars !== undefined)?.topics.webullBars,
     )
     let projectionConsumerSequence = 0
     let deliveredPositions = new Map<string, KafkaPartitionPosition>()
@@ -371,6 +378,7 @@ export const makeKafkaMarketProjection = (
         projection = emptyStreamingProjection(
           epoch,
           universe.find((source) => source.topics.technicalFeatures !== undefined)?.topics.technicalFeatures,
+          universe.find((source) => source.topics.webullBars !== undefined)?.topics.webullBars,
         )
         projectionConsumerSequence = 0
         deliveredPositions = new Map()
@@ -580,6 +588,40 @@ export const makeKafkaMarketProjection = (
                 partition: record.partition,
                 offset: record.offset,
               })
+              if (projection.webull.rejections !== previousProjection.webull.rejections)
+                yield* Effect.logWarning('Kafka Webull context withheld', {
+                  epoch,
+                  topic: record.topic,
+                  partition: record.partition,
+                  offset: record.offset,
+                  rejection: projection.webull.rejections.at(-1),
+                })
+              if (projection.webull.bars !== previousProjection.webull.bars) {
+                const arrivals = [...projection.webull.bars.values()].flatMap((bars) => {
+                  const bar = bars[0]
+                  return bar === undefined || bar.delivery.sequence !== projection.sequence
+                    ? []
+                    : [
+                        {
+                          symbol: bar.value.symbol,
+                          minuteStartMs: bar.value.startMs,
+                          captureId: bar.captureId,
+                          receivedAt: bar.receivedAt,
+                          availableAtMs: bar.delivery.availableAtMs,
+                          availabilityLagMs: bar.delivery.availableAtMs - bar.value.startMs - 60_000,
+                        },
+                      ]
+                })
+                if (arrivals.length > 0)
+                  yield* Effect.logInfo('Kafka Webull minute bars incorporated', {
+                    epoch,
+                    topic: record.topic,
+                    partition: record.partition,
+                    offset: record.offset,
+                    consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
+                    arrivals,
+                  })
+              }
               if (projection.technicalFeatureArrival !== null && projection.sequence !== previousSequence)
                 yield* Effect.logInfo('Kafka technical feature incorporated', {
                   ...featureAvailabilityMeasurement(

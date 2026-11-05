@@ -7,6 +7,7 @@ import {
   type TechnicalSnapshotEvidenceSchema,
 } from './evidence-schema'
 import { strictParseOptions } from '../../schemas'
+import type { WebullSnapshotEvidence } from './webull-projection'
 import type { HistoricalMarketCursor } from './historical'
 
 import { canonicalHashV1Result } from '../../hash'
@@ -50,6 +51,7 @@ export interface StreamingSnapshotEvidence {
   readonly records: readonly StreamingRecordReceipt[]
   readonly features: readonly StreamingFeatureReceipt[]
   readonly barPublications?: (typeof StreamingSnapshotEvidenceSchema.Type)['barPublications']
+  readonly webull?: WebullSnapshotEvidence
   readonly technical?: typeof TechnicalSnapshotEvidenceSchema.Type
 }
 export interface StreamingSnapshotManifest extends Omit<
@@ -166,6 +168,7 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       featureReceipts,
       barPublications,
       technical,
+      webull,
       bars,
       quotes,
       trades,
@@ -194,6 +197,11 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       const maximum = sourcePositions.get(topicPartitionKey(feature.topic, feature.partition))
       if (feature.sequence > state.sequence || maximum === undefined || BigInt(feature.offset) >= maximum)
         return yield* Result.fail(failure('watermark', 'Streaming feature is outside the incorporated source cut'))
+    }
+    for (const capture of webull?.captures ?? []) {
+      const maximum = sourcePositions.get(topicPartitionKey(capture.record.topic, capture.record.partition))
+      if (capture.sequence > state.sequence || maximum === undefined || BigInt(capture.record.offset) >= maximum)
+        return yield* Result.fail(failure('watermark', 'Webull capture is outside the incorporated source cut'))
     }
     const schemaVersion: P['schemaVersion'] = provenance.schemaVersion
     const streaming: P['streaming'] = provenance.streaming
@@ -242,6 +250,7 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
         ...streaming,
         barPublicationPolicy: BarPublicationPolicy.ObservedHistory,
         ...(technical === undefined ? {} : { technical }),
+        ...(webull === undefined ? {} : { webull }),
         ...(barPublications.length === 0
           ? {}
           : {

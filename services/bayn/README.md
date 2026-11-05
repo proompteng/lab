@@ -471,7 +471,31 @@ controller handles without terminating its process. Reports retain typed operati
 exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
 error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
-## Webull research ingestion
+## Webull live ingestion
+
+`BAYN_KAFKA_WEBULL_BARS_TOPIC=dorvud.webull.raw.v1` adds native Webull captures to the existing equity Kafka
+consumer. The controller records completed M1 context in its immutable streaming snapshots. It does not query
+ClickHouse on this path. HTTP bars, MQTT messages and collector gaps retain their original identities. MQTT
+messages do not become bars or executable quotes.
+
+The consumer checks the native payload hash, exact decimal OHLCV, real-time entitlement marker, requested symbols,
+completed recovery window and producer clock. Only the latest completed minute is eligible. Its first consumer
+arrival must be within ten seconds of minute close and before the observation. Recovery polls cannot refresh that
+arrival; a late correction removes the current minute until a subsequent eligible observation. Scoped bar gaps and
+invalid captures withhold optional context without invalidating IEX inputs. Missing symbols remain explicit.
+
+Snapshots retain each selected capture once, with native bytes, Kafka coordinate, consumer sequence and arrival.
+Recorded replay verifies that proof again. `Kafka Webull minute bars incorporated` logs measure the real consumer
+arrival delay, including late inputs. The existing streaming diagnostics command also reports Webull coverage.
+Historical diagnostic reads establish arrival at the diagnostic consumer only, not availability to an earlier decision.
+
+This ingestion does not change protocol v37, Jev numerical inputs, IEX execution pricing or capital authority.
+Webull context remains supplementary evidence pending point-in-time qualification and a separately versioned model
+input change. Nasdaq Basic and IEX have different coverage; Webull volume must not replace an IEX volume feature.
+The acceptance boundary is a deployed consumer receipt, regular-session completeness and latency measurements, then
+a comparison against IEX using recorded availability. Better returns require separate economic evidence.
+
+## Webull archive comparison
 
 `bayn-webull-research` reads the normalized Webull archive and compares completed M1 bars with the current Alpaca
 IEX archive. It is a read-only research/scanner input. Reports remain `UNQUALIFIED`; the command has no broker,
