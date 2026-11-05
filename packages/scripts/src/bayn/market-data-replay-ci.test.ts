@@ -9,6 +9,10 @@ interface WorkflowJob {
   readonly if?: string
   readonly needs?: readonly string[] | string
   readonly 'timeout-minutes'?: number
+  readonly strategy?: {
+    readonly 'fail-fast'?: boolean
+    readonly matrix?: { readonly group?: readonly string[] }
+  }
   readonly steps: readonly { readonly name?: string; readonly run?: string; readonly env?: Record<string, string> }[]
 }
 const workflow = YAML.parse(
@@ -52,6 +56,28 @@ const run = async (overrides: Record<string, string>) => {
   ])
   return { exit, stdout, stderr }
 }
+
+test('native replay cases run in isolated required groups without extending their job budget', () => {
+  const ledger = workflow.jobs['ledger-integration']
+  expect(ledger?.strategy?.matrix?.group).toEqual([
+    'runtime',
+    'backtest',
+    'latency-jev',
+    'latency-ablation',
+    'latency-momentum',
+    'latency-momentum-trading',
+    'frozen-control',
+    'restart',
+    'inference',
+  ])
+  expect(ledger?.strategy?.['fail-fast']).toBe(false)
+  expect(ledger?.['timeout-minutes']).toBe(15)
+  expect(
+    ledger?.steps.find((step) => step.name === 'Verify replay accounting with PostgreSQL and TigerBeetle')?.run,
+  ).toBe('bun run --cwd services/bayn test:ledger ${{ matrix.group }}')
+  expect(required.needs).toContain('ledger-integration')
+  expect(gate.env?.LEDGER_RESULT).toBe('${{ needs.ledger-integration.result }}')
+})
 
 test.each(['kafka', 'restate', 'foreign'] as const)(
   'created-but-failed %s fixture removes only verified job-owned container IDs',
