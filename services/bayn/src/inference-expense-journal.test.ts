@@ -7,6 +7,7 @@ import {
   buildInferenceExpensePlan,
   makeInferenceExpenseQuote,
   makeInferenceExpenseQuotes,
+  inferenceExpenseBatchSize,
   inferenceExpenseRateCard,
   type InferenceExpenseQuote,
 } from './inference-expense'
@@ -161,7 +162,7 @@ const memoryLedger = (initialTimestamp = 0n) => {
 
 describe('inference expense TigerBeetle posting and reconciliation', () => {
   test('reconciles a complete native expense prefix beyond ten thousand quotes', async () => {
-    const quotes = Array.from({ length: 10_001 }, (_, index) =>
+    const quotes = Array.from({ length: 10_002 }, (_, index) =>
       Result.getOrThrow(
         makeInferenceExpenseQuote(
           expenseSourceFixture({ observedAt: new Date(index).toISOString() }),
@@ -172,8 +173,20 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
     const expected = Result.getOrThrow(buildInferenceExpensePlan(quotes))
     const ledger = memoryLedger(59_000_000_000n)
     await Effect.runPromise(postInferenceExpenses(ledger.client, expected))
+    const boundedClient: TigerBeetleRequestClient = {
+      request: (operation, execute) =>
+        ledger.client.request(operation, (active) =>
+          execute({
+            ...active,
+            lookupTransfers: async (ids) => {
+              expect(ids.length).toBeLessThanOrEqual(inferenceExpenseBatchSize)
+              return active.lookupTransfers(ids)
+            },
+          }),
+        ),
+    }
     const report = await Effect.runPromise(
-      readInferenceExpenseLedger(ledger.client, snapshot(quotes), Effect.succeed(rows(quotes))),
+      readInferenceExpenseLedger(boundedClient, snapshot(quotes), Effect.succeed(rows(quotes))),
     )
     expect(report.exactLedgerPrefix).toBe(true)
     expect(report.verifiedSessionTransferCount).toBe(quotes.length)

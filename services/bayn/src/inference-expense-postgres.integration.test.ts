@@ -10,12 +10,17 @@ import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
 import expenseMigration from '../migrations/0091_inference_expense_quotes'
 import inferenceRequestVersion from '../migrations/0150_inference_request_version'
 import expenseSourceQueue from '../migrations/0173_inference_expense_source_queue'
-import { inferenceExpenseBatchSize, makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
+import {
+  buildInferenceExpensePlan,
+  inferenceExpenseBatchSize,
+  makeInferenceExpenseQuote,
+  type InferenceExpenseSource,
+} from './inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from './test-environment.test-support'
 import { runInferenceExpensePass } from './inference-expense-runtime'
-import { readInferenceExpenseLedger } from './inference-expense-journal'
+import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeTigerBeetleRequestClient } from './tigerbeetle-client'
 import {
@@ -449,58 +454,109 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
   })
 
   const nativeTest = baynTestTigerBeetleAddress === undefined ? test.skip : test
-  nativeTest('keeps a PostgreSQL quote capture stable while a later request posts to the native ledger', async () => {
-    const address = baynTestTigerBeetleAddress
-    if (address === undefined || !/^127\.0\.0\.1:\d+$/.test(address))
-      throw new Error('Native inference expense acceptance requires an isolated loopback TigerBeetle cluster')
-    const result = await runtime.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const source = expenseSourceFixture({ accountId: `synthetic-expense-cut-${crypto.randomUUID()}` })
-          yield* persistSource(source)
-          const sql = yield* PgClient.PgClient
-          const store = makeInferenceExpenseStore(sql, source.accountId, '1970-01-01')
-          const client = yield* makeTigerBeetleRequestClient({
-            operationTimeoutMs: 5_000,
-            tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
-          })
-          yield* runInferenceExpensePass(store, client, expenseRateFixture)
-          const { captured, report } = yield* forwardPerformanceSnapshot(sql).withTransaction(
-            Effect.gen(function* () {
-              const captured = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
-              yield* Effect.gen(function* () {
-                yield* persistSource(expenseSourceFixture({ accountId: source.accountId, key: 'b', inputTokens: 2 }))
-                yield* runInferenceExpensePass(store, client, expenseRateFixture)
-              }).pipe(
-                Effect.updateContext((context: Context.Context<PgClient.PgClient>) =>
-                  Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
-                ),
-              )
-              const report = yield* readInferenceExpenseLedger(
+  nativeTest(
+    'keeps a 10,002-quote PostgreSQL capture stable while a later request posts to the native ledger',
+    async () => {
+      const address = baynTestTigerBeetleAddress
+      if (address === undefined || !/^127\.0\.0\.1:\d+$/.test(address))
+        throw new Error('Native inference expense acceptance requires an isolated loopback TigerBeetle cluster')
+      const result = await runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const source = expenseSourceFixture({ accountId: `synthetic-expense-cut-${crypto.randomUUID()}` })
+            const sources = Array.from({ length: 10_002 }, (_, index) =>
+              expenseSourceFixture({
+                accountId: source.accountId,
+                authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ index })),
+              }),
+            )
+            const quotes = sources.map((source) =>
+              Result.getOrThrow(makeInferenceExpenseQuote(source, expenseRateFixture)),
+            )
+            const sql = yield* PgClient.PgClient
+            // Bulk fixture writes retain the real foreign keys and immutable evidence guards.
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO autonomous_cycles VALUES (${source.cycleId}, ${source.accountId}, ${source.sessionDate}::date)`
+                yield* sql`INSERT INTO authority_generations
+              SELECT value FROM jsonb_array_elements_text(${sql.json(sources.map((source) => source.authorityGenerationHash))})`
+                yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+              SELECT item->>'requestId', item->>'cycleId', item->>'authorityGenerationHash', item->'request'
+              FROM jsonb_array_elements(${sql.json(sources)}) AS item`
+                yield* sql`INSERT INTO jev_evaluation_receipts (request_id, receipt_hash, payload)
+              SELECT item->>'requestId', item #>> '{receipt,receiptHash}', item->'receipt'
+              FROM jsonb_array_elements(${sql.json(sources)}) AS item`
+                yield* sql`INSERT INTO jev_evaluation_resolutions (request_id, resolution_hash, payload)
+              SELECT item->>'requestId', item #>> '{resolution,resolutionHash}', item->'resolution'
+              FROM jsonb_array_elements(${sql.json(sources)}) AS item`
+                yield* sql`INSERT INTO inference_expense_quotes (quote_hash, account_id, session_date, payload)
+              SELECT item->>'quoteHash', ${source.accountId}, ${source.sessionDate}::date, item
+              FROM jsonb_array_elements(${sql.json(quotes)}) AS item`
+              }),
+            )
+            const store = makeInferenceExpenseStore(sql, source.accountId, '1970-01-01')
+            const client = yield* makeTigerBeetleRequestClient({
+              operationTimeoutMs: 5_000,
+              tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
+            })
+            for (let offset = 0; offset < quotes.length; offset += inferenceExpenseBatchSize)
+              yield* postInferenceExpenses(
                 client,
-                captured,
-                store.currentSession(source.sessionDate),
+                Result.getOrThrow(buildInferenceExpensePlan(quotes.slice(offset, offset + inferenceExpenseBatchSize))),
               )
-              return { captured, report }
-            }),
-          )
-          const current = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
-          const next = yield* readInferenceExpenseLedger(client, current, store.currentSession(source.sessionDate))
-          return { captured, report, current, next }
-        }),
-      ),
-    )
-    expect(result.captured.evidence.requests).toHaveLength(1)
-    expect(result.captured.quotes).toHaveLength(1)
-    expect(result.report.transferCount).toBe(1)
-    expect(result.report.verifiedSessionTransferCount).toBe(2)
-    expect(result.report.knownEstimatedCostPicoUsd).toBe('42000')
-    expect(result.current.evidence.requests).toHaveLength(2)
-    expect(result.current.quotes).toHaveLength(2)
-    expect(result.next.transferCount).toBe(2)
-    expect(result.next.knownEstimatedCostPicoUsd).toBe('126000')
-    expect(BigInt(result.next.ledgerTimestampMax)).toBe(BigInt(result.report.ledgerTimestampMax))
-  })
+            yield* store.acknowledge(quotes)
+            const { captured, report, sessionRows } = yield* forwardPerformanceSnapshot(sql).withTransaction(
+              Effect.gen(function* () {
+                const captured = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
+                yield* Effect.gen(function* () {
+                  yield* persistSource(expenseSourceFixture({ accountId: source.accountId, key: 'b', inputTokens: 2 }))
+                  yield* runInferenceExpensePass(store, client, expenseRateFixture)
+                }).pipe(
+                  Effect.updateContext((context: Context.Context<PgClient.PgClient>) =>
+                    Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
+                  ),
+                )
+                const report = yield* readInferenceExpenseLedger(
+                  client,
+                  captured,
+                  store.currentSession(source.sessionDate),
+                )
+                return { captured, report, sessionRows: yield* store.session(source.sessionDate) }
+              }),
+            )
+            const current = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
+            const next = yield* readInferenceExpenseLedger(client, current, store.currentSession(source.sessionDate))
+            return {
+              captured,
+              report,
+              current,
+              next,
+              sessionRows,
+              currentRows: yield* store.currentSession(source.sessionDate),
+            }
+          }),
+        ),
+      )
+      expect(result.captured.evidence.requests).toHaveLength(10_002)
+      expect(result.captured.quotes).toHaveLength(10_002)
+      expect(result.sessionRows).toEqual([...result.captured.quotes])
+      expect(result.sessionRows.map(({ quote }) => quote.quoteHash)).toEqual(
+        result.sessionRows.map(({ quote }) => quote.quoteHash).toSorted(),
+      )
+      expect(result.report.exactLedgerPrefix).toBe(true)
+      expect(result.report.transferCount).toBe(10_002)
+      expect(result.report.verifiedSessionTransferCount).toBe(10_003)
+      expect(result.report.knownEstimatedCostPicoUsd).toBe('420084000')
+      expect(result.current.evidence.requests).toHaveLength(10_003)
+      expect(result.current.quotes).toHaveLength(10_003)
+      expect(result.currentRows).toEqual([...result.current.quotes])
+      expect(result.next.exactLedgerPrefix).toBe(true)
+      expect(result.next.transferCount).toBe(10_003)
+      expect(result.next.knownEstimatedCostPicoUsd).toBe('420168000')
+      expect(BigInt(result.next.ledgerTimestampMax)).toBe(BigInt(result.report.ledgerTimestampMax))
+    },
+    120_000,
+  )
   nativeTest(
     'projects a real PostgreSQL receipt into native TigerBeetle and verifies it once after replay',
     async () => {
