@@ -575,7 +575,11 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
 The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
-validates the target against the latest worker before reading durable controller state. A pinned stale coordinator
+validates the target against the latest worker before reading durable controller state. Before an OBSERVE successor
+can retire its predecessor, a bounded read-only preflight rejects untransitioned PAPER authority and unrelated holds.
+Absent or existing OBSERVE authority and recognized restricted-generation recovery remain admissible; the existing
+native settlement, reconciliation, identity and capital checks still apply afterward. The preflight does not rotate
+authority, restore a mandate or prove broker exposure. A pinned stale coordinator
 cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
 activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
 source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
