@@ -73,9 +73,10 @@ its enclosing writer transaction and deadline. Every session's frozen inference 
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
 
-Inference expense snapshots stream one PostgreSQL statement with native backpressure instead of issuing a query
-for every source row. Sequential consumption verifies the same cut, complete counts and financial evidence.
-The stream closes before transaction cleanup on failure or interruption; other snapshot readers retain their cursors.
+Inference expense snapshots drain one PostgreSQL statement before verifying request, receipt and cost evidence.
+Verification cannot hold that statement open and exhaust its database deadline. An owned read-only transaction closes
+after acquisition; an enclosing writer still rolls back if later verification fails. The same cut, complete counts,
+all costs and financial evidence remain required. Interruption cancels the read and releases its backend.
 
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
