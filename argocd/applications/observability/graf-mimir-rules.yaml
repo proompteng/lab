@@ -1201,6 +1201,18 @@ data:
               min by (namespace, persistentvolumeclaim) (
                 kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
               ) < 0.05
+              # Raw block devices can expose capacity with both byte counters zero.
+              # Missing used-byte telemetry must not suppress a full-filesystem alert.
+              unless on (namespace, persistentvolumeclaim)
+              (
+                (max by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) == 0)
+                and
+                (max by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_used_bytes{persistentvolumeclaim!=""}
+                ) == 0)
+              )
             for: 10m
             labels:
               severity: critical
