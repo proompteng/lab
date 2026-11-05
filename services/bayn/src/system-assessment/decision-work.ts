@@ -7,7 +7,11 @@ import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pa
 import { JevResearchPolicy } from '../jev/acceptance'
 import { jevSignalDueAtMs, jevSignalWindowEndMs } from '../jev/observation-query'
 import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
-import { jevProtocolIdentityMatches, type ExecutionDecisionDocument } from '../shadow-decision-contract'
+import {
+  isSnapshotExecutionMarketDataBinding,
+  jevProtocolIdentityMatches,
+  type ExecutionDecisionDocument,
+} from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { ScheduledEvaluation } from './policy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
@@ -71,6 +75,14 @@ export const sourceFitsRegisteredSession = (
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
 }
+
+export const decisionMarketScopeSupported = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) =>
+  [document.bindings.decisionMarketData, document.bindings.executionMarketData].every(
+    (binding) =>
+      binding === undefined ||
+      !isSnapshotExecutionMarketDataBinding(binding) ||
+      sourceFitsRegisteredSession(binding, registration, binding.observedAt),
+  )
 
 const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) => {
   const { observation } = strategy.evidence
@@ -142,6 +154,25 @@ export const controllerBuildMatchesRegistration = (pass: ControllerPassEvidence,
     candidate !== undefined &&
     build !== undefined &&
     build.sourceRevision === candidate.sourceRevision &&
+    build.imageDigest === `sha256:${candidate.imageDigest}` &&
+    (candidate.capitalAuthorization === undefined ||
+      build.imageRepository === candidate.capitalAuthorization.buildLineage.activation.imageRepository)
+  )
+}
+
+export type ControllerBuildBindingPolicy = 'CURRENT' | 'RETAINED_OPERATIONAL_V1'
+
+/** Frozen receipt reproduction only. New claims use controllerBuildMatchesRegistration. */
+const retainedOperationalV1ControllerBuildMatches = (
+  pass: ControllerPassEvidence,
+  registration: ScheduledEvaluation,
+) => {
+  const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  const build = pass.observation.executionBuild
+  return (
+    candidate !== undefined &&
+    build !== undefined &&
+    build.sourceRevision === candidate.sourceRevision &&
     build.imageDigest === `sha256:${candidate.imageDigest}`
   )
 }
@@ -152,6 +183,7 @@ const registeredControllerOwns = (
   accountId: string,
   generationHash: string,
   protocol: JevProtocolMaterial,
+  buildBinding: ControllerBuildBindingPolicy,
 ) =>
   Result.gen(function* () {
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -178,7 +210,9 @@ const registeredControllerOwns = (
     })
     return (
       candidate !== undefined &&
-      controllerBuildMatchesRegistration(pass, registration) &&
+      (buildBinding === 'RETAINED_OPERATIONAL_V1'
+        ? retainedOperationalV1ControllerBuildMatches(pass, registration)
+        : controllerBuildMatchesRegistration(pass, registration)) &&
       pass.planHash === registration.obligations.configuration.controllerPlanHash &&
       pass.controllerKey === identity.identityHash &&
       candidate.accountBindingHash === accountHash &&
@@ -214,6 +248,7 @@ export const closedEntryWindowWork = (
   pass: ControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -256,6 +291,7 @@ export const closedEntryWindowWork = (
           evidence.accountId,
           evidence.authorityGenerationHash,
           runtime.protocol,
+          buildBinding,
         )) &&
         registration.calendar.sessions.some(
           (s) => s.openAt <= evidence.evaluatedAt && evidence.evaluatedAt < s.closeAt,
@@ -277,6 +313,7 @@ export const entryAbstentionWork = (
   pass: ControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -297,6 +334,7 @@ export const entryAbstentionWork = (
           source.portfolio.brokerState.account.accountId,
           source.authorityGenerationHash,
           source.protocol,
+          buildBinding,
         )) &&
         holdCompletionSupported({
           observedAt: evidence.decidedAt,
@@ -324,6 +362,7 @@ export const accountProtectionWork = (
   pass: ControllerPassEvidence,
   registration: ScheduledEvaluation,
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -348,6 +387,7 @@ export const accountProtectionWork = (
           inputs.policy.accountId,
           protection.authorityGenerationHash,
           registration.obligations.configuration.protocol,
+          buildBinding,
         )) &&
         registration.calendar.sessions.some((s) => s.openAt <= inputs.observedAt && inputs.observedAt < s.closeAt) &&
         inputs.observedAt === observation.observedAt &&
@@ -367,6 +407,7 @@ export const positionHoldWork = (
   registration: ScheduledEvaluation,
   decisions: readonly { readonly sessionDate: string; readonly document: ExecutionDecisionDocument }[],
   witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
 ) =>
   Result.gen(function* () {
     const observation = pass.observation
@@ -384,6 +425,7 @@ export const positionHoldWork = (
         accountId,
         evidence.authorityGenerationHash,
         evidence.protocol,
+        buildBinding,
       )) &&
       entry.document.bindings.authorityGenerationHash === evidence.authorityGenerationHash &&
       entry.document.bindings.accountId === accountId &&

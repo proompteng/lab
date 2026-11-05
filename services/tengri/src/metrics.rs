@@ -154,6 +154,8 @@ impl Drop for LatencyTimer<'_> {
 pub struct Metrics {
     latency: [Mutex<Histogram>; Latency::ALL.len()],
     inventory: Mutex<Option<Inventory>>,
+    run_read_failures: AtomicU64,
+    run_recovery_observations: [AtomicU64; 2],
     readiness_errors: [AtomicU64; 3],
     readiness_timeouts: [AtomicU64; 3],
     guest_failures: AtomicU64,
@@ -230,6 +232,19 @@ impl Metrics {
             &self.readiness_errors
         };
         counters[dependency as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_run_read_failure(&self) {
+        self.run_read_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn observe_run_recovery(&self, state: &crate::runs::State) {
+        let index = match state {
+            crate::runs::State::AuthorizationRequired { .. } => 0,
+            crate::runs::State::NeedsReconciliation { .. } => 1,
+            _ => return,
+        };
+        self.run_recovery_observations[index].fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_guest_failure(&self) {
@@ -359,6 +374,19 @@ impl Metrics {
                 writeln!(inventory, "tengri_readiness_failures_total{{dependency=\"{}\",outcome=\"{outcome}\"}} {count}", dependency.name()).unwrap();
             }
         }
+        writeln!(inventory, "# HELP tengri_run_read_failures_total Run reads that exhausted their recovery budget.\n# TYPE tengri_run_read_failures_total counter\ntengri_run_read_failures_total {}", self.run_read_failures.load(Ordering::Relaxed)).unwrap();
+        writeln!(inventory, "# HELP tengri_run_recovery_observations_total Actual recovery observations requiring authorization or execution reconciliation; replay does not increment them.\n# TYPE tengri_run_recovery_observations_total counter").unwrap();
+        for (index, phase) in ["authorization_required", "needs_reconciliation"]
+            .iter()
+            .enumerate()
+        {
+            writeln!(
+                inventory,
+                "tengri_run_recovery_observations_total{{phase=\"{phase}\"}} {}",
+                self.run_recovery_observations[index].load(Ordering::Relaxed)
+            )
+            .unwrap();
+        }
         format!(
             concat!(
                 "{inventory}",
@@ -427,6 +455,32 @@ mod tests {
         assert!(observed.contains("tengri_ticket_records{scope=\"pending\"} 2\n"));
         assert!(observed.contains("tengri_inventory_age_seconds "));
         assert!(observed.contains("tengri_inventory_last_success_timestamp_seconds "));
+    }
+
+    #[test]
+    fn recovery_metrics_distinguish_authority_and_outcome_without_run_identifiers() {
+        let metrics = Metrics::default();
+        metrics.record_run_read_failure();
+        metrics.observe_run_recovery(&crate::runs::State::AuthorizationRequired {
+            turn_id: Some("private-turn".into()),
+            reason: "private-reason".into(),
+        });
+        metrics.observe_run_recovery(&crate::runs::State::NeedsReconciliation {
+            turn_id: Some("private-turn".into()),
+            reason: "private-reason".into(),
+        });
+        metrics.observe_run_recovery(&crate::runs::State::Running {
+            turn_id: "private-turn".into(),
+        });
+        let rendered = metrics.render();
+        assert!(rendered.contains("tengri_run_read_failures_total 1\n"));
+        assert!(rendered.contains(
+            "tengri_run_recovery_observations_total{phase=\"authorization_required\"} 1\n"
+        ));
+        assert!(rendered.contains(
+            "tengri_run_recovery_observations_total{phase=\"needs_reconciliation\"} 1\n"
+        ));
+        assert!(!rendered.contains("private-"));
     }
 
     #[test]

@@ -37,7 +37,10 @@ const cycle = Effect.runSync(
   }),
 )
 const waiting = (
-  reason = DecisionReadinessReason.SignalWindowObserved,
+  reason: Exclude<
+    DecisionReadinessReason,
+    DecisionReadinessReason.ExecutionRiskExpired
+  > = DecisionReadinessReason.SignalWindowObserved,
   availableAt: string | undefined = instant(7_000),
 ) =>
   ({
@@ -95,6 +98,7 @@ test.each(
     (reason) =>
       reason !== DecisionReadinessReason.LookbackWarmup &&
       reason !== DecisionReadinessReason.SignalWindowObserved &&
+      reason !== DecisionReadinessReason.ExecutionRiskExpired &&
       reason !== DecisionReadinessReason.InferenceExpired,
   ),
 )('preserves the ordinary retry cadence for %s, even with a timestamp', (reason) => {
@@ -115,10 +119,38 @@ test('retries expired inference within the original unused entry deadline instea
     ).toBeUndefined()
 })
 
+test('verified risk expiry refreshes only inside the unchanged unused entry deadline', () => {
+  const result = {
+    ...waiting(DecisionReadinessReason.InferenceExpired),
+    readiness: {
+      reason: DecisionReadinessReason.ExecutionRiskExpired as const,
+      message: 'Risk expired during binding',
+      riskClockRejection: {
+        schemaVersion: 'bayn.intent-risk-clock-rejection.v1' as const,
+        violation: 'EXPIRED' as const,
+        intentId: 'a'.repeat(64),
+        decisionId: 'b'.repeat(64),
+        decidedAt: instant(0),
+        updatedAt: instant(1),
+        expiresAt: instant(1000),
+        checkedAt: instant(2000),
+      },
+    },
+  }
+  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(2000))).toBe(1)
+  const deadline = unusedEntryExpiresAt(cycle)
+  for (const at of [deadline, deadline + 1])
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, new Date(at).toISOString())).toBeUndefined()
+  for (const bindings of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
+    expect(
+      decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, bindings } }, 30_000, instant(2000)),
+    ).toBeUndefined()
+})
+
 const pendingInputs = (previousWindowEndAt?: string) => ({
   ...waiting(DecisionReadinessReason.SnapshotUnavailable),
   readiness: {
-    reason: DecisionReadinessReason.SnapshotUnavailable,
+    reason: DecisionReadinessReason.SnapshotUnavailable as const,
     message: 'No candidate has complete raw data and a matching rolling feature',
     snapshotQuery: {
       rangeStartAt: native.query.rangeStartAt,

@@ -420,3 +420,16 @@ describe('Codex image inputs', () => {
     ).toBe(false)
   })
 })
+
+test('run recovery binds an explicit run and stable control identity', () => {
+  const action = {
+    action: 'recover-run',
+    agentId: 'agent-test',
+    runId: '11111111-1111-4111-8111-111111111111',
+    operationId: '22222222-2222-4222-8222-222222222222',
+  }
+  expect(tengriActionSchema.safeParse(action).success).toBe(true)
+  expect(tengriActionSchema.safeParse({ ...action, operationId: undefined }).success).toBe(false)
+  expect(tengriActionSchema.safeParse({ ...action, runId: 'other' }).success).toBe(false)
+  expect(tengriActionSchema.safeParse({ ...action, sessionId: 'caller-session' }).success).toBe(false)
+})

@@ -12,7 +12,7 @@ import type { CyclePassObservation } from './model'
 test('retains readiness and holding reasons through the durable observation schema and log projection', () => {
   const { cycle } = candidateObservationFixture()
   const readiness = {
-    reason: DecisionReadinessReason.SnapshotCoverage,
+    reason: DecisionReadinessReason.SnapshotCoverage as const,
     message: 'intraday symbol lacks the complete rolling lookback baseline',
     symbol: 'IWM',
   }

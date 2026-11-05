@@ -13,12 +13,46 @@ import {
   decisionDocumentWork,
   entryAbstentionWork,
   positionHoldWork,
+  type ControllerBuildBindingPolicy,
 } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { JevResearchPolicy } from '../jev/acceptance'
 
+export const registeredDecisionWork = (
+  document: SystemSourceCut['decisions'][number]['document'],
+  registration: ScheduledEvaluation,
+) => {
+  const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  return candidate !== undefined &&
+    document.bindings.accountId === candidate.riskPolicy.accountId &&
+    document.bindings.authorityGenerationHash === candidate.authorityGenerationHash &&
+    document.bindings.policyHash === candidate.riskPolicyHash &&
+    document.bindings.strategyProtocolHash === candidate.protocolHash
+    ? decisionDocumentWork(document, registration)
+    : undefined
+}
+
+export const registeredControllerWork = (
+  pass: SystemSourceCut['controllerPasses'][number],
+  registration: ScheduledEvaluation,
+  decisions: SystemSourceCut['decisions'],
+  witnessedAt: string,
+  buildBinding: ControllerBuildBindingPolicy = 'CURRENT',
+) =>
+  Result.gen(function* () {
+    const work =
+      (yield* positionHoldWork(pass, registration, decisions, witnessedAt, buildBinding)) ??
+      (yield* entryAbstentionWork(pass, registration, witnessedAt, buildBinding)) ??
+      (yield* accountProtectionWork(pass, registration, witnessedAt, buildBinding)) ??
+      (yield* closedEntryWindowWork(pass, registration, witnessedAt, buildBinding))
+    return work === undefined ? undefined : { ...work, completedAt: pass.completedAt }
+  })
+
 /** Freeze dynamic denominators at the first admission/uncertainty, never at the most recent retry. */
-export const mutationObligations = (cut: SystemSourceCut, registration: ScheduledEvaluation) =>
+export const mutationObligations = (
+  cut: Pick<SystemSourceCut, 'registrationHash' | 'asOf' | 'mutations'>,
+  registration: ScheduledEvaluation,
+) =>
   Result.gen(function* () {
     const lastClose = registration.calendar.sessions.at(-1)?.closeAt
     if (lastClose === undefined)
@@ -91,10 +125,14 @@ export const mutationObligations = (cut: SystemSourceCut, registration: Schedule
     return schedule
   })
 
-export const bindOperationalObligations = (
-  cut: SystemSourceCut,
+export const bindOperationalWork = (
+  cut: Pick<SystemSourceCut, 'registrationHash' | 'asOf' | 'mutations' | 'durableObservations'>,
   registration: ScheduledEvaluation,
   sourceCutHash: string,
+  work: {
+    readonly controllerWork: Parameters<typeof indexObligationWitnesses>[3]
+    readonly documentWork: Parameters<typeof indexObligationWitnesses>[4]
+  },
 ) =>
   Result.gen(function* () {
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
@@ -102,46 +140,19 @@ export const bindOperationalObligations = (
       return yield* Result.fail(
         new SystemAssessmentError({ message: 'Operational evidence requires its registered candidate' }),
       )
-    const controllerReceipts = new Map<string, string>()
-    for (const pass of cut.controllerPasses) {
-      const hash = yield* canonicalHashV1Result(pass)
-      const previous = controllerReceipts.get(pass.receiptHash)
-      if (previous !== undefined && previous !== hash)
-        return yield* Result.fail(
-          new SystemAssessmentError({ message: 'Controller receipt has conflicting retained contents' }),
-        )
-      controllerReceipts.set(pass.receiptHash, hash)
-    }
-    const earliestWitnesses = earliestDurableWitnesses(cut)
     const sources = new Set<string>()
     const dynamic = yield* mutationObligations(cut, registration)
     for (const row of dynamic) sources.add(row.scheduleEvidenceHash)
     const schedule = [...(yield* registeredSchedule(registration)), ...dynamic]
     for (const row of schedule) sources.add(row.scheduleEvidenceHash)
     const completions: (typeof ObligationCompletionSchema.Type)[] = []
-    const controllerWork = new Map<string, { sourceAt: string; completedAt: string; correct: boolean }>()
-    for (const pass of cut.controllerPasses) {
-      const witness = earliestWitnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
-      if (witness === undefined) continue
-      const work =
-        (yield* positionHoldWork(pass, registration, cut.decisions, witness.witnessedAt)) ??
-        (yield* entryAbstentionWork(pass, registration, witness.witnessedAt)) ??
-        (yield* accountProtectionWork(pass, registration, witness.witnessedAt)) ??
-        (yield* closedEntryWindowWork(pass, registration, witness.witnessedAt))
-      if (work !== undefined) controllerWork.set(pass.receiptHash, { ...work, completedAt: pass.completedAt })
-    }
-    const documentWork = new Map(
-      cut.decisions.map(({ document }) => [
-        document.contentHash,
-        document.bindings.accountId === candidate.riskPolicy.accountId &&
-        document.bindings.authorityGenerationHash === candidate.authorityGenerationHash &&
-        document.bindings.policyHash === candidate.riskPolicyHash &&
-        document.bindings.strategyProtocolHash === candidate.protocolHash
-          ? decisionDocumentWork(document, registration)
-          : undefined,
-      ]),
+    const indexedWitnesses = yield* indexObligationWitnesses(
+      cut,
+      registration,
+      schedule,
+      work.controllerWork,
+      work.documentWork,
     )
-    const indexedWitnesses = yield* indexObligationWitnesses(cut, registration, schedule, controllerWork, documentWork)
     for (const obligation of schedule) {
       const witnesses = indexedWitnesses.get(obligation.obligationId) ?? []
       const selected =
@@ -163,4 +174,48 @@ export const bindOperationalObligations = (
       obligationCoverageHash,
       sourceHashes: [...sources],
     }
+  })
+
+export const bindOperationalObligations = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'CURRENT')
+
+/** Only the stored v1 assessment reader may reproduce the original controller-build matching rule. */
+export const verifyRetainedOperationalV1Obligations = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+) => bindOperationalObligationsForPolicy(cut, registration, sourceCutHash, 'RETAINED_OPERATIONAL_V1')
+
+const bindOperationalObligationsForPolicy = (
+  cut: SystemSourceCut,
+  registration: ScheduledEvaluation,
+  sourceCutHash: string,
+  buildBinding: ControllerBuildBindingPolicy,
+) =>
+  Result.gen(function* () {
+    const controllerReceipts = new Map<string, string>()
+    for (const pass of cut.controllerPasses) {
+      const hash = yield* canonicalHashV1Result(pass)
+      const previous = controllerReceipts.get(pass.receiptHash)
+      if (previous !== undefined && previous !== hash)
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Controller receipt has conflicting retained contents' }),
+        )
+      controllerReceipts.set(pass.receiptHash, hash)
+    }
+    const earliestWitnesses = earliestDurableWitnesses(cut)
+    const controllerWork = new Map<string, { sourceAt: string; completedAt: string; correct: boolean }>()
+    for (const pass of cut.controllerPasses) {
+      const witness = earliestWitnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
+      if (witness === undefined) continue
+      const work = yield* registeredControllerWork(pass, registration, cut.decisions, witness.witnessedAt, buildBinding)
+      if (work !== undefined) controllerWork.set(pass.receiptHash, work)
+    }
+    const documentWork = new Map(
+      cut.decisions.map(({ document }) => [document.contentHash, registeredDecisionWork(document, registration)]),
+    )
+    return yield* bindOperationalWork(cut, registration, sourceCutHash, { controllerWork, documentWork })
   })

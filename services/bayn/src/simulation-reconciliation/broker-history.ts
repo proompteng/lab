@@ -375,10 +375,9 @@ export const decideStableHistory = (
     return after
   })
 
-export const readStableBrokerSnapshot = (
+export const readBrokerSnapshotOnce = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
-  waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
   read.projection?.snapshot ??
   Effect.gen(function* () {
@@ -389,7 +388,14 @@ export const readStableBrokerSnapshot = (
     const after = yield* readHistory(read, afterUntil)
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
-  }).pipe(
+  })
+
+export const readStableBrokerSnapshot = (
+  read: BrokerReadShape,
+  now: Effect.Effect<string, ReconciliationError>,
+  waitForRetry: (milliseconds: number) => Effect.Effect<void, BrokerReadError | ReconciliationError> = Effect.sleep,
+): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  readBrokerSnapshotOnce(read, now).pipe(
     Effect.retry(
       Schedule.recurs(2).pipe(
         Schedule.while(({ input: cause }) =>
