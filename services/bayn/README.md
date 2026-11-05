@@ -2274,6 +2274,11 @@ assertions and ten-minute case budgets without sharing one fifteen-minute CI job
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
 Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
 instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
+The disposable diagnostic executable also retains cumulative host-clock timings for seventeen fixed reconciliation,
+cycle and PostgreSQL stages. It emits a checkpoint every 1,024 reconciliations, with at most 31 checkpoints and one
+terminal summary. Counts distinguish completion, failure and interruption; totals and maxima are inclusive, so nested
+stages overlap. Only stage names and numeric aggregates are emitted, never span payloads. Checkpoints remain useful
+when the case deadline kills the child before its terminal summary. The production executable and polling are unchanged.
 The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
