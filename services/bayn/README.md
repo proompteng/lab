@@ -1488,13 +1488,15 @@ Retained rejected or abandoned responses with valid usage remain included. Earli
 The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
 Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
 
-Expense reports capture requests and frozen quotes through one transaction-scoped PostgreSQL cursor. Each fetch
-reads and reproduces one source row under the cursor's original snapshot, including inside a READ COMMITTED execution writer
-transaction. Successful captures close it explicitly; its owning transaction also releases it when the transaction ends.
-Pricing and frozen-quote coverage reuse the decoded usage facts; a charge bound to an earlier pending source prefix is
-validated against that prefix. This keeps source reconstruction from holding an inactive database connection during
-coverage verification. The complete-session limits and operation deadlines remain unchanged. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
-history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
+Expense reports drain requests and frozen quotes through one streamed PostgreSQL statement. Its original snapshot
+also covers reads inside a READ COMMITTED execution writer transaction. Read-only reports and source captures finish
+their enclosing transaction before reconstructing source evidence, verifying frozen prefixes, hashing the cut, or
+reconciling the external ledger. Verification uses the captured rows and rejects malformed or incomplete evidence;
+it never rereads a repaired request in place of its original cut. Writer-fenced evaluations retain their transaction
+and roll back on verification failure. Pricing and coverage reuse decoded usage facts; a charge bound to an earlier
+pending source prefix is validated against that prefix. The complete-session limits, SQL and socket guards, and
+operation deadlines remain unchanged. The reader pins a native TigerBeetle timestamp and verifies every session
+transfer and the history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
 while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
 contribute to the report subtotal. Trading and expense posting continue throughout the read.
 

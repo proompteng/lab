@@ -8,7 +8,7 @@ import {
   makeInferenceCostReport,
   type DecodedInferenceCostEvidence,
 } from '../inference-costs'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { verifyInferenceExpenseCoverage, type InferenceExpenseQuote } from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
@@ -110,7 +110,7 @@ export const readForwardInferenceExpenseSnapshots = (
       })
     if (sessions.length === 0) return []
     return yield* Effect.forEach(sessions, ({ sessionDate }) =>
-      readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence),
+      acquireInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence),
     )
   }).pipe(
     Effect.mapError((cause) =>
@@ -120,7 +120,7 @@ export const readForwardInferenceExpenseSnapshots = (
     ),
   )
 
-export type ForwardInferenceExpenseSnapshot = Effect.Success<ReturnType<typeof readInferenceExpenseSnapshot>>
+export type ForwardInferenceExpenseSnapshot = Effect.Success<ReturnType<typeof acquireInferenceExpenseSnapshot>>
 
 export const readForwardInferenceExpenses = (
   config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
@@ -133,8 +133,9 @@ export const readForwardInferenceExpenses = (
     if (snapshots.length === 0) return []
     const client = yield* makeTigerBeetleRequestClient(config)
     const store = makeInferenceExpenseStore(sql, accountId)
-    return yield* Effect.forEach(snapshots, (snapshot) =>
+    return yield* Effect.forEach(snapshots, ({ verify }) =>
       Effect.gen(function* () {
+        const snapshot = yield* verify
         const { evidence, quotes: frozen } = snapshot
         const sessionDate = evidence.sessionDate
         const summary = yield* Effect.fromResult(
