@@ -53,13 +53,13 @@ type Driver = {
   }
 }
 
-test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
+test('keeps the Rook v1.21 operator, CSI, and cluster charts aligned', () => {
   const kustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
 
   expect(kustomization.helmCharts).toMatchObject([
-    { name: 'rook-ceph', version: 'v1.20.7' },
+    { name: 'rook-ceph', version: '1.21.1' },
     { name: 'ceph-csi-drivers', version: '1.0.4' },
-    { name: 'rook-ceph-cluster', version: 'v1.20.7' },
+    { name: 'rook-ceph-cluster', version: '1.21.1' },
   ])
   expect(kustomization.resources).not.toContain('csi-legacy-service-account-bridge.yaml')
 
@@ -123,7 +123,7 @@ test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
   })
 })
 
-test('preserves the Ceph data plane and live CSI behavior after the v1.20 migration', () => {
+test('preserves the Ceph data plane and live CSI behavior through the Umbrella upgrade', () => {
   const operatorValues = readYaml<{
     image: { repository: string; tag: string }
     csi: Record<string, unknown>
@@ -176,7 +176,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     }
   }>('argocd/applications/rook-ceph/csi-driver-values.yaml')
 
-  expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.7' })
+  expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.21.1' })
   expect(clusterValues.cephClusterSpec.security.cephx.allowedCiphers).toEqual(['aes256k'])
   expect(operatorValues.csi).toMatchObject({
     installCsiOperator: true,
@@ -186,7 +186,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({
     repository: 'quay.io/ceph/ceph',
-    tag: 'v20.2.4-20260818',
+    tag: 'v21.2.0@sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d',
   })
   expect(clusterValues.cephClusterSpec.cephConfig.rgw.rgw_s3_auth_use_sts).toBe('false')
   expect(clusterValues.cephClusterSpec.cephConfig.mon.mon_auth_allow_insecure_key).toBe('false')

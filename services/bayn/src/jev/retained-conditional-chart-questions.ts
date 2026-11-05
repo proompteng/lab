@@ -6,7 +6,6 @@ import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from
 import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import {
-  decodeDecisionsResponse,
   decisionsModel,
   prepareDecisionsRequest,
   DecisionsRequestSchema,
@@ -198,13 +197,6 @@ export type RetainedConditionalChartAssessments = typeof RetainedConditionalChar
 export type RetainedConditionalChartAssessmentsMaterial = Omit<RetainedConditionalChartAssessments, 'schemaVersion'> & {
   readonly schemaVersion: 'bayn.chart-assessments.v1' | 'bayn.chart-assessments.v2'
 }
-
-export const retainedConditionalChartAssessments = (chart: NativeChartEvidence, input: unknown) =>
-  Result.gen(function* () {
-    const prepared = yield* makeRetainedConditionalChartDecisionsRequest(chart)
-    const response = yield* decodeDecisionsResponse(prepared.request, input)
-    return yield* retainedConditionalChartAssessmentsFromResponse(chart, response)
-  })
 
 export const retainedConditionalChartAssessmentsFromResponse = (
   chart: NativeChartEvidence,

@@ -1,3 +1,4 @@
+import { MarketKind } from './instruments'
 import { expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
@@ -66,7 +67,7 @@ test('status identifies an ordinary holding wait in both pass projections', () =
 
 test('status exposes missing feature evidence without publishing free-form readiness text', () => {
   const readiness = {
-    reason: DecisionReadinessReason.SnapshotUnavailable,
+    reason: DecisionReadinessReason.SnapshotUnavailable as const,
     symbol: 'SPY',
     eventAt: observedAt,
     availableAt: '2026-09-17T14:31:00.000Z',
@@ -194,4 +195,11 @@ test('status classifies failures in both pass projections without exposing their
     executionController: { status: { lastPass: projected } },
   })
   expect(JSON.stringify(response)).not.toContain('private-account-identity')
+})
+
+test('status exposes the enforced equity-only entry scope', () => {
+  expect(responseWithPass(undefined).tradingScope).toEqual({
+    entryMarkets: [MarketKind.Equity],
+    existingPositionExits: 'NORMAL_CAPITAL_AND_RISK_CHECKS',
+  })
 })

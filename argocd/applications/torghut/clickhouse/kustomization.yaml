@@ -5,6 +5,7 @@ resources:
   - clickhouse-upgrade-25-8-checkpoints.yaml
   - clickhouse-upgrade-26-3-checkpoints.yaml
   - keeper-upgrade-snapshot.yaml
+  - keeper-pre-nvme-snapshot.yaml
   - clickhouse-keeper.yaml
   - keeper-pdb.yaml
   - sealed-secret.yaml
@@ -22,5 +23,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-d7b256f064aebd299e7f1fae6775b97861c35cad
-    digest: sha256:b20fdabbca23d6698671155af8661b32457dfe0e4dea3e591280d9c10759d26c
+    newTag: kargo-sha-2de76204dbaa68086caff7f37d2b4844ef811932
+    digest: sha256:bc5dd8ad72da48554c5eabb3583b24ebb7818dd50e7099b166f445bc19a982b2

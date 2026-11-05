@@ -4,6 +4,7 @@ import { stableU128, stableU64 } from './hash'
 import { InferenceCostError, inferenceStageKey } from './inference-costs'
 import {
   buildInferenceExpensePlan,
+  inferenceExpenseBatchSize,
   inferenceExpenseLedger,
   inferenceExpenseScope,
   type InferenceExpensePlan,
@@ -13,6 +14,7 @@ import {
 } from './inference-expense'
 import { createAndVerifyAccounts, createAndVerifyTransfers } from './ledger'
 import { verifyExactAccounts, verifyExactTransfers } from './ledger-plan/verification'
+import { readLedgerRecords } from './ledger/account-read'
 import {
   LEDGER_BATCH_MAX,
   LedgerAccountFilterFlag,
@@ -100,32 +102,6 @@ export const readInferenceExpenseLedger = <E, R>(
       const head = yield* lastTransfer(account.id)
       if (head !== undefined && head.timestamp > timestampMax) timestampMax = head.timestamp
     }
-    const transfers: LedgerTransferRecord[] = []
-    let minimum = 0n
-    while (true) {
-      const limit = Math.min(LEDGER_BATCH_MAX, 10_001 - transfers.length)
-      const page = yield* client.request('read-inference-expense-session-transfers', (active) =>
-        active.queryTransfers({ ...base, timestamp_min: minimum, timestamp_max: timestampMax, limit }),
-      )
-      if (page.length > limit)
-        return yield* new InferenceCostError({ message: 'Inference expense ledger returned an oversized page' })
-      let prior = minimum - 1n
-      for (const transfer of page) {
-        if (
-          transfer.timestamp <= prior ||
-          transfer.timestamp < minimum ||
-          transfer.timestamp > timestampMax ||
-          transfer.timestamp === 0n
-        )
-          return yield* new InferenceCostError({ message: 'Inference expense ledger pagination is not ordered' })
-        prior = transfer.timestamp
-        transfers.push(transfer)
-      }
-      if (transfers.length > 10_000)
-        return yield* new InferenceCostError({ message: 'Inference expense ledger exceeds the complete-report limit' })
-      if (page.length < limit) break
-      minimum = prior + 1n
-    }
     // Quotes commit before posting. A later read can identify every owner at the pinned native cut.
     const current = yield* readCurrentQuotes
     if (
@@ -139,9 +115,14 @@ export const readInferenceExpenseLedger = <E, R>(
     const acknowledged = yield* Effect.fromResult(
       buildInferenceExpensePlan(current.filter((row) => row.verifiedAt !== null).map((row) => row.quote)),
     )
+    const transfers = yield* readLedgerRecords(
+      { ...base, timestamp_max: timestampMax },
+      plan.transfers.length,
+      (filter) => client.request('read-inference-expense-session-transfers', (active) => active.queryTransfers(filter)),
+    )
     const lookedUpTransfers: LedgerTransferRecord[] = []
-    for (let offset = 0; offset < plan.transfers.length; offset += LEDGER_BATCH_MAX) {
-      const batch = plan.transfers.slice(offset, offset + LEDGER_BATCH_MAX)
+    for (let offset = 0; offset < plan.transfers.length; offset += inferenceExpenseBatchSize) {
+      const batch = plan.transfers.slice(offset, offset + inferenceExpenseBatchSize)
       const actual = yield* client.request('read-inference-expense-owner-transfers', (active) =>
         active.lookupTransfers(batch.map((row) => row.id)),
       )

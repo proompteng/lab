@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
+import { sha256 } from '../hash'
 import { Effect, Result, Schema } from 'effect'
 
 import { nativeJevFixture, nativeJevDecisionEvidence } from '../jev/native.test-support'
@@ -75,9 +76,28 @@ describe('strategy decision work evidence', () => {
       sequence: 1,
       receiptHash: testHash(decision),
       completedAt,
-      observation: retainAutonomousCyclePassObservation(passObservation),
+      observation: {
+        ...retainAutonomousCyclePassObservation(passObservation),
+        executionBuild: {
+          sourceRevision: 'a'.repeat(40),
+          imageRepository: 'registry.example.test/lab/bayn',
+          imageDigest: `sha256:${sha256('image')}`,
+        },
+      },
     })
     expect(Result.getOrThrow(accountProtectionWork(pass, registration, completedAt))?.correct).toBe(true)
+    const { executionBuild, ...unboundObservation } = pass.observation
+    for (const build of [
+      undefined,
+      { ...executionBuild, sourceRevision: 'b'.repeat(40) },
+      { ...executionBuild, imageDigest: `sha256:${'2'.repeat(64)}` },
+    ]) {
+      const changed = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
+        ...pass,
+        observation: { ...unboundObservation, ...(build === undefined ? {} : { executionBuild: build }) },
+      })
+      expect(Result.getOrThrow(accountProtectionWork(changed, registration, completedAt))?.correct).toBe(false)
+    }
     expect(
       Result.getOrThrow(accountProtectionWork(pass, registration, decision.admissionProtection.validUntil))?.correct,
     ).toBe(false)
@@ -174,6 +194,11 @@ describe('strategy decision work evidence', () => {
         recoveryAction: 'WAITING',
         observedAt: target.evidence.decidedAt,
         entryAbstention: target,
+        executionBuild: {
+          sourceRevision: 'a'.repeat(40),
+          imageRepository: 'registry.example.test/lab/bayn',
+          imageDigest: `sha256:${sha256('image')}`,
+        },
         readiness: { reason: 'NO_ELIGIBLE_CANDIDATE', message: 'No supported entries' },
       },
     })

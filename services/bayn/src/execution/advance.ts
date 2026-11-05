@@ -105,9 +105,12 @@ const hashOutcome = (
   const { observation, result } = advance
   const material = {
     schemaVersion:
-      observation.jevObservationReferences === undefined
-        ? 'bayn.execution-advance-receipt.v1'
-        : 'bayn.execution-advance-receipt.v2',
+      observation.executionBuild !== undefined
+        ? 'bayn.execution-advance-receipt.v3'
+        : observation.jevObservationReferences === undefined
+          ? 'bayn.execution-advance-receipt.v1'
+          : 'bayn.execution-advance-receipt.v2',
+    ...(observation.executionBuild === undefined ? {} : { executionBuild: observation.executionBuild }),
     ...(observation.jevObservationReferences === undefined
       ? {}
       : { jevObservationReferences: observation.jevObservationReferences }),

@@ -181,7 +181,6 @@ export const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(Transa
 export const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 export const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
 export const decodeDurableExecutions = Schema.decodeUnknownEffect(Schema.Array(DurableExecutionRow), strictParseOptions)
-export const decodeCycleDecisions = Schema.decodeUnknownEffect(Schema.Array(CycleDecisionRow), strictParseOptions)
 export const decodeMarketVolumeBindings = Schema.decodeUnknownEffect(
   Schema.Array(MarketVolumeBindingRow),
   strictParseOptions,
