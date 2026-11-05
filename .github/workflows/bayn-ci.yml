@@ -314,7 +314,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [runtime, backtest, frozen-control, restart, inference]
+        group:
+          - runtime
+          - backtest-core
+          - backtest-latency-jev
+          - backtest-latency-ablation
+          - backtest-latency-momentum
+          - backtest-latency-momentum-trading
+          - frozen-control
+          - restart
+          - inference
     services:
       postgres:
         image: postgres:18-alpine
