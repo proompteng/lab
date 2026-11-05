@@ -102,7 +102,12 @@ import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } f
 import { CycleState, type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
-import { decisionReadinessContinuationDelayMs } from '../observe-composition/recovery-driver'
+import {
+  decisionReadinessContinuationDelayMs,
+  canReuseSourceWaitReconciliation,
+} from '../observe-composition/recovery-driver'
+import { cachedBrokerStateFixture, nativeBrokerStateFixture } from '../execution/broker-state-cache.fixture'
+import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
 import { isCycleStateTransitionAllowed } from '../cycle/transitions'
 import {
   decideActivation,
@@ -177,6 +182,124 @@ import { registrationBuildFixture } from './registration-build.test-support'
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('source-wait reconciliation retains exactness, authority, flat state and original freshness', () => {
+    const origin = Date.parse('2026-11-05T14:30:00.000Z')
+    const at = (offset: number) => new Date(origin + offset).toISOString()
+    const base = nativeBrokerStateFixture(
+      cachedBrokerStateFixture({
+        id: 'source-retry-account',
+        status: BrokerAccountStatus.Active,
+        currency: 'USD',
+        cashMicros: '100000000000',
+        equityMicros: '100000000000',
+        lastEquityMicros: '100000000000',
+        buyingPowerMicros: '100000000000',
+        accountBlocked: false,
+        tradingBlocked: false,
+        tradeSuspendedByUser: false,
+        cryptoStatus: null,
+        cryptoFeeTier: null,
+        cashReportingQuantumMicros: '1',
+        nonMarginableBuyingPowerMicros: null,
+        observedAt: at(0),
+      }),
+    )
+    const authority = base.riskContext.authority
+    if (authority === null) throw new Error('source-retry fixture requires authority')
+    const held = {
+      schemaVersion: 'bayn.position.v2' as const,
+      accountId: 'source-retry-account',
+      symbol: 'NVDA',
+      quantityAtoms: '1000000000',
+      averageEntryPriceMicros: '100000000',
+      costBasisMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '100000000',
+      unrealizedPnlMicros: '0',
+      observedAt: at(0),
+    }
+    const pending = {
+      schemaVersion: 'bayn.order.v3' as const,
+      accountId: 'source-retry-account',
+      symbol: 'NVDA',
+      brokerOrderId: 'source-retry-order',
+      clientOrderId: 'source-retry-client',
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: '1000000000',
+      filledQuantityAtoms: '0',
+      limitPriceMicros: '100000000',
+      status: OrderStatus.New,
+      observedAt: at(0),
+    }
+    const cases = Array.from({ length: 256 }, (_, mask) => mask).flatMap((mask) =>
+      [-1, 0, 1, 999, 29_999, 30_000, 30_001].flatMap((now) =>
+        [0, 1_000, 30_000].map((maximumAge) => ({
+          exact: (mask & 1) !== 0,
+          accounting: (mask & 2) !== 0,
+          sameGeneration: (mask & 4) !== 0,
+          sameVersion: (mask & 8) !== 0,
+          flat: (mask & 16) !== 0,
+          clearMutations: (mask & 32) !== 0,
+          pending: (mask & 64) !== 0,
+          unknownOrders: (mask & 128) !== 0,
+          now,
+          maximumAge,
+        })),
+      ),
+    )
+    const results = cases.map((c) =>
+      canReuseSourceWaitReconciliation(
+        {
+          ...base,
+          report: {
+            ...base.report,
+            reconciliation: {
+              ...base.report.reconciliation,
+              status: c.exact ? ReconciliationStatus.Exact : ReconciliationStatus.Discrepancy,
+            },
+            metrics: { ...base.report.metrics, accountingExact: c.accounting },
+          },
+          brokerState: {
+            ...base.brokerState,
+            positions: c.flat ? [] : [held],
+            orders: c.pending ? [pending] : [],
+            unknownOrderCount: c.unknownOrders ? 1 : 0,
+          },
+          riskContext: {
+            ...base.riskContext,
+            authorityObservedAt: at(0),
+            unknownMutationCount: c.clearMutations ? 0 : 1,
+            authority: {
+              ...authority,
+              generationHash: c.sameGeneration ? authority.generationHash : 'f'.repeat(64),
+              version: c.sameVersion ? authority.version : authority.version + 1,
+            },
+          },
+        },
+        authority,
+        origin + c.now,
+        c.maximumAge,
+      ),
+    )
+    expect(results).toContain(true)
+    expect(results).toContain(false)
+    expect(
+      model(
+        cases.map((c) => ({
+          ...c,
+          operation: 'sourceWaitReconciliationReusable',
+          clearOrders: !c.pending && !c.unknownOrders,
+          oldest: '0',
+          newest: '0',
+          now: String(c.now),
+          maximumAge: String(c.maximumAge),
+        })),
+      ),
+    ).toEqual(results)
+  })
+
   test('reconciliation batching preserves each original deadline and causal receipt', () => {
     const cases = [0, 30, 60, 90].flatMap((due) =>
       [0, 65, 95, 181].flatMap((observed) =>
@@ -1947,6 +2070,57 @@ formal('pinned Lean executable conformance', () => {
           ) ?? null,
       ),
     )
+    const sourceWindowCases = lifecycleCases.flatMap((c) =>
+      [500, 30_000].flatMap((normalDelay) =>
+        [
+          c.now - 1,
+          c.now,
+          c.now + 1,
+          c.now + 7_000,
+          c.now + normalDelay,
+          unusedEntryExpiresAt(c.cycle) - 1,
+          unusedEntryExpiresAt(c.cycle),
+          unusedEntryExpiresAt(c.cycle) + 1,
+        ].map((availableAt) => ({ ...c, normalDelay, availableAt })),
+      ),
+    )
+    const sourceWindowExpected = [
+      ...Schema.decodeUnknownSync(Schema.Array(Schema.NullOr(Schema.Number)))(
+        model(
+          sourceWindowCases.map((c) => ({
+            operation: 'sourceWindowContinuation',
+            known: true,
+            cycle: encodeCycle(c.cycle),
+            now: String(c.now),
+            availableAt: String(c.availableAt),
+            normalDelay: c.normalDelay,
+          })),
+        ),
+      ),
+    ]
+    expect(sourceWindowExpected).toContain(null)
+    expect(sourceWindowExpected).toContain(1)
+    for (const reason of [DecisionReadinessReason.SnapshotUnavailable, DecisionReadinessReason.SnapshotStale] as const)
+      expect(
+        sourceWindowCases.map(
+          (c) =>
+            decisionReadinessContinuationDelayMs(
+              {
+                outcome: 'RECOVERED',
+                action: 'WAITING',
+                cycle: c.cycle,
+                observedAt: instant(c.now),
+                readiness: {
+                  reason,
+                  message: 'Committed source window is excluded',
+                  availableAt: instant(c.availableAt),
+                },
+              },
+              c.normalDelay,
+              instant(c.now),
+            ) ?? null,
+        ),
+      ).toEqual(sourceWindowExpected)
     const observing: ObserveShadowDecisionDocument = {
       schemaVersion: 'bayn.observe-shadow-decision.v2',
       mode: legacyObserveAuthorityToken,
