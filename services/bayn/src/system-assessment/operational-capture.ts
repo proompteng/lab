@@ -53,7 +53,10 @@ export const makeOperationalSourceSpool = Effect.gen(function* () {
       const previous = references.get(key)
       if (previous !== undefined) {
         if (previous.recordHash !== record.recordHash)
-          return yield* new SystemAssessmentError({ message: 'Native source identity has conflicting contents' })
+          return yield* new SystemAssessmentError({
+            message: 'Native source identity has conflicting contents',
+            cause: { kind, sourceId, retainedHash: previous.recordHash, conflictingHash: record.recordHash },
+          })
         return
       }
       yield* fs.writeFileString(`${directory}/${record.recordHash}`, record.payloadText, {

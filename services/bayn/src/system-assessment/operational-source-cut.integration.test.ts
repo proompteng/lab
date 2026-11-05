@@ -19,6 +19,7 @@ import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { replacementProtectionFixture } from './protection-evidence.test-support'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import { MutationEventSchema, MutationEventType } from '../execution/mutations/model'
+import { readSystemControllerPasses } from './capture-queries'
 import {
   evaluateOperationalAssessment,
   makeOperationalSafetyAudit,
@@ -159,6 +160,60 @@ postgres('replayed operational source records', () => {
   )
   afterAll(async () => {
     if (runtime !== undefined) await runtime.dispose()
+  })
+
+  test('retains the real pass across deactivation without hiding contradictory active evidence', async () => {
+    const f = fixture()
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const status = {
+            controller_key: f.pass.controllerKey,
+            plan_hash: f.pass.planHash,
+            active: true,
+            epoch: f.pass.epoch,
+            last_sequence: f.pass.sequence,
+            last_receipt_hash: f.pass.receiptHash,
+            completed_at: f.pass.completedAt,
+            last_pass: f.pass.observation,
+          }
+          for (const value of [status, { ...status, active: false, epoch: status.epoch + 1 }])
+            yield* sql`INSERT INTO execution_controller_observations(controller_key, status)
+          VALUES (${f.pass.controllerKey}, ${sql.json(value)})`
+          const read = readSystemControllerPasses(
+            f.pass.controllerKey,
+            f.pass.planHash,
+            f.registration.calendar.sessions[0]!.openAt,
+            f.cut.asOf,
+            f.cut.asOf,
+          )
+          const retained = yield* read
+          expect(retained).toEqual([f.pass])
+          for (const pass of retained)
+            yield* persistSystemSourceRecord(
+              Result.getOrThrow(makeSystemSourceRecord(SystemSourceRecordKind.Controller, pass)),
+            )
+          const replayed = yield* replayOperationalSourceRecords(f.cut, f.registration)
+          expect(replayed.work.controllerWork.get(f.pass.receiptHash)?.correct).toBe(true)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM execution_controller_observations`).toEqual([
+            { count: 2 },
+          ])
+
+          yield* sql`INSERT INTO execution_controller_observations(controller_key, status)
+        VALUES (${f.pass.controllerKey}, ${sql.json({ ...status, last_pass: { ...f.pass.observation, observedAt: f.pass.completedAt } })})`
+          const conflicting = yield* read
+          expect(conflicting).toHaveLength(2)
+          const archive = yield* makeOperationalSourceSpool
+          const result = yield* Effect.exit(
+            Effect.forEach(conflicting, (pass) =>
+              archive.spool(SystemSourceRecordKind.Controller, pass.receiptHash, pass),
+            ),
+          )
+          expect(Exit.isFailure(result)).toBe(true)
+        }),
+      ),
+    )
   })
 
   test.each([200, 429])(
@@ -414,6 +469,8 @@ postgres('replayed operational source records', () => {
         true,
       )
     },
+    // Full native document construction and canonical replay must finish before the next schema reset.
+    30000,
   )
 
   test.each(['success', 'failure', 'interruption'] as const)('removes private spool files after %s', async (mode) => {

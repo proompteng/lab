@@ -1,18 +1,39 @@
 import { isNativeError } from 'node:util/types'
-import { Effect, Exit, Layer, Schedule, Scope } from 'effect'
-import type { RedisError } from 'effect/persistence/Redis'
+import { Effect, Exit, Fiber, Layer, Schedule, Scope } from 'effect'
+import { RedisError } from 'effect/persistence/Redis'
+import { ConnectionTimeoutError } from 'redis'
 
 const startupConnectionRefused = (error: RedisError) =>
   isNativeError(error.cause) && Object.getOwnPropertyDescriptor(error.cause, 'code')?.value === 'ECONNREFUSED'
 
-export const withValkeyStartupRetry = <A, R>(layer: Layer.Layer<A, RedisError, R>) =>
+export const withValkeyStartupRetry = <A, R>(makeLayer: (signal: AbortSignal) => Layer.Layer<A, RedisError, R>) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const parent = yield* Effect.scope
       const attempt = Effect.gen(function* () {
+        const controller = new AbortController()
         const scope = yield* Scope.fork(parent)
-        return yield* Layer.buildWithScope(Layer.fresh(layer), scope).pipe(
-          Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
+        return yield* Effect.acquireUseRelease(
+          // Own the build in the attempt scope so cancellation can abort the socket before joining finalizers.
+          Layer.buildWithScope(Layer.fresh(makeLayer(controller.signal)), scope).pipe(
+            Effect.forkIn(scope, { startImmediately: true, uninterruptible: false }),
+          ),
+          (build) =>
+            Fiber.join(build).pipe(
+              // Bound the complete TCP/TLS/RESP acquisition without timing out healthy idle sockets.
+              Effect.timeoutOrElse({
+                duration: '2 seconds',
+                orElse: () => Effect.fail(new RedisError({ cause: new ConnectionTimeoutError() })),
+              }),
+            ),
+          (build, exit) =>
+            Exit.isFailure(exit)
+              ? Effect.sync(() => controller.abort()).pipe(
+                  // Native abort must flush the handshake before NodeRedis's graceful finalizer runs.
+                  Effect.andThen(Fiber.await(build)),
+                  Effect.andThen(Scope.close(scope, exit)),
+                )
+              : Effect.void,
         )
       })
       return yield* attempt.pipe(

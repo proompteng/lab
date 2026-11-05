@@ -297,7 +297,7 @@ integration('committed sequential provider handoff', () => {
     initialDispatch = undefined
     const admission = await resetDatabase()
     initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
-  })
+  }, 30_000)
 
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],

@@ -67,6 +67,10 @@ its enclosing writer transaction and deadline. Every session's frozen inference 
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
 
+Inference expense snapshots stream one PostgreSQL statement with native backpressure instead of issuing a query
+for every source row. Sequential consumption verifies the same cut, complete counts and financial evidence.
+The stream closes before transaction cleanup on failure or interruption; other snapshot readers retain their cursors.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
@@ -567,6 +571,10 @@ Initial acquisition retries a native `ECONNREFUSED` failure at most twice, one s
 apart, closing each failed acquisition before the next attempt. Authentication,
 TLS, configuration and timeout failures fail immediately. The retry boundary ends
 before the cache service is exposed, so it never replays a caller's command.
+Each acquisition has a two-second budget covering TCP, TLS and the RESP handshake.
+Cancellation aborts the native connection and awaits its settlement before closing
+the layer scope. Healthy idle connections have no socket inactivity timeout or
+periodic ping; the existing one-second command deadline detects stalled work.
 
 Each command owns that connection through reconnect, its request, and cancellation;
 `SET` and its replica `WAIT` stay together. Observation publication pipelines its

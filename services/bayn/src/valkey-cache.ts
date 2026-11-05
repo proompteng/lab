@@ -248,7 +248,7 @@ export const makeValkeyCache = Effect.gen(function* () {
   })
 })
 
-const clientOptions = Effect.gen(function* () {
+export const valkeyClientOptions = Effect.gen(function* () {
   const config = yield* valkeyConfig.pipe(
     Effect.mapError(
       (cause) =>
@@ -275,7 +275,6 @@ const clientOptions = Effect.gen(function* () {
     password: Redacted.value(config.password),
     disableOfflineQueue: true,
     commandOptions: { timeout: 500 },
-    pingInterval: 1_000,
     socket: {
       host: config.host,
       port: config.port,
@@ -286,13 +285,17 @@ const clientOptions = Effect.gen(function* () {
       key,
       connectTimeout: 1000,
       reconnectStrategy: false,
-      socketTimeout: 2_000,
     },
   } satisfies ValkeyClientOptions
 })
 
 export const ValkeyRedisLive = Layer.unwrap(
-  Effect.map(clientOptions, (options) => NodeRedis.layer(options).pipe(withValkeyStartupRetry)),
+  Effect.map(valkeyClientOptions, (options) =>
+    withValkeyStartupRetry((signal) => {
+      const socket = { ...options.socket, signal }
+      return NodeRedis.layer({ ...options, socket })
+    }),
+  ),
 ).pipe(
   Layer.provide(NodeServices.layer),
   Layer.catch((cause) =>
