@@ -22,6 +22,8 @@ global:
   deleteHooks:
     enabled: false
 spire-server:
+  jwtIssuer: https://oidc-discovery.proompteng.ai
+  defaultJwtSvidTTL: 5m
   replicaCount: 3
   podDisruptionBudget:
     enabled: true
