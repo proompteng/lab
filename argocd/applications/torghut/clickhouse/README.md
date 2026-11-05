@@ -24,6 +24,13 @@ before the next stage is merged:
    does not prove native membership or catch-up.
 3. Add replica 2 on the third host. Verify all three members agree on membership and serve the existing state.
    Native membership changes must be incremental. Re-read `/keeper/config` after an uncertain response.
+
+   ```sh
+   kubectl -n torghut exec chk-torghut-keeper-default-0-0-0 -- clickhouse-keeper-client \
+     --host 127.0.0.1 --port 2181 \
+     --query 'reconfig add "server.2=chk-torghut-keeper-default-0-2:9444;participant;1"'
+   ```
+
 4. Only after both new members are caught up, move replica 0 to its own local claim, retaining its original ID,
    hostname, Ceph PVC and snapshot. Let it recover from the surviving majority. Do not replace all claim
    templates at once or start an empty singleton. Allow at most one unavailable member after all three are ready.
