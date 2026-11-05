@@ -162,6 +162,7 @@ describe('ARC Nix runner toolchain', () => {
       'local-path',
       'local-path-bayn-wal',
       'local-path-ci-amd64',
+      'local-path-keeper',
       'local-path-ryzen',
       'local-path-turin-nvme-intel',
       'local-path-turin-nvme-transcend',
