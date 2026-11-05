@@ -96,6 +96,14 @@ there is no full-equity or daily-reference-price fallback. Existing target-plan 
 for immutable historical evidence. Financial reports retain unsupported historical decision identities and accounting
 totals, while withholding unverifiable execution measurements rather than replaying retired planning contracts.
 
+Short retries for missing source inputs reuse the last exact reconciliation only while the account is flat, has no
+pending orders or unresolved mutations, and durable authority is unchanged. Every original observation must remain
+fresh within both the broker-state age bound and configured reconciliation interval. The serialized driver discards
+this read state after a bound or terminal cycle, mutation, other recovery outcome or failure; restart reconciles anew.
+Final submission keeps its separate single-use broker-state check. A committed source-excluded Jev window supplies
+the next protocol signal time, so the controller can wake before its original unused-entry lease expires. This keeps
+the source failure visible and never extends the lease or turns missing data into a successful decision.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the

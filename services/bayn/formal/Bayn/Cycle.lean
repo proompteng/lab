@@ -104,6 +104,63 @@ theorem pending_inputs_wake_is_within_original_deadline (pending : Bool) (cycle 
   rcases admitted with ⟨_, _, _, _, _, before⟩
   omega
 
+/-- Reuse is a read optimization for a flat, unbound source wait, never submit authority. -/
+def sourceWaitReconciliationReusable
+    (exact accounting sameGeneration sameVersion flat clearMutations clearOrders : Bool)
+    (oldest newest now maximumAge : Int) : Bool :=
+  decide (exact = true ∧ accounting = true ∧ sameGeneration = true ∧ sameVersion = true ∧
+    flat = true ∧ clearMutations = true ∧ clearOrders = true ∧ newest ≤ now ∧ now < oldest + maximumAge)
+
+theorem source_wait_reuse_preserves_authority_and_original_freshness
+    (exact accounting sameGeneration sameVersion flat clearMutations clearOrders : Bool)
+    (oldest newest now maximumAge : Int)
+    (reused : sourceWaitReconciliationReusable exact accounting sameGeneration sameVersion flat clearMutations
+      clearOrders oldest newest now maximumAge = true) :
+    exact = true ∧ accounting = true ∧ sameGeneration = true ∧ sameVersion = true ∧
+      flat = true ∧ clearMutations = true ∧ clearOrders = true ∧ newest ≤ now ∧ now < oldest + maximumAge := by
+  simpa [sourceWaitReconciliationReusable] using reused
+
+theorem source_wait_cannot_reuse_at_original_freshness_boundary
+    (exact accounting sameGeneration sameVersion flat clearMutations clearOrders : Bool)
+    (oldest newest now maximumAge : Int) (expired : oldest + maximumAge ≤ now) :
+    sourceWaitReconciliationReusable exact accounting sameGeneration sameVersion flat clearMutations
+      clearOrders oldest newest now maximumAge = false := by
+  simp [sourceWaitReconciliationReusable, show ¬now < oldest + maximumAge by omega]
+
+example : sourceWaitReconciliationReusable true true true true true true true 0 0 1000 30000 = true := by decide
+example : sourceWaitReconciliationReusable true true true true true true true 0 0 30000 30000 = false := by decide
+
+def sourceWindowContinuation (known : Bool) (cycle : CycleEvidence) (now availableAt : Int)
+    (normalDelay : Nat) : Option Nat :=
+  if unboundEntryRetryAllowed known cycle now ∧ now < availableAt ∧
+      availableAt < unusedEntryExpiry cycle ∧ availableAt - now < normalDelay then
+    some (availableAt - now).toNat
+  else none
+
+theorem source_window_wake_preserves_original_admission (known : Bool) (cycle : CycleEvidence)
+    (now availableAt : Int) (normalDelay delay : Nat)
+    (wake : sourceWindowContinuation known cycle now availableAt normalDelay = some delay) :
+    unboundEntryRetryAllowed known cycle now ∧ now + delay = availableAt ∧
+      availableAt < unusedEntryExpiry cycle ∧ delay < normalDelay := by
+  unfold sourceWindowContinuation at wake
+  split at wake
+  · rename_i allowed
+    rcases allowed with ⟨admitted, future, before, shorter⟩
+    cases wake
+    have exactDelay := Int.toNat_of_nonneg (show 0 ≤ availableAt - now by omega)
+    exact ⟨admitted, by omega, before, by omega⟩
+  · contradiction
+
+theorem source_window_cannot_wake_at_original_expiry (known : Bool) (cycle : CycleEvidence)
+    (now availableAt : Int) (normalDelay : Nat) (late : unusedEntryExpiry cycle ≤ availableAt) :
+    sourceWindowContinuation known cycle now availableAt normalDelay = none := by
+  unfold sourceWindowContinuation
+  split
+  · rename_i allowed
+    rcases allowed with ⟨_, _, before, _⟩
+    omega
+  · rfl
+
 def cycleActivation (cycle : CycleEvidence) (now : Int) : String :=
   if cycle.state = .active then "Replay"
   else if !cycleTransitionAllowed cycle.state .active then "conflict"
@@ -277,6 +334,12 @@ theorem pending_inputs_retry_is_reachable :
     pendingMarketInputsContinuation true reachableCycle 59900 30000 = some 100 ∧
     pendingMarketInputsContinuation true reachableCycle 60000 30000 = none ∧
     pendingMarketInputsContinuation false reachableCycle 37171 30000 = none := by decide
+
+theorem source_window_wake_is_reachable :
+    sourceWindowContinuation true reachableCycle 33864 38335 30000 = some 4471 ∧
+    sourceWindowContinuation true reachableCycle 33864 60000 30000 = none ∧
+    sourceWindowContinuation false reachableCycle 33864 38335 30000 = none ∧
+    33864 + 30000 > unusedEntryExpiry reachableCycle := by decide
 
 def reachableCycleDecision : CycleDecisionEvidence :=
   ⟨reachableCycle.identity, "decision", true, ⟨"snapshot", "content", 1⟩,

@@ -65,6 +65,39 @@ test.each([DecisionReadinessReason.SignalWindowObserved, DecisionReadinessReason
   },
 )
 
+test.each([DecisionReadinessReason.SnapshotUnavailable, DecisionReadinessReason.SnapshotStale])(
+  '%s preserves the known next-window wake before the original unused entry expires',
+  (reason) => {
+    const prior = Schema.decodeUnknownSync(AutonomousCycleSchema)({
+      ...cycle,
+      createdAt: instant(-33_864),
+      updatedAt: instant(-33_864),
+    })
+    const result = { ...waiting(reason, instant(4_471)), cycle: prior }
+    expect(unusedEntryExpiresAt(prior)).toBe(observedMs + 26_136)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, observedAt)).toBe(4_471)
+    expect(hasExpiredUnusedEntryAdmission(prior, instant(30_000))).toBe(true)
+    expect(hasExpiredUnusedEntryAdmission(prior, result.readiness.availableAt ?? '')).toBe(false)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(4_471))).toBeUndefined()
+    for (const at of [instant(26_136), instant(26_137)])
+      expect(
+        decisionReadinessContinuationDelayMs(
+          { ...result, readiness: { ...result.readiness, availableAt: at } },
+          90_000,
+          observedAt,
+        ),
+      ).toBeUndefined()
+    for (const bindings of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
+      expect(
+        decisionReadinessContinuationDelayMs({ ...result, cycle: { ...prior, bindings } }, 30_000, observedAt),
+      ).toBeUndefined()
+    for (const state of Object.values(CycleState).filter((s) => s !== CycleState.Active))
+      expect(
+        decisionReadinessContinuationDelayMs({ ...result, cycle: { ...prior, state } }, 30_000, observedAt),
+      ).toBeUndefined()
+  },
+)
+
 test.each([-1, 0, 30_000, 60_000])('does not accelerate an elapsed or later boundary (%i ms)', (offset) => {
   expect(
     decisionReadinessContinuationDelayMs(
@@ -98,6 +131,8 @@ test.each(
     (reason) =>
       reason !== DecisionReadinessReason.LookbackWarmup &&
       reason !== DecisionReadinessReason.SignalWindowObserved &&
+      reason !== DecisionReadinessReason.SnapshotUnavailable &&
+      reason !== DecisionReadinessReason.SnapshotStale &&
       reason !== DecisionReadinessReason.ExecutionRiskExpired &&
       reason !== DecisionReadinessReason.InferenceExpired,
   ),
@@ -298,11 +333,15 @@ test('does not accelerate non-readiness waits, terminal results or closed window
   for (const result of results) expect(decisionReadinessContinuationDelayMs(result, 30_000, observedAt)).toBeUndefined()
 })
 
-test('persists a one-shot boundary wake through the existing receipt and restart-safe controller chain', async () => {
+test.each([
+  DecisionReadinessReason.SignalWindowObserved,
+  DecisionReadinessReason.SnapshotUnavailable,
+  DecisionReadinessReason.SnapshotStale,
+])('persists a %s boundary wake through the receipt and restart-safe controller chain', async (reason) => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(observedMs)
-      const result = waiting()
+      const result = waiting(reason)
       const command = {
         controllerKey: 'a'.repeat(64),
         epoch: 1,
