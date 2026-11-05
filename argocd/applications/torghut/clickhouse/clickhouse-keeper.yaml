@@ -20,12 +20,41 @@ spec:
     clusters:
       - name: default
         layout:
-          replicasCount: 1
+          replicas:
+            - name: "0"
+            - name: "1"
+              templates:
+                podTemplate: chk-nvme
+                volumeClaimTemplate: chk-nvme-data
         templates:
           podTemplate: chk-default
           volumeClaimTemplate: chk-data
   templates:
     podTemplates:
+      - name: chk-nvme
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      clickhouse-keeper.altinity.com/chk: torghut-keeper
+                  topologyKey: kubernetes.io/hostname
+          tolerations:
+            - key: workload.proompteng.ai/compute-local
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
+          containers:
+            - name: clickhouse-keeper
+              image: mirror.gcr.io/clickhouse/clickhouse-keeper:26.8.2.7@sha256:0fbe266b275a23b53508a7a3dac2e6fe149d63cddf242897a5c5c3d7b5350568
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
       - name: chk-default
         spec:
           nodeSelector:
@@ -41,6 +70,14 @@ spec:
                   cpu: 500m
                   memory: 512Mi
     volumeClaimTemplates:
+      - name: chk-nvme-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: local-path-keeper
       - name: chk-data
         spec:
           accessModes:
