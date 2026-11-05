@@ -21,6 +21,12 @@ A rejected intent rolls back its decision binding. Broker submission starts afte
 the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
 mutation during persistence cannot change the approved intent identities or protection.
 
+If PostgreSQL rejects an expired risk approval during binding, its named constraint records the intent, decision,
+and exact database clock boundary. After the entire writer transaction rolls back, the same unbound cycle can await
+fresh decision evidence within its original entry deadline. At that deadline it is blocked. Future-dated decisions,
+unverified rejections and rollback failures remain failures. This wait is unavailable decision work, not a valid
+strategy abstention or a successful reliability obligation. Risk, quote and broker freshness checks remain unchanged.
+
 Cycle discovery bounds the authoritative equity-calendar read to the original five seconds. An unavailable calendar
 remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
@@ -764,8 +770,11 @@ Execution receipts bind the physical worker source revision, image repository an
 capital-authorizing build. Compatible releases preserve the original generation and mandate. The prospective
 registration binds the existing approved request and build lineage to its physical build. Financial capture verifies
 that saved binding when the reporting worker is later upgraded, preserving late-fee evidence. An unknown or different
-worker build cannot establish correctly completed controller work or supported reporting provenance. Historical
-receipts remain readable and retain their original contents.
+worker build cannot establish correctly completed controller work or supported reporting provenance. Repository
+identity must also match whenever the registration carries an activation lineage; matching source and digest alone
+cannot substitute a different repository. Historical registrations without that lineage retain their source/digest
+comparison. Retained operational v1 receipt replay keeps its frozen source/digest matcher even when a repository
+commitment is present; current operational v2 claims enforce that commitment. Receipts retain their original contents.
 
 Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
 wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the

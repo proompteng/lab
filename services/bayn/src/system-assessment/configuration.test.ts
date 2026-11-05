@@ -4,11 +4,44 @@ import { registrationFixture } from './fixtures.test-support'
 import { captureQualificationRuntime, qualificationDeadlines } from './configuration'
 import { currentEntryMarkets } from '../execution/trading-scope'
 import { MarketKind } from '../instruments'
+import { executionControllerPlanHash } from '../execution/controller'
 import { validateSystemRegistration } from './policy'
 import { evaluateSystemAssessment } from './assessment'
 import { supportedAssessmentFixture, testHash, withRegistrationCommitments } from './fixtures.test-support'
+import { operationalRegistrationFixture } from './operational-period.test-support'
+import { emptySourceCutFixture } from './source-cut.test-support'
+import { bindOperationalObligations } from './operational-obligations'
+import { measureReliability, ObligationClass, ReliabilityStatus } from './reliability'
 
 describe('capture runtime compatibility', () => {
+  test('a retained scoped null plan cannot borrow controller evidence or complete its scheduled obligations', () => {
+    const base = operationalRegistrationFixture()
+    const configuration = { ...base.obligations.configuration, controllerPlanHash: null }
+    const registration = {
+      ...base,
+      obligations: { ...base.obligations, ...Result.getOrThrow(qualificationDeadlines(configuration)), configuration },
+    }
+    const captured = Result.getOrThrow(
+      captureQualificationRuntime(base.obligations.configuration, registration.obligations),
+    )
+    expect(captured.runtimeConfiguration).toEqual(configuration)
+    const { cut: original } = emptySourceCutFixture()
+    const cut = {
+      ...original,
+      registrationHash: testHash(registration),
+      runtimeConfigurationHash: captured.runtimeConfigurationHash,
+      asOf: '2026-11-04T01:00:00.000Z',
+      controllerPasses: [],
+      durableObservations: [],
+    }
+    const bound = Result.getOrThrow(bindOperationalObligations(cut, registration, testHash(cut)))
+    const reliability = Result.getOrThrow(measureReliability(bound.reliability, false, true))
+    const reconciliation = reliability.classes.find((row) => row.class === ObligationClass.Reconciliation)
+    expect(BigInt(reconciliation?.scheduled ?? '0')).toBeGreaterThan(0n)
+    expect(reconciliation?.correctOnTime).toBe('0')
+    expect(reliability.status).toBe(ReliabilityStatus.MissesTarget)
+  })
+
   test('reproduces an unchanged historical financial registration without changing its original hash', () => {
     const registered = registrationFixture().obligations
     expect(registered.configuration.entryMarkets).toBeUndefined()
@@ -125,6 +158,18 @@ describe('runtime-derived qualification deadlines', () => {
         configuration: { ...registration.obligations.configuration, controllerPlanHash: null },
       },
     })
+    const captured = Result.getOrThrow(
+      captureQualificationRuntime(
+        {
+          ...unknown.obligations.configuration,
+          controllerPlanHash: executionControllerPlanHash,
+          entryMarkets: currentEntryMarkets,
+        },
+        unknown.obligations,
+      ),
+    )
+    expect(captured.runtimeConfiguration.controllerPlanHash).toBeNull()
+    expect(captured.runtimeConfigurationHash).toBe(unknown.obligations.runtimeConfigurationHash)
     const result = Result.getOrThrow(evaluateSystemAssessment({ ...input, registration: unknown }, verifiedSources))
     expect(result.missing).toContain('MISSING_CONTROLLER_PLAN_BINDING')
     expect(result.verdict).not.toBe('QUALIFIED_PAPER')

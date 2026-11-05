@@ -4,6 +4,7 @@ import { stableU128, stableU64 } from './hash'
 import { InferenceCostError, inferenceStageKey } from './inference-costs'
 import {
   buildInferenceExpensePlan,
+  inferenceExpenseBatchSize,
   inferenceExpenseLedger,
   inferenceExpenseScope,
   type InferenceExpensePlan,
@@ -120,8 +121,8 @@ export const readInferenceExpenseLedger = <E, R>(
       (filter) => client.request('read-inference-expense-session-transfers', (active) => active.queryTransfers(filter)),
     )
     const lookedUpTransfers: LedgerTransferRecord[] = []
-    for (let offset = 0; offset < plan.transfers.length; offset += LEDGER_BATCH_MAX) {
-      const batch = plan.transfers.slice(offset, offset + LEDGER_BATCH_MAX)
+    for (let offset = 0; offset < plan.transfers.length; offset += inferenceExpenseBatchSize) {
+      const batch = plan.transfers.slice(offset, offset + inferenceExpenseBatchSize)
       const actual = yield* client.request('read-inference-expense-owner-transfers', (active) =>
         active.lookupTransfers(batch.map((row) => row.id)),
       )
