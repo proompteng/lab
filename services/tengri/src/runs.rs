@@ -1070,7 +1070,10 @@ impl TengriWorkspaceRuns {
                     || Uuid::parse_str(&control.run_id).is_err()
                     || !matches!(
                         control.method.as_str(),
-                        "turn/steer" | "turn/interrupt" | "tengri/resolveApproval"
+                        "turn/steer"
+                            | "turn/interrupt"
+                            | "tengri/resolveApproval"
+                            | "tengri/recoverRun"
                     )
                 {
                     return Err(TerminalError::new_with_code(400, "invalid run control").into());
@@ -1643,7 +1646,10 @@ impl ControlPlane {
         } else {
             state.clone()
         };
-        if recovered.terminal() || matches!(recovered, State::AuthorizationRequired { .. }) {
+        if recovered.terminal()
+            || (turn_id(&recovered).is_none()
+                && matches!(recovered, State::AuthorizationRequired { .. }))
+        {
             return recovered;
         }
         let Some(turn) = turn_id(&recovered) else {

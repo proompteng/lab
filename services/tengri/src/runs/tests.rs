@@ -8,14 +8,18 @@ use std::{
 };
 
 fn fixture() -> ControlPlane {
+    let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
+    agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
+    agent.status = Some(crate::crd::MicroVMStatus {
+        phase: crate::crd::MicroVMPhase::Sleeping,
+        ..Default::default()
+    });
+    fixture_with_agent(agent)
+}
+
+fn fixture_with_agent(mut agent: crate::crd::MicroVM) -> ControlPlane {
     let (service, mut handle) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
     tokio::spawn(async move {
-        let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
-        agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
-        agent.status = Some(crate::crd::MicroVMStatus {
-            phase: crate::crd::MicroVMPhase::Sleeping,
-            ..Default::default()
-        });
         agent.metadata.resource_version = Some("1".into());
         let mut version = 1;
         while let Some((request, response)) = handle.next_request().await {
@@ -687,6 +691,35 @@ async fn stop_keeps_denied_authority_visible_without_losing_the_accepted_turn() 
     }
 }
 
+#[tokio::test]
+async fn renewed_stop_rechecks_an_existing_authorization_wait() {
+    let service = fixture_with_agent(crate::grpc::tests::provisional_terminal_test_agent(
+        Utc::now(),
+    ));
+    let input = input();
+    let control = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: principal(),
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    let observed = service
+        .stop_durable_run(
+            &control,
+            &input,
+            &State::AuthorizationRequired {
+                turn_id: Some("preserved-turn".into()),
+                reason: "old session expired".into(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(observed, State::Cancelling { turn_id: Some(id), .. } if id == "preserved-turn")
+    );
+}
+
 #[derive(Serialize, Deserialize)]
 struct StopAuthorityProofInput {
     claim: Claim,
@@ -1071,32 +1104,44 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let stale_steer = Control {
-        id: Uuid::new_v4().to_string(),
-        run_id: input.id.clone(),
-        agent_id: input.agent_id.clone(),
-        principal: principal(),
-        method: "turn/steer".into(),
-        params: serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
-    };
-    let stale_client =
-        TengriRunControlIngressClient::from_client(ingress.clone(), stale_steer.id.clone());
-    let error = match control_receipt(
-        &workspace,
-        &stale_client,
-        seal(&service, "control", &stale_steer).await.unwrap(),
-    )
-    .await
-    {
-        Ok(_) => panic!("an unstarted run cannot receive native steering"),
-        Err(error) => error,
-    };
-    let rejected_status = client_error(error);
-    assert_eq!(rejected_status.code(), tonic::Code::FailedPrecondition);
-    assert_eq!(
-        rejected_status.message(),
-        "Codex control was not dispatched"
-    );
+    for (method, params) in [
+        (
+            "turn/steer",
+            serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
+        ),
+        ("tengri/recoverRun", serde_json::json!({})),
+    ] {
+        let control = Control {
+            id: Uuid::new_v4().to_string(),
+            run_id: input.id.clone(),
+            agent_id: input.agent_id.clone(),
+            principal: principal(),
+            method: method.into(),
+            params,
+        };
+        let control_client =
+            TengriRunControlIngressClient::from_client(ingress.clone(), control.id.clone());
+        let error = match control_receipt(
+            &workspace,
+            &control_client,
+            seal(&service, "control", &control).await.unwrap(),
+        )
+        .await
+        {
+            Ok(_) => panic!("an unready run cannot receive this control"),
+            Err(error) => error,
+        };
+        let rejected_status = client_error(error);
+        assert_eq!(
+            rejected_status.code(),
+            tonic::Code::FailedPrecondition,
+            "{method} must pass signed admission and reach the run handler"
+        );
+        assert_eq!(
+            rejected_status.message(),
+            "Codex control was not dispatched"
+        );
+    }
     let query = Query {
         run_id: String::new(),
         owner_hash: owner.clone(),

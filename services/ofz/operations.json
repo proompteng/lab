@@ -564,6 +564,11 @@
   },
   {
     "surface": "bff",
+    "operation": "recover-run",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "interrupt-turn",
     "action": "ACTION_CODEX_CONTROL"
   },
