@@ -4,7 +4,7 @@ import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import { CycleState, type AutonomousCycle } from '../cycle/model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import {
   CycleDecisionBuildError,
@@ -433,6 +433,27 @@ export const executionEvidenceContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
+/** The expired attempt has ended; the next pass must revalidate a distinct attempt before the unchanged cutoff. */
+export const unusedEntryHandoffDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (
+    result.outcome !== 'RECOVERED' ||
+    result.action !== 'BLOCKED' ||
+    result.cycle.state !== CycleState.Blocked ||
+    result.cycle.terminalReason !== CycleTerminalReason.UnusedEntryExpired ||
+    result.cycle.bindings.snapshotId !== undefined ||
+    result.cycle.bindings.decisionHash !== undefined
+  )
+    return undefined
+  const now = Date.parse(observedAt)
+  return now >= unusedEntryExpiresAt(result.cycle) && now < Date.parse(result.cycle.window.submissionCutoffAt)
+    ? Math.min(1, normalDelayMs)
+    : undefined
+}
+
 /** Recheck missing entry inputs inside their original admission; consumed windows retain their backoff. */
 export const decisionReadinessContinuationDelayMs = (
   result: CycleRunResult,
@@ -735,6 +756,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.map((observedAt) => {
             const cadence = advanced.nextDelayMs ?? nextDelayMs
             const continuation =
+              unusedEntryHandoffDelayMs(advanced.result, cadence, observedAt) ??
               executionEvidenceContinuationDelayMs(advanced.result, cadence, observedAt) ??
               decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
             const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)

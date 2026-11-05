@@ -299,6 +299,27 @@ The recovery driver publishes the absolute wake instant with the delay. Its comp
 real driver; native controller tests retain that instant across persistence work and projected replay, so durable
 publication cannot restart the source wait from a later clock.
 
+`entry_handoff_preserves_terminal_cutoff_and_counter_bounds` maps `nextIntradayEntryAttemptOrdinal`.
+A successor requires a completed/no-trade cycle or a verified recovered block, a real terminal time, the original
+session cutoff and the existing PostgreSQL integer bound. No extra cooldown starts at completion. Executable
+conformance covers terminal states, missing/future completion, cutoff equality and ordinal boundaries.
+
+`sharing_entry_requires_the_same_policy_and_market_scope` maps the actual indexed PostgreSQL entry-window query.
+Equity reads compare all eleven cycle-context fields. Continuous leases preserve the same policy, account and
+market identity while ignoring admission-specific lease hashes and UTC date labels. Management remains within
+one cycle. `equity_window_scope_preserves_its_exact_calendar` and
+`continuous_window_scope_ignores_only_the_rolling_lease` prove that distinction. The formal PostgreSQL gate
+runs the native query against matching equity cycles, a change to each context field, and three real continuous
+admissions in one signal minute across midnight, then compares every result with
+`latestCompatibleEntryWindow`. The same test calls `loadNativeEntryObservation` to reject the consumed window before
+any input read and allow the next window. Payloads remain unchanged. The entry index orders windows across cycles so the lookup stops at the newest compatible
+source instead of decompressing a maximum observation for every prior cycle. Management retains its per-cycle index.
+`ineligible_window_cannot_supply_a_source` excludes a foreign source from the model maximum.
+
+`unused_entry_handoff_requires_an_ended_unbound_attempt` maps `unusedEntryHandoffDelayMs`. Only an expired,
+unbound blocked attempt before the original submission cutoff gets an immediate continuation. All successor
+admission and authority checks run again; the ended lease is never extended.
+
 `source_wait_reuse_preserves_authority_and_original_freshness` maps
 `canReuseSourceWaitReconciliation` in the recovery driver. The executable comparison covers all 256 combinations
 of exactness, accounting, generation/version identity, positions, unresolved mutations, pending orders and unknown

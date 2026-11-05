@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { CycleState, AutonomousCycleSchema } from '../cycle/model'
+import { CycleState, CycleTerminalReason, AutonomousCycleSchema } from '../cycle/model'
 import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { type CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
@@ -17,7 +17,7 @@ import {
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { currentUtcInstant } from '../time'
-import { decisionReadinessContinuationDelayMs } from './recovery-driver'
+import { decisionReadinessContinuationDelayMs, unusedEntryHandoffDelayMs } from './recovery-driver'
 
 const native = nativeJevFixture(undefined, '2026-09-04T14:56:54.802Z')
 const observedAt = native.query.observedAt
@@ -54,6 +54,40 @@ const waiting = (
       ...(availableAt === undefined ? {} : { availableAt }),
     },
   }) as const
+
+test('unused-entry handoff accelerates only an expired, unbound block before the original cutoff', () => {
+  const expired = {
+    outcome: 'RECOVERED',
+    action: 'BLOCKED',
+    observedAt: instant(60_000),
+    cycle: {
+      ...cycle,
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.UnusedEntryExpired,
+    },
+  } as const
+  expect(unusedEntryHandoffDelayMs(expired, 30_000, instant(60_000))).toBe(1)
+  expect(unusedEntryHandoffDelayMs(expired, 30_000, instant(59_999))).toBeUndefined()
+  expect(unusedEntryHandoffDelayMs(expired, 30_000, cycle.window.submissionCutoffAt)).toBeUndefined()
+  expect(
+    unusedEntryHandoffDelayMs(
+      { ...expired, cycle: { ...expired.cycle, state: CycleState.Active } },
+      30_000,
+      instant(60_000),
+    ),
+  ).toBeUndefined()
+  expect(
+    unusedEntryHandoffDelayMs(
+      { ...expired, cycle: { ...expired.cycle, terminalReason: CycleTerminalReason.Risk } },
+      30_000,
+      instant(60_000),
+    ),
+  ).toBeUndefined()
+  for (const bindings of [{ snapshotId: '1'.repeat(64) }, { decisionHash: '2'.repeat(64) }])
+    expect(
+      unusedEntryHandoffDelayMs({ ...expired, cycle: { ...expired.cycle, bindings } }, 30_000, instant(60_000)),
+    ).toBeUndefined()
+})
 
 test.each([DecisionReadinessReason.SignalWindowObserved, DecisionReadinessReason.LookbackWarmup])(
   '%s schedules the known future boundary before the normal poll',

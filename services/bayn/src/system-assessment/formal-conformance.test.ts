@@ -1,3 +1,4 @@
+import { nextIntradayEntryAttemptOrdinal } from '../cycle/runner/calendar-decisions'
 import { reconciliationCompletionSupported } from './obligation-witnesses'
 import { closedEntryWindowTimingSupported } from './decision-work'
 import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../execution/trading-scope'
@@ -99,11 +100,12 @@ import { accountEntryProtectionReasons } from '../risk'
 import { replayDecisionReleaseAt } from '../intraday-replay/decision-latency'
 import { assessBacktestSession } from '../intraday-replay/backtest'
 import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } from '../ledger-plan'
-import { CycleState, type AutonomousCycle } from '../cycle/model'
+import { CycleState, CycleTerminalReason, AutonomousCycleSchema, type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import {
   decisionReadinessContinuationDelayMs,
+  unusedEntryHandoffDelayMs,
   canReuseSourceWaitReconciliation,
 } from '../observe-composition/recovery-driver'
 import { cachedBrokerStateFixture, nativeBrokerStateFixture } from '../execution/broker-state-cache.fixture'
@@ -298,6 +300,65 @@ formal('pinned Lean executable conformance', () => {
         })),
       ),
     ).toEqual(results)
+  })
+
+  test('terminal handoff uses the original cutoff without adding another minute of delay', () => {
+    const native = nativeJevFixture(undefined, '2026-09-04T14:34:54.408Z')
+    const terminal = Date.parse('2026-09-04T14:34:54.408Z')
+    const cutoff = Date.parse(native.draft.window.submissionCutoffAt)
+    const base = Schema.decodeUnknownSync(AutonomousCycleSchema)({
+      ...native.draft,
+      state: CycleState.Active,
+      stateVersion: 1,
+      bindings: {},
+      createdAt: '2026-09-04T14:34:51.722Z',
+      updatedAt: '2026-09-04T14:34:51.722Z',
+    })
+    const cases = [
+      CycleState.Pending,
+      CycleState.Active,
+      CycleState.Completed,
+      CycleState.NoTrade,
+      CycleState.Blocked,
+    ].flatMap((state) =>
+      [false, true].flatMap((recovered) =>
+        [undefined, terminal - 1, terminal, terminal + 1].flatMap((finished) =>
+          [terminal - 1, terminal, terminal + 1, cutoff - 1, cutoff, cutoff + 1].flatMap((now) =>
+            [1, 2, 42, 2_147_483_646, 2_147_483_647].map((ordinal) => ({ state, recovered, finished, now, ordinal })),
+          ),
+        ),
+      ),
+    )
+    const expected = cases.map(
+      (c) =>
+        nextIntradayEntryAttemptOrdinal(
+          {
+            ...base,
+            state: c.state,
+            identity: { ...base.identity, entryAttemptOrdinal: c.ordinal },
+            ...(c.finished === undefined ? {} : { terminalAt: new Date(c.finished).toISOString() }),
+          },
+          new Date(c.now).toISOString(),
+          base.window.submissionCutoffAt,
+          c.recovered,
+        ) ?? null,
+    )
+    expect(expected).toContain(43)
+    expect(expected).toContain(null)
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'entryAttemptSuccessor',
+          state: c.state,
+          native: true,
+          recovered: c.recovered,
+          terminalAt: c.finished === undefined ? null : String(c.finished),
+          now: String(c.now),
+          cutoff: String(cutoff),
+          ordinal: c.ordinal,
+        })),
+      ),
+    ).toEqual(expected)
   })
 
   test('reconciliation batching preserves each original deadline and causal receipt', () => {
@@ -2066,6 +2127,34 @@ formal('pinned Lean executable conformance', () => {
               },
             },
             c.normalDelay,
+            instant(c.now),
+          ) ?? null,
+      ),
+    )
+    const handoffs = lifecycleCases.flatMap((c) => [false, true].map((expiredTerminal) => ({ ...c, expiredTerminal })))
+    expect(
+      model(
+        handoffs.map((c) => ({
+          operation: 'unusedEntryHandoffContinuation',
+          expiredTerminal: c.expiredTerminal,
+          cycle: encodeCycle(c.cycle),
+          now: String(c.now),
+        })),
+      ),
+    ).toEqual(
+      handoffs.map(
+        (c) =>
+          unusedEntryHandoffDelayMs(
+            {
+              outcome: 'RECOVERED',
+              action: 'BLOCKED',
+              observedAt: instant(c.now),
+              cycle: {
+                ...c.cycle,
+                terminalReason: c.expiredTerminal ? CycleTerminalReason.UnusedEntryExpired : CycleTerminalReason.Risk,
+              },
+            },
+            30_000,
             instant(c.now),
           ) ?? null,
       ),

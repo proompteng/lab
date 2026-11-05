@@ -35,8 +35,149 @@ structure CycleEvidence where
   decisionHash : Option String
   deriving Repr, DecidableEq
 
+structure EntryWindowScope where
+  schemaVersion : String
+  identitySchemaVersion : String
+  strategy : String
+  protocol : String
+  qualification : String
+  account : String
+  executionPolicy : String
+  calendarSchema : String
+  calendarSource : String
+  calendar : String
+  session : String
+  deriving Repr, DecidableEq
+
+def stableEntryWindowScope (scope : EntryWindowScope) : EntryWindowScope :=
+  if scope.calendarSchema = "bayn.continuous-market-hours.v1" ∧ scope.calendarSource = "alpaca-crypto-us" then
+    { scope with calendar := "", session := "" }
+  else scope
+
+theorem equity_window_scope_preserves_its_exact_calendar (scope : EntryWindowScope) :
+    stableEntryWindowScope { scope with calendarSchema := "bayn.alpaca-market-calendar-observation.v2" } =
+      { scope with calendarSchema := "bayn.alpaca-market-calendar-observation.v2" } := by
+  simp [stableEntryWindowScope]
+
+theorem continuous_window_scope_ignores_only_the_rolling_lease (scope : EntryWindowScope)
+    (calendar session : String)
+    (continuous : scope.calendarSchema = "bayn.continuous-market-hours.v1")
+    (source : scope.calendarSource = "alpaca-crypto-us") :
+    stableEntryWindowScope { scope with calendar := calendar, session := session } = stableEntryWindowScope scope := by
+  simp [stableEntryWindowScope, continuous, source]
+
+def entryWindowScopeCompatible (entry : Bool) (targetCycle previousCycle : String)
+    (target previous : EntryWindowScope) : Bool :=
+  decide (targetCycle = previousCycle ∨ entry = true ∧ stableEntryWindowScope target = stableEntryWindowScope previous)
+
+theorem sharing_entry_requires_the_same_policy_and_market_scope
+    (entry : Bool) (targetCycle previousCycle : String) (target previous : EntryWindowScope)
+    (different : targetCycle ≠ previousCycle)
+    (shared : entryWindowScopeCompatible entry targetCycle previousCycle target previous = true) :
+    entry = true ∧ stableEntryWindowScope target = stableEntryWindowScope previous := by
+  simpa [entryWindowScopeCompatible, different] using shared
+
+structure EntryWindowSource where
+  cycle : String
+  scope : EntryWindowScope
+  jev : Bool
+  entry : Bool
+  windowEnd : Int
+  deriving Repr, DecidableEq
+
+def entryWindowSourceEligible (entry : Bool) (targetCycle : String) (target : EntryWindowScope)
+    (source : EntryWindowSource) : Bool :=
+  source.jev && (source.entry == entry) &&
+    entryWindowScopeCompatible entry targetCycle source.cycle target source.scope
+
+def latestCompatibleEntryWindow (entry : Bool) (targetCycle : String) (target : EntryWindowScope) :
+    List EntryWindowSource → Option Int
+  | [] => none
+  | source :: rest =>
+      let latest := latestCompatibleEntryWindow entry targetCycle target rest
+      if entryWindowSourceEligible entry targetCycle target source then
+        some (max source.windowEnd (latest.getD source.windowEnd))
+      else latest
+
+theorem ineligible_window_cannot_supply_a_source (entry : Bool) (targetCycle : String)
+    (target : EntryWindowScope) (source : EntryWindowSource)
+    (ineligible : entryWindowSourceEligible entry targetCycle target source = false) :
+    latestCompatibleEntryWindow entry targetCycle target [source] = none := by
+  simp [latestCompatibleEntryWindow, ineligible]
+
+theorem latest_compatible_window_is_an_actual_eligible_source (entry : Bool) (targetCycle : String)
+    (target : EntryWindowScope) (sources : List EntryWindowSource) (window : Int)
+    (selected : latestCompatibleEntryWindow entry targetCycle target sources = some window) :
+    ∃ source ∈ sources, entryWindowSourceEligible entry targetCycle target source = true ∧ source.windowEnd = window := by
+  induction sources generalizing window with
+  | nil => simp [latestCompatibleEntryWindow] at selected
+  | cons source rest ih =>
+    simp only [latestCompatibleEntryWindow] at selected
+    split at selected
+    · rename_i eligible
+      generalize priorEq : latestCompatibleEntryWindow entry targetCycle target rest = prior at selected
+      cases prior with
+      | none =>
+        simp at selected
+        exact ⟨source, by simp, eligible, selected⟩
+      | some priorWindow =>
+        simp only [Option.getD_some, Option.some.injEq] at selected
+        by_cases le : priorWindow ≤ source.windowEnd
+        · have same : source.windowEnd = window := by simpa [Int.max_eq_left le] using selected
+          exact ⟨source, by simp, eligible, same⟩
+        · rcases ih priorWindow priorEq with ⟨earlier, member, allowed, same⟩
+          have le' : source.windowEnd ≤ priorWindow := by omega
+          have chosen : priorWindow = window := by simpa [Int.max_eq_right le'] using selected
+          exact ⟨earlier, by simp [member], allowed, same.trans chosen⟩
+    · rcases ih window selected with ⟨earlier, member, allowed, same⟩
+      exact ⟨earlier, by simp [member], allowed, same⟩
+
+def entryAttemptSuccessor (state : CycleState) (native recovered : Bool) (terminalAt : Option Int)
+    (now cutoff : Int) (ordinal : Nat) : Option Nat :=
+  match terminalAt with
+  | none => none
+  | some terminal =>
+      if native = true ∧ (state = .completed ∨ state = .noTrade ∨ state = .blocked ∧ recovered = true) ∧
+          terminal ≤ now ∧ now < cutoff ∧ ordinal < 2147483647 then some (ordinal + 1)
+      else none
+
+theorem entry_handoff_preserves_terminal_cutoff_and_counter_bounds (state : CycleState)
+    (native recovered : Bool) (terminal now cutoff : Int) (ordinal next : Nat)
+    (accepted : entryAttemptSuccessor state native recovered (some terminal) now cutoff ordinal = some next) :
+    native = true ∧ (state = .completed ∨ state = .noTrade ∨ state = .blocked ∧ recovered = true) ∧
+      terminal ≤ now ∧ now < cutoff ∧ ordinal < 2147483647 ∧ next = ordinal + 1 := by
+  simp only [entryAttemptSuccessor] at accepted
+  split at accepted
+  · rename_i admitted
+    cases accepted
+    exact ⟨admitted.1, admitted.2.1, admitted.2.2.1, admitted.2.2.2.1, admitted.2.2.2.2, rfl⟩
+  · contradiction
+
+theorem missing_terminal_cannot_rearm (state : CycleState) (native recovered : Bool)
+    (now cutoff : Int) (ordinal : Nat) :
+    entryAttemptSuccessor state native recovered none now cutoff ordinal = none := rfl
+
+example : entryAttemptSuccessor .noTrade true false (some 53000) 53001 600000 42 = some 43 := by decide
+
 def unusedEntryExpiry (cycle : CycleEvidence) : Int :=
   min cycle.submissionCutoffAt (max cycle.createdAt cycle.submissionOpenAt + 60000)
+
+def unusedEntryHandoffContinuation (expiredTerminal : Bool) (cycle : CycleEvidence) (now : Int) : Option Nat :=
+  if expiredTerminal = true ∧ cycle.state = .blocked ∧ cycle.snapshotId = none ∧ cycle.decisionHash = none ∧
+      unusedEntryExpiry cycle ≤ now ∧ now < cycle.submissionCutoffAt then some 1
+  else none
+
+theorem unused_entry_handoff_requires_an_ended_unbound_attempt (expiredTerminal : Bool)
+    (cycle : CycleEvidence) (now : Int) (delay : Nat)
+    (wake : unusedEntryHandoffContinuation expiredTerminal cycle now = some delay) :
+    expiredTerminal = true ∧ cycle.state = .blocked ∧ cycle.snapshotId = none ∧ cycle.decisionHash = none ∧
+      unusedEntryExpiry cycle ≤ now ∧ now < cycle.submissionCutoffAt ∧ delay = 1 := by
+  unfold unusedEntryHandoffContinuation at wake
+  split at wake
+  · rename_i ended
+    cases wake
+    exact ⟨ended.1, ended.2.1, ended.2.2.1, ended.2.2.2.1, ended.2.2.2.2.1, ended.2.2.2.2.2, rfl⟩
+  · contradiction
 
 def expiredUnusedEntry (cycle : CycleEvidence) (now : Int) : Bool :=
   decide (cycle.snapshotId = none ∧ cycle.decisionHash = none ∧ unusedEntryExpiry cycle ≤ now)

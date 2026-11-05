@@ -96,6 +96,14 @@ there is no full-equity or daily-reference-price fallback. Existing target-plan 
 for immutable historical evidence. Financial reports retain unsupported historical decision identities and accounting
 totals, while withholding unverifiable execution measurements rather than replaying retired planning contracts.
 
+A terminal native cycle may hand off to its successor without a second minute of cooldown. Entry observations are
+consumed across cycles only when account, standing plan, strategy/protocol, execution policy, calendar and session
+identities all match for exchange sessions. Continuous leases share consumption across their admission-specific
+calendar hashes and UTC date labels, preserving the remaining policy and market context. Management observations
+remain with their owning cycle. The successor waits for an unconsumed
+protocol signal window before reading inputs or dispatching inference; it cannot repeat the prior window. Original
+cycle leases, scheduled decision deadlines, risk admission and capital authority still apply to every attempt.
+
 Short retries for missing source inputs reuse the last exact reconciliation only while the account is flat, has no
 pending orders or unresolved mutations, and durable authority is unchanged. Every original observation must remain
 fresh within both the broker-state age bound and configured reconciliation interval. The serialized driver discards
@@ -391,7 +399,7 @@ allowance ends, leaving the existing three-minute recovery reserve. The position
 starts at its actual first fill. Equity flatten-before-close leads never shorten a continuous position's horizon.
 An unused native admission retains its expiry classification at the equity cutoff, including when decision construction
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
-evidence and cooldown guards before acquiring a successor.
+evidence and original cutoff guards before acquiring a successor.
 
 Current positions require explicit broker cost basis. Migration 115 rejects new cost-less position records;
 retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
