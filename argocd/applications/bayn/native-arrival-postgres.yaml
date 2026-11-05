@@ -15,8 +15,6 @@ spec:
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
-  minSyncReplicas: 1
-  maxSyncReplicas: 1
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
@@ -48,6 +46,10 @@ spec:
       encoding: UTF8
       dataChecksums: true
   postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
     parameters:
       jit: "off"
       shared_buffers: 512MB

@@ -11,6 +11,7 @@ import {
   getCodexAccount,
   getCodexLogin,
   getCodexRun,
+  recoverCodexRun,
   getActiveCodexRuns,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
@@ -190,6 +191,10 @@ async function runAction(request: Request) {
         break
       case 'active-codex-runs':
         result = await getActiveCodexRuns(identity, action.agentId, action.threadId, request.signal)
+        break
+      case 'recover-run':
+        await recoverCodexRun(identity, action.agentId, action.runId, action.operationId)
+        result = null
         break
       case 'codex-run':
         result = await getCodexRun(identity, action.agentId, action.runId, request.signal)

@@ -1201,6 +1201,18 @@ data:
               min by (namespace, persistentvolumeclaim) (
                 kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
               ) < 0.05
+              # Raw block devices can expose capacity with both byte counters zero.
+              # Missing used-byte telemetry must not suppress a full-filesystem alert.
+              unless on (namespace, persistentvolumeclaim)
+              (
+                (max by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) == 0)
+                and
+                (max by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_used_bytes{persistentvolumeclaim!=""}
+                ) == 0)
+              )
             for: 10m
             labels:
               severity: critical
@@ -1212,15 +1224,29 @@ data:
                 {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
-            expr: ceph_health_status{job="ceph-storage"} == 1
+            expr: |
+              (ceph_health_status{job="ceph-storage"} == 1)
+              unless on (job, instance)
+              (
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name=~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+                unless on (job, instance)
+                (max by (job, instance) (
+                  ceph_health_detail{job="ceph-storage",name!~"PG_NOT_(DEEP_)?SCRUBBED"}
+                ) > 0)
+              )
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
               team: platform
             annotations:
               summary: Ceph cluster reports HEALTH_WARN
-              description: Ceph has reported HEALTH_WARN continuously for 10 minutes.
+              description: >-
+                Ceph has reported HEALTH_WARN continuously for ten minutes with a cause beyond scrub debt, or health-detail telemetry is unavailable.
+                Active checks: {{ range query (printf "ceph_health_detail{job=%q,instance=%q} > 0" $labels.job $labels.instance) | sortByLabel "name" }}{{ .Labels.name }}; {{ else }}detail unavailable; {{ end }}Inspect ceph health detail. Scrub-only debt has its own CephScrubDebt incident.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthError
             expr: ceph_health_status{job="ceph-storage"} >= 2
@@ -1264,6 +1290,7 @@ data:
           - alert: CephOsdQueueWaitHigh
             expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
             for: 10m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1275,6 +1302,7 @@ data:
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -1286,6 +1314,7 @@ data:
           - alert: CephOsdCommitLatencyCritical
             expr: ceph_storage:osd_commit_latency_ms:max > 150
             for: 5m
+            keep_firing_for: 10m
             labels:
               severity: critical
               service: ceph-storage
@@ -1304,6 +1333,7 @@ data:
                 }
               ) > 0
             for: 30m
+            keep_firing_for: 10m
             labels:
               severity: warning
               service: ceph-storage
@@ -4143,6 +4173,30 @@ data:
               summary: Tengri guest operations are repeatedly failing
               description: Tengri recorded more than two guest API or readiness failures during the last 15 minutes.
               runbook_url: docs/tengri/operations.md
+          - alert: TengriRunStatusFailures
+            expr: sum(increase(tengri_run_read_failures_total{job="tengri",namespace="tengri"}[5m])) > 0
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri cannot reliably observe accepted runs
+              description: Run-status reads are failing or exhausting recovery deadlines despite process readiness. Inspect Restate admission and durable-write latency.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriRunRecoveryBlocked
+            expr: sum by (phase) (increase(tengri_run_recovery_observations_total{job="tengri-run-worker",namespace="tengri"}[10m])) > 0
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri run recovery needs attention
+              description: An accepted run requires current authorization or reconciliation of its execution outcome. Journal activity and Ready pods do not establish native progress. Preserve its home and never resubmit the accepted turn.
+              runbook_url: docs/tengri/operations.md
           - alert: TengriBootLatencyHigh
             expr: |
               histogram_quantile(0.95,
@@ -4331,9 +4385,9 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynOperationMetricsUnavailable
           expr: label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"} ==
-            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"})
+            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"} <= time() + 5)
             >= time() - 90), "service", "bayn", "source_revision", ".*") or label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
-            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"})
+            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"} <= time() + 5)
             >= time() - 90), "service", "bayn-execution-controller", "source_revision", ".*")
           for: 2m
           labels:

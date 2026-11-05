@@ -604,6 +604,19 @@ def evaluate (json : Json) : Except String Json := do
       ("activation", toJson (cycleActivation cycle now)),
       ("completion", toJson (cycleCompletion cycle (← json.getObjValAs? Bool "completed") now))
     ]
+  | "controllerBuildBound" =>
+    return toJson (controllerBuildBound (← json.getObjValAs? (Option String) "registeredSource")
+      (← json.getObjValAs? (Option String) "registeredDigest")
+      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest")
+      (← json.getObjValAs? (Option String) "registeredRepository")
+      (← json.getObjValAs? (Option String) "workerRepository"))
+  | "expiredInferenceContinuation" =>
+    return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
+  | "pendingMarketInputsContinuation" =>
+    return toJson (pendingMarketInputsContinuation (← json.getObjValAs? Bool "pending")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
+      (← json.getObjValAs? Nat "normalDelay"))
   | "cycleDecisionBinding" =>
     return toJson (cycleDecisionBinding (← readCycleEvidence (← json.getObjVal? "cycle"))
       (← readCycleDecision (← json.getObjVal? "document")) (← readInteger json "now")
@@ -722,6 +735,9 @@ def evaluate (json : Json) : Except String Json := do
       (← json.getObjValAs? Bool "sourceMatches"))
   | "mutationAdmissionIndependent" =>
     return toJson (mutationAdmissionIndependent (← json.getObjValAs? Bool "ambient"))
+  | "intentRiskClockRejection" =>
+    return toJson (intentRiskClockRejection (← readInteger json "decided") (← readInteger json "expires")
+      (← readInteger json "updated") (← readInteger json "checked"))
   | "decisionCommitmentUpperBound" =>
     let bound := decisionCommitmentUpperBound (← json.getObjValAs? Bool "receiptValid")
       (← json.getObjValAs? Bool "independent") (← json.getObjValAs? Bool "routed")
@@ -870,6 +886,24 @@ def evaluate (json : Json) : Except String Json := do
     let scheduled ← readNatural json "scheduled"
     return toJson (if scheduled = 0 ∨ good > scheduled then "UNDETERMINED"
       else if reliabilityPass good scheduled then "MEETS_TARGET" else "MISSES_TARGET")
+  | "currentTradingScope" =>
+    let market ← json.getObjValAs? String "market"
+    let sell ← json.getObjValAs? Bool "sell"
+    return Json.mkObj [("entryAllowed", toJson (currentEntryMarketAllowed market)),
+      ("submissionAllowed", toJson (currentSubmissionMarketAllowed market sell))]
+  | "operationalAssessmentVerdict" =>
+    return toJson (operationalAssessmentVerdict (← json.getObjValAs? String "reliability")
+      (← readNatural json "missing") (← json.getObjValAs? Bool "safetyComplete") (← readNatural json "violations"))
+  | "nativeObligationDeadline" =>
+    return toJson (toString (nativeObligationDeadline (← readInteger json "due") (← readInteger json "window")))
+  | "closedEntryWindowTiming" =>
+    return toJson (closedEntryWindowTimingSupported (← readInteger json "issued")
+      (← readInteger json "evaluated") (← readInteger json "available") (← readInteger json "decided")
+      (← readInteger json "observed") (← readInteger json "completed") (← readInteger json "witnessed")
+      (← json.getObjValAs? Bool "entryEligible"))
+  | "reconciliationCompletion" =>
+    return toJson (reconciliationCompletionSupported (← readInteger json "due")
+      (← readInteger json "deadline") (← readInteger json "observed") (← readInteger json "witnessed"))
   | "binaryEdge" =>
     let gain ← readNatural json "gainMicros"
     let loss ← readNatural json "lossMicros"

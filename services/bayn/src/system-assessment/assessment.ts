@@ -84,6 +84,18 @@ export const SystemAssessmentInputSchema = Schema.Struct({
   }),
 })
 
+export const completeSafetyAudit = (
+  safety: (typeof SystemAssessmentInputSchema.Type)['safety'],
+  registrationHash: string,
+  asOf: string,
+  verifiedSources: ReadonlySet<string>,
+) =>
+  safety.coverage === 'COMPLETE' &&
+  safety.violations.length === 0 &&
+  verifiedSources.has(safety.sourceHash) &&
+  safety.registrationHash === registrationHash &&
+  safety.asOf === asOf
+
 export const evaluateSystemAssessment = (
   input: unknown,
   verifiedSources: ReadonlySet<string>,
@@ -325,12 +337,7 @@ export const evaluateSystemAssessment = (
         : numerical !== null && 'checks' in numerical && numerical.checks.pairedIncrementalLowerBounds
           ? EdgeStatus.Established
           : EdgeStatus.NotEstablished
-    const safetyPass =
-      data.safety.coverage === 'COMPLETE' &&
-      data.safety.violations.length === 0 &&
-      verifiedSources.has(data.safety.sourceHash) &&
-      data.safety.registrationHash === registrationHash &&
-      data.safety.asOf === data.asOf
+    const safetyPass = completeSafetyAudit(data.safety, registrationHash, data.asOf, verifiedSources)
     const evidenceComplete = missing.length === 0 && violations.length === 0
     const verdict =
       violations.length > 0 ||

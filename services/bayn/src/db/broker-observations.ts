@@ -225,13 +225,10 @@ export const makeBrokerObservationStore = (
         // Publish acknowledged immutable payloads before exposing their durable fenced references.
         const snapshotKey = yield* Effect.fromResult(payloadKey('snapshot', snapshotHash))
         const stateKey = yield* Effect.fromResult(payloadKey('state', stateHash))
-        yield* Effect.all(
-          [
-            cache.put({ key: snapshotKey, value: snapshotJson, ttlMs }),
-            cache.put({ key: stateKey, value: stateJson, ttlMs }),
-          ],
-          { concurrency: 2 },
-        )
+        yield* cache.putAll([
+          { key: snapshotKey, value: snapshotJson, ttlMs },
+          { key: stateKey, value: stateJson, ttlMs },
+        ])
         const rows = yield* sql`
       WITH published AS (
       UPDATE broker_observations SET available = true, poll_started_at = ${value.startedAt}::timestamptz,

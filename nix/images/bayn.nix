@@ -56,6 +56,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
   '';
+  webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/webull-research-command.js" "$@"
+  '';
   gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
@@ -107,6 +112,7 @@ let
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -185,6 +191,7 @@ import ./bun-workspace-service.nix {
     backtestCommand
     frozenControlCommand
     controlCommand
+    webullResearchCommand
     gepaPython
     pkgs.go-containerregistry
   ];

@@ -27,6 +27,7 @@ export const matchedCommittedDecisionFixture = (
   allocationCapitalMicros = '1',
   pricingSnapshot = native.snapshot,
   maxOpenOrders = 2,
+  authorityVersion = 1,
 ) =>
   Effect.gen(function* () {
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
@@ -111,7 +112,7 @@ export const matchedCommittedDecisionFixture = (
         maximum: Authority.Execution,
         effective: Authority.Execution,
         kill: KillState.Clear,
-        version: 1,
+        version: authorityVersion,
         updatedAt: at,
       },
       authorityObservedAt: at,

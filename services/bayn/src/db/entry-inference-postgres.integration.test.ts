@@ -1,3 +1,4 @@
+import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import jevOnlyInference from '../../migrations/0172_jev_only_inference'
 import datedExecutionFees from '../../migrations/0171_dated_execution_fees'
@@ -107,7 +108,7 @@ import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { JevFailure } from '../jev/contract'
 import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -296,7 +297,7 @@ integration('committed sequential provider handoff', () => {
     initialDispatch = undefined
     const admission = await resetDatabase()
     initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
-  })
+  }, 30_000)
 
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
@@ -1791,11 +1792,11 @@ integration('committed sequential provider handoff', () => {
           expect(late.transferCount).toBe(1)
           expect(late.gapCount).toBe(0)
           expect((yield* runInferenceExpensePass(expenses, client, tariff)).transferCount).toBe(0)
-          const snapshot = yield* readInferenceExpenseSnapshot(
+          const snapshot = yield* acquireInferenceExpenseSnapshot(
             sql,
             accountId,
             fixture.draft.identity.executionSessionDate,
-          )
+          ).pipe(Effect.flatMap(({ verify }) => verify))
           const ledger = yield* readInferenceExpenseLedger(
             client,
             snapshot,
@@ -1994,6 +1995,7 @@ integration('committed sequential provider handoff', () => {
             ).toEqual([])
             return
           }
+          yield* sql.withTransaction(expenseSourceQueue)
           const expenses = makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01')
           const initialSource = (yield* expenses.newSources).find((value) => value.requestId === historical.requestId)
           if (initialSource === undefined) throw new Error('Missing retained funded claim')
