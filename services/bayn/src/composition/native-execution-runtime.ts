@@ -51,6 +51,7 @@ import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../resta
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'
+import { nativeActivationPreflight } from './native-activation-preflight'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
@@ -601,6 +602,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   projectionRunner: NativeExecutionProjectionRuntime<ProjectionR, ProjectionE>,
   hostRunner: ExecutionEffectRunner,
   planHash: string,
+  prepareActivation: NativeExecutionRuntime['prepareActivation'],
 ): NativeExecutionRuntime => {
   const replaceFailedRuntime = (cause: unknown): Promise<never> =>
     hostRunner
@@ -614,6 +616,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
       })
 
   return {
+    prepareActivation,
     advance: (command, signal) => {
       const parent = currentOpenTelemetryParentSpan()
       const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
@@ -679,6 +682,7 @@ export const acquireNativeExecutionRuntime = (
       projectionManaged,
       logManaged,
       config.planHash,
+      (signal) => projectionManaged.runPromise(nativeActivationPreflight(plan), { signal }),
     )
     return { config, runtime }
   })
