@@ -1,6 +1,6 @@
 import { Config, DateTime, Effect, Schema } from 'effect'
 
-import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
+import { readBrokerSnapshotOnce } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { BrokerReadError, configurationError } from './failures'
 import { OrderCollection, SortDirection, type BrokerReadShape } from './model'
@@ -46,7 +46,9 @@ export const captureBrokerObservation = (
   Effect.gen(function* () {
     const value = yield* Effect.all(
       {
-        snapshot: readStableBrokerSnapshot(fresh, currentUtcInstant),
+        // Restart unstable cuts through the owner, with a new durable ticket and the existing quota wait.
+        // Retrying under a ticket invalidated by that mutation only adds unusable history reads and debt.
+        snapshot: readBrokerSnapshotOnce(fresh, currentUtcInstant),
         configuration: fresh.accountConfiguration,
         openOrders: fresh.orders({ status: OrderCollection.Open, limit: 1 }),
         recentOrders: fresh.orders({ status: OrderCollection.All, limit: 1, direction: SortDirection.Descending }),

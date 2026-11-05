@@ -17,7 +17,7 @@ export const reconciliationCompletionSupported = (clock: {
   readonly witnessed: number
 }) => clock.due <= clock.observed && clock.observed <= clock.witnessed && clock.witnessed <= clock.deadline
 
-export const earliestDurableWitnesses = (cut: SystemSourceCut) => {
+export const earliestDurableWitnesses = (cut: Pick<SystemSourceCut, 'durableObservations' | 'asOf'>) => {
   const earliest = new Map<string, Witness>()
   for (const witness of cut.durableObservations) {
     if (!witness.correct || witness.witnessedAt > cut.asOf) continue
@@ -34,7 +34,7 @@ export const earliestDurableWitnesses = (cut: SystemSourceCut) => {
 
 /** Join each witness once to its scheduled time bucket or admitted mutation identity. */
 export const indexObligationWitnesses = (
-  cut: SystemSourceCut,
+  cut: Pick<SystemSourceCut, 'registrationHash' | 'asOf' | 'mutations' | 'durableObservations'>,
   registration: ScheduledEvaluation,
   schedule: readonly Obligation[],
   controllerWork: ReadonlyMap<string, Work & { readonly completedAt: string }>,

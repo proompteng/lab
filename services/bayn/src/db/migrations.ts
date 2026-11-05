@@ -1,3 +1,5 @@
+import riskClockRejection from '../../migrations/0177_risk_clock_rejection'
+import operationalSourceRecords from '../../migrations/0176_operational_source_records'
 import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
 import operationalPeriod from '../../migrations/0174_operational_period'
 import inferenceExpenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
@@ -177,6 +179,8 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '176_operational_source_records': operationalSourceRecords,
+  '177_risk_clock_rejection': riskClockRejection,
   '175_operational_controller_evidence': operationalControllerEvidence,
   '164_focused_entry_evidence': focusedEntryEvidence,
   '165_observed_resistance': observedResistance,

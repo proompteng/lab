@@ -1096,6 +1096,50 @@ describe('native execution runtime', () => {
     })
   })
 
+  test.each([false, true])(
+    'retains a pass only in its existing projection epoch (stored inactive: %s)',
+    async (storedInactive) => {
+      const retained = status({
+        lastPass: windowClosedObservation,
+        active: !storedInactive,
+        epoch: storedInactive ? command.epoch + 1 : command.epoch,
+      })
+      if (!executionControllerStatusHasCompletion(retained)) throw new Error('Expected a retained completion')
+      let projected: ExecutionControllerStatus | undefined
+      await Effect.runPromise(
+        projectExecutionControllerState(
+          command.controllerKey,
+          {
+            schemaVersion: 1,
+            active: false,
+            epoch: command.epoch + 1,
+            planHash: controllerPlanHash,
+            sourceRevision,
+            initialSequence: command.sequence,
+            nextSequence: command.sequence + 1,
+            lastCompletion: {
+              sequence: retained.lastSequence,
+              outcome: retained.lastOutcome,
+              receiptHash: retained.lastReceiptHash,
+              completedAt: retained.completedAt,
+            },
+          },
+          {
+            read: () => Effect.succeed(retained),
+            project: (candidate) =>
+              Effect.sync(() => {
+                projected = candidate
+                return { _tag: 'Applied' as const, status: candidate }
+              }),
+          },
+        ),
+      )
+      expect(projected).toMatchObject({ epoch: command.epoch + 1, lastReceiptHash: retained.lastReceiptHash })
+      if (storedInactive) expect(projected).toHaveProperty('lastPass', windowClosedObservation)
+      else expect(projected).not.toHaveProperty('lastPass')
+    },
+  )
+
   test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
     let projected: ExecutionControllerStatus | undefined
     await Effect.runPromise(

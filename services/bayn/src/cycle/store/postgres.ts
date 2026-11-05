@@ -6,9 +6,11 @@ import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { intentPlanSchemaVersion } from '../../execution/contracts'
 import {
   IntentStore,
+  IntentStoreError,
   makeExecutionIntentFromDecodedPlan,
   type IntentStoreService,
 } from '../../execution/intents/domain'
+import { ExpiredIntentRiskDecision } from '../../execution/risk-clock'
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { isProtectedEntryTarget } from '../../strategy/runtime-decision'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
@@ -111,14 +113,18 @@ const commitBoundEntryIntents = (document: CycleDecisionDocument, intents: Pick<
           message: 'bound entry intent differs from its ordered decision identity',
         })
       yield* intents.commit(intent, risk.evaluation.decision).pipe(
-        Effect.mapError((cause) =>
-          cycleStoreError({
+        Effect.mapError((cause) => {
+          const expired =
+            cause instanceof IntentStoreError && cause.cause instanceof ExpiredIntentRiskDecision
+              ? cause.cause
+              : undefined
+          return cycleStoreError({
             operation: 'bind-decision',
-            failure: 'query',
+            failure: expired === undefined ? 'query' : 'risk-expired',
             message: 'entry intent and decision binding could not commit together',
-            cause,
-          }),
-        ),
+            cause: expired ?? cause,
+          })
+        }),
       )
     }
   })

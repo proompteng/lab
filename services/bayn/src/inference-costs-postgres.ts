@@ -1,6 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { randomUUID } from 'node:crypto'
-import { Effect, Schema } from 'effect'
+import { Effect, Schema, Stream } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
 import {
@@ -48,14 +47,26 @@ const SnapshotSchema = Schema.Array(
   ]),
 )
 
-/** Session attribution includes every claimed request, even for blocked, unfilled, and no-trade cycles. */
-export const readInferenceExpenseSnapshot = (
+const inferenceSnapshotError = (cause: unknown) =>
+  cause instanceof InferenceCostError
+    ? cause
+    : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause })
+
+export interface InferenceCostSnapshot {
+  readonly evidence: DecodedInferenceCostEvidence
+  readonly quotes: readonly InferenceExpenseRecord[]
+}
+
+/** Acquire every source in the cut; verify it after the enclosing read snapshot releases its connection. */
+export const acquireInferenceExpenseSnapshot = (
   sql: PgClient.PgClient,
   accountId: string,
   sessionDate: string,
   writerFence?: WriterFenceService,
 ): Effect.Effect<
-  { readonly evidence: DecodedInferenceCostEvidence; readonly quotes: readonly InferenceExpenseRecord[] },
+  {
+    readonly verify: Effect.Effect<InferenceCostSnapshot, InferenceCostError>
+  },
   InferenceCostError
 > =>
   Effect.gen(function* () {
@@ -70,11 +81,7 @@ export const readInferenceExpenseSnapshot = (
     return yield* forwardPerformanceSnapshot(sql, writerFence)
       .withTransaction(
         Effect.gen(function* () {
-          // The transaction owns this non-holdable cursor, including rollback cleanup on failure or interruption.
-          // Every fetch uses its original MVCC snapshot even inside a READ COMMITTED writer transaction.
-          const cursor = sql(`bayn_expense_${yield* Effect.sync(randomUUID)}`)
-          yield* sql`
-            DECLARE ${cursor} NO SCROLL CURSOR WITHOUT HOLD FOR
+          const sourceQuery = sql`
             WITH cut AS (
               SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
                 (SELECT count(*)::integer FROM jev_evaluation_requests AS request
@@ -124,66 +131,60 @@ export const readInferenceExpenseSnapshot = (
                 ORDER BY quote_hash COLLATE "C"
               ) AS item
           `
-          const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
-          const requests: DecodedInferenceCostRequest[] = []
-          while (true) {
-            // A single source row bounds FETCH's utility-result spool as well as each statement's work.
-            const batch = yield* sql<Record<string, unknown>>`FETCH NEXT FROM ${cursor}`.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(SnapshotSchema)),
-            )
-            if (batch.length === 0) break
-            for (const row of batch) {
-              if (row.kind === SnapshotRowKind.Request) {
-                requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
-              }
-            }
-            rows.push(...batch)
-          }
-          yield* sql`CLOSE ${cursor}`
-          const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
-          const cut = cuts[0]
-          if (
-            cuts.length !== 1 ||
-            cut === undefined ||
-            rows.some(
-              (row) =>
-                row.as_of !== cut.as_of ||
-                row.request_count !== cut.request_count ||
-                row.quote_count !== cut.quote_count,
-            )
-          )
-            return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
-          const quoteRows = rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : []))
-          if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
-            return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
-          const evidence: DecodedInferenceCostEvidence = {
-            schemaVersion: requests.some((row) => row.stagedCheckpoint !== undefined)
-              ? 'bayn.inference-cost-evidence.v4'
-              : requests.some((row) => row.chartCheckpoint !== undefined)
-                ? 'bayn.inference-cost-evidence.v3'
-                : 'bayn.inference-cost-evidence.v2',
-            accountBindingHash,
-            sessionDate: scope.sessionDate,
-            asOf: cut.as_of,
-            requests,
-          }
-          const quotes = yield* decodeInferenceExpenseSessionRows(quoteRows, scope.sessionDate)
-          return {
-            evidence: {
-              ...evidence,
-              requests: evidence.requests.toSorted((left, right) =>
-                left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
-              ),
-            },
-            quotes,
-          }
+          return yield* Stream.runCollect(sourceQuery.stream)
         }),
       )
       .pipe(
-        Effect.mapError((cause) =>
-          cause instanceof InferenceCostError
-            ? cause
-            : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause }),
-        ),
+        Effect.map((inputs) => ({
+          verify: Effect.gen(function* () {
+            const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
+            const requests: DecodedInferenceCostRequest[] = []
+            for (const input of inputs) {
+              const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
+              if (row.kind === SnapshotRowKind.Request) {
+                requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
+              }
+              rows.push(row)
+            }
+            const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
+            const cut = cuts[0]
+            if (
+              cuts.length !== 1 ||
+              cut === undefined ||
+              rows.some(
+                (row) =>
+                  row.as_of !== cut.as_of ||
+                  row.request_count !== cut.request_count ||
+                  row.quote_count !== cut.quote_count,
+              )
+            )
+              return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
+            const quoteRows = rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : []))
+            if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
+              return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
+            const evidence: DecodedInferenceCostEvidence = {
+              schemaVersion: requests.some((row) => row.stagedCheckpoint !== undefined)
+                ? 'bayn.inference-cost-evidence.v4'
+                : requests.some((row) => row.chartCheckpoint !== undefined)
+                  ? 'bayn.inference-cost-evidence.v3'
+                  : 'bayn.inference-cost-evidence.v2',
+              accountBindingHash,
+              sessionDate: scope.sessionDate,
+              asOf: cut.as_of,
+              requests,
+            }
+            const quotes = yield* decodeInferenceExpenseSessionRows(quoteRows, scope.sessionDate)
+            return {
+              evidence: {
+                ...evidence,
+                requests: evidence.requests.toSorted((left, right) =>
+                  left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
+                ),
+              },
+              quotes,
+            }
+          }).pipe(Effect.mapError(inferenceSnapshotError)),
+        })),
+        Effect.mapError(inferenceSnapshotError),
       )
   })

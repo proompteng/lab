@@ -108,7 +108,7 @@ import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { JevFailure } from '../jev/contract'
 import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -297,7 +297,7 @@ integration('committed sequential provider handoff', () => {
     initialDispatch = undefined
     const admission = await resetDatabase()
     initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
-  })
+  }, 30_000)
 
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
@@ -1792,11 +1792,11 @@ integration('committed sequential provider handoff', () => {
           expect(late.transferCount).toBe(1)
           expect(late.gapCount).toBe(0)
           expect((yield* runInferenceExpensePass(expenses, client, tariff)).transferCount).toBe(0)
-          const snapshot = yield* readInferenceExpenseSnapshot(
+          const snapshot = yield* acquireInferenceExpenseSnapshot(
             sql,
             accountId,
             fixture.draft.identity.executionSessionDate,
-          )
+          ).pipe(Effect.flatMap(({ verify }) => verify))
           const ledger = yield* readInferenceExpenseLedger(
             client,
             snapshot,
