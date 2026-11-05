@@ -37,7 +37,6 @@ test.each([
   { name: 'before original deadline', atDeadline: false, failure: undefined },
   { name: 'at original deadline', atDeadline: true, failure: undefined },
   { name: 'blocking failure', atDeadline: true, failure: 'block' as const },
-  { name: 'database entry expiry before runtime clock', atDeadline: false, failure: 'clock' as const },
   ...(['query', 'defect', 'interruption', 'unverified'] as const).map((failure) => ({
     name: failure,
     atDeadline: false,
@@ -51,8 +50,7 @@ test.each([
     if (risk === undefined || intentId === undefined) throw new Error('Missing approved risk fixture')
     const expires = unusedEntryExpiresAt(cycle)
     expect(Date.parse(risk.expiresAt)).toBeLessThan(expires)
-    const checkedAt = new Date(atDeadline || failure === 'clock' ? expires : Date.parse(risk.expiresAt)).toISOString()
-    const runtimeAt = failure === 'clock' ? risk.expiresAt : checkedAt
+    const checkedAt = new Date(atDeadline ? expires : Date.parse(risk.expiresAt)).toISOString()
     const evidence = {
       schemaVersion: 'bayn.intent-risk-clock-rejection.v1' as const,
       violation: 'EXPIRED' as const,
@@ -120,7 +118,7 @@ test.each([
           return { cycle: stored, changed: true }
         }),
       bindDecision: (id, input, observedAt) =>
-        TestClock.setTime(Date.parse(runtimeAt)).pipe(
+        TestClock.setTime(Date.parse(checkedAt)).pipe(
           Effect.andThen(
             Effect.sync(() => {
               expect(id).toBe(cycle.identity.cycleId)

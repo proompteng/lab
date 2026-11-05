@@ -14,7 +14,7 @@ import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
 import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
 import { CycleStore, CycleStoreError } from '../store/model'
-import { canRefreshExpiredEntryRisk, unusedEntryExpiresAt } from '../entry-admission'
+import { unusedEntryExpiresAt } from '../entry-admission'
 import { isTerminalCycleState } from '../transitions'
 import { canRearmUnusedCycle } from './calendar-decisions'
 import { calendarQueryFailureError } from './errors'
@@ -418,15 +418,6 @@ const recoverCycle = <R>(
                                       cause,
                                     }),
                                   ),
-                                )
-                              if (!canRefreshExpiredEntryRisk(selection.cycle, observedAt, evidence.checkedAt))
-                                return Effect.fail(
-                                  runnerError({
-                                    operation: 'recover-cycle',
-                                    failure: 'store',
-                                    message: 'Runtime recovery clock precedes the database-observed entry expiry',
-                                    cause: rejected,
-                                  }),
                                 )
                               return Effect.succeed<CycleRunResult>({
                                 outcome: 'RECOVERED',

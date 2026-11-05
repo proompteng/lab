@@ -738,9 +738,6 @@ def evaluate (json : Json) : Except String Json := do
   | "intentRiskClockRejection" =>
     return toJson (intentRiskClockRejection (← readInteger json "decided") (← readInteger json "expires")
       (← readInteger json "updated") (← readInteger json "checked"))
-  | "riskExpiryCanRefresh" =>
-    return toJson (riskExpiryCanRefresh (← readInteger json "runtime") (← readInteger json "checked")
-      (← readInteger json "entryExpires"))
   | "decisionCommitmentUpperBound" =>
     let bound := decisionCommitmentUpperBound (← json.getObjValAs? Bool "receiptValid")
       (← json.getObjValAs? Bool "independent") (← json.getObjValAs? Bool "routed")

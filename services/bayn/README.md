@@ -26,8 +26,6 @@ and exact database clock boundary. After the entire writer transaction rolls bac
 fresh decision evidence within its original entry deadline. At that deadline it is blocked. Future-dated decisions,
 unverified rejections and rollback failures remain failures. This wait is unavailable decision work, not a valid
 strategy abstention or a successful reliability obligation. Risk, quote and broker freshness checks remain unchanged.
-The database check must also predate the original entry deadline. A runtime clock behind an already expired database
-observation cannot authorize another wait or a new entry.
 
 Cycle discovery bounds the authoritative equity-calendar read to the original five seconds. An unavailable calendar
 remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
