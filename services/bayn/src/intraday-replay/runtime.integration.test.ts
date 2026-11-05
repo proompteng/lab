@@ -875,7 +875,17 @@ durableTest.each(
           ])
           yield* advanceMarketTo(initialAtMs + 60_000)
           const advanced = yield* runtime.advance
-          expect(advanced.observation.result).toBe('FAILURE')
+          if (scenario === 'entry-lease-expires-at-commit')
+            expect(advanced.observation).toMatchObject({
+              result: 'SUCCESS',
+              outcome: 'RECOVERED',
+              recoveryAction: 'WAITING',
+              readiness: {
+                reason: DecisionReadinessReason.ExecutionRiskExpired,
+                riskClockRejection: { violation: 'EXPIRED' },
+              },
+            })
+          else expect(advanced.observation.result).toBe('FAILURE')
           expect((yield* broker.snapshot).orders).toEqual([])
           expect((yield* broker.snapshot).fills).toEqual([])
           expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
