@@ -159,6 +159,7 @@ test('normal broker polling emits diagnostics while native deployment activation
             return Promise.reject(new Error('execution must remain blocked'))
           },
           log: async () => undefined,
+          prepareActivation: () => Promise.resolve(),
           projectState: async () => undefined,
         },
       )
