@@ -11,12 +11,15 @@ import {
   entryAbstentionWork,
   holdCompletionSupported,
   accountProtectionWork,
+  decisionMarketScopeSupported,
+  sourceFitsRegisteredSession,
 } from './decision-work'
 import { decideJevEntry } from '../jev/decision'
 import { registrationFixture, testHash } from './fixtures.test-support'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { qualificationCalendar } from './calendar'
+import { MarketCalendarObservationSchema } from '../broker/alpaca/model'
 import type { SystemRegistration } from './policy'
 import { accountProtectionFixture } from '../jev/account-protection.test-support'
 import { AccountProtectionInputsSchema, decideAccountProtection } from '../jev/account-protection'
@@ -237,6 +240,43 @@ describe('strategy decision work evidence', () => {
     const without = { ...document }
     delete without.strategyDecision
     expect(decisionDocumentWork(without, scopedRegistration)).toBeUndefined()
+  })
+  test('retains same-session decision context without counting work outside the registered period', () => {
+    const binding = document.bindings.executionMarketData
+    if (binding === undefined || !('feed' in binding)) throw new Error('Missing native snapshot binding')
+    const observedAt = Date.parse(binding.observedAt)
+    for (const [open, close] of [
+      [observedAt + 60_000, observedAt + 120_000],
+      [observedAt - 120_000, observedAt - 60_000],
+    ] as const) {
+      const registration = {
+        ...scopedRegistration,
+        calendar: {
+          ...scopedRegistration.calendar,
+          operatingHours: 'NATIVE' as const,
+          marketCalendar: Schema.decodeUnknownSync(MarketCalendarObservationSchema)(binding.calendar),
+          sessions: scopedRegistration.calendar.sessions.map((s) => ({
+            ...s,
+            openAt: new Date(open).toISOString(),
+            closeAt: new Date(close).toISOString(),
+          })),
+        },
+      }
+      expect(sourceFitsRegisteredSession(binding, registration, binding.observedAt)).toBe(false)
+      expect(decisionDocumentWork(document, registration)?.correct).toBe(false)
+      expect(decisionMarketScopeSupported(document, registration)).toBe(true)
+      for (const changed of [
+        { ...binding, feed: 'sip' },
+        { ...binding, universeSymbolHash: testHash('foreign universe') },
+        { ...binding, sessionDate: '2026-11-01' },
+      ] as const)
+        expect(
+          decisionMarketScopeSupported(
+            { ...document, bindings: { ...document.bindings, executionMarketData: changed } },
+            registration,
+          ),
+        ).toBe(false)
+    }
   })
   test('a hold needs ordered observation, completion and durable visibility strictly before expiry', () => {
     const instant = (n: number) => new Date(n).toISOString()
