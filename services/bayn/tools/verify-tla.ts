@@ -146,8 +146,8 @@ const faults = [
   {
     model: 'MutationLedger',
     name: 'duplicate-posting',
-    before: "filled /\\ MissingA /\\ postedA' = postedA + 1",
-    after: "filled /\\ PreflightValid /\\ postedA < 2 /\\ postedA' = postedA + 1",
+    before: "postedA' = IF postedA = 0 THEN 1 ELSE postedA",
+    after: "postedA' = postedA + 1",
     violation: 'Invariant NoDuplicatePosting is violated.',
   },
 ]

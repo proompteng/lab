@@ -96,6 +96,10 @@ const MutationState = Schema.Struct({
   duplicate: bool,
   accounted: bool,
   worker: int,
+  pendingA1: bool,
+  pendingA2: bool,
+  pendingB1: bool,
+  pendingB2: bool,
   authorityAllowed: bool,
   mayStart: bool,
   preflightValid: bool,
@@ -304,6 +308,8 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
     const expected = [transfer(1n), transfer(2n)]
     expect(cases.some((s) => s.postedA === 1 && s.postedB === 0)).toBe(true)
     expect(cases.some((s) => s.postedA === 0 && s.postedB === 1)).toBe(true)
+    expect(cases.some((s) => s.pendingA1 && s.pendingA2 && s.postedA === 0)).toBe(true)
+    expect(cases.some((s) => s.postedA === 1 && (s.pendingA1 || s.pendingA2))).toBe(true)
     expect(cases.some((s) => s.accounted && s.exact)).toBe(true)
     expect(cases.some((s) => s.corrupt && !s.preflightValid)).toBe(true)
     expect(cases.some((s) => s.duplicate && !s.preflightValid)).toBe(true)
