@@ -36,7 +36,7 @@ import { OrderSide } from '../execution/contracts'
 import { registeredSchedule } from './schedule'
 import { CashFlowEvidenceSchema } from './cash-flows'
 import { withProviderSessions } from '../testing/market-calendar-fixture'
-import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
+import { defaultJevProtocolDocument, decodeJevProtocol, usesJevOnlyInference } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { systemLatencyStressProtocolHash } from './latency-protocol'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -147,7 +147,7 @@ const baseRegistrationFixture = (
             cacheWriteInputMicrosPerMillionTokens: '0',
           },
         }).rates.filter((rate) =>
-          protocol.schemaVersion === 'bayn.jev.protocol.v37'
+          usesJevOnlyInference(protocol)
             ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
               rate.provider === 'typesafe'
             : policy === JevResearchPolicy.Candidate ||
@@ -266,6 +266,7 @@ export const registrationFixture = (
           Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
             ...defaultJevProtocolDocument,
             schemaVersion: 'bayn.jev.protocol.v35',
+            inputDefinition: 'bayn.jev-entry-state.v23',
             entrySignalPolicy: 'openai-decisions-then-jev' as const,
             entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
             executionModel: retainedIntradayExecutionModel,

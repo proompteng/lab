@@ -19,6 +19,25 @@ large immutable evidence cuts. Use a 3 GiB Node heap for that command and stream
 A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The native controller's resource limits,
 original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
 
+## Webull supplementary context
+
+Protocol v38 adds the latest completed Webull M1 bar to each candidate's numerical input v24 and final Jev evidence.
+The native Kafka arrival cut supplies the bar, with a ten-second availability limit and exact provider decimals.
+Missing, late or invalid data remains absent. Source labels distinguish Webull HTTP bars from the existing IEX chart,
+volume and execution prices; consolidated SIP/NBBO coverage and improved trading returns are not established.
+
+Migration 178 requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete
+accounting and no unexpired inference claims. It admits only v38 execution requests while preserving all original
+financial and provider evidence, including read-only v37 cost verification. The source cutover removes the old sealed
+mandate and its three runtime inputs, then runs OBSERVE. After verifying the published immutable image and native
+cutover, restore the same sandbox account's PAPER mandate through reviewed GitOps, bound to that image and the v38
+strategy. Broker credentials, risk limits, fees, funding, loss history and turnover remain unchanged.
+
+Both stages require the reviewed protocol-cutover approval. Do not merge this source cutover before that approval.
+After PAPER restoration, verify natural model requests contain source-bound Webull context, exact reconciliation,
+unchanged limits and successful native receipts. OBSERVE alone does not complete integration. Rollback follows the
+native deactivation and mandate-rotation procedure below; never restore the retired mandate by itself.
+
 ## Jev-only inference
 
 Protocol v37 moves CHART and conditional BASE_START to pinned Jev 1.13 image assets. The final proposal judgments

@@ -1,3 +1,4 @@
+import { usesJevOnlyInference } from './jev/protocol'
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -219,8 +220,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       })
       const visual: Stage[] = visualStages.map((stage) => ({
         stage: stage.stage === 'CHART' ? InferenceStage.Chart : InferenceStage.BaseStart,
-        provider: request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ? 'typesafe' : 'openai',
-        model: request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ? jevModel : decisionsModel,
+        provider: usesJevOnlyInference(request.request.protocol) ? 'typesafe' : 'openai',
+        model: usesJevOnlyInference(request.request.protocol) ? jevModel : decisionsModel,
         purpose: InferencePurpose.Entry,
         tariffAt: stage.tariffAt,
         recordedStartedAt: stage.recordedStartedAt,

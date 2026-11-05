@@ -130,7 +130,7 @@ Selecting the deployed control still requires its frozen identity; selected abla
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
 
-The v37 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
+The v37 and v38 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
 Retained historical protocols still require their original provider tariffs for financial verification. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
 Replay requests use `bayn.backtest.v11` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
