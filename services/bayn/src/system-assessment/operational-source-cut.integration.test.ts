@@ -373,6 +373,45 @@ postgres('replayed operational source records', () => {
     )
   })
 
+  test('replays immutable decision context outside the reporting period without adding completions', async () => {
+    const document = await runtime.runPromise(persistenceDocumentFixture)
+    const session = document.executionSession?.executionSession
+    if (session === undefined) throw new Error('Expected a native equity session')
+    const f = fixture()
+    const openAt = new Date(Date.parse(document.createdAt) + 60_000).toISOString()
+    const closeAt = new Date(Date.parse(openAt) + 60_000).toISOString()
+    const registration = {
+      ...f.registration,
+      calendar: {
+        ...f.registration.calendar,
+        sessions: [{ sessionDate: session.date, openAt, closeAt }],
+      },
+    }
+    const record = Result.getOrThrow(
+      makeSystemSourceRecord(SystemSourceRecordKind.Decision, { sessionDate: session.date, document }),
+    )
+    const cut = {
+      ...f.cut,
+      asOf: new Date(Date.parse(closeAt) + 120_000).toISOString(),
+      registrationHash: testHash(registration),
+      durableObservations: [],
+      records: [{ kind: record.kind, sourceId: document.contentHash, recordHash: record.recordHash }],
+    }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* persistSystemSourceRecord(record)
+        const replayed = yield* replayOperationalSourceRecords(cut, registration)
+        const work = Result.getOrThrow(bindOperationalWork(cut, registration, testHash(cut), replayed.work))
+        expect(work.reliability.schedule.length).toBeGreaterThan(0)
+        expect(work.reliability.completions).toEqual([])
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT record_hash, payload_text FROM system_source_records`).toEqual([
+          { record_hash: record.recordHash, payload_text: record.payloadText },
+        ])
+      }),
+    )
+  }, 30000)
+
   test('a compact cut with no controller passes still withholds a null-plan current claim', async () => {
     const f = fixture()
     const configuration = { ...f.registration.obligations.configuration, controllerPlanHash: null }
