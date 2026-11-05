@@ -2272,6 +2272,8 @@ With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 its own disposable PostgreSQL and TigerBeetle. The four twenty-session latency cases retain their native polling,
 assertions and ten-minute case budgets without sharing one fifteen-minute CI job. Append a group name to run it
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
+instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
 The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
