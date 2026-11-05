@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { Result } from 'effect'
 
 import { jevSignalFor } from '../../jev/trading-signals'
+import { jevRequestForSnapshot } from '../../jev/native.test-support'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { emptyStreamingProjection, incorporateMarketRecord } from './projection'
@@ -105,6 +106,26 @@ const decisionCut = () => {
     },
   }
 }
+
+test('native Webull evidence reaches model input without changing IEX chart or execution prices', () => {
+  const snapshot = Result.getOrThrow(constructStreamingSnapshot(decisionCut(), fixture.query))
+  const actual = Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).input
+  const baseline = Result.getOrThrow(jevRequestForSnapshot(fixture.snapshot, 'AAPL')).input
+  expect(actual.numericalState['webullContext']).toMatchObject({
+    schemaVersion: 'bayn.jev-webull-entry-context.v1',
+    provider: 'webull',
+    feed: 'nasdaq_basic',
+    symbol: 'AAPL',
+    close: payloadBar.close,
+    volume: payloadBar.volume,
+    availableAt: new Date(end + 1500).toISOString(),
+    availabilityLagMs: 1500,
+  })
+  expect(actual.chartSource).toEqual(baseline.chartSource)
+  expect(actual.funding).toEqual(baseline.funding)
+  expect(actual.numericalState['candidate']).toEqual(baseline.numericalState['candidate'])
+  expect(baseline.numericalState['webullContext']).toBeNull()
+})
 
 test('the existing consumer accepts native batches once and retains real first availability', () => {
   const state = incorporateMarketRecord(initial(), record(), universe, end + 1500)

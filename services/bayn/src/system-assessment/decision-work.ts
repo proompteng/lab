@@ -15,7 +15,7 @@ import {
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { ScheduledEvaluation } from './policy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
-import { JevProtocolSchema, type JevProtocolMaterial } from '../jev/protocol'
+import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import { exchangeSessions, isContinuousMarket, marketHoursAreCanonical } from '../market-hours'
@@ -213,7 +213,7 @@ const registeredControllerOwns = (
     const historicalBehavior = sha256(
       protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
-        protocol.schemaVersion === 'bayn.jev.protocol.v37'
+        usesJevOnlyInference(protocol)
         ? 'bayn.candidate-chart-entry.behavior.v1'
         : 'bayn.chart-first-entry.behavior.v1',
     )

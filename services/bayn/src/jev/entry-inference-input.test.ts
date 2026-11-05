@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
-import { defaultJevProtocolDocument } from './protocol'
+import { defaultJevProtocolDocument, RetainedJevProtocolV37Schema, decodeJevProtocol } from './protocol'
+import { WebullSession } from '../market-data/webull-contract'
+import { webullEntryContextPolicy } from './webull-entry-context'
 
 const bars = [
   { minuteBeforeWindowEnd: 2, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
@@ -12,10 +14,11 @@ const bars = [
 const input = {
   schemaVersion: 'bayn.entry-inference-input.v8',
   numericalState: {
-    schemaVersion: 'bayn.jev-entry-state.v23',
+    schemaVersion: defaultJevProtocolDocument.inputDefinition,
+    webullContext: null,
     task: { decisionPurpose: 'ENTRY' },
     candidate: { symbol: 'AAPL', bars1m: bars },
-    session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z' },
+    session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z', observedAt: '2026-10-25T07:00:02.000Z' },
     benchmark: { symbol: 'SPY' },
   },
   chartSource: { symbol: 'AAPL', windowEndAt: '2026-10-25T07:00:00.000Z', bars },
@@ -24,6 +27,56 @@ const input = {
 }
 
 describe('sequential entry inference input', () => {
+  test('retained v37 protocol bytes keep their original identity while current admission requires v38', () => {
+    const retained = {
+      ...defaultJevProtocolDocument,
+      schemaVersion: 'bayn.jev.protocol.v37',
+      inputDefinition: 'bayn.jev-entry-state.v23',
+      entryQuestionPolicyHash: '0dd4b9c1a0b98df2878ad7fbbe3a1bac11571a50138cb1f0c883f89e3fedf9c5',
+    }
+    const decoded = Result.getOrThrow(Schema.decodeUnknownResult(RetainedJevProtocolV37Schema)(retained))
+    expect(Result.getOrThrow(canonicalHashV1Result(decoded))).toBe(
+      '4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6',
+    )
+    expect(Result.isFailure(decodeJevProtocol(retained))).toBe(true)
+    expect(Result.isFailure(prepareEntryInferenceInput({ ...input, protocol: retained }))).toBe(true)
+  })
+
+  test('rejects wrong-symbol, future, late, unfinished and malformed Webull context instead of substituting IEX data', () => {
+    const context = {
+      ...webullEntryContextPolicy,
+      symbol: 'AAPL',
+      windowStartAt: '2026-10-25T06:59:00.000Z',
+      windowEndAt: '2026-10-25T07:00:00.000Z',
+      session: WebullSession.Regular,
+      open: '100',
+      high: '102',
+      low: '99',
+      close: '101.000000000000000001',
+      volume: '12345',
+      receivedAt: '2026-10-25T07:00:01.000000000Z',
+      availableAt: '2026-10-25T07:00:01.500Z',
+      availabilityLagMs: 1500,
+    }
+    const withContext = (webullContext: unknown) => ({
+      ...input,
+      numericalState: { ...input.numericalState, webullContext },
+    })
+    expect(Result.isSuccess(prepareEntryInferenceInput(withContext(context)))).toBe(true)
+    for (const changed of [
+      undefined,
+      { ...context, symbol: 'AMD' },
+      { ...context, availableAt: '2026-10-25T07:00:03.000Z', availabilityLagMs: 3000 },
+      { ...context, availableAt: '2026-10-25T07:00:10.001Z', availabilityLagMs: 10001 },
+      { ...context, windowStartAt: context.windowEndAt },
+      { ...context, high: '100' },
+      { ...context, close: 'NaN' },
+      { ...context, feed: 'sip' },
+      { ...context, unboundSource: 'other-feed' },
+    ])
+      expect(Result.isFailure(prepareEntryInferenceInput(withContext(changed)))).toBe(true)
+  })
+
   test('binds ablation selection to a distinct request and rejects absent or substituted policies', () => {
     const ablation = {
       ...input,

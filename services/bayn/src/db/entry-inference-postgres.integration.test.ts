@@ -1,3 +1,4 @@
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import jevOnlyInference from '../../migrations/0172_jev_only_inference'
@@ -2117,6 +2118,7 @@ integration('committed sequential provider handoff', () => {
     ['conditional-base-anchor', conditionalBaseAnchors],
     ['dated-execution-fee', datedExecutionFees],
     ['Jev-only', jevOnlyInference],
+    ['Webull-context', webullEntryContext],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {

@@ -31,8 +31,8 @@ Cycle discovery bounds the authoritative equity-calendar read to the original fi
 remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
 crypto buys before final authorization or transmission. Retained crypto sells still require normal capital, ownership,
-funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v37 and its original
-capital mandate, parameters, monetary limits, financial records and loss history remain bound to the deployment.
+funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v38 requires its reviewed
+PAPER mandate while preserving the broker identity, monetary limits, financial records and loss history.
 Historical crypto codecs, replay evidence and shared market data remain available for accounting and position recovery.
 
 A system-restricted, previously traded generation can enter settlement after an idle failure when every account
@@ -154,9 +154,9 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 172 admits only v37 requests and dispatch. Original v35/v36 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
+Migration 178 admits only v38 requests and dispatch after the existing flat, reconciled cutover. Original v35, v36 and v37 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
 
-The current source uses `jev` protocol v37, verified numerical input v23, batch v8 and entry inference input v8. It retains the
+The current source uses `jev` protocol v38, verified numerical input v24, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks pinned Jev 1.13 for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -167,7 +167,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v37 and its exact question-policy hash.
+current execution and database guards accept v38 and its exact question-policy hash.
 
 All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
 BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
@@ -499,9 +499,13 @@ Recorded replay verifies that proof again. `Kafka Webull minute bars incorporate
 arrival delay, including late inputs. The existing streaming diagnostics command also reports Webull coverage.
 Historical diagnostic reads establish arrival at the diagnostic consumer only, not availability to an earlier decision.
 
-This ingestion does not change protocol v37, Jev numerical inputs, IEX execution pricing or capital authority.
-Webull context remains supplementary evidence pending point-in-time qualification and a separately versioned model
-input change. Nasdaq Basic and IEX have different coverage; Webull volume must not replace an IEX volume feature.
+Protocol v38 carries `webullContext` in numerical input v24 and final proposal evidence v2. It contains one independently
+labeled completed M1 bar for the candidate, with exact native decimal strings and original receipt timing. The
+existing snapshot proof supplies it; no new query or service runs on the decision path. Jev questions explicitly
+consider this supplemental observation. Unavailable context is `null`. IEX remains the chart, execution-price and
+liquidity source, and its original candidate exclusions still apply. Nasdaq Basic and IEX retain separate prices
+and volume. The protocol cutover runs OBSERVE first. A reviewed, protocol-bound PAPER mandate is required to activate
+the revised strategy.
 The acceptance boundary is a deployed consumer receipt, regular-session completeness and latency measurements, then
 a comparison against IEX using recorded availability. Better returns require separate economic evidence.
 
@@ -2097,7 +2101,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. Current
 requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
-`models: {"jev": "jev-1.13.0"}`, `inputDefinition: "bayn.jev-entry-state.v23"` and a positive `maximumCalls`
+`models: {"jev": "jev-1.13.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
 shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
 `bayn-backtest --instructions` reports it. `costs` uses `bayn.inference-rate-card.v1` with effective-dated provider/model
 rates. Candidate and chart ablation require only Jev tariffs; deterministic momentum requires none. Current preparation

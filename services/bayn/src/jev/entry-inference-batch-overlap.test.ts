@@ -30,7 +30,8 @@ const fixture = () => {
     input: {
       schemaVersion: 'bayn.entry-inference-input.v8' as const,
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: defaultJevProtocolDocument.inputDefinition,
+        webullContext: null,
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
