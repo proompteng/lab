@@ -18,9 +18,13 @@ uses one active connection and discovers its capacity from provider responses in
 permanent total symbol cap. Additional idle connections do not count as delivered coverage.
 
 `WEBULL_PRIORITY_SYMBOLS` gives Bayn's equity universe first access to streaming slots and a separate completed-M1
-polling loop. Priority bar requests repeat five seconds after the previous round finishes, so they do not wait for
+polling loop. Priority bar requests repeat one second after the previous round finishes, so they do not wait for
 the full catalog sweep. The remaining catalog continues in the background. Both loops share the same API client,
 per-endpoint request pacing and provider cooldowns; priority polling does not increase the aggregate request limit.
+Bayn's first decision cut is two seconds after minute close. A measured ten-minute premarket window with the former
+five-second interval supplied 159 of 160 core symbol-minutes by ten seconds, but only 31 by that first cut. The shorter
+interval reduces polling delay within the same four-request-per-second budget; provider availability and actual
+consumer receipt still determine whether a bar arrives in time.
 
 Webull documents [five concurrent connections, a one-minute reconnect wait, and at most three pushes
 per second per connection](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/).

@@ -68,7 +68,7 @@ class WebullBarPollingTest {
     }
 
   @Test
-  fun `priority bars repeat while the full catalog sweep is still blocked and cancel with their owner`() =
+  fun `priority bars repeat after one second while the catalog is blocked and cancel with their owner`() =
     runBlocking {
       val priority = listOf("AAPL", "SPY")
       val catalog = (priority + (1..2_000).map { "S$it" }).sorted()
@@ -91,7 +91,8 @@ class WebullBarPollingTest {
             sweepStarted = {},
             sweepCompleted = { error("The blocked catalog cannot complete") },
             pause = { millis ->
-              if (millis == 5_000L) priorityTick.receive() else awaitCancellation()
+              assertEquals(1_000L, millis)
+              priorityTick.receive()
             },
           )
         }
