@@ -442,6 +442,14 @@ test('unbound in-period workers prevent an otherwise complete certificate withou
     return Result.getOrThrow(verifyStoredOperationalAssessment(retainedInput, source, verified))
   }
   const foreignRepository = replaceControllerBuild({ ...build, imageRepository: 'example.test/foreign/worker' })
+  const currentForeign = evaluate(foreignRepository)
+  expect(currentForeign.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
+  expect(currentForeign.missing.filter((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toEqual(
+    foreignRepository.controllerPasses.map((pass) => `UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`),
+  )
+  expect(currentForeign.reliability.classes.find((row) => row.class === ObligationClass.Decision)?.correctOnTime).toBe(
+    '0',
+  )
   const retainedForeign = historicalFor(foreignRepository)
   expect(retainedForeign.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
   // Original v1 receipt material, including the foreign-repository controller completion evidence.
@@ -653,6 +661,7 @@ test('archive replay retains unwitnessed controller provenance and cannot downgr
     undefined,
     { ...build, sourceRevision: 'b'.repeat(40) },
     { ...build, imageDigest: `sha256:${testHash('different archived worker image')}` },
+    { ...build, imageRepository: 'example.test/foreign/unwitnessed-worker' },
   ]) {
     const observation = {
       result: 'SUCCESS',
@@ -735,6 +744,19 @@ test('archive replay preserves retained completion matching and rejects tampered
       matched ? '2' : '0',
     )
     expect(retained.missing.some((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toBe(false)
+    const currentReplay = await Effect.runPromise(
+      readOperationalAssessmentSourceCut(archive.hash, input.registration).pipe(
+        Effect.provideService(PgClient.PgClient, archive.sql),
+      ),
+    )
+    const current = Result.getOrThrow(
+      evaluateOperationalAssessment({ ...input, sourceCutHash: archive.hash, safety }, currentReplay, verified),
+    )
+    expect(current.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
+    expect(current.missing.filter((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toEqual(
+      replacements.map((pass) => `UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`),
+    )
+    expect(current.reliability.classes.find((row) => row.class === ObligationClass.Decision)?.correctOnTime).toBe('0')
     const originalHash = archive.records[0]!.recordHash
     archive.records[0]!.payloadText = '{}'
     expect(

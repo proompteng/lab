@@ -1,86 +1,13 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
-import { researchCapitalGrantProof } from '../execution/configuration'
-
-import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { makeResearchCapitalActivationRequest, makeResearchCapitalPlanHash } from '../execution/configuration'
-import { registrationFixture, withRegistrationCommitments } from './fixtures.test-support'
+import { withRegistrationCommitments } from './fixtures.test-support'
 import { validateSystemRegistration } from './policy'
+import { controllerBuildMatchesRegistration, type ControllerPassEvidence } from './decision-work'
+import { registrationBuildFixture } from './registration-build.test-support'
 
 test('a prospective physical build retains the exact original mandate through its saved lineage', () => {
-  const base = registrationFixture()
-  const candidate = base.policies.find((p) => p.policy === 'JEV')
-  if (candidate === undefined) throw new Error('Missing candidate')
-  const broker = Result.getOrThrow(
-    makeBrokerIdentity({
-      schemaVersion: 'bayn.broker-identity.v2',
-      provider: BrokerProvider.Alpaca,
-      environment: BrokerEnvironment.Sandbox,
-      accountId: candidate.riskPolicy.accountId,
-    }),
-  )
-  const material = {
-    activation: {
-      sourceRevision: '0'.repeat(40),
-      imageRepository: 'registry.example.test/lab/bayn',
-      imageDigest: `sha256:${'0'.repeat(64)}`,
-    },
-    strategy: {
-      name: 'jev',
-      behaviorHash: candidate.strategyHash,
-      parameterHash: candidate.parametersHash,
-      parameterSchemaVersion: base.obligations.configuration.protocol.schemaVersion,
-      protocolHash: candidate.protocolHash,
-    },
-    broker: { environment: broker.environment, accountId: broker.accountId, identityHash: broker.identityHash },
-    riskPolicyHash: candidate.riskPolicyHash,
-    limits: { maxOpenOrders: 0, maxPositions: 0 },
-  } as const
-  const planHash = Result.getOrThrow(
-    makeResearchCapitalPlanHash({ schemaVersion: 'bayn.research-execution-plan.v1', ...material }),
-  )
-  const request = Result.getOrThrow(
-    makeResearchCapitalActivationRequest({
-      schemaVersion: 'bayn.research-execution-mandate.v1',
-      grant: { _tag: 'Research', planHash },
-      ...material,
-    }),
-  )
-  const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(request)
-  const generation = Result.getOrThrow(
-    makeResearchCapitalGrantGenerationResult({
-      ...proof,
-      schemaVersion: 'bayn.paper-authority-generation.v3',
-      maximum: Authority.Execution,
-      previousGenerationHash: '1'.repeat(64),
-      reconciliationId: '2'.repeat(64),
-      reconciliationContentHash: '3'.repeat(64),
-    }),
-  )
-  const buildLineage = {
-    schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
-    requestHash: request.requestHash,
-    authoredActivation: request.activation,
-    activation: {
-      sourceRevision: candidate.sourceRevision,
-      imageRepository: request.activation.imageRepository,
-      imageDigest: `sha256:${candidate.imageDigest}`,
-    },
-  }
-  const registered = withRegistrationCommitments({
-    ...base,
-    policies: base.policies.map((p) =>
-      p.policy === 'JEV'
-        ? {
-            ...p,
-            authorityGenerationHash: generation.generationHash,
-            capitalAuthorization: { request, buildLineage, generation },
-          }
-        : p,
-    ),
-  })
+  const { base, registered, request, buildLineage, generation } = registrationBuildFixture()
   expect(Result.isSuccess(validateSystemRegistration(registered))).toBe(true)
   for (const changed of [
     { ...buildLineage, requestHash: 'f'.repeat(64) },
@@ -107,4 +34,35 @@ test('a prospective physical build retains the exact original mandate through it
     expect(Result.isFailure(validateSystemRegistration(invalid))).toBe(true)
   }
   expect(Result.isSuccess(validateSystemRegistration(base))).toBe(true)
+})
+
+test('physical worker repository must match registered lineage while retained registrations remain compatible', () => {
+  const { base, registered, buildLineage, broker } = registrationBuildFixture()
+  const planHash = registered.obligations.configuration.controllerPlanHash
+  if (planHash === null) throw new Error('Missing controller plan')
+  const pass: ControllerPassEvidence = {
+    controllerKey: broker.identityHash,
+    planHash,
+    epoch: 1,
+    sequence: 1,
+    receiptHash: 'c'.repeat(64),
+    completedAt: registered.registeredAt,
+    observation: {
+      result: 'SUCCESS',
+      outcome: 'WINDOW_CLOSED',
+      observedAt: registered.registeredAt,
+      executionBuild: buildLineage.activation,
+    },
+  }
+  expect(controllerBuildMatchesRegistration(pass, registered)).toBe(true)
+  const foreignRepository = {
+    ...pass,
+    observation: {
+      ...pass.observation,
+      executionBuild: { ...buildLineage.activation, imageRepository: 'registry.example.test/foreign/bayn' },
+    },
+  }
+  expect(controllerBuildMatchesRegistration(foreignRepository, registered)).toBe(false)
+  // Retained registrations have no repository commitment to compare.
+  expect(controllerBuildMatchesRegistration(foreignRepository, base)).toBe(true)
 })
