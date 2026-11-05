@@ -100,7 +100,11 @@ import { replayDecisionReleaseAt } from '../intraday-replay/decision-latency'
 import { assessBacktestSession } from '../intraday-replay/backtest'
 import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } from '../ledger-plan'
 import { CycleState, type AutonomousCycle } from '../cycle/model'
-import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
+import {
+  canRefreshExpiredEntryRisk,
+  unusedEntryExpiresAt,
+  hasExpiredUnusedEntryAdmission,
+} from '../cycle/entry-admission'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { decisionReadinessContinuationDelayMs } from '../observe-composition/recovery-driver'
 import { isCycleStateTransitionAllowed } from '../cycle/transitions'
@@ -1778,6 +1782,31 @@ formal('pinned Lean executable conformance', () => {
       }
     }
     expect(model(inputs)).toEqual(expected)
+  })
+
+  test('risk refresh requires both runtime and database clocks before the original entry expiry', () => {
+    const native = nativeJevFixture()
+    const cycle = makeInitialCycle(native.draft, native.observation.payload.observedAt)
+    const expires = unusedEntryExpiresAt(cycle)
+    const expiresMicros = BigInt(expires) * 1000n
+    const inputs: unknown[] = []
+    const expected: boolean[] = []
+    for (const runtime of [expires - 1, expires, expires + 1]) {
+      for (const checked of [expiresMicros - 1n, expiresMicros, expiresMicros + 1n]) {
+        const checkedAt = new Date(Number(checked / 1000n))
+          .toISOString()
+          .replace(/Z$/, `${String(checked % 1000n).padStart(3, '0')}Z`)
+        inputs.push({
+          operation: 'riskExpiryCanRefresh',
+          runtime: String(BigInt(runtime) * 1000n),
+          checked: String(checked),
+          entryExpires: String(expiresMicros),
+        })
+        expected.push(canRefreshExpiredEntryRisk(cycle, new Date(runtime).toISOString(), checkedAt))
+      }
+    }
+    expect(model(inputs)).toEqual(expected)
+    expect(expected).toEqual([true, false, false, false, false, false, false, false, false])
   })
 
   test('cycle transitions, lease expiry, immutable binding and durable completion match production', async () => {

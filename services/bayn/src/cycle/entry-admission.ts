@@ -13,3 +13,12 @@ export const hasExpiredUnusedEntryAdmission = (cycle: AutonomousCycle, observedA
   cycle.bindings.snapshotId === undefined &&
   cycle.bindings.decisionHash === undefined &&
   Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)
+
+export const canRefreshExpiredEntryRisk = (
+  cycle: Pick<AutonomousCycle, 'createdAt' | 'window'>,
+  observedAt: string,
+  databaseCheckedAt: string,
+): boolean => {
+  const expiresAt = unusedEntryExpiresAt(cycle)
+  return Date.parse(observedAt) < expiresAt && Date.parse(databaseCheckedAt) < expiresAt
+}

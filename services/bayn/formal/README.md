@@ -153,6 +153,11 @@ when the risk expires during persistence, preserving authority and retained infe
 the original cycle deadline and propagate rollback failures, defects and interruption. The model assumes PostgreSQL
 reports its actual clock and rolls back a failed transaction; these integration tests exercise those assumptions.
 
+`risk_refresh_preserves_both_entry_deadlines` maps to `canRefreshExpiredEntryRisk` and the runner's recovery branch.
+Both runtime and retained database clocks must precede the original lease expiry. The model rejects either clock at
+the boundary and includes reachable refresh. Executable conformance compares all boundary combinations; the native
+PostgreSQL/TigerBeetle commit-expiry fault test keeps its original failure and zero-partial-write assertions.
+
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
 `unapproved_risk_cannot_register` requires membership in the source-approved policy identities.

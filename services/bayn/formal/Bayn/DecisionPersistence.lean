@@ -36,6 +36,26 @@ theorem future_intent_risk_clock_cannot_refresh (decided expires updated checked
 theorem intent_risk_expiry_boundary_is_strict : intentRiskClockRejection 0 10 1 10 = "EXPIRED" := by decide
 theorem intent_risk_clock_has_reachable_success : intentRiskClockRejection 0 10 1 9 = "CURRENT" := by decide
 
+def riskExpiryCanRefresh (runtime checked entryExpires : Int) : Bool :=
+  decide (runtime < entryExpires ∧ checked < entryExpires)
+
+theorem risk_refresh_preserves_both_entry_deadlines (runtime checked entryExpires : Int) :
+    riskExpiryCanRefresh runtime checked entryExpires = true ↔
+      runtime < entryExpires ∧ checked < entryExpires := by
+  simp [riskExpiryCanRefresh]
+
+theorem database_expired_entry_cannot_refresh (runtime checked entryExpires : Int)
+    (expired : entryExpires ≤ checked) : riskExpiryCanRefresh runtime checked entryExpires = false := by
+  simp [riskExpiryCanRefresh]
+  omega
+
+theorem runtime_expired_entry_cannot_refresh (runtime checked entryExpires : Int)
+    (expired : entryExpires ≤ runtime) : riskExpiryCanRefresh runtime checked entryExpires = false := by
+  simp [riskExpiryCanRefresh]
+  omega
+
+theorem risk_refresh_is_reachable : riskExpiryCanRefresh 1 2 10 = true := by decide
+
 def decisionAdmissionEligible (sourceCommitted sourceMatches : Bool) : Bool := sourceCommitted && sourceMatches
 
 theorem admitted_source_is_committed_and_owned (committed owned : Bool)

@@ -148,6 +148,71 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     expect(jsonText(result)).not.toContain('fixture-account')
   })
 
+  test('drains the complete owned snapshot and releases its transaction before verifying request evidence', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        const sources = Array.from({ length: 128 }, (_, index) => retainedSource(index, 48))
+        yield* insertSources(sql, sources)
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
+        let observedRows = 0
+        let committedSnapshots = 0
+        const observed = tapSnapshotRows(sql, () =>
+          Effect.sync(() => {
+            observedRows++
+          }),
+        )
+        const tracked = new Proxy(observed, {
+          get(target, property, receiver) {
+            if (property === 'withTransaction')
+              return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                target.withTransaction(effect).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      committedSnapshots++
+                    }),
+                  ),
+                )
+            return Reflect.get(target, property, receiver)
+          },
+        })
+        const before = yield* sql`SELECT pg_backend_pid() AS pid`
+        const result = yield* readInferenceExpenseSnapshot(tracked, 'fixture-account', '1970-01-01').pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(committedSnapshots).toBe(1)
+        expect(observedRows).toBe(sources.length + 1)
+        expect(yield* sql`SELECT pg_backend_pid() AS pid`).toEqual(before)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([
+          { count: sources.length },
+        ])
+      }),
+    )
+  })
+
+  test('request verification failure still rolls back an enclosing writer transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
+        const fence = yield* WriterFence
+        const result = yield* fence
+          .transaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO autonomous_cycles VALUES ('capture-write', 'fixture-account', '1970-01-01', 'NO_TRADE')`
+              return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01', fence)
+            }),
+          )
+          .pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(
+          yield* sql`SELECT count(*)::integer AS count FROM autonomous_cycles WHERE cycle_id='capture-write'`,
+        ).toEqual([{ count: 0 }])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([{ count: 4 }])
+      }).pipe(Effect.provide(WriterFenceLive)),
+    )
+  })
+
   test('retains and orders a wide claimed session without spilling its evidence payloads to disk', async () => {
     const sources = Array.from({ length: 512 }, (_, index) => retainedSource(index, 48))
     const result = await runtime.runPromise(
@@ -427,34 +492,6 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         expect(yield* sql`SELECT pg_backend_pid() AS pid`).toEqual(before)
         expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([{ count: 512 }])
       }).pipe(Effect.scoped),
-    )
-  })
-
-  test('drains the stream and reuses the same backend when a source fails validation', async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DELETE FROM jev_evaluation_requests`
-        yield* insertSources(
-          sql,
-          Array.from({ length: 512 }, (_, index) => retainedSource(index, 48)),
-        )
-        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
-        const before = yield* sql`SELECT pg_backend_pid() AS pid`
-        const result = yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
-          Effect.provideService(Statement.CurrentTransformer, (statement) =>
-            Effect.succeed(
-              statement.compile()[0].trimStart().startsWith('WITH cut AS')
-                ? sql`SELECT source.*, pg_sleep(0.01) AS capture_delay FROM (${statement}) AS source`
-                : statement,
-            ),
-          ),
-          Effect.result,
-        )
-        expect(Result.isFailure(result)).toBe(true)
-        expect(yield* sql`SELECT pg_backend_pid() AS pid`).toEqual(before)
-        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests`).toEqual([{ count: 512 }])
-      }),
     )
   })
 })
