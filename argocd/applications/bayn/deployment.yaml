@@ -225,7 +225,7 @@ spec:
             defaultMode: 288
         - name: tmp
           emptyDir:
-            sizeLimit: 256Mi
+            sizeLimit: 4Gi
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca

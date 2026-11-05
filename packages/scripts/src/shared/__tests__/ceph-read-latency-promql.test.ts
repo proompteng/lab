@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { test } from 'bun:test'
 import YAML from 'yaml'
 
-test.each(['ceph-read-latency-alerts.yaml', 'ceph-health-alerts.yaml'])(
-  'Ceph alerts preserve incident identity and recovery semantics: %s',
+test.each(['ceph-read-latency-alerts.yaml', 'ceph-health-alerts.yaml', 'persistent-volume-alerts.yaml'])(
+  'Storage alerts preserve incident identity and capacity semantics: %s',
   (fixture) => {
     const root = new URL('../../../../../', import.meta.url)
     const manifest = YAML.parseDocument(
@@ -34,7 +34,9 @@ test.each(['ceph-read-latency-alerts.yaml', 'ceph-health-alerts.yaml'])(
         timeout: 30_000,
       })
       if (result.error || result.status !== 0)
-        throw new Error(`Native Ceph rule evaluation failed: ${result.error ?? ''}\n${result.stdout}\n${result.stderr}`)
+        throw new Error(
+          `Native storage rule evaluation failed: ${result.error ?? ''}\n${result.stdout}\n${result.stderr}`,
+        )
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

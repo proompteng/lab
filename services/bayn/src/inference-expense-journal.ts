@@ -4,10 +4,10 @@ import { stableU128, stableU64 } from './hash'
 import { InferenceCostError, inferenceStageKey } from './inference-costs'
 import {
   buildInferenceExpensePlan,
+  inferenceExpenseBatchSize,
   inferenceExpenseLedger,
   inferenceExpenseScope,
   type InferenceExpensePlan,
-  type InferenceExpenseQuote,
   type InferenceExpenseRecord,
   type InferenceExpenseSnapshot,
 } from './inference-expense'
@@ -120,8 +120,8 @@ export const readInferenceExpenseLedger = <E, R>(
       (filter) => client.request('read-inference-expense-session-transfers', (active) => active.queryTransfers(filter)),
     )
     const lookedUpTransfers: LedgerTransferRecord[] = []
-    for (let offset = 0; offset < plan.transfers.length; offset += LEDGER_BATCH_MAX) {
-      const batch = plan.transfers.slice(offset, offset + LEDGER_BATCH_MAX)
+    for (let offset = 0; offset < plan.transfers.length; offset += inferenceExpenseBatchSize) {
+      const batch = plan.transfers.slice(offset, offset + inferenceExpenseBatchSize)
       const actual = yield* client.request('read-inference-expense-owner-transfers', (active) =>
         active.lookupTransfers(batch.map((row) => row.id)),
       )
@@ -262,16 +262,13 @@ export const readInferenceExpenseLedger = <E, R>(
       const actual = byId.get(row.id)
       return actual === undefined ? [] : [actual]
     })
-    const byRequest = new Map<string, InferenceExpenseQuote>()
-    const evidenceOrder = (quote: InferenceExpenseQuote) =>
-      (quote.line.receiptHash !== null ? 2 : 0) +
-      ('handoffHash' in quote.line && quote.line.handoffHash !== null ? 1 : 0)
+    const quotedStages = new Set<string>()
+    const pricedStages = new Set<string>()
     for (const quote of quotes) {
       const key = inferenceStageKey(quote.line)
-      const prior = byRequest.get(key)
-      if (prior === undefined || evidenceOrder(quote) > evidenceOrder(prior)) byRequest.set(key, quote)
+      quotedStages.add(key)
+      if (quote.line.estimatedCostPicoUsd !== null) pricedStages.add(key)
     }
-    const selected = [...byRequest.values()]
     return {
       schemaVersion: 'bayn.inference-expense-ledger-report.v2' as const,
       accountBindingHash,
@@ -283,10 +280,10 @@ export const readInferenceExpenseLedger = <E, R>(
       unit: 'USD_PICO' as const,
       invoiceReconciled: false as const,
       exactLedgerPrefix: true as const,
-      quotedRequestCount: selected.length,
-      claimedRequestCount: new Set(selected.map((quote) => quote.line.requestId)).size,
-      pricedRequestCount: selected.filter((quote) => quote.line.estimatedCostPicoUsd !== null).length,
-      gapRequestCount: selected.filter((quote) => quote.line.estimatedCostPicoUsd === null).length,
+      quotedRequestCount: quotedStages.size,
+      claimedRequestCount: new Set(quotes.map((quote) => quote.line.requestId)).size,
+      pricedRequestCount: pricedStages.size,
+      gapRequestCount: quotedStages.size - pricedStages.size,
       transferCount: sourceTransfers.length,
       knownEstimatedCostPicoUsd: sourceTransfers.reduce((total, transfer) => total + transfer.amount, 0n).toString(),
     }

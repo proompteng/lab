@@ -6,13 +6,15 @@ import { Cause, Effect, Option, pipe, Schema } from 'effect'
 import { BrokerRead } from '../../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
 import { Authority } from '../../execution/contracts'
+import { ExpiredIntentRiskDecision } from '../../execution/risk-clock'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { IsoDateSchema } from '../../schemas'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
 import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
-import { CycleStore } from '../store/model'
+import { CycleStore, CycleStoreError } from '../store/model'
+import { unusedEntryExpiresAt } from '../entry-admission'
 import { isTerminalCycleState } from '../transitions'
 import { canRearmUnusedCycle } from './calendar-decisions'
 import { calendarQueryFailureError } from './errors'
@@ -372,18 +374,6 @@ const recoverCycle = <R>(
                           withObservedStage('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
                         )
                       }),
-                      Effect.catchCause((failure) =>
-                        Effect.failCause(
-                          Cause.map(failure, (cause) =>
-                            runnerError({
-                              operation: 'recover-cycle',
-                              failure: 'store',
-                              message: 'durable shadow decision binding failed',
-                              cause,
-                            }),
-                          ),
-                        ),
-                      ),
                       Effect.map(
                         (binding): CycleRunResult => ({
                           outcome: 'RECOVERED',
@@ -392,6 +382,69 @@ const recoverCycle = <R>(
                           cycle: binding.cycle,
                         }),
                       ),
+                      Effect.catchCause((failure) => {
+                        const reason = failure.reasons.length === 1 ? failure.reasons[0] : undefined
+                        const rejected = reason !== undefined && Cause.isFailReason(reason) ? reason.error : undefined
+                        if (
+                          rejected instanceof CycleStoreError &&
+                          rejected.failure === 'risk-expired' &&
+                          rejected.cause instanceof ExpiredIntentRiskDecision
+                        ) {
+                          const evidence = rejected.cause.evidence
+                          return currentUtcInstant.pipe(
+                            Effect.flatMap((observedAt) => {
+                              if (Date.parse(observedAt) >= unusedEntryExpiresAt(selection.cycle))
+                                return CycleStore.pipe(
+                                  Effect.flatMap((store) =>
+                                    store.block(
+                                      selection.cycle.identity.cycleId,
+                                      CycleTerminalReason.UnusedEntryExpired,
+                                      observedAt,
+                                    ),
+                                  ),
+                                  Effect.map(
+                                    (receipt): CycleRunResult => ({
+                                      outcome: 'RECOVERED',
+                                      action: 'BLOCKED',
+                                      observedAt,
+                                      cycle: receipt.cycle,
+                                    }),
+                                  ),
+                                  Effect.mapError((cause) =>
+                                    runnerError({
+                                      operation: 'recover-cycle',
+                                      failure: 'store',
+                                      message: 'expired entry risk blocking failed',
+                                      cause,
+                                    }),
+                                  ),
+                                )
+                              return Effect.succeed<CycleRunResult>({
+                                outcome: 'RECOVERED',
+                                action: 'WAITING',
+                                observedAt,
+                                cycle: selection.cycle,
+                                readiness: {
+                                  reason: DecisionReadinessReason.ExecutionRiskExpired,
+                                  message:
+                                    'Execution risk approval expired before durable binding; awaiting fresh evidence',
+                                  riskClockRejection: evidence,
+                                },
+                              })
+                            }),
+                          )
+                        }
+                        return Effect.failCause(
+                          Cause.map(failure, (cause) =>
+                            runnerError({
+                              operation: 'recover-cycle',
+                              failure: 'store',
+                              message: 'durable shadow decision binding failed',
+                              cause,
+                            }),
+                          ),
+                        )
+                      }),
                     ),
                   ),
                 ),

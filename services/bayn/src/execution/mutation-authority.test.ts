@@ -26,6 +26,7 @@ import {
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { BrokerMutationShape } from '../broker/alpaca-mutations/model'
+import { MutationOperation, invalidRequest } from '../broker/alpaca-mutations/model'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from './contracts'
 import {
@@ -1417,6 +1418,44 @@ describe('final broker mutation authority', () => {
     expect(grantReads).toBe(0)
     expect(mismatched._tag).toBe('Failure')
   })
+
+  test.each(['failure', 'defect', 'interruption'] as const)(
+    'preserves compound authorization failure with %s',
+    async (kind) => {
+      const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected denial' })
+      const cleanup =
+        kind === 'failure'
+          ? Cause.fail({ _tag: 'WriterFenceError' })
+          : kind === 'defect'
+            ? Cause.die(new Error('injected cleanup defect'))
+            : Cause.interrupt()
+      const guarded = makeAuthorityGuardedBrokerMutation(
+        mutationAuthority(BrokerEnvironment.Sandbox, grantedCapitalAuthority(authorityGenerationHash)),
+        {
+          brokerMutation: {
+            submit: () => Effect.die('must not transmit'),
+            cancel: () => Effect.succeed(cancelReceipt),
+          },
+          finalSubmitAuthorization: () => Effect.failCause(Cause.combine(Cause.fail(denied), cleanup)),
+        },
+      )
+      const exit = await Effect.runPromiseExit(guarded.submit(intent()))
+      if (Exit.isSuccess(exit)) throw new Error('compound authorization failure must propagate')
+      expect(exit.cause.reasons).toHaveLength(2)
+      expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+      if (kind === 'failure') {
+        expect(exit.cause.reasons[1]).toMatchObject({
+          _tag: 'Fail',
+          error: { denialReason: SubmissionDenialReason.WriterFenceError },
+        })
+      } else {
+        const reason = cleanup.reasons[0]
+        if (reason === undefined || Cause.isFailReason(reason))
+          throw new Error('expected cleanup defect or interruption')
+        expect(exit.cause.reasons[1]).toEqual(reason)
+      }
+    },
+  )
 
   test('keeps cancellation available for containment after grant revocation', async () => {
     const grant = persistedGrantRecord()

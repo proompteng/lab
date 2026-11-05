@@ -6,6 +6,10 @@ const groups = {
     'src/intraday-replay/runtime.integration.test.ts',
   ],
   backtest: ['src/intraday-replay/backtest.integration.test.ts'],
+  'latency-jev': ['src/intraday-replay/latency-cli-jev.integration.test.ts'],
+  'latency-ablation': ['src/intraday-replay/latency-cli-ablation.integration.test.ts'],
+  'latency-momentum': ['src/intraday-replay/latency-cli-momentum.integration.test.ts'],
+  'latency-momentum-trading': ['src/intraday-replay/latency-cli-momentum-trading.integration.test.ts'],
   'frozen-control': [],
   restart: ['src/intraday-replay/restart.integration.test.ts'],
   inference: [
@@ -23,7 +27,7 @@ if (
   (group !== 'all' && !Object.hasOwn(groups, group))
 )
   throw Error(
-    'Use isolated PostgreSQL and TigerBeetle: bun tools/test-ledger.ts [all|runtime|backtest|frozen-control|restart|inference]',
+    `Use isolated PostgreSQL and TigerBeetle: bun tools/test-ledger.ts [all|${Object.keys(groups).join('|')}]`,
   )
 
 for (const [name, files] of Object.entries(groups)) {

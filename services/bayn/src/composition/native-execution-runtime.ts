@@ -271,6 +271,7 @@ const retainedProjectedPass = (
     !executionControllerStatusHasCompletion(stored) ||
     stored.controllerKey !== controllerKey ||
     stored.planHash !== state.planHash ||
+    stored.epoch !== state.epoch ||
     stored.lastSequence !== completion.sequence ||
     stored.lastOutcome !== completion.outcome ||
     stored.lastReceiptHash !== completion.receiptHash ||

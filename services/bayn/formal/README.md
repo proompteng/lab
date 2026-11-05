@@ -143,6 +143,16 @@ The causal conclusion assumes PostgreSQL visibility and that the coordinator rou
 returns. The assessment exposes these assumptions and retains original producer routing timestamps as upper bounds,
 rather than claiming an exact physical commit time.
 
+`intentRiskClockRejection` in `DecisionPersistence.lean` maps to the current-risk trigger in migration 177 and its
+strict decoder in `src/execution/risk-clock.ts`. `current_intent_risk_clock_matches_gate` proves the decision is
+current at both the requested update and the database check. `expired_intent_risk_clock_cannot_admit`,
+`future_intent_risk_clock_cannot_refresh`, the strict expiry boundary and a reachable success cover its rejection
+classes. The actual PostgreSQL trigger is compared with the executable at microsecond boundaries. Full entry tests
+use the production cycle store, intent store and writer fence to verify successful admission and complete rollback
+when the risk expires during persistence, preserving authority and retained inference evidence. Runner tests retain
+the original cycle deadline and propagate rollback failures, defects and interruption. The model assumes PostgreSQL
+reports its actual clock and rolls back a failed transaction; these integration tests exercise those assumptions.
+
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
 `unapproved_risk_cannot_register` requires membership in the source-approved policy identities.
@@ -212,6 +222,13 @@ p95 rank for every nonempty sample, and an unknown empty sample. Executable conf
 seeded samples against the production functions. These proofs do not establish full-batch timing coverage or a
 portfolio stress result. Native controller and PostgreSQL tests separately check original command retention, replay
 after ambiguous commit, and capture of work that completes after its original window.
+
+The model also maps `controllerBuildBound` to `controllerBuildMatchesRegistration` in
+`src/system-assessment/decision-work.ts`. A registered activation repository must match the worker repository,
+independently of source and digest equality. Retained registrations without a repository commitment keep their
+source/digest comparison. Executable conformance covers both registration forms, missing builds and foreign
+source, digest or repository claims. These checks do not prove receipt authenticity or grant capital authority.
+The frozen operational v1 receipt matcher remains source/digest-only and is not changed by this current-build model.
 
 The same model maps `fullBatchDuration` to `fullBatchClockDuration` in `src/system-assessment/full-batch-latency.ts`.
 Its theorems prove that completion bounds inference and every retained stage, duration is nonnegative, an additional

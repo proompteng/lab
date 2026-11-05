@@ -548,7 +548,7 @@ records the exact run binding, so subsequent key rotation does not strand accept
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
-Status reads retain their pending response within the existing fifteen-second recovery budget. A response still
+Status reads share one pooled ingress client and retain their pending response within the existing fifteen-second recovery budget. A response still
 pending after five seconds emits a warning and continues under the same deadline; it does not start another durable
 query. Only returned transient errors trigger bounded retries with a freshly signed query. The two-second admission
 expiry and authorization checks remain unchanged.
@@ -558,6 +558,14 @@ RPC refreshes its deadline and lets workspace authorization bind the current run
 Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
 observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
 access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
+
+Recovery preserves the accepted turn ID. Expired authority produces `authorization_required`; **Resume recovery**
+hands the workflow the current authenticated session through `RecoverCodexRun`, without sending another turn.
+Execution reconciliation backs off from two seconds to one minute. An authorization wait checks once a minute;
+a fresh recovery or Stop control wakes it immediately. Stop retains authorization and reconciliation states instead
+of masking them as cancellation. Neither action releases a conversation whose effects remain unknown.
+This changes the workflow journal and snapshot contract. Drain old active workflows before registration; do not
+move their journals onto the new worker or invent native terminal receipts to finish them.
 
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
@@ -618,6 +626,9 @@ the release ConfigMap, network policies, quota, and controller. Admission fails 
 their retained invocations, before deletion; `revisionHistoryLimit` is a rollback setting, not permission to destroy
 pinned work. The namespace budget allows eight worker Pods across active, retained, and overlapping versions. A full
 budget blocks another rollout until versions drain. Never force-delete a worker with pending work to make capacity.
+Workers expose HTTP `/healthz` and `/metrics` on port 8080. Kubernetes probes use this listener instead of opening
+incomplete HTTP/2 connections on the Restate endpoint. Alloy scrapes actual recovery observations and exhausted
+run-read budgets; Mimir alerts on sustained recovery or failed reads. Labels contain no run, session or turn IDs.
 The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks evidence and delivery gates.
 
 Run the native correlation and interruption contract with an isolated pinned binary:

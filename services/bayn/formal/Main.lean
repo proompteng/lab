@@ -607,7 +607,9 @@ def evaluate (json : Json) : Except String Json := do
   | "controllerBuildBound" =>
     return toJson (controllerBuildBound (← json.getObjValAs? (Option String) "registeredSource")
       (← json.getObjValAs? (Option String) "registeredDigest")
-      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest"))
+      (← json.getObjValAs? (Option String) "workerSource") (← json.getObjValAs? (Option String) "workerDigest")
+      (← json.getObjValAs? (Option String) "registeredRepository")
+      (← json.getObjValAs? (Option String) "workerRepository"))
   | "expiredInferenceContinuation" =>
     return toJson (expiredInferenceContinuation (← json.getObjValAs? Bool "expiredWaiting")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
@@ -733,6 +735,9 @@ def evaluate (json : Json) : Except String Json := do
       (← json.getObjValAs? Bool "sourceMatches"))
   | "mutationAdmissionIndependent" =>
     return toJson (mutationAdmissionIndependent (← json.getObjValAs? Bool "ambient"))
+  | "intentRiskClockRejection" =>
+    return toJson (intentRiskClockRejection (← readInteger json "decided") (← readInteger json "expires")
+      (← readInteger json "updated") (← readInteger json "checked"))
   | "decisionCommitmentUpperBound" =>
     let bound := decisionCommitmentUpperBound (← json.getObjValAs? Bool "receiptValid")
       (← json.getObjValAs? Bool "independent") (← json.getObjValAs? Bool "routed")
