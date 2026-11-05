@@ -45,8 +45,10 @@ Completed M1 [bars](https://developer.webull.com/apis/docs/reference/historical-
 for every candidate in batches of 20, with real-time entitlement required and PRE/RTH/ATH sessions.
 The production stock-bar endpoint rejected 100 symbols with `ILLEGAL_PARAMETER` and
 `symbols size must be between 1 and 20.`; a 20-symbol request succeeded. This limit is independent of
-the streaming subscription batch size. A full catalog sweep spans several minutes, so the five-minute
-window retains completed bars across those sweeps; `/coverage` reports each symbol's actual latest bar time.
+the streaming subscription batch size. A full catalog sweep spans several minutes; cold isolation of unsupported
+symbols can exceed the five-minute recovery window. Such sweeps emit explicit gap intervals with their affected
+background symbols, excluding independently polled priorities and already rejected symbols. An empty background
+does not emit a recovery gap. `/coverage` reports each symbol's actual latest bar time.
 Each batch uses a current completed UTC-minute cutoff and a five-minute recovery window, so later
 batches do not remain pinned to an earlier sweep's window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
