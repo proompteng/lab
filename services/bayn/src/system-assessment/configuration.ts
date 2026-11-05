@@ -6,6 +6,7 @@ import { jevSignalIntervalMs } from '../jev/observation-query'
 import { PositiveIntegerSchema, Sha256Schema } from '../schemas'
 import { MarketKind } from '../instruments'
 import { currentEntryMarkets } from '../execution/trading-scope'
+import { SystemAssessmentError } from './economics'
 import { executionControllerPlanHash } from '../execution/controller'
 
 /** Only operational settings and public strategy parameters are retained; credentials and endpoints are excluded. */
@@ -50,4 +51,25 @@ export const qualificationDeadlines = (runtime: typeof QualificationRuntimeSchem
       mutationDeadlineMs: runtime.operationTimeoutMs,
       recoveryDeadlineMs: runtime.unknownMutationThresholdMs,
     }
+  })
+
+export const captureQualificationRuntime = (
+  runtime: typeof QualificationRuntimeSchema.Type,
+  registered: {
+    readonly configuration: typeof QualificationRuntimeSchema.Type
+    readonly runtimeConfigurationHash: string
+  },
+) =>
+  Result.gen(function* () {
+    // Append-only financial registrations predate entry scope; reproduce only that original omission.
+    const { entryMarkets: _entryMarkets, ...unscopedRuntime } = runtime
+    const runtimeConfiguration = registered.configuration.entryMarkets === undefined ? unscopedRuntime : runtime
+    const runtimeConfigurationHash = yield* canonicalHashV1Result(runtimeConfiguration)
+    if (runtimeConfigurationHash !== registered.runtimeConfigurationHash)
+      return yield* Result.fail(
+        new SystemAssessmentError({
+          message: 'Capture runtime differs from the prospectively registered configuration',
+        }),
+      )
+    return { runtimeConfiguration, runtimeConfigurationHash }
   })
