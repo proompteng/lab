@@ -483,6 +483,8 @@ completed recovery window and producer clock. Only the latest completed minute i
 arrival must be within ten seconds of minute close and before the observation. Recovery polls cannot refresh that
 arrival; a late correction removes the current minute until a subsequent eligible observation. Scoped bar gaps and
 invalid captures withhold optional context without invalidating IEX inputs. Missing symbols remain explicit.
+Candidate snapshots retain independent Webull observations for IEX-excluded candidates so coverage comparisons
+include those cases. Their original IEX exclusions still prevent signal construction and trading.
 
 Snapshots retain each selected capture once, with native bytes, Kafka coordinate, consumer sequence and arrival.
 Recorded replay verifies that proof again. `Kafka Webull minute bars incorporated` logs measure the real consumer
