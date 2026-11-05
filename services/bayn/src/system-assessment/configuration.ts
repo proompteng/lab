@@ -61,9 +61,12 @@ export const captureQualificationRuntime = (
   },
 ) =>
   Result.gen(function* () {
-    // Append-only financial registrations predate entry scope; reproduce only that original omission.
-    const { entryMarkets: _entryMarkets, ...unscopedRuntime } = runtime
-    const runtimeConfiguration = registered.configuration.entryMarkets === undefined ? unscopedRuntime : runtime
+    // Capture has already verified the persisted registration. Unknown historical plans stay unknown.
+    const retainedPlanRuntime =
+      registered.configuration.controllerPlanHash === null ? { ...runtime, controllerPlanHash: null } : runtime
+    const { entryMarkets: _entryMarkets, ...unscopedRuntime } = retainedPlanRuntime
+    const runtimeConfiguration: typeof QualificationRuntimeSchema.Type =
+      registered.configuration.entryMarkets === undefined ? unscopedRuntime : retainedPlanRuntime
     const runtimeConfigurationHash = yield* canonicalHashV1Result(runtimeConfiguration)
     if (runtimeConfigurationHash !== registered.runtimeConfigurationHash)
       return yield* Result.fail(
