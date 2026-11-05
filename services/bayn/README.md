@@ -761,9 +761,10 @@ unusable. A consumed source window still waits for its next valid signal boundar
 inconsistent inference keeps the ordinary backoff. The same expiry classification applies when the source deadline
 passes during fresh reconciliation or pricing while the original lease is still open. A clock preceding the saved
 completion, missing reconciliation freshness, insufficient prospective quote coverage, or an expired admission
-keeps the ordinary backoff. After a durable observation, a missing input cut for a strictly later window retries
-within one second, bounded by the controller cadence and the original unused-entry expiry. Initial missing inputs and same-window retries
-retain the ordinary cadence. The readiness receipt retains the earlier window from this cycle's observation store.
+keeps the ordinary backoff. A missing initial input cut or a cut for a strictly later unconsumed window retries
+within one second, bounded by the controller cadence and the original unused-entry expiry. A captured snapshot query
+is required; source failures without that query and already consumed windows retain the ordinary cadence.
+The readiness receipt retains any earlier window from this cycle's observation store.
 Both inference readiness
 conditions remain operational failures (`EVALUATION_UNAVAILABLE`), rather than strategy abstentions.
 
@@ -2271,6 +2272,8 @@ With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 its own disposable PostgreSQL and TigerBeetle. The four twenty-session latency cases retain their native polling,
 assertions and ten-minute case budgets without sharing one fifteen-minute CI job. Append a group name to run it
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
+instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
 The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.

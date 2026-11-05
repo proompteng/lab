@@ -67,7 +67,7 @@ theorem expired_inference_cannot_retry_after_original_deadline (expiredWaiting :
     omega
   simp [expiredInferenceContinuation, unavailable]
 
-/-- `pending` requires a later missing cut after an earlier durable observation in this cycle. -/
+/-- `pending` covers a captured query for initial inputs or a later unconsumed input cut. -/
 def pendingMarketInputsContinuation (pending : Bool) (cycle : CycleEvidence) (now : Int)
     (normalDelay : Nat) : Option Nat :=
   if unboundEntryRetryAllowed pending cycle now then

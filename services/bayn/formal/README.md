@@ -1,19 +1,26 @@
 # Bayn formal model
 
-This directory contains the offline Lean model and executable used to check Bayn's production decisions. It is excluded
+This directory contains the offline Lean model and executable used to check Bayn's production decisions, plus
+[TLA+ models](tla/README.md) for controller, entry recovery and mutation/ledger interleavings. It is excluded
 from the trading image. `lean-toolchain` pins Lean 4.35.0; `lake-manifest.json` pins Mathlib and its dependencies.
 
 From the repository root, run the same proof and conformance command as CI:
 
 ```sh
 bun run --filter @proompteng/bayn verify:formal
+bun run --filter @proompteng/bayn verify:tla
 ```
 
-This requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
+The Lean command requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
 sandboxing. On macOS, use a Linux VM or container. Missing tools, a different Lean version, build failures, checker
 rejections, and conformance failures return a nonzero exit code. The command builds the model and sets
 `BAYN_FORMAL_EXECUTABLE` itself, so a missing environment variable cannot skip conformance. Ordinary `bun test` skips
 this suite without that variable and is not a substitute for `verify:formal`.
+
+The TLA+ command also runs on macOS with Java 21 and curl. It checks safety and conditional liveness with pinned,
+checksum-verified TLC, verifies deliberate faults are detected, and compares every checked state with production
+TypeScript. Both commands are mandatory in formal CI and before exact-revision image publication. Neither checker
+runs in the trading runtime. See the [TLA+ model boundaries and assumptions](tla/README.md#bounds-assumptions-and-limits).
 
 The command runs `lake -q build`, `bash check.sh`, and the production conformance suite. The formal CI workflow also
 runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` exports the
