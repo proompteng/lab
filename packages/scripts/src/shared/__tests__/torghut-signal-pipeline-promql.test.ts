@@ -236,7 +236,7 @@ test('Bayn readiness flaps remain one incident until five minutes of recovery', 
   expect(rule.keep_firing_for).toBe('5m')
   const scope = 'job="bayn",namespace="bayn",service="bayn",instance="a"'
   const expected = {
-    exp_labels: { job: 'bayn', namespace: 'bayn', instance: 'a', ...rule.labels },
+    exp_labels: { job: 'bayn', namespace: 'bayn', ...rule.labels },
     exp_annotations: rule.annotations,
   }
   runPromql(

@@ -7,7 +7,6 @@
 export const legacyObserveAuthorityToken = 'OBSERVE' as const
 export const legacyExecutionAuthorityToken = 'PAPER' as const
 
-export const legacyAccountSnapshotSchemaVersion = 'bayn.paper-account-snapshot.v1' as const
 export const legacyOrderV2SchemaVersion = 'bayn.order.v3' as const
 export const legacyFillSchemaVersion = 'bayn.fill.v2' as const
 export const legacyBrokerEventSchemaVersion = 'bayn.paper-broker-event.v1' as const

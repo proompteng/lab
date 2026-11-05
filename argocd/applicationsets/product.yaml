@@ -433,6 +433,7 @@ spec:
                   argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
                 managedNamespaceMetadata:
                   labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                     # The TigerBeetle client requires an explicit io_uring seccomp exception.
                     # The Bayn container remains non-root with no capabilities or privilege escalation.
                     pod-security.kubernetes.io/enforce: privileged
@@ -451,6 +452,17 @@ spec:
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut
                 automation: auto
                 enabled: "false"
+              - name: torghut-webull-feed
+                path: argocd/applications/torghut-webull-feed
+                namespace: torghut
+                renderWithLovely: false
+                targetRevision: kargo/torghut-webull-feed
+                cascadeResourcesOnDeletion: true
+                annotations:
+                  argocd.argoproj.io/sync-wave: "7"
+                  kargo.akuity.io/authorized-stage: lab-delivery:torghut-webull-feed
+                automation: auto
+                enabled: "true"
               - name: torghut-hyperliquid-feed
                 path: argocd/applications/torghut-hyperliquid-feed
                 namespace: torghut

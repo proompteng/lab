@@ -1,13 +1,38 @@
 # Tengri operations
 
+## Latency diagnosis
+
+Scrape the controller Pods individually. A Service-backed target combines independent process counters and cannot
+provide a valid rate or distribution. `/metrics` remains available when dependencies fail; inventory is the last
+successful readiness observation, not current authority. Check `tengri_inventory_last_success_timestamp_seconds`
+and `tengri_inventory_age_seconds` before using guest or ticket gauges. A zero last-success value means no inventory
+has been collected. `tengri_readiness_failures_total` distinguishes authorization, database, and Kubernetes errors
+from timeouts without exposing identities.
+
+Use the boot/resume histograms for CR-create/persisted-intent to Ready latency, not authenticated browser latency.
+The one-second p95 alerts require twenty successful observations in fifteen minutes; failures remain visible in
+readiness/guest counters and traces rather than being reported as successful startup samples. The existing native
+KVM test excludes BFF admission and six-guest contention. Full product qualification must measure authenticated
+creation/resume through a file read, PTY round trip, and initialized Codex response, with failure counts and the
+same resource profile on both sides of any comparison.
+
+For slow run status, compare `tengri_run_status_seconds` and `tengri_active_runs_seconds` with the BFF root trace.
+For Ofz, inspect `db.audit.batch` queue-wait/batch-size fields and its `db.audit.pool.acquire`, `db.audit.begin`, and
+`db.audit.commit` children. PostgreSQL 18 exposes WAL write/fsync timing in `pg_stat_io` when `track_wal_io_timing`
+is enabled. Compare counter deltas over the same window and inspect synchronous standby lag; cumulative means do
+not establish a current p95. Do not remove audit commits, fresh policy checks, or synchronous replication to improve
+latency. Keep storage migrations and shared-node changes separate from this application rollout.
+
 Tengri uses six prepared Firecracker slots under the normal OCI runtime. Each has a host supervisor, unprivileged VMM
 runner, Pod-local TAP, private snapshot/root disks, and a retained 32 GiB Ceph raw-block home. Source behavior is defined
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
 
-Each 8 GiB guest uses a 9 GiB host runner reservation, matching native acceptance. Artifact-copy initialization is
-bounded separately at 2 GiB. The 56 GiB namespace memory quota includes six runners, their supervisors, and the
-controller and proxy. Repeated unchanged lifecycle failures retain their condition transition time and wait for the
+Each 8 GiB guest uses a 12 GiB host runner reservation, including charged disk/snapshot cache and VMM overhead.
+The former 9 GiB limit killed an awake runner with 2.1 GiB of file cache. Artifact-copy initialization has a separate
+3 GiB limit and a 2 GiB volume. The namespace admits 75 GiB of memory requests and 81 GiB of limits for six runners,
+supervisors, controllers and retained workers. Repeated unchanged lifecycle failures retain their condition transition
+time and wait for the
 controller's retry interval instead of creating another Kubernetes status event.
 
 Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes for this migration. Only the
@@ -140,6 +165,18 @@ and home, saves a full generation, flushes backing files, reaps Firecracker, and
 acknowledgement. Root edits, shell processes, Codex state, and home files resume from that snapshot. Scheduler memory
 requests stay reserved; resident guest RAM is released.
 
+Power & Sleep settings save immediately when the timeout menu changes. Background Codex reads and event-stream
+reconnects, terminal heartbeats, and empty terminal frames do not reset the idle clock. Their control-admission CAS
+still excludes an already claimed sleep. User commands, terminal input/output, and active agent work keep the workspace
+awake. An accepted durable run remains a sleep inhibitor until it reaches a terminal state. A timeout update
+replaces the old deadline atomically. If automatic sleep has already claimed the running workspace, the update fails
+rather than reporting a saved timeout while the committed sleep proceeds; resume before retrying.
+
+A temporary authorization veto pauses an active workspace without clearing its running intent. Execution stays
+stopped while permission is denied; a fresh Ofz permit is required before the saved snapshot resumes automatically.
+Quarantine, explicit sleep and committed idle sleep still clear running intent. The desktop distinguishes the temporary
+pause from sleep and refreshes its state without sending a lifecycle command.
+
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.
 No Lease expiry or missing Kubernetes object proves that a previous storage writer stopped.
@@ -194,8 +231,12 @@ old memory snapshot.
    no other main native workflow occupies its publisher concurrency before taking the workspace offline.
    Finish active work and reconcile uncertain external effects.
    An idle browser, a transcript, or a sleeping snapshot alone does not establish that work completed.
-2. Use authenticated workspace sleep. Verify the exact runtime claim in the committed sleeping journal, the reaped
-   Firecracker process, and the absence of another storage writer. Capture a fresh baseline after the work finishes:
+2. Finish authenticated workspace sleep, or verify that normal automatic Sleep has completed. Require desired and
+   observed Sleep, the reaped Firecracker process, and no other storage writer. A sleeping journal must name the exact
+   runtime claim. A prepared vacant journal must have a positive snapshot generation, no runtime claim, and the same
+   MicroVM and Lease allocation, image, Pod and home identities. It does not prove native execution acceptance.
+   Accept only an absent activity pin or `idle-sleep/<exact runtime epoch>`; another pin blocks the migration.
+   Require all Restate run and control invocations to be terminal. Capture a fresh baseline after work finishes:
    MicroVM, Lease, Pod and PVC UIDs; filesystem UUID; representative file hashes; and native conversation identities.
 3. Record the Tengri Application's UID, source, and sync policy. Confirm its owning ApplicationSet preserves
    [`argocd.argoproj.io/skip-reconcile`](https://argo-cd.readthedocs.io/en/release-3.4/user-guide/skip_reconcile/),
@@ -209,9 +250,9 @@ old memory snapshot.
    MicroVM's image to the qualified Nanoagent digest. Verify the home initialization annotation remains `complete`.
    Retain the old Lease Pod UID and MicroVM slot binding for now. These references prevent pool recreation while the
    old controller is absent. Use fresh resourceVersion preconditions for each change.
-6. Release the original successful publishers through the existing hold. Rerun only the native publisher against its
-   unchanged architecture artifacts, verify both index digests remain exact, and require successful signing and
-   artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
+6. Release the original successful publishers through the existing hold. Rerun only the native publisher and web
+   index publisher against their unchanged architecture artifacts. Verify all four index digests remain exact, and
+   require successful signing and artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
    prevent rerunning its original job. Do not rebuild or substitute a guest digest after enrollment.
 7. Follow the same Freight through Ofz migration and rollout, then the generated `kargo/tengri` commit. Verify that
    commit selects the qualified controller and guest digests before removing the Application's temporary
@@ -224,6 +265,11 @@ old memory snapshot.
    Proompteng promotion. Resume through authenticated Ofz lifecycle control. Read back the unchanged filesystem UUID,
    retained files and conversations. Exercise run recovery, approval, cancellation, worker replacement, and active-run
    sleep exclusion before reopening normal work.
+
+After product acceptance, verify that no competing unqualified native publisher is active, then restore
+`TENGRI_PREPARED_SLOT_GUEST_API_VERSION` to the qualified source's guest API protocol for normal delivery. Keep the
+Application unpaused and its source, sync policy
+and Kargo metadata intact. Set the publication hold again before a future incompatible guest API or snapshot change.
 
 If the replacement fails, keep traffic closed and retain the home and claim for repair. Once the new guest writes,
 never restore its older memory snapshot against the advanced disk. Recovery must use a reviewed compatible image
@@ -238,8 +284,9 @@ Production cutover requires separate authorization. An isolated Docker fixture g
 
 Image delivery is held independently of source merge. The image workflow still requires component and strict KVM
 acceptance and can publish verified immutable `sha-<source>` images and their retained indexes. It withholds both
-discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY` is exactly
-`true`; an unset or false value keeps the current automatic Kargo policy from selecting this migration. Leave it held
+discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_GUEST_API_VERSION` matches
+`GUEST_API_PROTOCOL_VERSION` in the qualified source. An unset, malformed or different protocol keeps the current
+automatic Kargo policy from selecting this migration. Leave it held
 until the approved old writers are fenced and every retained home is enrolled with the exact staged guest digest.
 The Proompteng image workflow uses the same hold for its Kargo alias because conversation recovery now requires the
 streaming Tengri RPC. Stage its immutable image too, then release both applications from the same reviewed source
@@ -285,8 +332,8 @@ A reviewed cutover follows this order:
    `runtime.proompteng.ai/home-uid`, and `runtime.proompteng.ai/image` for the approved immutable boot image. Set the home initialization annotation to `complete`.
    Update that MicroVM's image to the same boot digest and retain its owner/finalizer. Do not set a new Pod UID yet.
    An operator enrollment must contain external proof of old-writer fencing; Lease creation itself supplies none.
-5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-   to `true` and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
+5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_GUEST_API_VERSION`
+   to the qualified source's guest API protocol and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
    validation/signing gates again; the workflow then exposes both aliases through the normal publication path.
    Kargo's existing automatic policy promotes that pair and Argo reconciles its generated branch. The pool prepares the
    reserved retained home, records the new Pod UID, and binds/adopts it. Open lifecycle traffic only after those slots

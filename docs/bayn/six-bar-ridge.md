@@ -96,7 +96,7 @@ node services/bayn/dist/research/ridge-training-command.js \
 ```
 
 The strict `bayn.ridge-training-input.v1` input contains `sampling: INDEPENDENT_SERIAL_FIXED_CANDIDATES`,
-the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v5` `backtest`, full raw research `calendar`,
+the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v6` `backtest`, full raw research `calendar`,
 `expectedCalendarHash`, chronological `sessions`, `fitCutoffAt`, fixed `allocationBudgetMicros`,
 `decisionLatencyMs`, and `turnoverPolicy`. Each session contains its date, UTC open/close and first decision,
 and a `TRAINING`, `VALIDATION` or `HOLDOUT` partition. Declared sessions must be a contiguous slice of the

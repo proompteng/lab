@@ -70,7 +70,7 @@ describePostgres('unused schema hard cutover', () => {
             ) VALUES (${id}, 'cleanup-test', 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD', 100, 100, 100)`
           }),
         )
-        const evidence = sql`SELECT to_jsonb(event) AS event, to_jsonb(snapshot) AS snapshot
+        const evidence = sql`SELECT to_jsonb(event) AS event, to_jsonb(snapshot) - 'crypto_fee_tier' AS snapshot
           FROM broker_events AS event JOIN account_snapshots AS snapshot USING (event_id)`
         const before = yield* evidence
         yield* postgresMigrations

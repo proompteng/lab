@@ -57,6 +57,11 @@ spec:
                 secretKeyRef:
                   name: keycloak-tengri-bff
                   key: client-secret
+            - name: PLATFORM_ADMIN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-platform-admin
+                  key: client-secret
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -558,6 +558,7 @@ const buildAgentRunnerSpec = (
     },
     artifacts: {
       statusPath: '/workspace/.agent/status.json',
+      resultPath: '/workspace/.agent/result.json',
       logPath: '/workspace/.agent/runner.log',
       logRetentionSeconds,
     },
@@ -997,6 +998,13 @@ export const submitJobRun = async (
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
           { name: 'CODEX_HOME', value: codexHomePath },
+          ...(agentRunnerSpec?.adapter?.type === 'codex-app-server' && runUid
+            ? [
+                { name: 'AGENT_RUN_NAMESPACE', value: namespace },
+                { name: 'AGENT_RUN_UID', value: runUid },
+                { name: 'AGENT_RUN_POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } },
+              ]
+            : []),
           ...(authSecret ? [{ name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) }] : []),
           ...env,
           ...(systemPromptRef

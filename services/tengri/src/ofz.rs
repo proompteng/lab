@@ -11,7 +11,8 @@ use proto::{
     GetCommandRequest, GetPolicyStateRequest, GetPolicyStateResponse,
     GetWorkspaceReservationRequest, GetWorkspaceReservationResponse, GetWorkspaceStateRequest,
     GetWorkspaceStateResponse, RequestContext, Resource, actor::Identity,
-    authorization_service_client::AuthorizationServiceClient, execute_command_request::Command,
+    execute_command_request::Command,
+    tengri_authorization_service_client::TengriAuthorizationServiceClient,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -36,7 +37,7 @@ mod receipts;
 
 #[derive(Clone)]
 pub struct Client {
-    rpc: AuthorizationServiceClient<Channel>,
+    rpc: TengriAuthorizationServiceClient<Channel>,
     receipts: Arc<receipts::Cache>,
 }
 
@@ -158,7 +159,7 @@ impl Client {
     fn from_channel(channel: Channel) -> Self {
         Self {
             receipts: Arc::new(receipts::Cache::default()),
-            rpc: AuthorizationServiceClient::new(channel)
+            rpc: TengriAuthorizationServiceClient::new(channel)
                 .max_decoding_message_size(1_048_576)
                 .max_encoding_message_size(65536),
         }

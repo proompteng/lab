@@ -504,7 +504,7 @@ describe('enabled app inventory', () => {
       'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.9.0@sha256:ff69a2225ad7c6f85ed84fbd5f3087df46202426b2388ec60214098e0adf05e9',
+      'cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39',
     )
     expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
@@ -731,14 +731,14 @@ describe('enabled app inventory', () => {
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
   })
 
-  it('tracks ARC runner images through both GitHub Actions and manual Nix image paths', () => {
+  it('tracks ARC runner images through the single GitHub Actions and Kargo path', () => {
     expect(entry('arc')).toMatchObject({
       class: 'nix-image',
       nixImageAttr: 'arc-runner-image',
-      buildScriptPath: 'packages/scripts/src/arc-runner/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/arc-runner/deploy-service.ts',
     })
     expect(entry('arc').workflowPaths).toContain('.github/workflows/arc-runner-build-push.yml')
+    expect(entry('arc').buildScriptPath).toBeUndefined()
+    expect(entry('arc').deployScriptPath).toBeUndefined()
   })
 
   it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {

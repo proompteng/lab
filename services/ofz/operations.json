@@ -3,31 +3,25 @@
     "surface": "controller",
     "operation": "ConnectorAgent",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off connector gate precedes authentication, workspace admission and guest effects"
+    "dispatch": "Authenticated Tengri controller admission, current workspace and Codex control authority"
   },
   {
     "surface": "codex",
     "operation": "relay/identity",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "codex",
     "operation": "relay/configure",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "codex",
     "operation": "relay/remove",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
-  },
-  {
-    "surface": "ofz",
-    "operation": "CheckConnectorAgent",
-    "action": "ACTION_CONNECTOR_EXECUTE",
-    "dispatch": "Default-off connector gate precedes database, replay and authorization effects"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "controller",
@@ -60,6 +54,11 @@
     "surface": "controller",
     "operation": "UpdatePowerSettings",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "controller",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "controller",
@@ -133,6 +132,16 @@
   },
   {
     "surface": "controller",
+    "operation": "ListCodexThreads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SetCodexThreadArchived",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "GetCodexLogin",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -163,7 +172,7 @@
   },
   {
     "surface": "controller",
-    "operation": "GetActiveCodexRun",
+    "operation": "GetActiveCodexRuns",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -226,6 +235,11 @@
     "surface": "guest",
     "operation": "OpenBrowser",
     "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "guest",
@@ -325,6 +339,21 @@
   },
   {
     "surface": "codex",
+    "operation": "thread/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/archive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/unarchive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
     "operation": "thread/start",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -410,6 +439,11 @@
   },
   {
     "surface": "bff",
+    "operation": "stat-file",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff",
     "operation": "list-files",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -490,12 +524,22 @@
   },
   {
     "surface": "bff",
+    "operation": "list-threads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "set-thread-archived",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "resume-thread",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
     "surface": "bff",
-    "operation": "active-codex-run",
+    "operation": "active-codex-runs",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -738,19 +782,31 @@
     "action": "ACTION_AUDIT_READ"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
+    "operation": "BeginSignIn",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ConsumeSignIn",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "EstablishSession",
     "internal_only": true,
     "action": "ACTION_SESSION_ESTABLISH"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "InspectSession",
     "internal_only": true,
     "action": "ACTION_SESSION_INSPECT"
   },
   {
-    "surface": "ofz",
+    "surface": "ofz_platform",
     "operation": "RevokeSession",
     "internal_only": true,
     "action": "ACTION_SESSION_REVOKE"
@@ -911,6 +967,24 @@
     "action": "ACTION_BROWSER_CONTROL"
   },
   {
+    "surface": "browser_mcp_http",
+    "operation": "POST /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp_http",
+    "operation": "DELETE /mcp",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "release",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
     "surface": "browser_action",
     "operation": "status",
     "internal_only": true,
@@ -1025,23 +1099,8 @@
   },
   {
     "surface": "bff_access",
-    "operation": "membership",
-    "action": "ACTION_MEMBERS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
     "operation": "collaborator",
     "action": "ACTION_COLLABORATORS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
-    "operation": "quota",
-    "action": "ACTION_QUOTAS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
-    "operation": "target",
-    "action": "ACTION_TARGETS_MANAGE"
   },
   {
     "surface": "bff_access",
@@ -1057,11 +1116,6 @@
     "surface": "bff_access",
     "operation": "transfer",
     "action": "ACTION_WORKSPACE_TRANSFER"
-  },
-  {
-    "surface": "bff_access",
-    "operation": "emergency",
-    "action": "ACTION_MEMBERS_MANAGE"
   },
   {
     "surface": "bff_auth",
@@ -1115,5 +1169,269 @@
     "operation": "OPTIONS /api/auth/[...all]",
     "public": true,
     "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformConfiguration",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "DiscoverPlatformAccess",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Attested client and current human or workload; native resource and workspace checks before catalog disclosure; durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CheckPlatformAccess",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RecordPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ReadPolicyRelationships",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Registered platform administrator service, active human administrator session, fully consistent resource relationships and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "WritePolicyRelationships",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListPlatformConnections",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "PutPlatformConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RevokePlatformConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CreatePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ActivatePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RevokePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "relay",
+    "operation": "ListOperations",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "relay",
+    "operation": "Execute",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "relay",
+    "operation": "GetExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/connectors",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/connections",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner-scoped saved connection intent; fresh Ofz authorization and guest acknowledgement before activation"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "DELETE /api/tengri/connections",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner-scoped saved connection intent; fresh Ofz authorization and guest acknowledgement before activation"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/policies",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/policies",
+    "action": "ACTION_TARGETS_MANAGE",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/relay/agent",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/connections",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Owner-scoped saved connection metadata without credentials"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListPlatformWorkspaces",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Attested administration gateway and current workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformWorkspace",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Attested administration gateway and current workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ReadWorkspaceActivity",
+    "action": "ACTION_AUDIT_READ",
+    "dispatch": "Attested administration gateway and current workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/workspaces",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/workspaces/[workspaceId]",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/workspaces/[workspaceId]/activity",
+    "action": "ACTION_AUDIT_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/workspaces/[workspaceId]/people",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway session and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CreatePlatformAccessRequest",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Attested member gateway; current workspace membership and enrolled client; bounded registered resource request only; journal and durable audit; no grants"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ReviewPlatformAccessRequest",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Independent administration gateway and exact workspace administrator; fresh MFA for new grants; original requester and client enrollment; atomic approval state and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CancelPlatformAccessRequest",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Original member and attested client; pending request ownership; journal and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListPlatformAccessRequests",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent administration gateway and exact workspace administrator; scoped durable audit and post-read authority check"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/access-requests",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Independent admin gateway and exact workspace administrator; Ofz scope and audit enforcement"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/access-requests",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Same-origin authenticated gateway; member request or cancellation, admin-only review; Ofz workspace, ownership, fresh MFA and durable journal enforcement"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ListProviderConnections",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Attested member gateway and enrolled workspace client or independent admin gateway and exact workspace administrator; owned account metadata only; durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "BeginProviderConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Current human and enrolled workspace client with resource authority, or exact workspace admin for shared accounts; PKCE, browser binding, fixed provider registration and durable attempt"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CompleteProviderConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Original human, gateway, browser binding and single-use state; current workspace authority; no repeated token exchange and no account identity replacement"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "DisconnectProviderConnection",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Original personal account owner or exact workspace administrator; durable local revocation before provider revocation; exact operation receipt"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ResolveProviderCredential",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Attested Relay executor only; durably started execution, exact connector and destination, current authorization and owner-bound account revision"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/provider-connections",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Same-origin current human; Ofz enforces member/client or exact workspace-admin scope; host-only browser binding cookie"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/provider-connections",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Same-origin authenticated bounded request; Ofz enforces owned begin/disconnect and durable operation identity"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/provider-connections/callback/[profileId]",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Current human and host-only browser binding; Ofz verifies original state, gateway, profile and authority before one code exchange; fixed local return path"
   }
 ]

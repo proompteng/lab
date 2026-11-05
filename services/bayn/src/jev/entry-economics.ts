@@ -1,30 +1,69 @@
 import { Result } from 'effect'
+import { cryptoMaximumTakerFeeBps, cryptoTakerFeeBps, type CryptoFeeTier } from '../broker/crypto-fees'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { OrderSide, OrderType } from '../execution/contracts'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
-import { instrumentMarket } from '../instruments'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
-import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice, jevExitLimitValue } from './liquidation-economics'
-import type { JevProtocol } from './protocol'
-import type { JevFundedExitPlan, JevStrategyExitPlan } from './strategy-exit-plan'
+import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice } from './liquidation-economics'
+import type { JevProtocolMaterial } from './protocol'
 
-export const jevMaximumEntryAskMicros = (protocol: JevProtocol, observedAsk: bigint): bigint =>
-  (observedAsk * BigInt(10_000 + protocol.maximumEntryQuoteDriftBps)) / 10_000n
+export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: string) =>
+  // Retired protocols retain their original price arithmetic for immutable financial evidence.
+  protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v31' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v30' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v29' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
+  (protocol.schemaVersion === 'bayn.jev.protocol.v27' && instrumentMarket(symbol) === MarketKind.Crypto)
+    ? { quoteDriftBps: 0, limitSlippageBps: 0 }
+    : {
+        quoteDriftBps: protocol.maximumEntryQuoteDriftBps,
+        limitSlippageBps: protocol.maximumEntryLimitSlippageBps,
+      }
+
+export const jevMaximumEntryAskMicros = (
+  protocol: JevProtocolMaterial,
+  symbol: string,
+  observedAsk: bigint,
+): bigint => {
+  const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
+  return protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v31' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v30' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v29' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v28'
+    ? quantizeInstrumentPriceMicros(symbol, maximumAsk, 'UP')
+    : maximumAsk
+}
 
 export const jevEntryEconomics = (input: {
-  readonly protocol: JevProtocol
+  readonly feeAt: string
+  readonly protocol: JevProtocolMaterial
   readonly symbol: string
   readonly bidMicros: bigint
   readonly askMicros: bigint
   readonly capitalMicros: string
+  readonly cryptoFeeTier: CryptoFeeTier | null
 }) =>
   Result.gen(function* () {
     const { protocol, symbol } = input
-    const maximumAsk = jevMaximumEntryAskMicros(protocol, input.askMicros)
+    const maximumAsk = jevMaximumEntryAskMicros(protocol, symbol, input.askMicros)
     const maximumEntryPrice = (yield* deriveExecutionIntentPricing({
       symbol,
       side: OrderSide.Buy,
@@ -32,7 +71,7 @@ export const jevEntryEconomics = (input: {
       timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       quantityAtoms: quantityScale,
       referencePriceMicros: maximumAsk,
-      limitSlippageBps: BigInt(protocol.maximumEntryLimitSlippageBps),
+      limitSlippageBps: BigInt(jevEntryPriceAllowances(protocol, symbol).limitSlippageBps),
     })).expectedExecutionPriceMicros
     const maximumTargetWeight = Math.min(protocol.maximumGrossWeight, protocol.maximumSymbolWeight)
     const quantities = yield* maximumAllocatedBuyQuantities({
@@ -49,12 +88,16 @@ export const jevEntryEconomics = (input: {
       quantityAtoms: quantity,
       notionalMicros: (maximumEntryPrice * quantity + quantityScale - 1n) / quantityScale,
     }
-    const fees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n)
-    const received = quantity - receivedCryptoFee(buy, 1_000_000n).quantityAtoms
+    const crypto = instrumentMarket(symbol) === MarketKind.Crypto
+    const entryFeeTier = crypto ? input.cryptoFeeTier : null
+    const entryTakerFeeBps = cryptoTakerFeeBps(entryFeeTier)
+    const fees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n, entryTakerFeeBps, input.feeAt)
+    const received = quantity - receivedCryptoFee(buy, 1_000_000n, entryTakerFeeBps).quantityAtoms
     if (received <= 0n) return null
     const acquisitionCost = buy.notionalMicros + fees.cashMicros
     const breakEvenBid = yield* jevBreakEvenExitBid({
       protocol,
+      feeAt: input.feeAt,
       symbol,
       quantityAtoms: received,
       acquisitionCostMicros: acquisitionCost,
@@ -62,6 +105,7 @@ export const jevEntryEconomics = (input: {
     })
     const breakEvenLimit = yield* jevBreakEvenExitLimitPrice({
       protocol,
+      feeAt: input.feeAt,
       symbol,
       quantityAtoms: received,
       acquisitionCostMicros: acquisitionCost,
@@ -76,6 +120,9 @@ export const jevEntryEconomics = (input: {
       maximumEntryPriceUsd: Number(maximumEntryPrice) / 1_000_000,
       assumedEntryQuantity: Number(quantity) / Number(quantityScale),
       estimatedEntryFeesUsd: Number(fees.totalMicros) / 1_000_000,
+      entryCryptoFeeTier: entryFeeTier,
+      entryTakerFeeBps: crypto ? entryTakerFeeBps : 0,
+      maximumExitTakerFeeBps: crypto ? cryptoMaximumTakerFeeBps : 0,
       holdingExitBreakEvenBidUsd: Number(breakEvenBid) / 1_000_000,
       holdingExitRequiredBidRiseBps: Number(((breakEvenBid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
       takeProfitBreakEvenLimitUsd: Number(breakEvenLimit) / 1_000_000,
@@ -90,31 +137,3 @@ export const jevEntryEconomics = (input: {
   )
 
 export type JevEntryEconomics = NonNullable<Result.Result.Success<ReturnType<typeof jevEntryEconomics>>>
-
-export const fundJevTradePlan = (input: {
-  readonly protocol: JevProtocol
-  readonly economics: JevEntryEconomics
-  readonly levels: JevStrategyExitPlan
-}) =>
-  Result.gen(function* () {
-    const { protocol, economics, levels } = input
-    const liquidation = { protocol, symbol: levels.symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
-    const stop = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: BigInt(levels.stopLimitPriceMicros) })
-    const target = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: BigInt(levels.profitLimitPriceMicros) })
-    const acquisition = BigInt(economics.acquisitionCostMicros)
-    if (
-      stop.conservativeNetMicros <= 0n ||
-      stop.conservativeNetMicros >= acquisition ||
-      target.conservativeNetMicros <= acquisition
-    )
-      return null
-    const exitPlan: JevFundedExitPlan = {
-      schemaVersion: 'bayn.jev-funded-exit-plan.v3',
-      levels,
-      maximumQuantityAtoms: economics.maximumQuantityAtoms,
-      acquisitionCostMicros: economics.acquisitionCostMicros,
-      estimatedStopNetMicros: stop.conservativeNetMicros.toString(),
-      estimatedTargetNetMicros: target.conservativeNetMicros.toString(),
-    }
-    return { maximumTargetWeight: economics.maximumTargetWeight, exitPlan }
-  })

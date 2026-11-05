@@ -45,6 +45,7 @@ const evidence: ReadEvidence = {
 
 const account: AlpacaAccount = {
   cryptoStatus: null,
+  cryptoFeeTier: null,
   cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 

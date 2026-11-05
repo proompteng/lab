@@ -3,13 +3,6 @@ import { describe, expect, it } from 'bun:test'
 import { classifyAgentsImageMode } from '../resolve-agents-image-mode'
 
 describe('classifyAgentsImageMode', () => {
-  it('validates the built shell image when its lifecycle check changes', () => {
-    const result = classifyAgentsImageMode(['nix/verify-agents-shell-image-lifecycle.sh'])
-    expect(result.tier).toBe('local-smoke')
-    expect(result.imageTargets).toEqual(['agents-shell'])
-    expect(result.runIntegration).toBe(true)
-  })
-
   it('keeps test-only changes on the Ubuntu unit tier', () => {
     expect(
       classifyAgentsImageMode([
@@ -67,6 +60,12 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
+  it('rebuilds the runner when its toolchain or acceptance command changes', () => {
+    for (const path of ['nix/images/agentrun-tools.nix', 'services/agents/scripts/runner-acceptance.sh']) {
+      expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['runner'])
+    }
+  })
+
   it('rebuilds every image that embeds the shared Linear MCP bridge contract', () => {
     for (const path of [
       'services/agents/src/linear-mcp/bridge-auth.ts',
@@ -79,6 +78,15 @@ describe('classifyAgentsImageMode', () => {
 
   it('builds every image that embeds the Codex workspace package', () => {
     expect(classifyAgentsImageMode(['packages/codex/src/app-server.ts']).imageTargets).toEqual([
+      'control-plane',
+      'controller',
+      'runner',
+      'agents-shell',
+    ])
+  })
+
+  it('rebuilds all images that embed the shared patch helper', () => {
+    expect(classifyAgentsImageMode(['services/agents/scripts/apply_patch.py']).imageTargets).toEqual([
       'control-plane',
       'controller',
       'runner',

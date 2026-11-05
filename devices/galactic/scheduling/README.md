@@ -80,15 +80,14 @@ do not sync its Kargo revision before its local class and memory headroom exist.
 7. Promote the reviewed ARC configuration through the existing `arc-runner` Kargo Stage after Ceph clients have left Ryzen.
    Keep the ARM64 sets on Altra; raise the normal `arc-arm64` maximum from five to eight and retain the separate
    analysis set's one-slot limit. Let busy AMD64 runners finish normally. One nine-runner `arc-amd64` set uses
-   `local-path-ci-amd64`, whose node maps select Turin Transcend or Ryzen local scratch. Strict two-host spread and
-   the 16Gi memory reservation with `maxSkew: 3` allow three on current Ryzen capacity and six on Turin. Require
-   fresh non-runner Ryzen requests below 13.82GiB and no node pressure on any runner host. Revisit this reservation
-   and spread before a BIOS memory change. Altra's ARM64 runners retain node-local workspaces; inspect its filesystem
+   `local-path-ci-amd64`, whose node maps select Turin Transcend or Ryzen local scratch. Host spread is a preference;
+   16Gi memory reservations and fresh node headroom determine the split. A full Ryzen must not block available Turin
+   capacity. Require no node pressure and verify free scratch capacity before promotion. Altra's ARM64 runners retain node-local workspaces; inspect its filesystem
    headroom and native image reclamation before increasing concurrency.
 8. Run `python3 devices/galactic/scheduling/verify-placement.py --context galactic-lan --verify`.
    Require no application Ceph client on Ryzen, an AMD64 runner using only its local scratch claim, and the Ryzen monitor in quorum.
    Execute a non-publishing AMD64 CI job that writes scratch files, builds and runs a container, and executes Nix binaries.
-   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during three concurrent Ryzen builds and six concurrent Turin builds.
+   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during the nine-slot acceptance run.
    Its local scratch partition shares the physical NVMe with `/var`.
 
 ## Live acceptance on 2026-10-12 UTC

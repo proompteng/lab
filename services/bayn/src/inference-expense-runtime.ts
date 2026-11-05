@@ -1,7 +1,8 @@
 import { makeResearchStore, projectResearchExpenses } from './research-inference/store'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Layer } from 'effect'
+import { Cause, Duration, Effect, Schema } from 'effect'
+import { Statement } from 'effect/sql'
 
 import type { LoadedRuntimeConfig } from './config/model'
 import { PostgresClientLive } from './db/postgres-client'
@@ -10,7 +11,8 @@ import {
   buildInferenceExpensePlan,
   inferenceExpenseLedger,
   inferenceExpenseRateCard,
-  makeInferenceExpenseQuote,
+  makeInferenceExpenseQuotes,
+  inferenceExpenseBatchSize,
 } from './inference-expense'
 import { postInferenceExpenses } from './inference-expense-journal'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
@@ -20,13 +22,14 @@ import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './t
 export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(function* (
   store: Pick<ReturnType<typeof makeInferenceExpenseStore>, 'newSources' | 'freeze' | 'pending' | 'acknowledge'>,
   client: TigerBeetleRequestClient,
-  rateCard: Parameters<typeof makeInferenceExpenseQuote>[1] = inferenceExpenseRateCard,
+  rateCard: Parameters<typeof makeInferenceExpenseQuotes>[1] = inferenceExpenseRateCard,
 ) {
   const sources = yield* store.newSources
-  const quotes = yield* Effect.forEach(sources, (source) =>
-    Effect.fromResult(makeInferenceExpenseQuote(source, rateCard)),
-  )
-  yield* store.freeze(quotes)
+  const quotes = (yield* Effect.forEach(sources, (source) =>
+    Effect.fromResult(makeInferenceExpenseQuotes(source, rateCard)),
+  )).flat()
+  for (let offset = 0; offset < quotes.length; offset += inferenceExpenseBatchSize)
+    yield* store.freeze(quotes.slice(offset, offset + inferenceExpenseBatchSize))
   const pending = yield* store.pending
   const plan = yield* Effect.fromResult(buildInferenceExpensePlan(pending))
   yield* postInferenceExpenses(client, plan)
@@ -63,6 +66,47 @@ export const inferenceExpenseLoop = <A, E, R>(pass: Effect.Effect<A, E, R>) =>
     }
   })
 
+const OwnershipRows = Schema.Tuple([Schema.Struct({ acquired: Schema.Boolean })])
+
+export const withInferenceExpenseOwner = <A, E, R>(
+  postgres: PgClient.PgClientConfig,
+  projection: string,
+  pass: (sql: PgClient.PgClient) => Effect.Effect<A, E, R>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const deadline = postgres.connectTimeout
+      if (deadline === undefined)
+        return yield* new InferenceCostError({ message: 'Inference expense ownership requires a PostgreSQL deadline' })
+      const sql = yield* PgClient.PgClient
+      const [{ acquired }] = yield* sql`
+        SELECT pg_try_advisory_lock(hashtextextended(${`bayn.inference-expense-projection.v1:${projection}`}, 0)) AS acquired
+      `.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(OwnershipRows)),
+        Effect.mapError(
+          (cause) => new InferenceCostError({ message: 'Inference expense ownership could not be acquired', cause }),
+        ),
+      )
+      if (!acquired) return
+      // PostgresClientLive uses the statement budget for connectTimeout, below the socket inactivity deadline.
+      // Ledger requests can outlast that inactivity budget; keep this same session alive without a transaction.
+      const keepAlive = Effect.sleep(Duration.toMillis(deadline) / 2).pipe(
+        Effect.andThen(sql`SELECT 1`),
+        Effect.mapError(
+          (cause) => new InferenceCostError({ message: 'Inference expense ownership session was lost', cause }),
+        ),
+        Effect.forever,
+      )
+      return yield* Effect.raceFirst(pass(sql), keepAlive)
+    }).pipe(
+      // A physical session owns this advisory lock, including when its acquisition response is lost.
+      // Closing it releases ownership on every exit; no pooled session or transaction spans ledger I/O.
+      // @effect-diagnostics-next-line strictEffectProvide:off -- each projection pass owns its PostgreSQL session
+      Effect.provide(PgClient.layerFrom(PgClient.makeClient(postgres))),
+      Effect.provideService(Statement.SpanPropagationEnabled, true),
+    ),
+  )
+
 export const startInferenceExpenseProjection = (config: LoadedRuntimeConfig) =>
   Effect.gen(function* () {
     if (config.tigerBeetle.ledger === inferenceExpenseLedger)
@@ -71,21 +115,35 @@ export const startInferenceExpenseProjection = (config: LoadedRuntimeConfig) =>
       })
     const owned = Effect.scoped(
       Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* postgresMigrations
+        const postgres = yield* Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* postgresMigrations
+          return sql.config
+        }).pipe(
+          // Close the bootstrap pool before the two independent projection sessions start.
+          // @effect-diagnostics-next-line strictEffectProvide:off -- migration startup owns its configured PostgreSQL pool
+          Effect.provide(
+            PostgresClientLive(
+              { operationTimeoutMs: config.operationTimeoutMs, postgres: config.postgres },
+              { maxConnections: 2, applicationName: 'bayn-inference-expenses' },
+            ),
+          ),
+        )
         const client = yield* makeTigerBeetleRequestClient(config)
-        yield* inferenceExpenseLoop(projectResearchExpenses(makeResearchStore(sql), client)).pipe(Effect.forkScoped)
-        const store = makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId)
-        return yield* inferenceExpenseLoop(runInferenceExpensePass(store, client))
+        yield* inferenceExpenseLoop(
+          withInferenceExpenseOwner(postgres, 'research', (sql) =>
+            projectResearchExpenses(makeResearchStore(sql), client),
+          ),
+        ).pipe(Effect.forkScoped)
+        return yield* inferenceExpenseLoop(
+          withInferenceExpenseOwner(postgres, `account:${config.alpaca.expectedAccountId}`, (sql) =>
+            runInferenceExpensePass(makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId), client),
+          ),
+        )
       }),
     ).pipe(
-      // @effect-diagnostics-next-line strictEffectProvide:off -- independent background accounting owns its database and platform resources
-      Effect.provide(
-        PostgresClientLive(
-          { operationTimeoutMs: config.operationTimeoutMs, postgres: config.postgres },
-          { maxConnections: 2, applicationName: 'bayn-inference-expenses' },
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
-      ),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- independent background accounting owns its platform resources
+      Effect.provide(NodeServices.layer),
     )
     return yield* inferenceExpenseLoop(owned).pipe(
       Effect.tapCause((cause) =>

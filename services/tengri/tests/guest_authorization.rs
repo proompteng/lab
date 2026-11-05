@@ -285,7 +285,7 @@ fn every_declared_guest_rpc_has_an_explicit_action() {
         );
         methods += 1;
     }
-    assert_eq!(methods, 18);
+    assert_eq!(methods, 19);
     assert_eq!(catalog_count, methods);
     assert_eq!(vector["rpcActions"].as_object().unwrap().len(), methods);
     assert!(rpc_action("/proompteng.runtime.guest.v1.NanoagentService/Unknown").is_none());

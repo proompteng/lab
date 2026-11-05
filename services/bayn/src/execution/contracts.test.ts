@@ -49,7 +49,8 @@ const expectFailure = async <A, E>(effect: Effect.Effect<A, E>): Promise<void> =
 }
 
 const account = {
-  schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+  schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+  cryptoFeeTier: null,
   accountId: 'paper-account-1',
   status: AccountStatus.Active,
   currency: 'USD' as const,

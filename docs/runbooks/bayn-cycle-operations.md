@@ -16,6 +16,21 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
    `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
 
+## Bounded session-opening verification
+
+Resolve the broker calendar's exact session date and opening instant in `America/New_York`, then convert each
+requested check to `America/Los_Angeles` and UTC. A schedule without a timezone cannot establish a Pacific trigger.
+Read back the scheduler's next execution instant before treating a follow-up as installed. Reject a trigger already
+past its named session; do not silently advance it to a different trading day.
+
+Pre-open readiness requires the authorized account, compatible PAPER mandate, clear kill state, advancing native
+controller, broker mutation eligibility, fresh exact reconciliation, complete fill accounting, zero unresolved
+mutations, Jev availability, and stock-feed/feature-job readiness. At the open, inspect actual fresh equity bars,
+quotes, feature arrivals, and a durable decision or justified strategy abstention within the existing deadlines.
+Crypto activity and a healthy pod do not establish the equity boundary. Distinguish operational failures, source
+exclusions, strategy abstentions, submitted orders, broker fills, and profitability. End the follow-up after the
+requested opening check; retain its failure evidence when a check arrives late.
+
 ## Native PAPER restoration
 
 The account controller owns routine restoration under the existing approved mandate. Compatible Kargo releases retain

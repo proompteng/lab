@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../src/broker/crypto-fees'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { canonicalHashV1Result } from '../src/hash'
@@ -18,10 +19,12 @@ test('native sensitivity keeps received coin atoms distinct from cent-rounded se
     const buy = receivedCryptoFee(
       { symbol: 'BTC/USD', side: 'buy', quantityAtoms: 10001n, notionalMicros: 10000001n },
       multiplier,
+      cryptoMaximumTakerFeeBps,
     )
     const sell = receivedCryptoFee(
       { symbol: 'BTC/USD', side: 'sell', quantityAtoms: 10001n, notionalMicros: 10000001n },
       multiplier,
+      cryptoMaximumTakerFeeBps,
     )
     expect(buy.quantityAtoms).toBe((10001n * BigInt(bps) + 9999n) / 10000n)
     expect(sell.cashMicros).toBe(((10000001n * BigInt(bps) + 99999999n) / 100000000n) * 10000n)
@@ -33,7 +36,7 @@ test('native sensitivity keeps received coin atoms distinct from cent-rounded se
 test('optional provenance preserves sealed decision and default report, without qualifying profit', () => {
   const { snapshot } = cryptoMarketFixture('SOL/USD')
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
-  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'wait')
+  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, false)
   const strategyDecision = Result.getOrThrow(decideJevEntry(evidence))
   const document = { mode: 'PAPER', bindings: { cycleId: observation.payload.cycleId }, strategyDecision }
   const original = hash(document)
@@ -144,6 +147,9 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
     const protocol = defaultJevProtocolDocument
     const economics = Result.getOrThrow(
       jevEntryEconomics({
+        feeAt: '2026-09-04T14:15:00.000Z',
+        cryptoFeeTier: null,
+
         protocol,
         symbol,
         bidMicros: 100_000_000n,
@@ -152,10 +158,17 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
       }),
     )
     if (economics === null) throw new Error('funded fixture')
-    const result = hypotheticalCryptoFeeSensitivity({ symbol, protocol, economics, bidMicros: 100_000_000n })
+    const result = hypotheticalCryptoFeeSensitivity({
+      feeAt: '2026-09-04T14:15:00.000Z',
+      symbol,
+      protocol,
+      economics,
+      bidMicros: 100_000_000n,
+    })
     expect(result.baselineReproducedExactly).toBe(true)
     expect(() =>
       hypotheticalCryptoFeeSensitivity({
+        feeAt: '2026-09-04T14:15:00.000Z',
         symbol,
         protocol,
         economics: { ...economics, receivedQuantityAtoms: '1' },
@@ -173,6 +186,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
     }
     expect(() =>
       hypotheticalCryptoFeeSensitivity({
+        feeAt: '2026-09-04T14:15:00.000Z',
         symbol,
         protocol,
         economics: { ...economics, holdingExitBreakEvenBidUsd: 1 },

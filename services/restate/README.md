@@ -6,7 +6,7 @@ bounded opportunity to reach a newly connected peer. WAL synchronization, write 
 format, and upstream tools remain unchanged. The source archive and build/runtime images are pinned. Test-only
 fault injection and connection barriers are absent from the runtime image.
 
-`docker build --target test services/restate` injects a two-second delay into real WAL `fsync`/`fdatasync` calls in an
+`docker buildx build --target test services/restate` injects a two-second delay into real WAL `fsync`/`fdatasync` calls in an
 isolated metadata store. It requires the unpatched code to fail responsiveness checks, applies the patch, then verifies
 timer and TCP responsiveness, successful durable writes, and the stored Raft state after reopening the database.
 It also runs the upstream metadata storage tests. The injector must report an actual WAL sync or the proof fails.
@@ -25,14 +25,11 @@ guarantees progress when otherwise idle. It does not create connection retries, 
 traffic. Full/closed channels retain the existing lossy/backpressure behavior. This preserves Raft safety while avoiding
 an unnecessary extra election round when a healthy peer connection becomes ready.
 
-CI retains `election-baseline.log` and `election-patched.log` alongside the existing storage proof. Both native
-architectures must still pass the unchanged delayed-message, 38s-pause and sub-100s node-loss fixture. No production
-configuration, election timer or acceptance deadline is relaxed.
+CI retains `election-baseline.log` and `election-patched.log` alongside the storage proof through a BuildKit local
+export. The container runtime resilience fixture was removed. CI no longer proves delayed-message, process-pause,
+or node-loss behavior. Production configuration and election timers retain their values.
 
-`docker build services/restate` builds the production server. Release and cluster verification instructions belong in
-the [application runbook](../../argocd/applications/restate/README.md). Never run fault injection against the live cluster.
-
-CI uploads each tested platform image through `packages/scripts/src/shared/docker.ts push`. Transient registry errors,
-including response-header timeouts, get up to three attempts with 15-second and 30-second backoffs. Each attempt uses
-the same preparation tag. Authentication errors and exhausted retries fail the job, so the release index and Kargo
-tag remain gated on both successful platform uploads.
+`docker buildx build services/restate` builds the production server. Release and cluster verification instructions belong
+in the [application runbook](../../argocd/applications/restate/README.md). CI pushes each native platform directly from
+BuildKit under its preparation tag. The release index, signature, receipt upload and Kargo alias require both successful
+build jobs and their exported build-stage evidence.

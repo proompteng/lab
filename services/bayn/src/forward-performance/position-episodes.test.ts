@@ -19,6 +19,8 @@ import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 import { measurePositionEpisodes, PositionEpisodeEvidenceSchema, PositionEpisodeReason } from './position-episodes'
 import { EpisodeCostReason } from './position-outcomes'
+import { supportedAssessmentFixture } from '../system-assessment/fixtures.test-support'
+import { evaluateSystemAssessment } from '../system-assessment/assessment'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
@@ -968,6 +970,44 @@ describe('position episodes', () => {
   })
 
   test.each([
+    { priceAtoms: '100000000001' },
+    { notionalMicros: '200001' },
+    { feeMicros: '0' },
+    { realizedPnlMicros: '1000000' },
+  ])('rejects conflicting scoped financial evidence %j', (override) => {
+    const history = roundTrip()
+    const input = evidence(history)
+    const report = success(
+      makeForwardPerformanceReport(
+        { ...input, transactions: input.transactions.map((item) => ({ ...item, ...override })) },
+        [],
+      ),
+    )
+    expect(report.positionEpisodes).toMatchObject({
+      status: 'UNDETERMINED',
+      reason: PositionEpisodeReason.ScopeMismatch,
+    })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  })
+
+  test('retains matching partial scopes and historical projections without optional pricing', () => {
+    const history = roundTrip()
+    for (const selected of [history, history.slice(1)]) {
+      const input = evidence(history, selected)
+      const projection = input.transactions.map(({ priceAtoms: _price, notionalMicros: _notional, ...item }) => item)
+      const report = success(makeForwardPerformanceReport({ ...input, transactions: projection }, []))
+      expect(report.positionEpisodes).toMatchObject({
+        status: 'MEASURED',
+        completedCount: selected.length === history.length ? 1 : 0,
+        crossScopeCount: selected.length === history.length ? 0 : 1,
+      })
+      expect(report.receipt.profitability).toBe('UNDETERMINED')
+      expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+    }
+  })
+
+  test.each([
     { ledgerExact: false },
     { accountingReceiptsExact: false },
     { unresolvedMutationCount: 1 },
@@ -1045,7 +1085,7 @@ describe('position episodes', () => {
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
@@ -1086,4 +1126,18 @@ describe('position episodes', () => {
       ),
     ).toBe(true)
   })
+})
+
+test('v6 exposes complete operating costs only for the attached registered assessment scope', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, assessment))
+  expect(report.operatingCostCoverage).toBe('COMPLETE')
+  expect(report.operatingCostScope).toEqual({
+    registrationHash: assessment.registrationHash,
+    sourceCutHash: assessment.sourceCutHash,
+    asOf: assessment.asOf,
+  })
+  expect(report.systemAssessment?.profitability.netEconomicPnlMicros).toBe('20000000000')
+  expect(Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [])).operatingCostScope).toBeNull()
 })

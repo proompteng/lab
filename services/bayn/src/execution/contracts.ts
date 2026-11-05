@@ -1,6 +1,7 @@
 import { pipe, Result, Schema } from 'effect'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
+import { CryptoFeeTierSchema } from '../broker/crypto-fees'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { ResearchCapitalGrantSchema } from './mandate'
@@ -18,7 +19,6 @@ import {
 
 import {
   legacyAccountingReceiptSchemaVersion,
-  legacyAccountSnapshotSchemaVersion,
   legacyAuthorityGenerationV2SchemaVersion,
   legacyAuthorityGenerationV3SchemaVersion,
   legacyAuthorityProofBindingSchemaVersion,
@@ -37,6 +37,7 @@ export const executionIntentSchemaVersion = 'bayn.execution-intent.v5' as const
 export const referenceIntentSchemaVersion = 'bayn.reference-intent.v4' as const
 export const intentPlanSchemaVersion = 'bayn.intent-plan.v3' as const
 export const intentIdentitySchemaVersion = 'bayn.execution-intent-identity.v5' as const
+export const accountSnapshotSchemaVersion = 'bayn.paper-account-snapshot.v2' as const
 
 const U32_MAX = 4_294_967_295
 const U64_MAX = 18_446_744_073_709_551_615n
@@ -194,13 +195,14 @@ export enum KillState {
 }
 
 const AccountSnapshotBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyAccountSnapshotSchemaVersion),
+  schemaVersion: Schema.Literal(accountSnapshotSchemaVersion),
   accountId: NonEmptyString,
   status: Schema.Enum(AccountStatus),
   currency: Schema.Literal('USD'),
   cashMicros: SignedMicros,
   equityMicros: SignedMicros,
   buyingPowerMicros: SignedMicros,
+  cryptoFeeTier: Schema.NullOr(CryptoFeeTierSchema),
   observedAt: UtcInstant,
 })
 

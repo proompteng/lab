@@ -37,8 +37,8 @@ export interface JevEvaluationEvidence {
 }
 
 export const makeJevResolution = (
-  request: JevEvaluationRequest,
-  receipt: JevEvaluationReceipt | null,
+  request: Pick<JevEvaluationRequest, 'requestId' | 'expiresAt'>,
+  receipt: Pick<JevEvaluationReceipt, 'requestId' | 'receiptHash'> | null,
   input: unknown,
 ) =>
   Schema.decodeUnknownResult(
@@ -66,8 +66,8 @@ export const makeJevResolution = (
   )
 
 export const decodeJevResolution = (
-  request: JevEvaluationRequest,
-  receipt: JevEvaluationReceipt | null,
+  request: Pick<JevEvaluationRequest, 'requestId' | 'expiresAt'>,
+  receipt: Pick<JevEvaluationReceipt, 'requestId' | 'receiptHash'> | null,
   input: unknown,
 ) =>
   Schema.decodeUnknownResult(

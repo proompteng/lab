@@ -252,6 +252,7 @@ export const normalizeAccountResult = (
       equityMicros,
       lastEquityMicros,
       cryptoStatus: raw.crypto_status ?? null,
+      cryptoFeeTier: raw.crypto_tier ?? null,
       nonMarginableBuyingPowerMicros:
         raw.non_marginable_buying_power === undefined
           ? null

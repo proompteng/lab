@@ -122,9 +122,9 @@ async fn runtime_receipts_preserve_fresh_checks_concurrency_recovery_and_control
                         let service = service.clone();
                         async move {
                             let response = match request.uri().path() {
-                                "/proompteng.authz.v1.AuthorizationService/GetPolicyState" => tonic::server::Grpc::new(tonic_prost::ProstCodec::<GetPolicyStateResponse, GetPolicyStateRequest>::default()).unary(service, request).await,
-                                "/proompteng.authz.v1.AuthorizationService/GetWorkspaceState" => tonic::server::Grpc::new(tonic_prost::ProstCodec::<GetWorkspaceStateResponse, GetWorkspaceStateRequest>::default()).unary(service, request).await,
-                                "/proompteng.authz.v1.AuthorizationService/AuthorizeGuestMaintenance" => tonic::server::Grpc::new(tonic_prost::ProstCodec::<proto::AuthorizeGuestMaintenanceResponse, proto::AuthorizeGuestMaintenanceRequest>::default()).unary(service, request).await,
+                                "/proompteng.authz.v1.TengriAuthorizationService/GetPolicyState" => tonic::server::Grpc::new(tonic_prost::ProstCodec::<GetPolicyStateResponse, GetPolicyStateRequest>::default()).unary(service, request).await,
+                                "/proompteng.authz.v1.TengriAuthorizationService/GetWorkspaceState" => tonic::server::Grpc::new(tonic_prost::ProstCodec::<GetWorkspaceStateResponse, GetWorkspaceStateRequest>::default()).unary(service, request).await,
+                                "/proompteng.authz.v1.TengriAuthorizationService/AuthorizeGuestMaintenance" => tonic::server::Grpc::new(tonic_prost::ProstCodec::<proto::AuthorizeGuestMaintenanceResponse, proto::AuthorizeGuestMaintenanceRequest>::default()).unary(service, request).await,
                                 path => panic!("unexpected fixture RPC {path}"),
                             };
                             Ok::<_, Infallible>(response)

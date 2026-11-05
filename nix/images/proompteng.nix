@@ -41,6 +41,9 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/landing/public" ]; then
       cp -R "$TMPDIR/work/apps/landing/public/." "$out/app/apps/landing/public/"
     fi
+    # Node resolves the standalone server inside the immutable Nix store. Point its cache at the writable volume.
+    rm -rf "$out/app/apps/landing/.next/cache"
+    ln -s /var/cache/proompteng "$out/app/apps/landing/.next/cache"
     mkdir -p "$out/app/services/tengri/proto"
     cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
     mkdir -p "$out/app/services/tengri/migrations"

@@ -20,6 +20,15 @@ use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::Subscribe
 include!(concat!(env!("OUT_DIR"), "/rpc-paths.rs"));
 
 fn technical_attribute(attribute: &KeyValue) -> bool {
+    match attribute.key.as_str() {
+        "batch_size" => {
+            return matches!(&attribute.value, opentelemetry::Value::I64(value) if (1..=32).contains(value));
+        }
+        "queue_wait_ms" => {
+            return matches!(&attribute.value, opentelemetry::Value::F64(value) if value.is_finite() && *value >= 0.0);
+        }
+        _ => {}
+    }
     if attribute.key.as_str() == "http.request.method" {
         return matches!(&attribute.value, opentelemetry::Value::String(value) if matches!(value.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "CONNECT" | "TRACE"));
     }
@@ -434,7 +443,7 @@ mod tests {
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
         tracing::subscriber::with_default(subscriber, || {
             let request = Request::builder()
-                .uri("/proompteng.authz.v1.AuthorizationService/PRIVATE_SENTINEL")
+                .uri("/proompteng.authz.v1.TengriAuthorizationService/PRIVATE_SENTINEL")
                 .method("PRIVATE_SENTINEL")
                 .header("content-type", "application/grpc")
                 .body(())
@@ -471,7 +480,27 @@ mod tests {
         assert!(data.contains("55P03"));
         assert!(data.contains("db.policy.read"));
         assert!(data.contains("postgresql"));
-        assert!(RPC_PATHS.contains(&"/proompteng.authz.v1.AuthorizationService/Check"));
+        assert!(RPC_PATHS.contains(&"/proompteng.authz.v1.TengriAuthorizationService/Check"));
+    }
+
+    #[test]
+    fn audit_timing_attributes_accept_only_bounded_technical_values() {
+        assert!(technical_attribute(&KeyValue::new("batch_size", 32_i64)));
+        assert!(technical_attribute(&KeyValue::new("queue_wait_ms", 1250.5)));
+        assert!(!technical_attribute(&KeyValue::new("batch_size", 33_i64)));
+        assert!(!technical_attribute(&KeyValue::new(
+            "batch_size",
+            "private"
+        )));
+        assert!(!technical_attribute(&KeyValue::new(
+            "queue_wait_ms",
+            "private"
+        )));
+        assert!(!technical_attribute(&KeyValue::new(
+            "queue_wait_ms",
+            f64::NAN
+        )));
+        assert!(!technical_attribute(&KeyValue::new("queue_wait_ms", -1.0)));
     }
 
     #[test]
@@ -539,7 +568,7 @@ mod tests {
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
         tracing::subscriber::with_default(subscriber, || {
             let request = Request::builder()
-                .uri("/proompteng.authz.v1.AuthorizationService/Check")
+                .uri("/proompteng.authz.v1.TengriAuthorizationService/Check")
                 .header(
                     "traceparent",
                     "00-11111111111111111111111111111111-2222222222222222-01",

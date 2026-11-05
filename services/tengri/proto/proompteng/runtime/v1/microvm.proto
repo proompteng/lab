@@ -11,6 +11,7 @@ service MicroVMControlPlane {
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
   rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
 
+  rpc StatFile(StatFileRequest) returns (FileEntry);
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
   rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
@@ -27,6 +28,8 @@ service MicroVMControlPlane {
 
   rpc GetCodexAccount(GetCodexAccountRequest) returns (CodexAccount);
   rpc ListCodexModels(ListCodexModelsRequest) returns (CodexModels);
+  rpc ListCodexThreads(ListCodexThreadsRequest) returns (CodexThreads);
+  rpc SetCodexThreadArchived(SetCodexThreadArchivedRequest) returns (Empty);
   rpc ConnectorAgent(ConnectorAgentRequest) returns (CodexModels);
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
@@ -34,7 +37,7 @@ service MicroVMControlPlane {
   rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
   rpc SendCodexInput(SendCodexInputRequest) returns (CodexRun);
   rpc GetCodexRun(GetCodexRunRequest) returns (CodexRun);
-  rpc GetActiveCodexRun(GetAgentRequest) returns (CodexRun);
+  rpc GetActiveCodexRuns(GetActiveCodexRunsRequest) returns (CodexRuns);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
   rpc ResolveCodexApproval(ResolveCodexApprovalRequest) returns (Empty);
@@ -124,6 +127,11 @@ message ListAgentsRequest {}
 message ConnectorAgentRequest { string agent_id = 1; string action = 2; string raw_json = 3; }
 message ListAgentsResponse { repeated Agent agents = 1; }
 message GetAgentRequest { string id = 1; }
+message GetActiveCodexRunsRequest {
+  string id = 1;
+  // Empty preserves workspace-wide recovery for existing clients.
+  string thread_id = 2;
+}
 message WatchAgentRequest { string id = 1; }
 
 message FileEntry {
@@ -134,6 +142,7 @@ message FileEntry {
   string modified_at = 5;
 }
 
+message StatFileRequest { string agent_id = 1; string path = 2; }
 message ListFilesRequest { string agent_id = 1; string path = 2; }
 message ListFilesResponse { string path = 1; repeated FileEntry entries = 2; }
 message ReadFileRequest { string agent_id = 1; string path = 2; }
@@ -213,6 +222,9 @@ message TerminalTicket {
 message GetCodexAccountRequest { string agent_id = 1; }
 message ListCodexModelsRequest { string agent_id = 1; string cursor = 2; }
 message CodexModels { string raw_json = 1; }
+message ListCodexThreadsRequest { string agent_id = 1; bool archived = 2; string cursor = 3; }
+message CodexThreads { string raw_json = 1; }
+message SetCodexThreadArchivedRequest { string agent_id = 1; string thread_id = 2; bool archived = 3; }
 message GetCodexLoginRequest { string agent_id = 1; }
 message StartCodexLoginRequest { string agent_id = 1; }
 message CreateCodexThreadRequest {
@@ -281,6 +293,7 @@ message CodexThread {
 }
 message CodexTurn { string id = 1; string thread_id = 2; string raw_json = 3; }
 message GetCodexRunRequest { string agent_id = 1; string run_id = 2; }
+message CodexRuns { repeated CodexRun runs = 1; }
 message CodexRun { string run_id = 1; string agent_id = 2; string thread_id = 3; string state_json = 4; }
 
 enum CodexEventKind {

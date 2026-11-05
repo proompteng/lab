@@ -1,4 +1,9 @@
-use std::{env, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    sync::Arc,
+    time::Duration,
+};
 
 use restate_sdk::{ingress::ReqwestClient, prelude::*, service::IntoServiceDefinition};
 use serde::{Deserialize, Serialize};
@@ -7,6 +12,79 @@ use tonic::Status;
 use uuid::Uuid;
 
 use crate::{auth::Principal, grpc::ControlPlane};
+
+// Query expiry limits admission; an authorized response may arrive later.
+const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
+const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+
+async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+        let mut backoff = Duration::from_millis(100);
+        loop {
+            let response = request();
+            tokio::pin!(response);
+            let result =
+                match tokio::time::timeout(STATUS_RESPONSE_WARNING, response.as_mut()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        tracing::warn!(operation, "durable run read response remains pending");
+                        response.await
+                    }
+                };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(error)
+                    if !matches!(
+                        error.code(),
+                        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+                    ) =>
+                {
+                    return Err(error);
+                }
+                Err(_) => {}
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
+    })
+    .await
+    .map_err(|_| {
+        tracing::warn!(operation, "durable run read recovery timed out");
+        Status::unavailable("durable run status recovery timed out")
+    })?
+}
+
+fn read_error(error: restate_sdk::ingress::ClientError) -> Status {
+    use restate_sdk::ingress::ClientError;
+    let class = match &error {
+        ClientError::Transport { .. } => "transport",
+        ClientError::Request { .. } => "request",
+        ClientError::Serialization { .. } => "serialization",
+        ClientError::InvalidRequest { .. } => "invalid_request",
+        ClientError::Protocol { .. } => "protocol",
+        ClientError::Status { .. } => "http_status",
+        ClientError::PayloadDecode { .. } => "payload_decode",
+    };
+    let status = error.response().map(|response| response.status().as_u16());
+    tracing::warn!(
+        class,
+        http_status = status,
+        "durable run read attempt failed"
+    );
+    match status {
+        Some(408) => Status::deadline_exceeded("run query expired before admission"),
+        Some(500..=599) => Status::unavailable("durable run status unavailable"),
+        Some(400 | 401 | 403 | 404 | 409 | 422) => client_error(error),
+        _ if matches!(error, ClientError::Transport { .. }) => {
+            Status::unavailable("durable run ingress unavailable")
+        }
+        _ => Status::internal("invalid durable run status response"),
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -47,6 +125,8 @@ struct Admission {
 #[serde(deny_unknown_fields)]
 struct Claim {
     workspace_uid: String,
+    owner_hash: String,
+    thread_id: String,
     run_id: String,
 }
 
@@ -149,7 +229,7 @@ fn control_digest(control: &Control) -> Result<String, Status> {
 }
 
 impl State {
-    fn terminal(&self) -> bool {
+    pub(crate) fn terminal(&self) -> bool {
         matches!(
             self,
             Self::Succeeded { .. }
@@ -231,6 +311,8 @@ pub(crate) async fn submit(
     let workspace_uid = principal.context.workspace_uid.clone();
     let claim = Claim {
         workspace_uid: workspace_uid.clone(),
+        owner_hash: principal.owner_hash.clone(),
+        thread_id: input.thread_id.clone(),
         run_id: input.id.clone(),
     };
     let digest = input_digest(&input)?;
@@ -250,18 +332,7 @@ pub(crate) async fn submit(
         .map_err(client_error)?
         .into_body()
         .map_err(client_error)?;
-    for _ in 0..20 {
-        match read(service, &principal, &input.id, Some(digest.clone())).await {
-            Ok(snapshot) => return Ok(snapshot),
-            Err(error) if error.code() == tonic::Code::Unavailable => {
-                tokio::time::sleep(Duration::from_millis(100)).await
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Err(Status::unavailable(
-        "run accepted; retry the same operation to recover its status",
-    ))
+    read(service, &principal, &input.id, Some(digest)).await
 }
 
 pub(crate) async fn read(
@@ -270,45 +341,86 @@ pub(crate) async fn read(
     id: &str,
     digest: Option<String>,
 ) -> Result<Snapshot, Status> {
-    let query = Query {
-        run_id: id.into(),
-        owner_hash: principal.owner_hash.clone(),
-        workspace_uid: principal.context.workspace_uid.clone(),
-        digest,
-        expires_at_ms: crate::ofz::now_ms()? + 2000,
-    };
-    let query = seal(service, "query", &query).await?;
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
     let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
-    let result = tokio::time::timeout(Duration::from_secs(2), client.status(Json(query)).call())
-        .await
-        .map_err(|_| Status::unavailable("durable run status timed out"))?
-        .map_err(client_error)?;
-    Ok(result.into_body().map_err(client_error)?.into_inner())
+    recover_status("status", || async {
+        let query = Query {
+            run_id: id.into(),
+            owner_hash: principal.owner_hash.clone(),
+            workspace_uid: principal.context.workspace_uid.clone(),
+            digest: digest.clone(),
+            expires_at_ms: crate::ofz::now_ms()? + 2000,
+        };
+        let query = seal(service, "query", &query).await?;
+        let response = client
+            .status(Json(query))
+            .call()
+            .await
+            .map_err(read_error)?;
+        Ok(response.into_body().map_err(read_error)?.into_inner())
+    })
+    .await
 }
 
 pub(crate) async fn active(
     service: &ControlPlane,
     principal: &Principal,
-) -> Result<Option<Snapshot>, Status> {
-    let query = Query {
-        run_id: String::new(),
-        owner_hash: principal.owner_hash.clone(),
-        workspace_uid: principal.context.workspace_uid.clone(),
-        digest: None,
-        expires_at_ms: crate::ofz::now_ms()? + 2000,
-    };
-    let envelope = seal(service, "active-query", &query).await?;
-    let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, query.workspace_uid);
-    let response =
-        tokio::time::timeout(Duration::from_secs(2), client.active(Json(envelope)).call())
+    thread_id: &str,
+) -> Result<Vec<Snapshot>, Status> {
+    let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
+    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+        let claims = active_claims(service, principal).await?;
+        futures::future::try_join_all(
+            claims
+                .iter()
+                .filter(|claim| claim.owner_hash == principal.owner_hash)
+                // Scope before reading snapshots: an unavailable conversation must not
+                // prevent observing another. A failed selected read still fails closed.
+                .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
+                .map(|claim| read(service, principal, &claim.run_id, None)),
+        )
+        .await
+    })
+    .await
+    .map_err(|_| Status::unavailable("active run recovery timed out"))?
+}
+
+pub(crate) async fn thread_active(
+    service: &ControlPlane,
+    principal: &Principal,
+    thread_id: &str,
+) -> Result<bool, Status> {
+    Ok(active_claims(service, principal)
+        .await?
+        .iter()
+        .any(|claim| claim.thread_id == thread_id))
+}
+
+async fn active_claims(
+    service: &ControlPlane,
+    principal: &Principal,
+) -> Result<Vec<Claim>, Status> {
+    let client = TengriWorkspaceRunsIngressClient::from_client(
+        ingress()?,
+        principal.context.workspace_uid.clone(),
+    );
+    recover_status("active", || async {
+        let query = Query {
+            run_id: String::new(),
+            owner_hash: principal.owner_hash.clone(),
+            workspace_uid: principal.context.workspace_uid.clone(),
+            digest: None,
+            expires_at_ms: crate::ofz::now_ms()? + 2000,
+        };
+        let envelope = seal(service, "active-query", &query).await?;
+        let response = client
+            .active(Json(envelope))
+            .call()
             .await
-            .map_err(|_| Status::unavailable("active run recovery timed out"))?
-            .map_err(client_error)?;
-    let id = response.into_body().map_err(client_error)?.into_inner();
-    match id {
-        Some(id) => read(service, principal, &id, None).await.map(Some),
-        None => Ok(None),
-    }
+            .map_err(read_error)?;
+        Ok(response.into_body().map_err(read_error)?.into_inner())
+    })
+    .await
 }
 
 pub(crate) async fn control(
@@ -436,7 +548,7 @@ impl TengriAgentRun {
                     return Err(error.into());
                 }
                 snapshot.state = State::Rejected {
-                    reason: "workspace already has an active run".into(),
+                    reason: "conversation already has an active run".into(),
                 };
                 ctx.set("snapshot", Json(snapshot.clone()));
                 return Ok(Json(snapshot.state));
@@ -758,10 +870,11 @@ impl TengriAgentRun {
                 let query: Query = open(&self.service, "query", &envelope.0)
                     .await
                     .map_err(terminal)?;
-                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-                    || query.run_id != run_id
-                {
-                    return Err(TerminalError::new_with_code(401, "run query expired").into());
+                if query.run_id != run_id {
+                    return Err(TerminalError::new_with_code(403, "run unavailable").into());
+                }
+                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
+                    return Err(TerminalError::new_with_code(408, "run query expired").into());
                 }
                 Ok(Json(query))
             })
@@ -865,6 +978,8 @@ impl TengriWorkspaceRuns {
                 if admission.claim.workspace_uid != workspace_uid
                     || admission.principal.context.workspace_uid != workspace_uid
                     || admission.claim.run_id != admission.input.id
+                    || admission.claim.thread_id != admission.input.thread_id
+                    || admission.claim.owner_hash != admission.principal.owner_hash
                     || Uuid::parse_str(&admission.input.id).is_err()
                     || input_digest(&admission.input).map_err(terminal)? != admission.digest
                 {
@@ -921,24 +1036,28 @@ impl TengriWorkspaceRuns {
         &self,
         ctx: SharedObjectContext<'_>,
         envelope: Json<Envelope>,
-    ) -> HandlerResult<Json<Option<String>>> {
+    ) -> HandlerResult<Json<Vec<Claim>>> {
         let workspace = ctx.key().to_owned();
         ctx.run(|| async {
             let query: Query = open(&self.service, "active-query", &envelope.0)
                 .await
                 .map_err(terminal)?;
-            if query.workspace_uid != workspace
-                || query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-            {
+            if query.workspace_uid != workspace {
                 return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+            }
+            if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
+                return Err(TerminalError::new_with_code(408, "run query expired").into());
             }
             Ok(())
         })
         .await?;
         Ok(Json(
-            ctx.get::<Json<Claim>>("active")
+            ctx.get::<Json<BTreeMap<String, Claim>>>("active")
                 .await?
-                .map(|claim| claim.0.run_id),
+                .map(Json::into_inner)
+                .unwrap_or_default()
+                .into_values()
+                .collect(),
         ))
     }
     #[handler(ingress_private = true)]
@@ -954,19 +1073,23 @@ impl TengriWorkspaceRuns {
         {
             return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
         }
-        if ctx
-            .get::<Json<Claim>>("active")
+        if !ctx
+            .get::<Json<BTreeMap<String, Claim>>>("active")
             .await?
-            .is_none_or(|claim| claim.0.run_id != control.run_id)
+            .map(Json::into_inner)
+            .unwrap_or_default()
+            .values()
+            .any(|claim| claim.run_id == control.run_id)
         {
             return Err(TerminalError::new_with_code(409, "run is no longer active").into());
         }
-        let previous = ctx.get::<Json<Control>>("stop").await?;
+        let key = format!("stop/{}", control.run_id);
+        let previous = ctx.get::<Json<Control>>(&key).await?;
         if previous.as_ref().is_none_or(|previous| {
             previous.0.principal.context.deadline_unix_ms
                 <= control.principal.context.deadline_unix_ms
         }) {
-            ctx.set("stop", Json(control));
+            ctx.set(&key, Json(control));
         }
         Ok(())
     }
@@ -983,14 +1106,14 @@ impl TengriWorkspaceRuns {
     ) -> HandlerResult<Json<Option<Control>>> {
         if query.0.claim.workspace_uid != ctx.key()
             || ctx
-                .get::<Json<Claim>>("active")
+                .get::<Json<BTreeMap<String, Claim>>>("active")
                 .await?
-                .is_none_or(|active| active.0 != query.0.claim)
+                .is_none_or(|active| active.0.get(&query.0.claim.thread_id) != Some(&query.0.claim))
         {
             return Err(TerminalError::new_with_code(403, "run is no longer active").into());
         }
         let stop = ctx
-            .get::<Json<Control>>("stop")
+            .get::<Json<Control>>(&format!("stop/{}", query.0.claim.run_id))
             .await?
             .map(Json::into_inner)
             .filter(|control| {
@@ -1005,24 +1128,34 @@ impl TengriWorkspaceRuns {
         ctx: ObjectContext<'_>,
         claim: Json<Claim>,
     ) -> HandlerResult<Json<Option<Control>>> {
-        let active = ctx.get::<Json<Claim>>("active").await?;
-        if active.as_ref().is_some_and(|active| active.0 == claim.0) {
+        let mut active = ctx
+            .get::<Json<BTreeMap<String, Claim>>>("active")
+            .await?
+            .map(Json::into_inner)
+            .unwrap_or_default();
+        if active.get(&claim.0.thread_id) == Some(&claim.0) {
             return Ok(Json(
-                ctx.get::<Json<Control>>("stop")
+                ctx.get::<Json<Control>>(&format!("stop/{}", claim.0.run_id))
                     .await?
                     .map(Json::into_inner),
             ));
         }
-        if active.is_some() {
-            return Err(
-                TerminalError::new_with_code(409, "workspace already has an active run").into(),
-            );
+        if active.contains_key(&claim.0.thread_id) {
+            return Err(TerminalError::new_with_code(
+                409,
+                "conversation already has an active run",
+            )
+            .into());
         }
-        if claim.0.workspace_uid != ctx.key() || Uuid::parse_str(&claim.0.run_id).is_err() {
+        if claim.0.workspace_uid != ctx.key()
+            || claim.0.thread_id.is_empty()
+            || Uuid::parse_str(&claim.0.run_id).is_err()
+        {
             return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
         }
-        ctx.clear("stop");
-        ctx.set("active", claim);
+        ctx.clear(&format!("stop/{}", claim.0.run_id));
+        active.insert(claim.0.thread_id.clone(), claim.0);
+        ctx.set("active", Json(active));
         Ok(Json(None))
     }
 
@@ -1031,13 +1164,15 @@ impl TengriWorkspaceRuns {
         if claim.0.workspace_uid != ctx.key() {
             return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
         }
-        if ctx
-            .get::<Json<Claim>>("active")
+        let mut active = ctx
+            .get::<Json<BTreeMap<String, Claim>>>("active")
             .await?
-            .is_some_and(|active| active.0 == claim.0)
-        {
-            ctx.clear("active");
-            ctx.clear("stop");
+            .map(Json::into_inner)
+            .unwrap_or_default();
+        if active.get(&claim.0.thread_id) == Some(&claim.0) {
+            active.remove(&claim.0.thread_id);
+            ctx.set("active", Json(active));
+            ctx.clear(&format!("stop/{}", claim.0.run_id));
         }
         Ok(())
     }
@@ -1106,15 +1241,34 @@ impl ControlPlane {
             .annotations
             .as_ref()
             .and_then(|a| a.get(crate::activity::ACTIVE_RUN_ANNOTATION));
-        if current.is_some_and(|id| id != &input.id) {
-            if !active {
-                return Ok(());
-            }
-            return Err(Status::already_exists("workspace is pinned by another run"));
+        if current.is_some_and(|value| crate::activity::is_idle_sleep_claim(value)) {
+            return if active {
+                Err(Status::unavailable("workspace is entering idle sleep"))
+            } else {
+                Ok(())
+            };
         }
-        if (active && current == Some(&input.id)) || (!active && current.is_none()) {
+        let mut pins: BTreeSet<String> = match current {
+            Some(value) => serde_json::from_str(value)
+                .map_err(|_| Status::failed_precondition("invalid active run sleep fence"))?,
+            None => BTreeSet::new(),
+        };
+        let changed = if active {
+            pins.insert(input.id.clone())
+        } else {
+            pins.remove(&input.id)
+        };
+        if !changed {
             return Ok(());
         }
+        let value = if pins.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&pins)
+                    .map_err(|_| Status::internal("encode active run sleep fence"))?,
+            )
+        };
         let api: Api<crate::crd::MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         let version = agent
             .resource_version()
@@ -1122,7 +1276,7 @@ impl ControlPlane {
         let uid = agent
             .uid()
             .ok_or_else(|| Status::unavailable("run sleep fence has no workspace UID"))?;
-        api.patch(&input.agent_id, &PatchParams::default(), &Patch::Merge(serde_json::json!({"metadata":{"uid":uid,"resourceVersion":version,"annotations":{crate::activity::ACTIVE_RUN_ANNOTATION: if active {Some(input.id.clone())} else {None}}}}))).await.map_err(|_| Status::unavailable("run sleep fence could not be recorded"))?;
+        api.patch(&input.agent_id, &PatchParams::default(), &Patch::Merge(serde_json::json!({"metadata":{"uid":uid,"resourceVersion":version,"annotations":{crate::activity::ACTIVE_RUN_ANNOTATION: value}}}))).await.map_err(|_| Status::unavailable("run sleep fence could not be recorded"))?;
         Ok(())
     }
 

@@ -1,8 +1,9 @@
 import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
+import { currentSubmissionMarketAllowed } from './trading-scope'
 import { quantityFromDecimal, quantityScale } from '../quantity'
 import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
-import { Effect, Result } from 'effect'
+import { Cause, Effect, Result } from 'effect'
 
 import {
   AccountStatus,
@@ -36,6 +37,7 @@ import {
 } from './authority'
 
 import { SubmissionDenialReason } from './submission-denial'
+import { cryptoTakerFeeBps, effectiveCryptoFeeTier, type CryptoTakerFeeBps } from '../broker/crypto-fees'
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
@@ -1016,13 +1018,36 @@ export const validatePersistedCapitalGrantForSubmit = (
 
 export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure | InstrumentError
 
+export const validateCryptoEntryFeeCeiling = (
+  intent: Intent,
+  account: Account,
+  maximumTakerFeeBps: CryptoTakerFeeBps | null,
+  closeOnly: boolean,
+  observedAt: string,
+): Result.Result<void, InstrumentError> => {
+  if (closeOnly || intent.side !== IntentOrderSide.Buy || instrumentMarket(intent.symbol) !== MarketKind.Crypto)
+    return Result.succeed(undefined)
+  const currentMaximum = cryptoTakerFeeBps(
+    effectiveCryptoFeeTier(account.cryptoFeeTier, account.observedAt, observedAt),
+  )
+  return maximumTakerFeeBps !== null && currentMaximum <= maximumTakerFeeBps
+    ? Result.succeed(undefined)
+    : Result.fail(
+        new InstrumentError({
+          symbol: intent.symbol,
+          message:
+            'The current broker crypto fee bound exceeds the sealed entry estimate or its binding is unavailable',
+        }),
+      )
+}
+
 export const validateExecutionBrokerSubmitSnapshot = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
   intent: Intent,
   snapshot: ExecutionBrokerSubmitSnapshot,
   observedAt: string,
-  context: ExecutionCapitalLimitContext,
+  context: ExecutionCapitalLimitContext & { readonly maximumCryptoEntryTakerFeeBps: CryptoTakerFeeBps | null },
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
   const snapshotFreshness = validateBrokerStateFreshness(snapshot, observedAt, context.maxBrokerStateAgeMs)
   if (Result.isFailure(snapshotFreshness)) return Result.fail(snapshotFreshness.failure)
@@ -1091,6 +1116,14 @@ export const validateExecutionBrokerSubmitSnapshot = (
         message: 'crypto account status or cash buying power is unavailable',
       }),
     )
+  const entryFees = validateCryptoEntryFeeCeiling(
+    intent,
+    snapshot.account,
+    context.maximumCryptoEntryTakerFeeBps,
+    context.closeOnly,
+    observedAt,
+  )
+  if (Result.isFailure(entryFees)) return entryFees
   const cashBuyingPower = [
     snapshot.account.cashMicros,
     snapshot.account.buyingPowerMicros,
@@ -1125,10 +1158,14 @@ export const makeAuthorityGuardedBrokerMutation = (
     dependencies
       .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
       .pipe(
-        Effect.mapError((cause) =>
-          cause instanceof BrokerMutationError
-            ? cause
-            : mutationAuthorizationError('final broker submit authorization failed', cause),
+        Effect.catchCause((failure) =>
+          Effect.failCause(
+            Cause.map(failure, (cause) =>
+              cause instanceof BrokerMutationError
+                ? cause
+                : mutationAuthorizationError('final broker submit authorization failed', cause),
+            ),
+          ),
         ),
       )
   const submit = (intent: Intent) => {
@@ -1138,6 +1175,16 @@ export const makeAuthorityGuardedBrokerMutation = (
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
+    if (!currentSubmissionMarketAllowed(intent))
+      return Effect.fail(
+        mutationAuthorizationError(
+          'crypto entries are disabled',
+          new InstrumentError({
+            symbol: intent.symbol,
+            message: 'Current trading scope permits equity entries only',
+          }),
+        ),
+      )
     return transmit(intent)
   }
 

@@ -10,8 +10,10 @@ resources:
   - bootstrap-manifest-sealedsecret.yaml
   - database-credentials-sealedsecret.yaml
   - audit-archive-sealedsecret.yaml
+  - recovery-owner-sealedsecret.yaml
   - databases.yaml
   - network-policy.yaml
   - database-ca-reader.yaml
   - database-ca-publisher.yaml
   - activation.yaml
+  - policies.yaml

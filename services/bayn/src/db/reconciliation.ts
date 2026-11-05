@@ -1,6 +1,12 @@
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
 import { Data, Effect, Option, Result, Schema } from 'effect'
+import {
+  CryptoFeeTierSchema,
+  cryptoTakerFeeBps,
+  effectiveCryptoFeeTier,
+  type CryptoTakerFeeBps,
+} from '../broker/crypto-fees'
 
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
@@ -46,6 +52,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
   UtcDatabaseInstantSchema,
+  UtcOrderTimestampSchema,
   strictParseOptions,
 } from '../schemas'
 import { MutationEventType } from '../execution/mutations/model'
@@ -122,6 +129,11 @@ export interface ReconciledBrokerSnapshot {
   readonly persisted: ReconciliationWriteResult
 }
 
+/** Ingestion reports whether it required fill accounting, including recovery of an incomplete receipt. */
+export interface ReconciliationIngestion extends BrokerSnapshot {
+  readonly ledgerPostingRequired?: boolean
+}
+
 interface AccountingReadPhase {
   readonly intents: readonly IntentExpectation[]
   readonly unknownMutationCount: number
@@ -185,6 +197,7 @@ const ProtectionChildRow = Schema.Struct({
 })
 
 const DurableFillRow = Schema.Struct({
+  source_timestamp: UtcOrderTimestampSchema,
   fill_id: NonEmptyString,
   broker_order_id: NonEmptyString,
   broker_event_id: Sha256,
@@ -400,7 +413,8 @@ export const verifyBrokerStateVersion = (
   accountId: string,
   version: BrokerStateVersion,
   intentId: string,
-): Effect.Effect<void, ReconciliationStoreError> =>
+  requireCryptoEntryFeeBound: boolean,
+): Effect.Effect<CryptoTakerFeeBps | null, ReconciliationStoreError> =>
   runStore(
     'risk-context',
     Effect.gen(function* () {
@@ -444,6 +458,47 @@ export const verifyBrokerStateVersion = (
           'invariant',
           'cached broker reconciliation version changed before submit',
         )
+      if (!requireCryptoEntryFeeBound) return null
+      const [fee] = yield* sql`
+        SELECT
+          (d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,cryptoFeeTier}')::integer AS tier,
+          d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,observedAt}' AS account_observed_at,
+          d.document #>> '{strategyDecision,evidence,observation,observedAt}' AS priced_at
+        FROM intents i
+        JOIN autonomous_cycles c ON c.cycle_id = i.cycle_id
+        JOIN autonomous_cycle_shadow_decisions d ON d.cycle_id = c.cycle_id AND d.decision_hash = c.decision_hash
+        WHERE i.intent_id = ${intentId} AND i.account_id = ${accountId} AND i.side = 'BUY'
+          AND i.decision_hash = d.document #>> '{bindings,strategyDecisionHash}'
+          AND d.document #>> '{bindings,accountId}' = ${accountId}
+          AND (
+            (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37'))
+          )
+          AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
+          AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
+          AND (d.document #> '{strategyDecision,evidence,observation,portfolio,brokerState,account}') ? 'cryptoFeeTier'
+          AND (d.document -> 'orderedIntentIds') @> ${JSON.stringify([intentId])}::jsonb
+      `.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Tuple([
+              Schema.Struct({
+                tier: Schema.NullOr(CryptoFeeTierSchema),
+                account_observed_at: UtcInstant,
+                priced_at: UtcInstant,
+              }),
+            ]),
+            strictParseOptions,
+          ),
+        ),
+      )
+      return cryptoTakerFeeBps(effectiveCryptoFeeTier(fee.tier, fee.account_observed_at, fee.priced_at))
     }),
   )
 
@@ -665,6 +720,7 @@ export const makeReconciliation = (
         const durableFillRows = yield* sql<Record<string, unknown>>`
           SELECT
             fill.fill_id,
+            fill.source_timestamp,
             fill.broker_order_id,
             fill.event_id AS broker_event_id,
             transaction.transaction_id,
@@ -708,6 +764,7 @@ export const makeReconciliation = (
             accountId,
             openingCash,
             transactions: accounting.transactions,
+            fillExecutionTimes: new Map(durableFillRows.map((row) => [row.broker_event_id, row.source_timestamp])),
             fees: accounting.fees,
             brokerFeeAccruals: accounting.accruals,
             brokerFeeCashDeltaMicros: accounting.brokerFeeCashDeltaMicros,
@@ -821,16 +878,18 @@ export const makeReconciliation = (
 
   const reconcileTransaction = (
     snapshot: BrokerSnapshot,
+    mode: 'post' | 'verify-only' = 'post',
   ): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
     runStore(
       'reconcile',
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
-        yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
-        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle).pipe(
+        // Inline verification retains the account lock acquired before preparation on this same transaction.
+        if (mode === 'post') yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
+        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle, mode).pipe(
           withObservedStage('bayn.reconciliation.cash-settlement'),
         )
-        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle).pipe(
+        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle, mode).pipe(
           withObservedStage('bayn.reconciliation.fee-posting'),
         )
         const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle).pipe(
@@ -862,34 +921,80 @@ export const makeReconciliation = (
         'Broker fee plans must commit independently before ledger posting',
       )
   })
+  const hasPendingPosting = (accountId: string) =>
+    runStore(
+      'reconcile',
+      sql`
+        SELECT EXISTS (
+          SELECT 1 FROM broker_cash_settlements WHERE account_id=${accountId} AND posted_at IS NULL
+        ) OR EXISTS (
+          SELECT 1 FROM broker_fee_accruals a
+          JOIN broker_fee_match_corrections c ON c.accrual_id=a.accrual_id AND c.account_id=a.account_id
+          WHERE a.account_id=${accountId} AND c.posted_at IS NULL
+        ) OR EXISTS (
+          SELECT 1 FROM broker_fee_accruals a WHERE a.account_id=${accountId}
+            AND (a.posted_at IS NULL OR NOT EXISTS (
+              SELECT 1 FROM broker_fee_posting_acknowledgements p
+              WHERE p.account_id=a.account_id AND p.source_kind='ACCRUAL'
+                AND p.source_id=a.accrual_id AND p.ledger_plan_hash=a.ledger_plan_hash
+            ))
+        ) OR EXISTS (
+          SELECT 1 FROM broker_fee_accounting f WHERE f.account_id=${accountId}
+            AND (f.posted_at IS NULL OR NOT EXISTS (
+              SELECT 1 FROM broker_fee_posting_acknowledgements p
+              WHERE p.account_id=f.account_id AND p.source_kind='ACTIVITY'
+                AND p.source_id=f.activity_id AND p.ledger_plan_hash=f.ledger_plan_hash
+            ))
+        ) AS pending
+      `.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ pending: Schema.Boolean })]))),
+        Effect.map(([row]) => row.pending),
+      ),
+    )
   const reconcile = <E, R>(
     accountId: string,
-    ingestSnapshot: Effect.Effect<BrokerSnapshot, E, R>,
+    ingestSnapshot: Effect.Effect<ReconciliationIngestion, E, R>,
   ): Effect.Effect<ReconciledBrokerSnapshot, E | ReconciliationStoreError, R> =>
     Effect.gen(function* () {
       yield* requireAutocommit
-      const snapshot = yield* writerFence
-        .transaction(
+      type Phase =
+        | { readonly _tag: 'Prepared'; readonly snapshot: BrokerSnapshot; readonly inline: boolean }
+        | { readonly _tag: 'Completed'; readonly result: ReconciledBrokerSnapshot }
+      const preparation: Effect.Effect<Phase, E | ReconciliationStoreError, R> = Effect.gen(function* () {
+        yield* runStore('reconcile', sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`)
+        const recoveryRequired = yield* hasPendingPosting(accountId)
+        // Only previously committed plans exist here. Recover them before accounting any new fill.
+        // Ingestion and preparation then share one commit; newly prepared fees are posted below it.
+        yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
+        yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
+        const { ledgerPostingRequired, ...snapshot } = yield* ingestSnapshot
+        // Legacy ingestion has no proof about external posting and therefore retains both phases.
+        const ingestionPostingRequired = ledgerPostingRequired !== false
+        if (snapshot.account.accountId !== accountId)
+          return yield* storeError('reconcile', 'invariant', 'Reconciliation snapshot account binding changed')
+        yield* runStore(
+          'reconcile',
           Effect.gen(function* () {
-            // Only previously committed plans exist here. Recover them before accounting any new fill.
-            // Ingestion and preparation then share one commit; newly prepared fees are posted below it.
-            yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
-            yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
-            const snapshot = yield* ingestSnapshot
-            if (snapshot.account.accountId !== accountId)
-              return yield* storeError('reconcile', 'invariant', 'Reconciliation snapshot account binding changed')
-            yield* runStore(
-              'reconcile',
-              Effect.gen(function* () {
-                yield* retainAccountCashReporting(sql, snapshot)
-                yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
-                yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
-                yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
-                yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
-              }),
-            )
-            return snapshot
+            yield* retainAccountCashReporting(sql, snapshot)
+            yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
+            yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
+            yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
+            yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
           }),
+        )
+        const inline = !recoveryRequired && !ingestionPostingRequired
+        return { _tag: 'Prepared', snapshot, inline }
+      })
+      const phase = yield* writerFence
+        .transaction(preparation, (prepared): Effect.Effect<Phase, ReconciliationStoreError> | undefined =>
+          prepared._tag === 'Prepared' && prepared.inline
+            ? Effect.gen(function* () {
+                // This added read belongs to finalization: a failed query must not erase prepared broker facts.
+                if (yield* hasPendingPosting(accountId)) return prepared
+                const persisted = yield* reconcileTransaction(prepared.snapshot, 'verify-only')
+                return { _tag: 'Completed', result: { snapshot: prepared.snapshot, persisted } }
+              })
+            : undefined,
         )
         .pipe(
           Effect.mapError((cause) =>
@@ -898,8 +1003,9 @@ export const makeReconciliation = (
               : cause,
           ),
         )
-      const persisted = yield* runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
-      return { snapshot, persisted }
+      if (phase._tag === 'Completed') return phase.result
+      const persisted = yield* runStore('reconcile', writerFence.transaction(reconcileTransaction(phase.snapshot)))
+      return { snapshot: phase.snapshot, persisted }
     })
 
   const retainCashReporting = (snapshot: Parameters<typeof retainAccountCashReporting>[1]) =>

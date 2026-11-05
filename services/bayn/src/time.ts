@@ -26,6 +26,8 @@ export const utcInstantFromEpochMillis = (epochMillis: number): string =>
 export const utcDateFromEpochMillis = (epochMillis: number): string =>
   DateTime.formatIsoDate(DateTime.makeUnsafe(epochMillis))
 
+export const nativeWallClock = 'effect.Clock.currentTimeMillis'
+
 export const currentUtcInstant = Clock.currentTimeMillis.pipe(Effect.map(utcInstantFromEpochMillis))
 
 export const currentUtcDate = Clock.currentTimeMillis.pipe(Effect.map(utcDateFromEpochMillis))

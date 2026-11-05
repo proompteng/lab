@@ -3,15 +3,15 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { type MessageInitShape } from '@bufbuild/protobuf'
 import * as grpc from '@grpc/grpc-js'
-import type { TengriIdentity } from './auth'
+import type { PlatformIdentity } from '../platform/auth'
 import { humanContext } from './authorization'
 import {
-  AuthorizationService,
+  TengriAuthorizationService,
   CommandState,
   ExecuteCommandRequestSchema,
   type CommandReceipt,
 } from './generated/proompteng/authz/v1/authz_pb'
-import { OfzError, ofzCall } from './ofz'
+import { OfzError, ofzCall } from '../platform/ofz'
 
 type LifecycleCommand = MessageInitShape<typeof ExecuteCommandRequestSchema>['command']
 
@@ -28,7 +28,7 @@ function requestHash(intent: LifecycleIntent) {
 }
 
 export async function recoverLifecycleCommand(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: LifecycleIntent,
   phase: string,
   workspaceUid = '',
@@ -45,13 +45,13 @@ export async function recoverLifecycleCommand(
 }
 
 function readLifecycleCommand(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: LifecycleIntent,
   phase: string,
   workspaceUid: string,
   runtimeEpoch = '',
 ) {
-  return ofzCall(AuthorizationService.method.getCommand, {
+  return ofzCall(TengriAuthorizationService.method.getCommand, {
     context: humanContext(identity, workspaceUid, runtimeEpoch),
     operationId: lifecycleId(identity, intent.operationId, phase),
     clientRequestHash: requestHash(intent),
@@ -59,7 +59,7 @@ function readLifecycleCommand(
 }
 
 export async function workspaceRemovalComplete(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: Exclude<LifecycleIntent, { action: 'create' }>,
 ) {
   const response = await readLifecycleCommand(identity, intent, 'remove', intent.workspaceUid)
@@ -67,7 +67,7 @@ export async function workspaceRemovalComplete(
   return response.workspaceRemoved
 }
 
-export function lifecycleId(identity: TengriIdentity, operationId: string, phase: string) {
+export function lifecycleId(identity: PlatformIdentity, operationId: string, phase: string) {
   const bytes = createHash('sha256')
     .update(`tengri.lifecycle.v1\n${identity.session.humanId}\n${operationId}\n${phase}`)
     .digest()
@@ -79,7 +79,7 @@ export function lifecycleId(identity: TengriIdentity, operationId: string, phase
 }
 
 export async function lifecycleCommand(
-  identity: TengriIdentity,
+  identity: PlatformIdentity,
   intent: LifecycleIntent,
   phase: string,
   command: LifecycleCommand,
@@ -93,9 +93,9 @@ export async function lifecycleCommand(
     try {
       const recovered = await recoverLifecycleCommand(identity, intent, phase, workspaceUid, runtimeEpoch)
       if (recovered) return recovered
-      const policy = await ofzCall(AuthorizationService.method.getPolicyState, {})
+      const policy = await ofzCall(TengriAuthorizationService.method.getPolicyState, {})
       if (policy.recoveryGeneration !== identity.session.recoveryGeneration) throw new OfzError(401)
-      const result = await ofzCall(AuthorizationService.method.executeCommand, {
+      const result = await ofzCall(TengriAuthorizationService.method.executeCommand, {
         context: context(),
         operationId: id,
         expectedVersion: policy.version,

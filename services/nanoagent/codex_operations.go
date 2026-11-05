@@ -103,7 +103,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	if !errors.Is(err, os.ErrNotExist) {
 		return codexCallResult{}, fmt.Errorf("read Codex operation journal: %w", err)
 	}
-	activePath := filepath.Join(directory, ".pending.json")
+	activePath := filepath.Join(directory, fmt.Sprintf(".pending-%x.json", sha256.Sum256([]byte(input.Thread))))
 	if method == "turn/start" || method == "turn/steer" {
 		active, err := readCodexOperation(activePath)
 		if err == nil {

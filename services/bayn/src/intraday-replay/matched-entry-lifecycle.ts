@@ -83,7 +83,11 @@ export const stepMatchedLifecycle = (
         ...jevMarketForSymbol(terms.symbol),
       })
       if (rejection !== null || quote === undefined) return problem(rejection ?? 'missing-entry-quote')
-      const quantityAtoms = yield* studyEntryQuantity({ ...terms, referencePrice: quote.value.askPrice })
+      const quantityAtoms = yield* studyEntryQuantity({
+        feeAt: new Date(atMs).toISOString(),
+        ...terms,
+        referencePrice: quote.value.askPrice,
+      })
       return {
         ...state,
         entry:

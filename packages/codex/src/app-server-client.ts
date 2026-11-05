@@ -38,6 +38,8 @@ import type {
   ThreadGoalStatus,
   ThreadHistoryMode,
   ThreadItem,
+  ThreadItemsListParams,
+  ThreadItemsListResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
@@ -68,6 +70,7 @@ type JsonRpcRequestMethod =
   | 'initialize'
   | 'thread/start'
   | 'thread/resume'
+  | 'thread/items/list'
   | 'thread/goal/set'
   | 'thread/goal/get'
   | 'thread/goal/clear'
@@ -153,6 +156,7 @@ export type CodexAppServerOptions = {
   persistExtendedHistory?: boolean
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  onNotification?: (notification: { method: string; params?: unknown }) => void
   onRequestUserInput?: (
     params: ToolRequestUserInputParams,
   ) => ToolRequestUserInputResponse | Promise<ToolRequestUserInputResponse>
@@ -485,6 +489,7 @@ export class CodexAppServerClient {
   private bootstrapTimeout: ReturnType<typeof setTimeout> | null = null
   private bootstrapTimeoutMs: number
   private logger: CodexAppServerOptions['logger']
+  private onNotification: CodexAppServerOptions['onNotification']
   private sandbox: SandboxMode
   private approval: AskForApproval
   private defaultModel: string
@@ -514,6 +519,7 @@ export class CodexAppServerClient {
     persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
+    onNotification,
     onRequestUserInput,
     onDynamicToolCall,
     dynamicTools,
@@ -523,6 +529,7 @@ export class CodexAppServerClient {
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
+    this.onNotification = onNotification
     this.sandbox = normalizeSandboxMode(sandbox)
     this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
@@ -811,6 +818,19 @@ export class CodexAppServerClient {
     return response.cleared
   }
 
+  async getTurnItems(threadId: string, turnId: string): Promise<ThreadItem[]> {
+    await this.ensureReady()
+    const items: ThreadItem[] = []
+    let cursor: string | null = null
+    do {
+      const params: ThreadItemsListParams = { threadId, turnId, cursor, limit: 100, sortDirection: 'asc' }
+      const page = await this.request<ThreadItemsListResponse>('thread/items/list', params)
+      items.push(...page.data.map(({ item }) => item))
+      cursor = page.nextCursor
+    } while (cursor)
+    return items
+  }
+
   async waitForThreadIdle(
     threadId: string,
     { quietMs = 1000, timeoutMs = 0, signal }: ThreadIdleWaitOptions = {},
@@ -1048,6 +1068,7 @@ export class CodexAppServerClient {
   }
 
   private handleNotification(notification: JsonRpcNotification): void {
+    this.onNotification?.(notification)
     const { method } = notification
     const params = notification.params
 
@@ -1429,11 +1450,12 @@ export class CodexAppServerClient {
             id: item.id,
             status,
             title: 'image generation',
-            detail: item.revisedPrompt ?? item.result,
+            detail: item.revisedPrompt ?? ('result' in item ? item.result : item.fileId),
             data: {
               status: item.status,
               revisedPrompt: item.revisedPrompt,
-              result: item.result,
+              ...('result' in item ? { result: item.result } : { fileId: item.fileId }),
+              ...(item.savedPath ? { savedPath: item.savedPath } : {}),
             },
           }
         default:

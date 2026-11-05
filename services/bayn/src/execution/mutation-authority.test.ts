@@ -26,6 +26,7 @@ import {
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { BrokerMutationShape } from '../broker/alpaca-mutations/model'
+import { MutationOperation, invalidRequest } from '../broker/alpaca-mutations/model'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from './contracts'
 import {
@@ -77,6 +78,7 @@ const readResult = <A>(value: A, observedAt: string = evidence.observedAt): Read
 
 const account = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cryptoFeeTier: null,
   cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
@@ -259,6 +261,7 @@ interface ScenarioInput {
   readonly peakEquityMicros?: string
   readonly maxDrawdownMicros?: string
   readonly closeOnly?: boolean
+  readonly maximumCryptoEntryTakerFeeBps?: 18 | 25 | null
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -367,6 +370,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           observedAt,
           {
             closeOnly: input.closeOnly ?? false,
+            maximumCryptoEntryTakerFeeBps:
+              input.maximumCryptoEntryTakerFeeBps === undefined ? 25 : input.maximumCryptoEntryTakerFeeBps,
             maxBrokerStateAgeMs: 300_000,
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
             currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
@@ -392,6 +397,55 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
   const failure = exit.cause.reasons.find(Cause.isFailReason)?.error
   return failure?.cause?.['tag']
 }
+
+test.each([
+  [4, 18, 0],
+  [3, 18, 0],
+  [null, 18, 0],
+  [5, 18, 0],
+  [4, null, 0],
+  [null, 25, 0],
+] as const)('disabled crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
+  const result = await runLiveSubmit({
+    maximumCryptoEntryTakerFeeBps: ceiling,
+    brokerAccount: account({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: tier,
+      nonMarginableBuyingPowerMicros: '1000000000',
+    }),
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }),
+  })
+  expect(result.submits).toBe(expected)
+  expect(Exit.isSuccess(result.exit)).toBe(false)
+})
+
+test('a cached crypto fee discount cannot re-enable crypto entries', async () => {
+  const result = await runLiveSubmit({
+    maximumCryptoEntryTakerFeeBps: 18,
+    brokerAccount: account({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: 4,
+      nonMarginableBuyingPowerMicros: '1000000000',
+      observedAt: '2026-07-28T07:59:59.000Z',
+    }),
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }),
+  })
+  expect(result.submits).toBe(0)
+  expect(Exit.isFailure(result.exit)).toBe(true)
+  if (Exit.isFailure(result.exit)) expect(Cause.pretty(result.exit.cause)).toContain('crypto entries are disabled')
+})
 
 test('final submission admits a covered crypto protective stop through all capital and instrument checks', async () => {
   const scenario: ScenarioInput = {
@@ -478,8 +532,9 @@ describe('final broker mutation authority', () => {
               BrokerEnvironment.Sandbox,
             ),
           })
-          expect(atCap.exit._tag).toBe('Success')
-          expect(atCap.submits).toBe(1)
+          const entryAllowed = !symbol.includes('/') || side === OrderSide.Sell
+          expect(atCap.exit._tag).toBe(entryAllowed ? 'Success' : 'Failure')
+          expect(atCap.submits).toBe(entryAllowed ? 1 : 0)
           const overCap = await runLiveSubmit({
             ...common,
             grant: persistedGrantRecord(
@@ -487,7 +542,7 @@ describe('final broker mutation authority', () => {
               BrokerEnvironment.Sandbox,
             ),
           })
-          expect(failureTag(overCap.exit)).toBe('OrderNotionalLimitExceeded')
+          expect(failureTag(overCap.exit)).toBe(entryAllowed ? 'OrderNotionalLimitExceeded' : 'InstrumentError')
           expect(overCap.submits).toBe(0)
         },
       ),
@@ -495,7 +550,7 @@ describe('final broker mutation authority', () => {
   })
 
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'])
-    test(`${symbol} uses the common PAPER submission guard with native precision and cash authority`, async () => {
+    test(`${symbol} cannot enter despite valid native precision and PAPER cash authority`, async () => {
       const cryptoAccount = account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' })
       const proposedIntent = intent({
         symbol,
@@ -506,9 +561,9 @@ describe('final broker mutation authority', () => {
       })
       const common = { environment: BrokerEnvironment.Sandbox, brokerAccount: cryptoAccount, proposedIntent }
       const submitted = await runLiveSubmit(common)
-      if (Exit.isFailure(submitted.exit)) throw new Error(Cause.pretty(submitted.exit.cause))
-      expect(Exit.isSuccess(submitted.exit)).toBe(true)
-      expect(submitted.submits).toBe(1)
+      expect(Exit.isFailure(submitted.exit)).toBe(true)
+      expect(failureTag(submitted.exit)).toBe('InstrumentError')
+      expect(submitted.submits).toBe(0)
       for (const changed of [
         { brokerAccount: { ...cryptoAccount, cryptoStatus: 'INACTIVE' } },
         { brokerAccount: { ...cryptoAccount, nonMarginableBuyingPowerMicros: '1' } },
@@ -1363,6 +1418,44 @@ describe('final broker mutation authority', () => {
     expect(grantReads).toBe(0)
     expect(mismatched._tag).toBe('Failure')
   })
+
+  test.each(['failure', 'defect', 'interruption'] as const)(
+    'preserves compound authorization failure with %s',
+    async (kind) => {
+      const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected denial' })
+      const cleanup =
+        kind === 'failure'
+          ? Cause.fail({ _tag: 'WriterFenceError' })
+          : kind === 'defect'
+            ? Cause.die(new Error('injected cleanup defect'))
+            : Cause.interrupt()
+      const guarded = makeAuthorityGuardedBrokerMutation(
+        mutationAuthority(BrokerEnvironment.Sandbox, grantedCapitalAuthority(authorityGenerationHash)),
+        {
+          brokerMutation: {
+            submit: () => Effect.die('must not transmit'),
+            cancel: () => Effect.succeed(cancelReceipt),
+          },
+          finalSubmitAuthorization: () => Effect.failCause(Cause.combine(Cause.fail(denied), cleanup)),
+        },
+      )
+      const exit = await Effect.runPromiseExit(guarded.submit(intent()))
+      if (Exit.isSuccess(exit)) throw new Error('compound authorization failure must propagate')
+      expect(exit.cause.reasons).toHaveLength(2)
+      expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+      if (kind === 'failure') {
+        expect(exit.cause.reasons[1]).toMatchObject({
+          _tag: 'Fail',
+          error: { denialReason: SubmissionDenialReason.WriterFenceError },
+        })
+      } else {
+        const reason = cleanup.reasons[0]
+        if (reason === undefined || Cause.isFailReason(reason))
+          throw new Error('expected cleanup defect or interruption')
+        expect(exit.cause.reasons[1]).toEqual(reason)
+      }
+    },
+  )
 
   test('keeps cancellation available for containment after grant revocation', async () => {
     const grant = persistedGrantRecord()

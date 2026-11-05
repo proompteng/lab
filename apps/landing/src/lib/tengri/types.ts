@@ -7,10 +7,15 @@ export type TengriErrorCode =
   | 'conversation_not_found'
   | 'control_not_dispatched'
   | 'conversation_history_invalid'
+  | 'chat_index_invalid'
   | 'file_conflict'
   | 'capacity_full'
   | 'lifecycle_superseded'
   | 'model_catalog_invalid'
+  | 'runtime_upgrade_required'
+  | 'connection_access_denied'
+  | 'connection_scope_changed'
+  | 'provider_reconnect_required'
 
 export type TengriCondition = {
   type: string
@@ -63,6 +68,11 @@ export type TengriFileEntry = {
   directory: boolean
   size: number
   modifiedAt: string
+}
+
+export type TengriFileList = {
+  path: string
+  entries: TengriFileEntry[]
 }
 
 export type TengriFileSearchResult = {
@@ -160,6 +170,7 @@ export type TengriAction =
   | { action: 'sleep-agent'; agentId: string; workspaceUid: string }
   | { action: 'resume-agent'; agentId: string; workspaceUid: string }
   | { action: 'update-power-settings'; agentId: string; power: TengriPowerSettings }
+  | { action: 'stat-file'; agentId: string; path: string }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
   | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }
@@ -175,8 +186,10 @@ export type TengriAction =
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
   | { action: 'codex-models'; agentId: string; cursor?: string }
-  | { action: 'active-codex-run'; agentId: string }
+  | { action: 'active-codex-runs'; agentId: string }
   | { action: 'codex-run'; agentId: string; runId: string }
+  | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
+  | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
   | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
   | ({

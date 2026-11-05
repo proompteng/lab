@@ -48,6 +48,8 @@ pub enum GuestError {
     MissingToken(String),
     #[error("Nanoagent API returned {status}: {message}")]
     Api { status: StatusCode, message: String },
+    #[error("Guest protocol {actual} requires an upgrade to protocol {required}")]
+    IncompatibleProtocol { actual: u32, required: u32 },
     #[error("Nanoagent returned invalid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
     #[error("Nanoagent returned invalid Codex history: {0}")]
@@ -304,6 +306,9 @@ impl GuestClient {
 
     pub async fn open_browser(&self) -> Result<(), GuestError> {
         self.rpc.open_browser().await
+    }
+    pub async fn stat_file(&self, path: &str) -> Result<FileEntry, GuestError> {
+        self.rpc.stat_file(path).await
     }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         self.rpc.list_files(path).await

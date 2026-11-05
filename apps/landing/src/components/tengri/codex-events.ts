@@ -1,6 +1,8 @@
 import { codexToolText } from './codex-tool-text'
 import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
+import { codexAsyncQuestionRequest, codexEventAsyncQuestionRequest } from './codex-async-questions'
+import type { QuestionRequest } from './codex-question-model'
 
 const MAX_CODEX_EVENTS = 500
 const MAX_EVENT_TEXT_BYTES = 512 << 10
@@ -39,6 +41,7 @@ export type CodexTranscriptItem = {
   text: string
   eventSequence?: number
   activityTitle?: string
+  questionRequest?: QuestionRequest
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
@@ -50,7 +53,23 @@ type CodexTextSegment = {
   bytes: number
   previous?: CodexTextSegment
 }
-export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
+export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment; asyncQuestionResolved?: true }
+
+export function retireCodexAsyncQuestions(
+  current: CodexBufferedEvent[],
+  threadId: string,
+  answered: ReadonlySet<string>,
+) {
+  let changed = false
+  const next = current.map((event) => {
+    if (event.threadId !== threadId || event.asyncQuestionResolved) return event
+    const request = codexEventAsyncQuestionRequest(event)
+    if (!request || !request.fields.every((field) => answered.has(field.key))) return event
+    changed = true
+    return { ...event, asyncQuestionResolved: true as const }
+  })
+  return changed ? next : current
+}
 
 export type SubmittedPrompt = {
   images?: readonly TengriCodexImage[]
@@ -185,13 +204,20 @@ export function appendCodexEvent(
     const next = [...current]
     next[itemIndex] = isDeltaEvent(event)
       ? appendTextSegment(previous, event, eventText)
-      : { ...event, text: truncateEventText(eventText || previous.text) }
+      : {
+          ...event,
+          ...(previous.asyncQuestionResolved ? { asyncQuestionResolved: true } : {}),
+          text: truncateEventText(eventText || previous.text),
+        }
     return next
   }
 
   return [
     ...current.filter(
-      (candidate, index) => index >= current.length - MAX_CODEX_EVENTS + 1 || candidate.kind === 'approval',
+      (candidate, index) =>
+        index >= current.length - MAX_CODEX_EVENTS + 1 ||
+        candidate.kind === 'approval' ||
+        (!candidate.asyncQuestionResolved && Boolean(codexEventAsyncQuestionRequest(candidate))),
     ),
     isDeltaEvent(event)
       ? {
@@ -501,19 +527,48 @@ export function codexResumeCommitIsCurrent(
   return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
 }
 
-export function codexActiveTurnIdFromThread(rawJson: string) {
+export function codexThreadTurnState(rawJson: string) {
+  const state: { activeTurnId: string; completedTurnIds: string[]; clientTurnIds: Map<string, string> } = {
+    activeTurnId: '',
+    completedTurnIds: [],
+    clientTurnIds: new Map(),
+  }
   try {
     const response = record(JSON.parse(rawJson))
     const thread = record(response.thread)
     const turns = Array.isArray(thread.turns) ? thread.turns : []
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const turn = record(turns[index])
-      if (string(turn.status) === 'inProgress') return boundedIdentifier(turn.id, 256)
+    for (const value of turns) {
+      const turn = record(value)
+      const id = boundedIdentifier(turn.id, 256)
+      if (!id) continue
+      for (const [clientId, turnId] of nativeClientTurnIds(id, turn.items)) state.clientTurnIds.set(clientId, turnId)
+      const status = string(turn.status)
+      if (status === 'inProgress') state.activeTurnId = id
+      else if (['completed', 'failed', 'interrupted'].includes(status)) state.completedTurnIds.push(id)
     }
   } catch {
-    // A malformed resume response cannot identify an active turn.
+    return { activeTurnId: '', completedTurnIds: [], clientTurnIds: new Map<string, string>() }
   }
-  return ''
+  return state
+}
+
+export function codexEventClientTurnIds(event: TengriCodexEvent) {
+  if (event.kind !== 'user-message' && event.method !== 'turn/started' && event.method !== 'turn/completed') return []
+  const params = record(parseRawEvent(event.rawJson).params)
+  const turn = record(params.turn)
+  return nativeClientTurnIds(event.turnId || boundedIdentifier(turn.id, 256), [
+    ...(Array.isArray(turn.items) ? turn.items : []),
+    params.item,
+  ])
+}
+
+function nativeClientTurnIds(turnId: string, items: unknown): Array<[string, string]> {
+  if (!turnId || !Array.isArray(items)) return []
+  return items.flatMap((value): Array<[string, string]> => {
+    const item = record(value)
+    const clientId = boundedIdentifier(item.clientId, 160)
+    return item.type === 'userMessage' && clientId ? [[clientId, turnId]] : []
+  })
 }
 
 export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns: ReadonlySet<string>) {
@@ -590,7 +645,12 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
     const content = Array.isArray(item.content) ? item.content : []
     return transcript(id, 'user-message', content.map(userInputText).filter(Boolean).join('\n'))
   }
-  if (type === 'agentMessage') return transcript(id, 'assistant-text', string(item.text))
+  if (type === 'agentMessage') {
+    const questionRequest = codexAsyncQuestionRequest(item)
+    return questionRequest
+      ? { id, kind: 'assistant-text', text: truncateEventText(string(item.text)), questionRequest }
+      : transcript(id, 'assistant-text', string(item.text))
+  }
   if (type === 'plan') return transcript(id, 'plan', string(item.text))
   if (type === 'reasoning') {
     const summary = stringArray(item.summary).join('\n')

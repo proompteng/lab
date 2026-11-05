@@ -28,8 +28,8 @@ export function parseWorkspaceFileLink(
   const match = /^(.*?)(?::([0-9]+)(?::([0-9]+))?|#L([0-9]+)(?:C([0-9]+))?)?$/.exec(decoded)
   if (!match) return null
   const absolute = match[1]
-  if (!absolute.startsWith('/workspace/')) return null
-  const path = absolute
+  if (absolute !== '/workspace' && !absolute.startsWith('/workspace/')) return null
+  const path = absolute.replace(/\/+$/, '')
   if (!isCodePath(path) || /[?#\\]/.test(path) || path.split('/').some((part) => part === '..' || part === '.'))
     return null
   const lineText = match[2] ?? match[4]

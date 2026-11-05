@@ -1,6 +1,8 @@
-import type { JevRequest } from './contract'
+import type { EntryInferenceInput } from './entry-inference-input'
+import { makeNativeChartEvidence } from './chart-evidence'
+import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
+import { entryJudgmentPolicy } from './entry-questions'
 import { Result, Schema } from 'effect'
-import { jevBenchmarkSymbol } from './markets'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -10,7 +12,8 @@ import {
   JevEvaluationReceiptSchema,
   JevEvaluationRequestSchema,
   JevEvidenceError,
-  usableJevInference,
+  JevAvailabilityReason,
+  entryInferenceAvailableAt,
 } from './evidence'
 import { decodeJevResolution, JevResolutionSchema, JevResolutionStatus } from './resolution'
 
@@ -36,7 +39,8 @@ export enum JevEntryExclusion {
 }
 
 export enum JevBatchPlanVersion {
-  V6 = 'bayn.jev-batch-plan.v6',
+  V8 = 'bayn.jev-batch-plan.v8',
+  Ablation = 'bayn.entry-ablation-batch.v1',
 }
 
 export const JevCandidateExclusionSchema = Schema.Struct({
@@ -63,7 +67,6 @@ const PlanMaterialSchema = Schema.Struct({
   snapshotId: Sha256Schema,
   observedAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
-  benchmarkSymbol: SymbolSchema,
   questionSetHash: Sha256Schema,
   candidates: Schema.Array(CandidatePlanSchema),
 })
@@ -95,7 +98,8 @@ const ResultMaterialSchema = Schema.Struct({
 export const JevBatchResultSchema = Schema.Struct({ ...ResultMaterialSchema.fields, resultHash: Sha256Schema })
 export type JevBatchResult = typeof JevBatchResultSchema.Type
 
-const invalid = (message: string) => Result.fail(new JevEvidenceError({ message }))
+const invalid = (message: string, availabilityReason?: JevAvailabilityReason) =>
+  Result.fail(new JevEvidenceError({ message, ...(availabilityReason === undefined ? {} : { availabilityReason }) }))
 const hash = (value: unknown) =>
   canonicalHashV1Result(value).pipe(
     Result.mapError(() => new JevEvidenceError({ message: 'Jev batch evidence cannot be hashed' })),
@@ -110,9 +114,6 @@ export const makeJevBatchPlan = (input: unknown) =>
     const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
     if (lifetime <= 0 || lifetime > 10_000 || material.candidates.length === 0)
       return yield* invalid('Jev batch requires candidates and a bounded validity window')
-    const firstCandidate = material.candidates[0]
-    if (firstCandidate === undefined || material.benchmarkSymbol !== jevBenchmarkSymbol(firstCandidate.symbol))
-      return yield* invalid('Jev batch benchmark anchor differs from its first candidate')
     let previous = ''
     for (const candidate of material.candidates) {
       if (candidate.symbol <= previous) return yield* invalid('Jev batch candidates must be unique and sorted')
@@ -122,6 +123,10 @@ export const makeJevBatchPlan = (input: unknown) =>
       }
       const request = yield* decodeJevEvaluationRequest(candidate.request)
       if (
+        request.request.schemaVersion !==
+          (material.schemaVersion === JevBatchPlanVersion.Ablation
+            ? 'bayn.entry-ablation-input.v1'
+            : 'bayn.entry-inference-input.v8') ||
         request.symbol !== candidate.symbol ||
         request.cycleId !== material.cycleId ||
         request.authorityGenerationHash !== material.authorityGenerationHash ||
@@ -198,12 +203,22 @@ export const decodeJevBatchResult = (plan: JevBatchPlan, input: unknown) =>
     return result
   })
 
-export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult: JevBatchResult, now: number) =>
+export const usableEntryBatchInferences = (
+  sourcePlan: JevBatchPlan,
+  sourceResult: JevBatchResult,
+  now: number,
+  expectedVersion: JevBatchPlanVersion,
+) =>
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(sourcePlan)
+    if (plan.schemaVersion !== expectedVersion)
+      return yield* invalid('Entry batch belongs to a different selection policy', JevAvailabilityReason.PolicyMismatch)
     const result = yield* decodeJevBatchResult(plan, sourceResult)
     if (!Number.isSafeInteger(now) || now < Date.parse(result.completedAt) || now >= Date.parse(plan.expiresAt))
-      return yield* invalid('Jev batch decision is outside the complete batch validity window')
+      return yield* invalid(
+        'Jev batch decision is outside the complete batch validity window',
+        JevAvailabilityReason.OutsideValidityWindow,
+      )
     const inferences = []
     for (const [index, candidate] of result.candidates.entries()) {
       const planned = plan.candidates[index]
@@ -214,8 +229,18 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
         candidate.resolution.status !== JevResolutionStatus.Recorded ||
         candidate.receipt === null
       )
-        return yield* invalid('Every requested Jev candidate must have a recorded result before selection')
-      const inference = yield* usableJevInference(planned.request, candidate.receipt, now)
+        return yield* invalid(
+          'Every requested Jev candidate must have a recorded result before selection',
+          JevAvailabilityReason.IncompleteBatch,
+        )
+      const inference = yield* entryInferenceAvailableAt(
+        planned.request,
+        candidate.receipt,
+        now,
+        expectedVersion === JevBatchPlanVersion.Ablation
+          ? 'bayn.entry-ablation-input.v1'
+          : 'bayn.entry-inference-input.v8',
+      )
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }
     if (
@@ -226,23 +251,35 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
           (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),
       )
     )
-      return yield* invalid('No Jev candidate has usable inference evidence')
+      return yield* invalid('No Jev candidate has usable inference evidence', JevAvailabilityReason.NoUsableCandidates)
     return inferences
   })
 
 export const jevBatchQuestionSetHash = (
-  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: JevRequest } }[],
+  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: EntryInferenceInput } }[],
 ) =>
-  hash(
-    candidates.flatMap((candidate) =>
-      candidate.request === undefined
-        ? []
-        : [
-            {
-              symbol: candidate.symbol,
-              model: candidate.request.request.model,
-              questions: candidate.request.request.questions,
-            },
-          ],
-    ),
-  )
+  Result.gen(function* () {
+    const specifications = []
+    for (const candidate of candidates) {
+      if (candidate.request === undefined) continue
+      const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
+      const visual = yield* makeInitialChartStageRequest({
+        chart,
+        protocol: candidate.request.request.protocol,
+        funding: candidate.request.request.funding,
+      })
+      specifications.push({
+        symbol: candidate.symbol,
+        visual: { model: visual.request.model, questions: visual.request.questions },
+        staged: {
+          policy: stagedChartQuestionPolicy,
+          inputHash: yield* canonicalHashV1Result(candidate.request.request),
+        },
+        jev:
+          candidate.request.request.schemaVersion === 'bayn.entry-ablation-input.v1'
+            ? { status: 'OMITTED_BY_POLICY', selectionPolicy: candidate.request.request.selectionPolicy }
+            : entryJudgmentPolicy,
+      })
+    }
+    return yield* hash(specifications)
+  })

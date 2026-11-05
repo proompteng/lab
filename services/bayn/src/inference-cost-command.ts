@@ -5,7 +5,7 @@ import { Cause, DateTime, Effect, FileSystem, Logger, Redacted, Result, Schema, 
 import { PostgresClientLive } from './db/postgres-client'
 import { researchLedgerReaderConfig, researchReaderConfig } from './db/research-reader-config'
 import { canonicalJsonV1Result } from './hash'
-import { InferenceCostError, makeInferenceCostReport } from './inference-costs'
+import { InferenceCostError, decodeInferenceCostEvidence, makeInferenceCostReport } from './inference-costs'
 import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeOperatingCostReport } from './operating-costs'
 import { readOperatingCostPacket } from './operating-cost-files'
@@ -138,7 +138,11 @@ export const readInferenceExpenseSession = (sessionDate: string) =>
 const readPricedReport = (args: Exclude<InferenceCostCommand, { readonly _tag: 'Help' | 'LedgerSession' }>) =>
   Effect.gen(function* () {
     const rateCard = yield* readJson(args.rateCardPath)
-    const evidence = yield* args._tag === 'Evidence' ? readJson(args.evidencePath) : readSession(args.sessionDate)
+    const evidence = yield* args._tag === 'Evidence'
+      ? readJson(args.evidencePath).pipe(
+          Effect.flatMap((input) => Effect.fromResult(decodeInferenceCostEvidence(input))),
+        )
+      : readSession(args.sessionDate)
     const report = yield* Effect.fromResult(makeInferenceCostReport(evidence, rateCard))
     const packet = args.expensesPath === undefined ? undefined : yield* readOperatingCostPacket(args.expensesPath)
     const economic =

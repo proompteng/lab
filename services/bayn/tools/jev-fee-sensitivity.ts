@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../src/broker/crypto-fees'
 import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../src/hash'
 import { PositiveMicrosSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../src/schemas'
@@ -102,6 +103,7 @@ const Economics = Schema.Struct({
   holdingExitBreakEvenBidUsd: Schema.Finite,
 })
 export const hypotheticalCryptoFeeSensitivity = (input: {
+  feeAt: string
   symbol: string
   protocol: JevProtocol
   economics: unknown
@@ -118,11 +120,13 @@ export const hypotheticalCryptoFeeSensitivity = (input: {
     const debit = receivedCryptoFee(
       { symbol: input.symbol, side: 'buy', quantityAtoms: quantity, notionalMicros: acquisition },
       multiplier,
+      cryptoMaximumTakerFeeBps,
     )
     const received = quantity - debit.quantityAtoms
     if (received <= 0n) throw new Error('Fee sensitivity has no received inventory')
     const bid = Result.getOrThrow(
       jevBreakEvenExitBid({
+        feeAt: input.feeAt,
         protocol: input.protocol,
         symbol: input.symbol,
         quantityAtoms: received,

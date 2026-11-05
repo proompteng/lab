@@ -3,6 +3,7 @@ import { Effect, Schema } from 'effect'
 import { postgresWallClock, type DatabaseClock } from '../../db/clock'
 
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
+import { isChartEntryTarget } from '../../strategy/runtime-decision'
 import {
   CycleDecisionDocumentSchema,
   type CycleDecisionDocument,
@@ -446,13 +447,27 @@ export const makeCycleQueries = (
             AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
         : sql`true`
     const jev =
-      document.mode === legacyExecutionAuthorityToken &&
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+      document.mode === legacyExecutionAuthorityToken && isChartEntryTarget(document.strategyDecision)
         ? document.strategyDecision.evidence
         : undefined
+    const momentum =
+      document.mode === legacyExecutionAuthorityToken &&
+      document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+        ? document.strategyDecision.evidence.observation
+        : undefined
+    const momentumEvidence =
+      momentum === undefined
+        ? sql`true`
+        : sql`EXISTS (
+      SELECT 1 FROM intraday_candidate_observations AS observation
+      WHERE observation.cycle_id = ${document.bindings.cycleId}
+        AND observation.payload = ${sql.json(momentum)}
+        AND observation.observed_at = ${momentum.observedAt}::timestamptz
+        AND observation.payload #>> '{portfolio,brokerState,account,accountId}' = ${document.bindings.accountId}
+    )`
     const jevEvidence =
       jev === undefined
-        ? sql`true`
+        ? momentumEvidence
         : sql`EXISTS (
       SELECT 1 FROM jev_batch_plans AS plan
       JOIN jev_batch_results AS result USING (batch_id)

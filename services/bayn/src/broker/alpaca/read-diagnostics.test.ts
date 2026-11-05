@@ -511,6 +511,7 @@ describe('bounded observational broker diagnostics', () => {
         const feeRead = yield* read.feeActivities()
         expect(original.value).toEqual({
           cryptoStatus: null,
+          cryptoFeeTier: null,
           cashReportingQuantumMicros: '10000' as const,
           nonMarginableBuyingPowerMicros: null,
 

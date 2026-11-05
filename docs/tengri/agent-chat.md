@@ -27,13 +27,14 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
    explicit restart invalidates that attempt.
 3. Nanoagent persists the resulting Codex login under the PVC-backed user home. Tengri does not inject or share an
    `OPENAI_API_KEY`.
-4. The first message creates a thread. The browser keeps the **active** thread id in `tengri-thread:${agentId}` and a
-   client-side conversation registry in `tengri-conversations:${agentId}` (`{ id, title, updatedAt }[]`, title from the
-   first user message). Later messages resume the active thread. The left sidebar lists registry entries (newest first);
-   choosing one sets the active thread and resumes it. **New conversation** clears the active thread and transcript UI
-   without removing other registry entries or guest-side thread state. There is no `ListCodexThreads` gRPC yet.
-5. A message submits one identified durable run. Only one mutating run is admitted per workspace. While its exact turn
-   is active, subsequent input steers it. Stop records durable cancellation even before a native turn exists and waits
+4. The first message creates a thread. The browser keeps the selected thread ID in `tengri-thread:${agentId}`;
+   the sidebar reads the native, paginated `thread/list` index, ordered by update time. Titles come from the native
+   name or first-message preview. **New chat** starts an empty local draft. A session's action menu offers **Archive**;
+   **Archived chats** lists saved sessions with **Restore**. Both operations change native retained state, so another
+   browser sees the same archive state. Archiving the selected session preserves its unsent draft. Active responses
+   must finish before archiving; other session navigation remains available. The former browser-only registry is removed.
+5. A message submits one identified durable run. Each conversation admits one active run; different conversations
+   run concurrently in the same workspace. While its exact turn is active, subsequent input steers it. Stop records durable cancellation even before a native turn exists and waits
    for that exact turn to report a terminal outcome.
 6. Typed app-server events update assistant text, reasoning summaries, plans, tools, file changes, approvals, usage,
    warnings, and errors in place.
@@ -72,22 +73,25 @@ resident guest RAM. A fenced cold replacement resets the root from the image. Ho
 
 The public browser surface uses strict action schemas rather than exposing arbitrary app-server calls:
 
-| Browser action       | Internal gRPC          | Guest app-server operation            |
-| -------------------- | ---------------------- | ------------------------------------- |
-| `codex-account`      | `GetCodexAccount`      | `account/read`                        |
-| `codex-login-status` | `GetCodexLogin`        | Nanoagent active-login snapshot       |
-| `codex-login`        | `StartCodexLogin`      | `account/login/start`                 |
-| `codex-models`       | `ListCodexModels`      | `model/list`                          |
-| `create-thread`      | `CreateCodexThread`    | `thread/start`                        |
-| `resume-thread`      | `ResumeCodexThread`    | `thread/resume`                       |
-| `active-codex-run`   | `GetActiveCodexRun`    | Restate workspace claim and run state |
-| `codex-run`          | `GetCodexRun`          | Restate run state                     |
-| `send-turn`          | `SendCodexInput`       | durable admission, then `turn/start`  |
-| `steer-turn`         | `SteerCodexInput`      | `turn/steer`                          |
-| `interrupt-turn`     | `InterruptCodexTurn`   | `turn/interrupt`                      |
-| `resolve-approval`   | `ResolveCodexApproval` | pending action approval response      |
-| `answer-questions`   | `ResolveCodexApproval` | typed user-input/elicitation response |
-| event stream         | `WatchCodexEvents`     | replayable app-server notifications   |
+| Browser action        | Internal gRPC            | Guest operation                        |
+| --------------------- | ------------------------ | -------------------------------------- |
+| `codex-account`       | `GetCodexAccount`        | `account/read`                         |
+| `codex-login-status`  | `GetCodexLogin`          | Nanoagent active-login snapshot        |
+| `codex-login`         | `StartCodexLogin`        | `account/login/start`                  |
+| `codex-models`        | `ListCodexModels`        | `model/list`                           |
+| `stat-file`           | `StatFile`               | path metadata, without sibling listing |
+| `list-threads`        | `ListCodexThreads`       | `thread/list`                          |
+| `set-thread-archived` | `SetCodexThreadArchived` | `thread/archive`, `thread/unarchive`   |
+| `create-thread`       | `CreateCodexThread`      | `thread/start`                         |
+| `resume-thread`       | `ResumeCodexThread`      | `thread/resume`                        |
+| `active-codex-runs`   | `GetActiveCodexRuns`     | Restate workspace claim and run state  |
+| `codex-run`           | `GetCodexRun`            | Restate run state                      |
+| `send-turn`           | `SendCodexInput`         | durable admission, then `turn/start`   |
+| `steer-turn`          | `SteerCodexInput`        | `turn/steer`                           |
+| `interrupt-turn`      | `InterruptCodexTurn`     | `turn/interrupt`                       |
+| `resolve-approval`    | `ResolveCodexApproval`   | pending action approval response       |
+| `answer-questions`    | `ResolveCodexApproval`   | typed user-input/elicitation response  |
+| event stream          | `WatchCodexEvents`       | replayable app-server notifications    |
 
 Caller-supplied IDs and prompts are bounded and validated at the BFF and control-plane boundaries. Accepted inputs
 and controls retain their UUID across retries. Restate owns their orchestration; the guest records native intent before
@@ -95,18 +99,47 @@ IPC and returns the committed result for an identical retry. The worker waits fo
 wakes an explicitly sleeping workspace. Image inputs are staged by content hash before admission and revalidated by the
 worker before native dispatch. A retry recovers an existing accepted run before contacting the guest.
 
+## Concurrent conversation ownership
+
+The workspace-wide exclusion came from the initial durable-run implementation in
+[PR #15241](https://github.com/proompteng/lab/pull/15241). Its Restate object stored one `active` claim and one `stop`
+value per workspace, and the sleep annotation held one run ID. The browser mirrored that restriction by disabling
+Send in every other conversation. Removing the browser notice alone would leave server admission blocked.
+
+The underlying execution supports multiple conversations. The [Codex SDK contract](https://github.com/openai/codex/blob/main/sdk/python/docs/api-reference.md)
+allows concurrent active turns, and Nanoagent already tracks active turns by thread in
+[`codex_activity.go`](../../services/nanoagent/codex_activity.go). Restate serializes short state mutations per object
+key, while independent run workflows can execute concurrently; see the
+[Rust SDK object contract](https://docs.rs/restate-sdk/0.12.1/restate_sdk/attr.object.html).
+
+The workspace object now maps each conversation to its claim and submitting principal. Active-run recovery returns only the caller's runs, while other principals' claims still prevent duplicate work in their conversations. Stop is stored under its exact run ID, and the sleep
+fence holds all active run IDs under the existing resource-version CAS. Independent conversations therefore share
+the workspace without sharing execution or cancellation ownership. They still share files under `/workspace`;
+concurrent edits to the same file have the same conflict risk as parallel terminals.
+
+Guest API 10 scopes Nanoagent's pending-operation fence by the SHA-256 hash of the thread ID. An uncertain start in
+one conversation cannot prevent another conversation from journaling and dispatching its own start. Reconciliation
+and duplicate suppression retain the exact operation UUID. The controller, guest and BFF reject earlier API versions.
+The existing publication guard holds Kargo aliases until retained homes and prepared slots are qualified and enrolled
+for protocol 10; draining old runs and pending-operation fences precedes the retained-home replacement.
+
 ## Event and recovery contract
 
-- On reload, the desktop queries the workspace's active Restate run and recovers its exact thread, turn and pending
+- On reload, the desktop queries the workspace's active Restate runs and recovers the selected thread, turn and pending
   approvals, including when browser storage is empty. Transcript events are display progress; the durable run owns
-  admission and terminal state. A later conversation cannot start until the workspace claim is released.
+  admission and terminal state. Other conversations can start while this conversation is running or awaiting approval.
+- A matching native `turn/completed` event ends response activity immediately. Terminal turns in recovered history
+  have the same effect. An older durable status poll cannot restore their Thinking indicator, Working label, or Stop
+  action. Completion of another turn cannot clear the current response. Restate still owns finalization and the
+  conversation admission fence; cancellation remains **Stopping** until its cleanup receipt is confirmed.
 - Identified controls retain the accepting process generation, thread and turn. An approval journals its exact native
   scope before delivery. An uncertain control is not automatically repeated with a new identity.
 - Lost native acceptance is reconciled by the persisted Codex client message ID without resubmitting. An outcome that
-  cannot be established remains `needs_reconciliation` and blocks new workspace work. A workflow cannot make opaque
+  cannot be established remains `needs_reconciliation` and blocks another run in that conversation. A workflow cannot make opaque
   shell or browser effects transactional.
-- The active run and automatic idle sleep compete through one UID/resourceVersion CAS. The admitted run keeps its VM
-  awake. Explicit sleep, removal and revocation retain authority. Snapshot sleep preserves the process, so Stop stays
+- Active runs and automatic idle sleep compete through one UID/resourceVersion CAS. The sleep fence holds the set of
+  admitted run IDs; completing one removes only its own ID. The VM stays awake while any run remains.
+  Explicit sleep, removal and revocation retain authority. Snapshot sleep preserves the process, so Stop stays
   pending until the resumed exact turn confirms interruption; completed Ofz removal can close an abandoned run.
 - Event sequence numbers are monotonic per Nanoagent process. The browser reconnects with its last accepted sequence.
 - Nanoagent retains a bounded replay window. Each thread snapshot carries the event sequence captured atomically when
@@ -136,6 +169,16 @@ worker before native dispatch. A retry recovers an existing accepted run before 
   integration error. Form support includes strings, booleans, numbers, integers, primitive enums and length/range bounds.
   Question responses require the updated controller and guest together; an older peer rejects them rather than
   treating them as action approvals.
+- Asynchronous `request_user_input_async` questions arrive in `agentMessage.questions`. Their choices and free-text
+  controls render from both live items and restored history, including messages without text. The first suggested
+  choice is selected initially; nothing is submitted automatically. Answers use Codex's identified desktop question
+  reply envelope through the existing durable message/steering path, preserving composer drafts and attachments.
+  Failed delivery keeps the answers editable and reuses the pending message identity for an unchanged retry.
+  Canonical reply messages retire the matching question controls after reload or another client's answer. The
+  transcript displays readable questions and answers rather than the wire envelope. Dismiss for now hides controls
+  only for the current open workspace and sends no answer. Message text remains visible alongside question controls.
+  Unanswered async items survive the ordinary event-buffer limit; answered or dismissed items return to normal
+  eviction. Free-text input remains editable even when it contains or exactly matches a suggested choice.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the

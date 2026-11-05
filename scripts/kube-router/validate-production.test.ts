@@ -187,6 +187,22 @@ test('rejects safety coverage that omits an enforced namespace', async () => {
   )
 })
 
+test('rejects a Relay policy change without its exact preflight fingerprint', async () => {
+  const files = copy(await loadProductionFiles())
+  files.relayPolicies = files.relayPolicies.replace('port: 9443', 'port: 9444')
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining('missing production invariant "expected_relay_policy_hash='),
+  )
+})
+
+test('rejects safety coverage that omits Relay', async () => {
+  const files = copy(await loadProductionFiles())
+  files.coverageProbe = files.coverageProbe.replace("      printf '%s\\n' relay", '      true')
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining(`${productionPaths.coverageProbe}: missing production invariant`),
+  )
+})
+
 test('rejects impact routing that skips Tengri policy changes', async () => {
   const files = copy(await loadProductionFiles())
   files.impactMap = files.impactMap.replace('      - argocd/applications/tengri/network-policies.yaml\n', '')

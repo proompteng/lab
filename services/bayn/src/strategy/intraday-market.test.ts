@@ -11,14 +11,14 @@ describe('shared intraday market contract', () => {
     const momentum = Result.getOrThrow(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
 
     expect(Result.getOrThrow(canonicalHashV1Result(jev))).toBe(
-      '5e4f552bb0420b98017e6a91b3df933dbb70408a51c6e13f804e1220de5700d6',
+      '4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6',
     )
     expect(Result.getOrThrow(canonicalHashV1Result(momentum))).toBe(
-      '0dccbe2abe3a380a987bcb2bbf6af299ff317d94df0198a35de3f89cbd28a775',
+      '4e1dd700b955b5cc7327aabc7e03244c06ac6d64bd4ecf95a57184ab32ec9df2',
     )
-    expect(jev.lookbackMinutes).toBe(30)
+    expect(jev.lookbackMinutes).toEqual({ equity: 30, crypto: 120 })
     expect(jev.decisionDelaySeconds).toBe(2)
-    expect(momentum.lookbackMinutes).toBe(jev.lookbackMinutes)
+    expect(momentum.lookbackMinutes).toBe(jev.lookbackMinutes.equity)
     expect(momentum.decisionDelaySeconds).toBe(jev.decisionDelaySeconds)
   })
 

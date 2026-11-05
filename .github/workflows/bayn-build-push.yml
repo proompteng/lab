@@ -10,10 +10,13 @@ on:
       - main
     paths:
       - 'services/bayn/**'
+      # PR validation covers tests; test-only commits must not reactivate the production controller.
+      - '!services/bayn/**/*.test.ts'
       - 'packages/scripts/src/bayn/**'
       - 'nix/images/bayn.nix'
       - 'nix/images/opencode-cli.nix'
       - 'nix/images/bayn-runtime-root.nix'
+      - 'nix/images/bayn-frozen-control.nix'
       - 'nix/images/bayn-deps-hash.nix'
       - 'nix/images/normalize-bayn-bun-deps.sh'
       - 'nix/images/normalize-bayn-bun-deps.test.sh'
@@ -22,14 +25,7 @@ on:
       - 'nix/images/bun-workspace-deps-source.test.sh'
       - 'nix/images/prune-bun-dependency-metadata.sh'
       - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
       - 'nix/verify-bayn-image-command.sh'
-      - 'nix/verify-bayn-image-command.test.sh'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
@@ -38,12 +34,7 @@ on:
       - 'bunfig.toml'
       - 'patches/**'
       - 'tsconfig.base.json'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/bayn-*.yml'
-      - '.github/workflows/common-monorepo.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
       - 'argocd/applications/bayn/**'
-      - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/product.yaml'
 
 concurrency:
@@ -51,7 +42,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    uses: ./.github/workflows/bayn-ci.yml
+    secrets: inherit
+
   image:
+    needs: validation
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn

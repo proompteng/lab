@@ -274,7 +274,7 @@ internal fun decodeAlpacaTradesResponse(
   json: Json,
 ): AlpacaTradesResponse = json.decodeFromString(payload)
 
-private class MarketDataFeedRuntimeState(
+internal class MarketDataFeedRuntimeState(
   val config: FeedRuntimeConfig,
   appConfig: ForwarderConfig,
   nowMs: () -> Long,
@@ -305,7 +305,8 @@ private class MarketDataFeedRuntimeState(
   fun readiness(): MarketDataFeedReadiness {
     val channels = channelFreshness.snapshot()
     val websocket = websocketStatus.get()
-    val ready = websocketReady.get() && kafkaReady.get() && channels.all { it.ready }
+    val ready =
+      websocket.authOk && websocket.subscriptionOk && websocketReady.get() && kafkaReady.get() && channels.all { it.ready }
     return MarketDataFeedReadiness(
       feed = config.feed,
       core = config.core,
@@ -698,7 +699,7 @@ class ForwarderApp(
           put("secret", config.alpacaSecretKey)
         }
       sendSerialized(auth)
-      markMarketDataWsSessionStarting(feed)
+      recordMarketDataWsDisconnected(feed)
       publishObservationStatus(producer, feed, "connecting")
 
       val subscribedSymbols = mutableSetOf<String>()
@@ -1809,22 +1810,6 @@ class ForwarderApp(
     markReady(value && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
-  private fun markMarketDataWsSessionStarting(feed: MarketDataFeedRuntimeState) {
-    feed.channelFreshness.clearSubscription()
-    feed.websocketStatus.updateAndGet {
-      it.copy(
-        authOk = false,
-        subscriptionOk = false,
-        latestSubscriptionAckAtMs = null,
-        subscribedSymbolCount = 0,
-        subscribedSymbols = emptyList(),
-        subscribedSymbolsByChannel = emptyMap(),
-        missingSubscriptionSymbolsByChannel = emptyMap(),
-        errorClass = null,
-      )
-    }
-  }
-
   private fun recordMarketDataAuthSuccess(feed: MarketDataFeedRuntimeState) {
     feed.websocketStatus.updateAndGet {
       it.copy(authOk = true, latestAuthSuccessAtMs = nowMs(), errorClass = null)
@@ -1835,6 +1820,7 @@ class ForwarderApp(
     feed: MarketDataFeedRuntimeState,
     errorClass: ReadinessErrorClass? = null,
   ) {
+    setFeedWsReady(feed, false)
     feed.channelFreshness.clearSubscription()
     feed.websocketStatus.updateAndGet {
       it.copy(

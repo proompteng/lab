@@ -1,10 +1,14 @@
 # Nanoagent guest API
 
-The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Its connector handlers require the exact server-side setting
-`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
-identity files or changing Codex configuration. Packaging the client does not
-install a connector or change normal conversation startup.
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
+
+The Relay MCP bridge uses the platform proxy's required execute-or-lookup envelope. Each request has its own proof
+over the exact body. After a failed call or an unusable response, including Kubernetes RBAC and missing-resource failures,
+the bridge requests receipt metadata without resending the operation. It returns an MCP error with the known
+outcome or `unknown` if lookup is denied or unavailable; it cannot recover the original result body.
+Successful calls and confirmed recovery responses include operation and receipt IDs in `_meta.relay`.
 
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
@@ -52,10 +56,19 @@ The Chrome display reconnects a dropped VNC transport against the same authentic
 backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
 failures stop immediately; closing the viewer cancels any retry without reporting an application error.
 
+The browser's stdio and authenticated HTTP MCP transports share one `computer` implementation and exclusive agent
+driver. Human takeover blocks screenshots and input and invalidates requests still awaiting browser startup.
+[Private ChatGPT connection](../../docs/tengri/browser.md#private-chatgpt-connection) documents the owner-approved
+connection download, bounded preview grant and local OpenAI tunnel helper. Run its validation with
+`python3 -m unittest discover -s services/nanoagent -p browser_mcp_tunnel_test.py` from the repository root.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves HTTP/2 gRPC and preview
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 10 scopes uncertain-operation fences to each conversation; protocol 9 hard-migrated Relay client installation; protocol 8 added `StatFile`,
+which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
+workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
+images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview
 HTTP over private vsock port 1024. Every RPC checks the slot's unique bootstrap credential. Only the host supervisor
 can reach this transport, after authenticating the exact Tengri SPIFFE identity and current owner/epoch headers.
 The binding includes the Ofz runtime epoch. Guest init requires that canonical epoch on every resume and returns its
@@ -72,8 +85,8 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
-requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 10. This version
+requires conversation-scoped pending-operation fences, confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
 for file operations, file events, and terminal working directories. The BFF
 requires that version in the controller's existing authenticated audience response before signing a request. The signed
 target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
@@ -158,6 +171,9 @@ Unsupported and oversized question schemas still fail explicitly without fabrica
 
 The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
 for verifying the browser computer tool.
+Session discovery and archiving use the pinned native `thread/list`, `thread/archive`, and `thread/unarchive` APIs.
+Archiving retains the session's history. It shares the native operation mutex with turn admission and rejects an
+active turn before calling the app-server. The controller also rejects archiving a session with an unfinished durable run.
 
 ## Firecracker rootfs and persistent tools
 
@@ -249,8 +265,8 @@ The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot slee
 processes. An explicitly fenced cold replacement resets the root from the image. The 32 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
-`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
-real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
+`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Its `--runtime` mode requires an independently provisioned real guest to exercise mounts and network administration;
+the container-based KVM fixture has been removed.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed

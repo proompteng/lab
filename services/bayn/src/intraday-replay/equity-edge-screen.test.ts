@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
@@ -160,7 +161,15 @@ test('fees aggregate once per session, with incremental fill charges summing to 
         notionalMicros: BigInt(trade.shares) * BigInt(trade.exitPriceMicros),
       },
     ])
-    const native = unwrap(calculateSessionFees(fills, intradayExecutionModel, 1_000_000n))
+    const native = unwrap(
+      calculateSessionFees(
+        fills,
+        intradayExecutionModel,
+        1_000_000n,
+        cryptoMaximumTakerFeeBps,
+        '2026-09-04T14:15:00.000Z',
+      ),
+    )
     expect(trades.reduce((sum, trade) => sum + BigInt(trade.feesMicros), 0n)).toBe(native.cashMicros)
   }
 })
@@ -251,6 +260,8 @@ test('low-price entry finds the maximal whole-share quantity including cumulativ
         [{ symbol: 'AAPL', side: 'buy', quantityAtoms: quantity * 1_000_000_000n, notionalMicros: quantity * price }],
         intradayExecutionModel,
         1_000_000n,
+        cryptoMaximumTakerFeeBps,
+        '2026-09-04T14:15:00.000Z',
       ),
     ).cashMicros
   expect(shares).toBeGreaterThan(0n)

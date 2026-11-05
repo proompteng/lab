@@ -186,14 +186,17 @@ export const generationScope = (
   }
 }
 
+// A scalar cut lets PostgreSQL constrain the ordered snapshot index before joining payloads.
 export const openingSnapshotBoundary = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
-) =>
-  authorityGenerationHash === undefined
-    ? sql`first_cycle.submission_open_at`
-    : sql`GREATEST(
+) => sql`(
+  SELECT LEAST(
+    ${
+      authorityGenerationHash === undefined
+        ? sql`first_cycle.submission_open_at`
+        : sql`GREATEST(
         first_cycle.submission_open_at,
         (
           SELECT scope_generation.activated_at
@@ -203,15 +206,21 @@ export const openingSnapshotBoundary = (
             AND scope_generation.account_id = ${accountId}
         )
       )`
+    },
+    latest_reconciliation.reconciled_at
+  )
+  FROM latest_reconciliation CROSS JOIN first_cycle
+)`
 
 export const closingSnapshotBoundary = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
-) =>
-  authorityGenerationHash === undefined
-    ? sql`latest_reconciliation.reconciled_at`
-    : sql`LEAST(
+) => sql`(
+  SELECT ${
+    authorityGenerationHash === undefined
+      ? sql`latest_reconciliation.reconciled_at`
+      : sql`LEAST(
         latest_reconciliation.reconciled_at,
         COALESCE(
           (
@@ -247,6 +256,9 @@ export const closingSnapshotBoundary = (
           latest_reconciliation.reconciled_at
         )
       )`
+  }
+  FROM latest_reconciliation
+)`
 
 export const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined

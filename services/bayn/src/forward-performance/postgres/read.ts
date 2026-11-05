@@ -1,6 +1,8 @@
+import { executionDecisionRows } from '../../db/execution-decision-query'
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
+import { openSnapshotRows } from '../../db/snapshot-rows'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
 import { readStoredFeeAccruals } from '../../db/fee-accruals'
@@ -13,17 +15,18 @@ import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
+  ForwardPerformanceExecutionEvidence,
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from '../model'
 
 import {
   ForwardPerformancePostgresError,
+  CycleDecisionRow,
   ReconciliationRow,
   type ForwardPerformancePostgresEvidence,
   decodeCashYieldSnapshots,
   decodeCount,
-  decodeCycleDecisions,
   decodeCycles,
   decodeDurableExecutions,
   decodeExecutionFills,
@@ -45,7 +48,12 @@ import {
   reconciliationExactness,
 } from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
-import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
+import {
+  executionEvidenceFromRows,
+  indexExecutionEvidence,
+  marketVolumeRequestsFromRows,
+  verifyPerformanceDecisions,
+} from './projection'
 
 export const readForwardPerformanceUnclosedCycleCount = (
   sql: PgClient.PgClient,
@@ -252,12 +260,10 @@ export const readForwardPerformancePostgres = (
           SELECT snapshot.equity_micros::text AS starting_capital_micros
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
-          CROSS JOIN latest_reconciliation
-          CROSS JOIN first_cycle
+            AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
           WHERE snapshot.account_id = ${accountId}
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
             AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-            AND event.observed_at <= latest_reconciliation.reconciled_at
           ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
           LIMIT 1
         `.pipe(Effect.flatMap(decodeStartingCapital))
@@ -286,13 +292,11 @@ export const readForwardPerformancePostgres = (
               reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
-            CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
               AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), baseline_snapshot AS (
@@ -320,8 +324,8 @@ export const readForwardPerformancePostgres = (
               reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
               AND event.observed_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
@@ -464,7 +468,9 @@ export const readForwardPerformancePostgres = (
         const ledgerReceipts = yield* Effect.forEach(ledgerReceiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
-        const cycleDecisionRows = yield* sql<Record<string, unknown>>`
+        const consumeDecisionRows = yield* openSnapshotRows(
+          sql,
+          sql`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
             FROM reconciliations AS reconciliation
@@ -475,34 +481,7 @@ export const readForwardPerformancePostgres = (
           )
           SELECT decision_rows.cycle_id, decision_rows.decision_hash, decision_rows.document, decision_rows.created_at
           FROM (
-            SELECT
-              cycle.cycle_id,
-              decision.decision_hash,
-              decision.document,
-              decision.created_at
-            FROM autonomous_cycles AS cycle
-            JOIN autonomous_cycle_shadow_decisions AS decision
-              ON decision.cycle_id = cycle.cycle_id
-              AND decision.decision_hash = cycle.decision_hash
-            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')
-            UNION ALL
-            SELECT
-              cycle.cycle_id,
-              closure.document #>> '{document,contentHash}' AS decision_hash,
-              closure.document -> 'document' AS document,
-              (closure.document ->> 'createdAt')::timestamptz AS created_at
-            FROM autonomous_cycles AS cycle
-            JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = cycle.cycle_id
-            WHERE closure.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
-            UNION ALL
-            SELECT
-              cycle.cycle_id,
-              replan.document #>> '{document,contentHash}' AS decision_hash,
-              replan.document -> 'document' AS document,
-              (replan.document ->> 'createdAt')::timestamptz AS created_at
-            FROM autonomous_cycles AS cycle
-            JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = cycle.cycle_id
-            WHERE replan.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
+            ${executionDecisionRows(sql)}
           ) AS decision_rows
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
           CROSS JOIN latest_reconciliation
@@ -511,7 +490,8 @@ export const readForwardPerformancePostgres = (
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
           ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
-        `.pipe(Effect.flatMap(decodeCycleDecisions))
+        `,
+        )
         const marketVolumeBindingRows = yield* readForwardPerformanceMarketVolumeBindings(
           sql,
           accountId,
@@ -650,12 +630,10 @@ export const readForwardPerformancePostgres = (
             SELECT event.observed_at
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
-            CROSS JOIN first_cycle
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
               AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           )
@@ -950,13 +928,18 @@ export const readForwardPerformancePostgres = (
             occurredAt: row.occurred_at.toISOString(),
           }),
         )
-        const { verifiedRows, unverifiedDecisionHashes } = verifyPerformanceDecisions(cycleDecisionRows)
-        const executionEvidence = executionEvidenceFromRows(
-          verifiedRows,
-          executionIntentRows,
-          executionOrderRows,
-          executionFillRows,
+        const executionIndex = indexExecutionEvidence(executionIntentRows, executionOrderRows, executionFillRows)
+        const unverified = new Set<string>()
+        const executionEvidence: ForwardPerformanceExecutionEvidence[] = []
+        yield* consumeDecisionRows((input) =>
+          Effect.gen(function* () {
+            const row = yield* Schema.decodeUnknownEffect(CycleDecisionRow, strictParseOptions)(input)
+            const verified = verifyPerformanceDecisions([row])
+            for (const hash of verified.unverifiedDecisionHashes) unverified.add(hash)
+            executionEvidence.push(...executionEvidenceFromRows(verified.verifiedRows, executionIndex))
+          }),
         )
+        const unverifiedDecisionHashes = [...unverified].sort()
         const marketVolumeRequests = marketVolumeRequestsFromRows(
           [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,

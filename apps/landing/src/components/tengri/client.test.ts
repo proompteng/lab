@@ -110,6 +110,13 @@ test('preserves HTTP status and recognized conversation errors without trusting 
     [503, { error: 'Unavailable', code: 'model_catalog_invalid' }, 'Unavailable', undefined],
     [
       412,
+      { error: 'Runtime upgrade required', code: 'runtime_upgrade_required' },
+      'Runtime upgrade required',
+      'runtime_upgrade_required',
+    ],
+    [503, { error: 'Unavailable', code: 'runtime_upgrade_required' }, 'Unavailable', undefined],
+    [
+      412,
       { error: 'Model selection unavailable', code: 'model_selection_unavailable' },
       'Model selection unavailable',
       undefined,
@@ -567,4 +574,31 @@ test('requires a signed-in principal before allocating or sending a lifecycle op
   )
   expect(called).toBe(false)
   expect(storage.length).toBe(0)
+})
+
+test('renews saved connections before a turn without making connector availability a chat precondition', async () => {
+  const paths: string[] = []
+  const action: TengriAction = {
+    action: 'send-turn',
+    agentId: 'microvm-fixture',
+    threadId: 'thread-fixture',
+    operationId: '11111111-1111-4111-8111-111111111111',
+    text: 'Describe this function',
+    images: [],
+  }
+  globalThis.fetch = Object.assign(
+    async (input: string | URL | Request, options?: RequestInit) => {
+      const path = String(input)
+      paths.push(path)
+      if (path === '/api/tengri/connections') {
+        expect(JSON.parse(String(options?.body))).toEqual({ kind: 'reconcile', agentId: action.agentId })
+        return Response.json({ error: 'The connector is unavailable' }, { status: 503 })
+      }
+      expect(JSON.parse(String(options?.body))).toEqual(action)
+      return Response.json({ result: { accepted: true } })
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  expect(await runTengriAction<{ accepted: boolean }>(action)).toEqual({ accepted: true })
+  expect(paths).toEqual(['/api/tengri/connections', '/api/tengri'])
 })

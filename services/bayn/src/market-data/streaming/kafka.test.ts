@@ -9,7 +9,7 @@ import {
 import { describe, expect, test } from 'bun:test'
 import { Clock, Deferred, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
-import { AuthenticationError } from '@platformatic/kafka'
+import { AuthenticationError, ProtocolError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
@@ -32,6 +32,7 @@ import {
   type KafkaMarketConfig,
   type KafkaProjectionStream,
   type KafkaProjectionTransport,
+  type KafkaProjectionClosed,
 } from './kafka'
 import type { StreamingUniverse } from './raw-events'
 
@@ -97,12 +98,13 @@ class FakeTransport implements KafkaProjectionTransport {
   commit = async (records: readonly KafkaConsumedRecord[]) => {
     this.commits = [...this.commits, [...records]]
   }
-  close = async () => {
-    if (this.closed) return
+  close = async (): Promise<KafkaProjectionClosed> => {
+    if (this.closed) return { _tag: 'Closed' }
     this.closed = true
     this.closeCount++
     this.pending?.({ done: true, value: undefined })
     this.pending = undefined
+    return { _tag: 'Closed' }
   }
 }
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
@@ -489,6 +491,97 @@ test('Kafka payload sizes are exact without enabling hashes or raw-value retenti
 })
 
 describe('Kafka bootstrap and scoped consumption', () => {
+  test('live workers skip obsolete separate ticks but wait for equity and mixed crypto history', async () => {
+    const crypto: StreamingUniverse = {
+      universeId: 'crypto',
+      universeSymbolHash: '1'.repeat(64),
+      symbols: ['ETH/USD'],
+      topics: { bars: 'crypto', quotes: 'crypto', trades: 'crypto', features: 'crypto-features' },
+    }
+    const bounds = [
+      ...positions('100'),
+      ...['crypto', 'crypto-features'].map((topic) => ({
+        topic,
+        partition: 0,
+        offset: '100',
+      })),
+    ]
+    const transport = new FakeTransport()
+    const seeks: { topics: readonly string[]; timestamp: bigint }[] = []
+    transport.offsets = async (topics, timestamp) => {
+      if (timestamp >= 0n) seeks.push({ topics, timestamp })
+      return bounds
+        .filter((position) => topics.includes(position.topic))
+        .map((position) => ({ ...position, offset: timestamp === -1n ? position.offset : '0' }))
+    }
+    const consume = transport.consume
+    let requested: readonly KafkaPartitionPosition[] = []
+    transport.consume = async (starts, invalidated) => {
+      requested = starts
+      transport.drained = starts
+      return consume(starts, invalidated)
+    }
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-10-29T01:00:03.000Z'))
+        const projection = yield* makeKafkaMarketProjection(config, [universe, crypto], () => transport)
+        yield* TestClock.adjust('1 second')
+        expect(seeks).toEqual([
+          { topics: Object.values(universe.topics), timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
+          { topics: ['crypto', 'crypto-features'], timestamp: BigInt(Date.parse('2026-10-28T22:59:55.000Z')) },
+        ])
+        expect(requested.filter((position) => ['quotes', 'trades'].includes(position.topic))).toEqual(
+          bounds.filter((position) => ['quotes', 'trades'].includes(position.topic)),
+        )
+        expect(
+          requested
+            .filter((position) => !['quotes', 'trades'].includes(position.topic))
+            .every((position) => position.offset === '0'),
+        ).toBe(true)
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        transport.drained = bounds.map((position) => ({
+          ...position,
+          offset: position.topic === 'crypto' ? '99' : position.offset,
+        }))
+        yield* TestClock.adjust('1 second')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        transport.drained = bounds
+        yield* TestClock.adjust('1 second')
+        const cut = yield* projection.read
+        expect(cut.projection.quotes.size).toBe(0)
+        expect(kafkaBootstrapComplete(cut.bootstrap, cut.positions)).toBe(true)
+        yield* TestClock.adjust('6 seconds')
+        expect((yield* projection.read).projection.epoch).toBe(cut.projection.epoch)
+        expect(transport.closeCount).toBe(0)
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
+  test('explicit historical diagnostics retain separate quote and trade history', async () => {
+    const transport = new FakeTransport()
+    transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '100' : '0')
+    const consume = transport.consume
+    let requested: readonly KafkaPartitionPosition[] = []
+    transport.consume = async (starts, invalidated) => {
+      requested = starts
+      transport.drained = starts
+      return consume(starts, invalidated)
+    }
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport, 0)
+        yield* TestClock.adjust('1 second')
+        expect(requested).toEqual(positions('0').toSorted((a, b) => a.topic.localeCompare(b.topic)))
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        transport.drained = positions('100')
+        yield* TestClock.adjust('1 second')
+        expect(kafkaBootstrapComplete((yield* projection.read).bootstrap, positions('100'))).toBe(true)
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
   test('rebuilds retained RTH history without a new lookback wait or backdated availability', async () => {
     const fixture = streamingFixture()
     const bootAtMs = Date.parse(fixture.query.observedAt) + 1000
@@ -516,11 +609,15 @@ describe('Kafka bootstrap and scoped consumption', () => {
       (a, b) =>
         a.topic.localeCompare(b.topic) || a.partition - b.partition || Number(BigInt(a.offset) - BigInt(b.offset)),
     )
-    const delayedTrades = records.filter((record) => record.topic === retainedUniverse.topics.trades)
-    if (delayedTrades.length === 0) throw new Error('retained trade fixture is empty')
+    const delayedBars = records.filter((record) => record.topic === retainedUniverse.topics.bars)
+    if (delayedBars.length === 0) throw new Error('retained bar fixture is empty')
+    const tickTopics = [retainedUniverse.topics.quotes, retainedUniverse.topics.trades]
+    const ticks = records.filter((record) => tickTopics.includes(record.topic))
     const transport = new FakeTransport()
     transport.drained = undefined
-    transport.queue = records.filter((record) => record.topic !== retainedUniverse.topics.trades)
+    transport.queue = records.filter(
+      (record) => record.topic !== retainedUniverse.topics.bars && !tickTopics.includes(record.topic),
+    )
     transport.offsets = async (_topics, timestamp) => {
       transport.lookups.push(timestamp)
       return fixture.cut.positions.map((position) => ({
@@ -534,11 +631,44 @@ describe('Kafka bootstrap and scoped consumption', () => {
         const projection = yield* makeKafkaMarketProjection(config, [retainedUniverse], () => transport)
         yield* TestClock.adjust('1 second')
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
-        for (const record of delayedTrades) transport.send(record)
+        for (const record of delayedBars) transport.send(record)
+        yield* TestClock.adjust('1 second')
+        const awaitingQuotes = yield* projection.read
+        expect(awaitingQuotes.projection.quotes.size).toBe(0)
+        expect(
+          Result.isFailure(
+            constructStreamingSnapshot(awaitingQuotes, {
+              ...fixture.query,
+              observedAt: new Date(yield* Clock.currentTimeMillis).toISOString(),
+            }),
+          ),
+        ).toBe(true)
+        const nextOffsets = new Map(
+          fixture.cut.positions.map((position) => [`${position.topic}:${position.partition}`, BigInt(position.offset)]),
+        )
+        const tickAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        for (const record of ticks) {
+          const key = `${record.topic}:${record.partition}`
+          const offset = nextOffsets.get(key)
+          if (offset === undefined) throw new Error('tick partition missing')
+          nextOffsets.set(key, offset + 1n)
+          const value = JSON.parse(record.value)
+          transport.send({
+            ...record,
+            offset: String(offset),
+            timestampMs: Date.parse(tickAt),
+            value: JSON.stringify({
+              ...value,
+              eventTs: tickAt,
+              ingestTs: tickAt,
+              payload: { ...value.payload, t: tickAt },
+            }),
+          })
+        }
         yield* TestClock.adjust('1 second')
         const cut = yield* projection.read
         const observedAtMs = yield* Clock.currentTimeMillis
-        expect(observedAtMs - bootAtMs).toBe(2000)
+        expect(observedAtMs - bootAtMs).toBe(3000)
         expect(kafkaBootstrapComplete(cut.bootstrap, cut.positions)).toBe(true)
         expect(transport.lookups).toContain(BigInt(Date.parse(fixture.query.rangeStartAt) - 5000))
         const snapshot = Result.getOrThrow(
@@ -1172,6 +1302,38 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
+  test('rebuilds after local shutdown despite an unavailable group coordinator without the fatal-close cooldown', async () => {
+    const first = new FakeTransport()
+    const second = new FakeTransport()
+    const close = first.close
+    first.close = async () => {
+      await close()
+      return { _tag: 'ClosedAfterCoordinatorFailure', cause: new ProtocolError('COORDINATOR_NOT_AVAILABLE') }
+    }
+    let attempts = 0
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
+          attempts++
+          if (attempts === 1) return first
+          expect(first.closed).toBe(true)
+          return second
+        })
+        yield* TestClock.adjust('2 seconds')
+        const initial = yield* projection.read
+        first.invalidated?.(new Error('fetch session failed'))
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        yield* TestClock.adjust('3 seconds')
+        expect(attempts).toBe(2)
+        const recovered = yield* projection.read
+        expect(recovered.bootstrap.epoch).not.toBe(initial.bootstrap.epoch)
+        expect(recovered.projection.sequence).toBe(0)
+        expect(first.closeCount).toBe(1)
+      }),
+    )
+    expect(second.closeCount).toBe(1)
+  })
+
   test('closes a failed consumer before replacing it even when cleanup reports an error', async () => {
     const first = new FakeTransport()
     const second = new FakeTransport()
@@ -1232,8 +1394,9 @@ describe('Kafka bootstrap and scoped consumption', () => {
             })
           const close = transport.close
           transport.close = async () => {
-            await close()
+            const closed = await close()
             cancel?.(positions('0'))
+            return closed
           }
           transports.push(transport)
           return transport

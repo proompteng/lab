@@ -1,9 +1,23 @@
 # Tengri control plane
 
-The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
-`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
-workspace and conversation requests do not call Relay.
+The controller exports process-local metrics without querying Kubernetes or PostgreSQL during a scrape. Successful
+readiness checks refresh guest and ticket inventory; their last-success timestamp and age identify stale gauges.
+Readiness still checks current Ofz authority, SQL access, and Kubernetes within the existing two-second deadline,
+with separate dependency error/timeout counters. Alloy discovers each controller Pod rather than combining independent
+counters behind a load-balanced Service.
+
+Boot/resume histograms measure successful CR creation or persisted resume intent through guest readiness, including
+reconciliation retries. They exclude BFF admission and are not a browser end-to-end SLO. Recovering a failed readiness
+probe is not another boot. Lifecycle identity is recorded with the running-intent CAS, so a failed resume cannot become
+a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
+The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
+or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
+Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
+
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
@@ -128,8 +142,9 @@ Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared 
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
-The host runner reserves 9 GiB, including 1 GiB beyond guest RAM for preparation and VMM overhead, matching the native
-acceptance fixture. Artifact staging has a separate 3 GiB limit so copying the boot disk does not exhaust a 128 MiB
+The host runner reserves 12 GiB, including 4 GiB beyond guest RAM for VMM overhead and charged disk/snapshot cache.
+An awake production guest exhausted the former 9 GiB limit with 2.1 GiB of file cache. Artifact staging has a separate
+3 GiB limit so copying the boot disk does not exhaust a 128 MiB
 container through charged file pages. The namespace quota covers all six runners, supervisors, and the controller.
 
 Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
@@ -218,9 +233,7 @@ The short-lived TAP init container receives NET_ADMIN inside the Pod network nam
 10.250.0.0/30 addressing, NAT, and protected-destination filtering. It asserts CNI forwarding is already enabled and
 never changes node sysctls, routes, bridges, scheduling, or machine configuration.
 The TAP uses the smaller of the Pod interface MTU and 1500 bytes. TCP SYN and SYN-ACK packets cap their advertised
-segment size in both directions without raising an existing smaller value. The isolated KVM fixture also inherits
-its execution network MTU inside its private Docker interface, so a 1400-byte CNI path is exercised correctly.
-The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
+segment size in both directions without raising an existing smaller value. The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
 
 The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
 for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient
@@ -236,10 +249,11 @@ legacy guest SPIRE attestation, the `nanoagent` ServiceAccount, token/registrati
 publication, and the old guest network path after the final old guest and its storage writer are fenced. Slots use only
 the host supervisor registration and private vsock credential.
 
-The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-is exactly `true`. Keep it false until the authorized cutover has removed the old workspaces and homes and the new
-authority dependencies are ready for the immutable image pair. The owner chose fresh workspaces for this cutover;
-no retained-data import or migration rehearsal is required. Kargo's existing automatic promotion policy remains in place.
+The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases unless the repository variable
+`TENGRI_PREPARED_SLOT_GUEST_API_VERSION` matches the qualified source's `GUEST_API_PROTOCOL_VERSION`. Keep it unset
+while old writers are fenced and retained homes are enrolled in the approved guest image. A prior protocol's
+enrollment cannot release a new protocol. Follow the [retained-home replacement procedure](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+for incompatible guest upgrades. Kargo's existing automatic promotion policy remains in place.
 Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
 cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
@@ -278,6 +292,11 @@ id-less requests instead of generating a compatibility identity or negotiating w
 
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
+
+Claimed slots retain their guest image when the controller and supervisor roll. An incompatible guest API returns
+`FAILED_PRECONDITION` with `x-tengri-error-code: runtime_upgrade_required`; the BFF and browser preserve this as HTTP
+412 and `runtime_upgrade_required`. Complete the [retained-home runtime replacement](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+before releasing an incompatible image cohort. Retrying or resuming the old snapshot does not upgrade its guest image.
 
 Workspace file reads return bounded protobuf bytes and a required strong SHA-256 revision. Tengri verifies that the
 revision matches the content and rejects missing, malformed, or mismatched revisions. Writes require a lowercase
@@ -325,7 +344,7 @@ as ready to accept agent operations.
 ## Workspace authorization
 
 Ofz owns authorization for the controller and BFF. Tengri calls the canonical
-[AuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
+[TengriAuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
 receives a SpiceDB administrative key, installs schema, or creates owner tuples directly. The canonical
 [operation catalog](../ofz/operations.json) maps each runtime RPC to an explicit action. Local Kubernetes labels,
 names and owner fields locate resources; Ofz checks the actual MicroVM UID and current runtime epoch.
@@ -408,24 +427,28 @@ same chain. Observer operations do not renew idle activity.
 Run `bash services/tengri/test-runtime.sh` for real TLS PostgreSQL 18.6 and SpiceDB 1.56.2 fixtures. It exercises
 replica-wide redemption/replay, preview binding and rotation, capacity/expiry, leadership CAS and lease expiry,
 supervisor SQL restrictions and protected cleanup. `bash services/ofz/test-control.sh` additionally proves typed
-reservation/runtime reads and the two-stage removal contract. For native KVM acceptance, set the documented image,
-output and sample variables and run `bash services/ofz/test-control.sh kvm`; this provisions the real shared SQL
-fixture and invokes `test-kvm.sh`. Unit fixtures do not establish production authority or fleet acceptance.
+reservation/runtime reads and the two-stage removal contract. The container-based KVM acceptance fixture has been
+removed. Source checks do not establish production authority or fleet acceptance.
 
-These source contracts are held behind `TENGRI_PREPARED_SLOT_CUTOVER_READY=false` until the coordinated release.
+These source contracts remain held until `TENGRI_PREPARED_SLOT_GUEST_API_VERSION` records the enrolled source protocol.
 See [implementation status](../../docs/tengri/ofz-implementation-status.md) for the remaining production gates.
 
 ## Lifecycle settings and delivery
 
 System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The default is 60 minutes, values through 1440
 are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
-starts a new idle interval; authenticated activity extends it. Automatic sleep also requires the guest to confirm that
+starts a new idle interval; authenticated activity extends it. Power settings refresh the MicroVM after the Ofz
+decision, verify the same UID, owner and runtime epoch, then patch with that current resource version. Activity
+updates during authorization therefore do not consume the optimistic-concurrency retries. Automatic sleep also requires the guest to confirm that
 Codex is idle across all conversations. Active turns, pending starts/steering and approvals keep the VM awake even with
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
 unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
 activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
-is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
-each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+is serialized per workspace across clients in the same guest pool. Conflicts with other controller replicas and
+reconcilers use exponential backoff with jitter, capped at 100 ms, within a one-second retry budget. Each attempt
+reads current lifecycle state and must win its own CAS, so parallel browser module requests can recover from a busy
+replica while a sleep reservation still rejects control. Other workspaces remain independent; no policy decision or
+admission result is cached.
 Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
 reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
 admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
@@ -464,59 +487,15 @@ Pull requests run source, authorization, database, browser, and editor validatio
 and Proompteng release images build only from `main`. PRs do not build unused native image archives or export
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
-Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
-native qualification. The runtime and harness builds both import the existing per-architecture Tengri cache: a cache
-hit in the runtime request does not materialize every intermediate build result for the later harness request.
-Guest test binaries stay local to that job. Native qualification does not create a separate registry cache or wait for
-the other architecture. Publication still requires both architectures and the full controller and guest source validation.
-`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
-select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
-`bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
-Omni configuration.
-The guest receives a separate resolver file. Docker's network resolver at `127.0.0.11` stays in the fixture container
-for shared SQL discovery; copying it into the VM would send DNS requests to the guest's own loopback.
-Routine main publication runs
-three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
-requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page
-eviction, guest administration, and browser startup. It also requires terminal first output below 300 ms, managed
-Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
-disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
-error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
-The retained `io-responsiveness.json` aligns heartbeat windows with bounded samples of the VMM main thread and four
-vCPUs. It records public scheduler, page-fault and wait-state counters so a failed responsiveness gate can be traced
-without capturing guest memory, RPC payloads or credentials. Sampling stops after the I/O probe, with a twelve-second
-upper bound. The latency limits and fifty heartbeat samples remain unchanged.
-The first sleep lasts three minutes so the previous host SVID
-expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
-`validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
-Resume replies report monotonic time spent after applying the host clock. The host excludes that readiness work
-when bounding clock-transfer delay, and repeats the same idempotent resume if the timestamp arrived too late.
-Missing or inconsistent clock timing rejects the resume; the controller and guest images must be promoted together.
-The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
-container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
+Each architecture builds its guest and controller through the standalone BuildKit worker. The production image
+builds retain their source unit tests and guest filesystem checks. The native build job verifies the guest kernel and
+root filesystem against the checksum manifest by exporting image contents with Crane. Container-based KVM lifecycle
+qualification, runtime image loading, and fixture-only image stages have been removed.
 
-The native terminal probe answers foreground/background color queries and the device-status barrier used by the
-pinned Neovim startup. Query parsing retains split sequences. Editor readiness requires a marker rendered in the
-managed editor's buffer, rather than a separate stderr message. The command constructs the marker from character
-codes so shell echo cannot satisfy the probe. The one-second screen limit and all other performance limits remain unchanged.
-
-For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
-`TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
-and fixture builds share the Dockerfile's real-source release compilation. A pinned `cargo-chef` recipe caches Rust
-dependencies independently of application source. The image build runs the controller binary's release unit tests and
-retains the exact native test binary in its build stage. The source validation job owns all-target tests, generated CRD
-checks, database integration, and RPC interoperability. The `kvm-test` target copies the native binary from the same stage;
-the production runtime excludes fixture binaries. Native validation reuses the runtime's local compilation and the
-same source-revision build argument. Cache exports are best effort;
-BuildKit reports export errors without canceling required image publication
-or native validation.
-
-The fixture uses a private Docker
-network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.
-It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
-diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
-creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
-concurrent guests.
+Publication requires both native builds, the complete controller and Nanoagent source validation jobs, paired image
+checksums, signed immutable indexes, and successful release-artifact uploads before exposing either image to Kargo.
+These gates no longer prove guest sleep/resume, snapshot page eviction, runtime editor latency, live KVM device
+behavior, or the removed fixture's performance bounds.
 
 ## Editor sessions
 
@@ -548,15 +527,19 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 7 requires canonical UUID operation identities for every submission and control, plus confirmed native
-command cleanup before reporting cancellation. Old guests require a fenced cold replacement on their retained home.
+Guest API 10 requires conversation-scoped pending-operation fences and retains direct file metadata and canonical UUID operation identities for every submission and
+control, plus confirmed native command cleanup before reporting cancellation. The web BFF, controller and guest must
+agree on this version; the operation inventory rejects drift. Older guests require a fenced cold replacement on their
+retained home.
 `SendCodexInput` returns a
-durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
+durable run, and `GetActiveCodexRuns` recovers the workspace's active runs without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
 after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
 
-`TengriWorkspaceRuns` holds one active run per immutable workspace UID. Its short claim and release handlers are
+`TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
+execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
+and release handlers are
 private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
 control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
 before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
@@ -564,6 +547,17 @@ a newly signed attempt can use the same operation UUID. Accepted workflows use p
 records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
+
+Status reads retain their pending response within the existing fifteen-second recovery budget. A response still
+pending after five seconds emits a warning and continues under the same deadline; it does not start another durable
+query. Only returned transient errors trigger bounded retries with a freshly signed query. The two-second admission
+expiry and authorization checks remain unchanged.
+
+Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
+RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
+Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
+observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
+access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
 
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
@@ -583,19 +577,20 @@ controls live in Restate. One workflow per control ID records the exact pending 
 the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
 Native approval IDs additionally bind a random process identity, thread, and turn.
 
-Stop is a durable request. The workspace object retains the latest authenticated Stop authority, ordered by the original
+Stop is a durable request. The workspace object retains Stop authority separately for each run, ordered by the original
 admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
-Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
+Repeated observations return only changed controls. Stop does not release the conversation after an interrupt acknowledgement: the worker waits for
 the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
 and the sleep pin. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
 of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
-runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
+runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain that conversation claim. The desktop
 displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a
 MicroVM annotation before dispatch. Idle sleep must claim that same field with a UID/resource-version CAS before
 requesting an Ofz stop, so an old idle decision cannot sleep a concurrent admission. Automatic idle sleep respects
-the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority. Terminal cleanup removes only the matching pin
+the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority.
+The sleep fence contains a set of active run IDs. Terminal cleanup removes only its own ID
 using MicroVM UID and resource-version preconditions.
 
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
@@ -603,9 +598,16 @@ terminal outcome or permanent removal receipt. Restate retains completed run and
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
 Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
 the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
+Each response has a five-second budget. Read recovery has a total fifteen-second budget, shared by the active claim
+and its snapshot. Transport failures, HTTP 5xx, response timeouts and explicit HTTP 408 admission expiry can issue a
+fresh signed read with exponential backoff capped at one second. Each request retains its two-second admission
+window. Signature and authority denials, missing or conflicting runs and invalid responses fail immediately.
+Run submissions and controls are not replayed by this read recovery.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
-Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
-run and control invocations before registering this worker version, and retain earlier versions for pinned history.
+Stop after preparation and immediately before dispatch. The conversation-concurrency migration changes workspace state
+from a single claim to a map and changes the sleep pin to a JSON set. Drain active run and control invocations before
+registering this worker version, verify that the old sleep pin has cleared, and retain earlier versions for pinned history.
+The controller and BFF must use the plural active-run RPC together; the singular RPC is removed.
 Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
@@ -631,7 +633,7 @@ account. Run the real Restate process-replacement fixture with Docker available:
 cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
 ```
 
-This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping;
+This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping and its disposable Restate data is in tmpfs. Only the worker is killed;
 running-command recovery and authenticated deployment acceptance remain separate evidence boundaries.
 
 ## Error reporting and request traces

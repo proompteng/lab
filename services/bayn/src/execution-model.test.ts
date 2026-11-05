@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from './broker/crypto-fees'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -126,6 +127,8 @@ describe('explicit execution model', () => {
         ],
         intradayExecutionModel,
         MICROS,
+        cryptoMaximumTakerFeeBps,
+        '2026-09-04T14:15:00.000Z',
       ),
     )
     expect(fees).toEqual({
@@ -150,6 +153,8 @@ describe('explicit execution model', () => {
         ],
         intradayExecutionModel,
         MICROS,
+        cryptoMaximumTakerFeeBps,
+        '2026-09-04T14:15:00.000Z',
       ),
     )
     expect(capped.tafMicros).toBe(9_790_000n)
@@ -173,7 +178,11 @@ describe('explicit execution model', () => {
       _tag: 'InvalidReferencePrice',
       reason: 'not-positive',
     })
-    expect(failure(calculateSessionFees([], intradayExecutionModel, 0n))).toMatchObject({
+    expect(
+      failure(
+        calculateSessionFees([], intradayExecutionModel, 0n, cryptoMaximumTakerFeeBps, '2026-09-04T14:15:00.000Z'),
+      ),
+    ).toMatchObject({
       _tag: 'InvalidFeeCostMultiplier',
     })
     expect(failure(saleCostBasisMicros(100n, 2n, 1n))).toMatchObject({

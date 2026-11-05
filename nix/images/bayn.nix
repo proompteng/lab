@@ -9,14 +9,15 @@
 
 let
   openCode = import ./opencode-cli.nix { inherit pkgs lib; };
+  frozenControl = import ./bayn-frozen-control.nix { inherit pkgs lib bun nodejs; };
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.executable-profit-limit.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2";
-  # Canonical hash of the compiled bayn.jev.protocol.v20 document.
-  strategyParameterHash = "5e4f552bb0420b98017e6a91b3df933dbb70408a51c6e13f804e1220de5700d6";
+  # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
+  # Canonical hash of the compiled bayn.jev.protocol.v37 document.
+  strategyParameterHash = "4b6e3e1012a6439823c36fd3d7d982a87b263f13fccf079ff19e7f5d359953d6";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "f4a4ea1fff4aaba7ebfeb7a2a40b7a1823880f948bd8000cbb99db29187fbd5e";
+  strategyProtocolHash = "7ff80d46eff090bd8d63ccd569fabbd0b1dafcb676e6af8f6fdff4f42ff1e393";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -40,20 +41,25 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/jev-evaluation-command.js" "$@"
   '';
-  dualSignalCommand = pkgs.writeShellScriptBin "bayn-dual-signal" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/dual-signal-command.js" "$@"
-  '';
   backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
   '';
+  frozenControlCommand = pkgs.writeShellScriptBin "bayn-frozen-control-backtest" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/frozen-control-command.js" "$@"
+  '';
   controlCommand = pkgs.writeShellScriptBin "bayn-control-study" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
+  '';
+  webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/webull-research-command.js" "$@"
   '';
   gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
@@ -99,12 +105,14 @@ let
     "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
+    "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
-    "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
+    "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -123,6 +131,7 @@ let
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
     rm "$out/app/services/bayn/dist/opencode-command.js"
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
+    cp "$TMPDIR/work/services/bayn/dist/frozen-control-compiler.json" "$out/app/services/bayn/dist/frozen-control-compiler.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     mkdir -p "$out/app/services/bayn/gepa"
     cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"
@@ -179,10 +188,12 @@ import ./bun-workspace-service.nix {
     bun
     pkgs.git
     evaluationCommand
-    dualSignalCommand
     backtestCommand
+    frozenControlCommand
     controlCommand
+    webullResearchCommand
     gepaPython
+    pkgs.go-containerregistry
   ];
   exposedPorts = {
     "8080/tcp" = { };

@@ -1,3 +1,6 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
+import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
@@ -15,10 +18,15 @@ import {
   type ReadResult,
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
+import {
+  BrokerMutationError,
+  MutationFailure,
+  MutationOperation,
+  invalidRequest,
+} from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
-import { makeReplayJevTiming } from '../intraday-replay/jev-timing'
+import { makeReplayInferenceTiming } from '../intraday-replay/inference-timing'
 import { BrokerMode, type Policy } from '../risk'
 import {
   BrokerAccess,
@@ -120,7 +128,8 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
     invalidate: Effect.void,
     take: () => Effect.succeed(cachedBrokerStateFixture(brokerAccount())),
   },
-  verifyBrokerStateVersion: () => Effect.void,
+  verifyBrokerStateVersion: (_version, _intentId, requireCryptoEntryFeeBound) =>
+    Effect.succeed(requireCryptoEntryFeeBound ? 25 : null),
   brokerRead: stableBrokerRead(),
   brokerMutation: {
     submit: () => Effect.die(new Error(`${label} submit must not run during composition proof`)),
@@ -149,6 +158,7 @@ const readEvidence: ReadEvidence = {
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
 const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cryptoFeeTier: null,
   cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
@@ -1539,10 +1549,16 @@ for (const phase of [
         yield* marketClock.setTime(Date.parse(observedAt))
         let clockUnavailable = false
         const delay = (at: typeof phase) => (phase === at ? providerClock.setTime(providerStart + 10_000) : Effect.void)
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           measureDatabaseTime: (operation) => operation,
           providerClock,
-          provider: { evaluate: () => Effect.die('final authorization must not call Jev') },
+          providers: {
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('final authorization must not call Jev') },
+              chartProviderFixture,
+            ),
+          },
           advanceTo: (atMs) =>
             clockUnavailable
               ? Effect.fail(new ReplayBrokerFailure({ message: 'Timeline source unavailable' }))
@@ -1625,6 +1641,131 @@ describe('execution with the native reconciliation cache', () => {
     }
     return { fixture, cache, deps }
   }
+  test.each(['rollback', 'defect', 'interruption'] as const)(
+    'preserves compound submit failure with %s before and after transmission',
+    async (cleanup) => {
+      for (const afterTransmission of [false, true]) {
+        const { fixture, cache, deps } = setup()
+        await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+        const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected submit denial' })
+        const rollback = new WriterFenceError({
+          operation: 'transaction',
+          failure: 'unavailable',
+          message: 'injected rollback failure',
+        })
+        const cleanupCause =
+          cleanup === 'rollback'
+            ? Cause.fail(rollback)
+            : cleanup === 'defect'
+              ? Cause.die(new Error('injected rollback defect'))
+              : Cause.interrupt()
+        let posts = 0
+        const exit = await Effect.runPromiseExit(
+          authorizeCachedFinalBrokerSubmit(
+            fixture.authority,
+            fixture.intent,
+            Effect.sync(() => {
+              posts += 1
+            }).pipe(Effect.andThen(Effect.fail(denied))),
+            {
+              ...deps,
+              currentUtcInstant: afterTransmission ? deps.currentUtcInstant : Effect.fail(denied),
+              writerFence: {
+                check: Effect.void,
+                transaction: (effect) =>
+                  effect.pipe(Effect.catchCause((cause) => Effect.failCause(Cause.combine(cause, cleanupCause)))),
+              },
+            },
+          ),
+        )
+        expect(posts).toBe(afterTransmission ? 1 : 0)
+        if (Exit.isSuccess(exit)) throw new Error('compound submit failure must propagate')
+        expect(exit.cause.reasons).toHaveLength(2)
+        expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+        if (cleanup === 'rollback' && afterTransmission) {
+          expect(exit.cause.reasons[1]).toMatchObject({ _tag: 'Fail', error: { failure: MutationFailure.Unknown } })
+        } else {
+          expect(exit.cause.reasons[1]).toEqual(cleanupCause.reasons[0])
+        }
+      }
+    },
+  )
+  test.each([false, true])('checks the fee tier at the final transport clock: reset crossed %s', async (crossReset) => {
+    const { fixture, cache, deps } = setup()
+    const beforeReset = '2026-07-28T07:59:59.900Z'
+    const account = brokerAccount({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: 4,
+      nonMarginableBuyingPowerMicros: '1000000000',
+      observedAt: beforeReset,
+    })
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(account))))
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Live),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: grantedCapitalAuthority(fixture.grant),
+        strategy,
+        observedAt: beforeReset,
+      }),
+    )
+    const intent: Intent = {
+      ...fixture.intent,
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('Expected mutation authority')
+    const readAt = <A>(value: A): ReadResult<A> => ({ value, evidence: { ...readEvidence, observedAt: beforeReset } })
+    let riskContextRead = false
+    let snapshotClockRead = false
+    let posts = 0
+    const exit = await Effect.runPromiseExit(
+      authorizeCachedFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...deps,
+          intentStore: { ...deps.intentStore, read: () => Effect.succeed(Option.some({ ...fixture.stored, intent })) },
+          verifyBrokerStateVersion: (_version, _intentId, required) => {
+            expect(required).toBe(true)
+            return Effect.succeed(18)
+          },
+          brokerRead: submissionProjectionFixture({
+            ...deps.brokerRead,
+            account: Effect.succeed(readAt(account)),
+            positions: Effect.succeed(readAt([])),
+            orders: () => Effect.succeed(readAt([])),
+            assetBySymbol: (symbol) => Effect.succeed(readAt(brokerAssetFixture(symbol, beforeReset))),
+          }),
+          readFinalExecutionRiskContext: (at) =>
+            deps.readFinalExecutionRiskContext(at).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  riskContextRead = true
+                }),
+              ),
+            ),
+          currentUtcInstant: Effect.sync(() => {
+            if (!riskContextRead) return beforeReset
+            if (!snapshotClockRead) {
+              snapshotClockRead = true
+              return beforeReset
+            }
+            return crossReset ? observedAt : beforeReset
+          }),
+        },
+      ),
+    )
+    expect(posts).toBe(crossReset ? 0 : 1)
+    expect(Exit.isSuccess(exit)).toBe(!crossReset)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('exceeds the sealed entry estimate')
+  })
   test.each(['empty', 'stale', 'changed-version'])(
     'denies %s cache before broker confirmation or transmission',
     async (scenario) => {
@@ -1638,7 +1779,7 @@ describe('execution with the native reconciliation cache', () => {
         ...(scenario === 'stale' ? { riskPolicy: { ...riskPolicy, maxBrokerStateAgeMs: 1 } } : {}),
         currentUtcInstant: Effect.succeed(scenario === 'stale' ? '2026-07-28T08:00:01.000Z' : observedAt),
         verifyBrokerStateVersion: () =>
-          scenario === 'changed-version' ? Effect.fail({ _tag: 'ChangedVersion' }) : Effect.void,
+          scenario === 'changed-version' ? Effect.fail({ _tag: 'ChangedVersion' }) : Effect.succeed(null),
         brokerRead: {
           ...deps.brokerRead,
           positions: Effect.sync(() => {

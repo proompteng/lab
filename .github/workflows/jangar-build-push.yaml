@@ -12,10 +12,6 @@ on:
       - 'services/bumba/**'
       - 'nix/images/jangar.nix'
       - 'nix/images/openai-codex-cli.nix'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
-      - '.github/workflows/jangar-post-deploy-verify.yml'
-      - 'nix/oci-push.sh'
       - 'argocd/applications/jangar/**'
       - 'argocd/bootstrap/jangar/**'
   workflow_dispatch:
@@ -35,6 +31,5 @@ jobs:
       publish_kargo_tag: true
       kargo_tag_include_run_id: true
       pr_number: ${{ github.event.pull_request.number || '' }}
-      image_build_timeout: 20m
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets: inherit

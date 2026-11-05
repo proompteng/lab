@@ -1,10 +1,12 @@
-import { Result, pipe } from 'effect'
+import { Result, Schema, pipe } from 'effect'
+import type { CryptoTakerFeeBps } from '../../broker/crypto-fees'
 
 import { instrumentMarket, MarketKind } from '../../instruments'
 import type { ExecutionModel } from '../../execution-model-contract'
 import { ceilDiv, ensureUnsigned, fail, scaledNumber, type ExecutionResult } from './fixed-point'
 import { quantityScale } from '../../quantity'
 import { BPS, MICROS } from './model'
+import { IsoDateSchema, UtcInstantSchema } from '../../schemas'
 
 export interface FeeInput {
   readonly symbol: string
@@ -31,6 +33,22 @@ const roundedFee = (numerator: bigint, denominator: bigint, increment: bigint): 
         Result.map((quotient) => quotient * increment),
       )
 
+const feeDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+
+export const equityTafRate = (model: Pick<ExecutionModel, 'fees'>, at: string): ExecutionResult<bigint> => {
+  if (model.fees.scheduleVersion === 'alpaca-brokerage-2026-07-01')
+    return ensureUnsigned(model.fees.tafSellPerShareMicros, 'retained TAF share rate')
+  const parsed = Date.parse(at)
+  if (!Schema.is(IsoDateSchema)(at) && !Schema.is(UtcInstantSchema)(at))
+    return fail({ _tag: 'UnsupportedEquityFeeDate', at })
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(at) ? at : feeDate.format(parsed)
+  // Alpaca's October 12 disclosure and SEC release 34-106409. Later schedules require new evidence.
+  if (date < '2026-07-01' || date >= '2029-01-01') return fail({ _tag: 'UnsupportedEquityFeeDate', at })
+  return date >= '2026-10-01' && date < '2027-01-01'
+    ? Result.succeed(0n)
+    : ensureUnsigned(model.fees.tafSellPerShareMicros, 'TAF share rate')
+}
+
 export const cryptoTakerFeeSchedule = Object.freeze({
   schemaVersion: 'bayn.crypto-taker-fees.v1',
   source: 'https://docs.alpaca.markets/us/docs/crypto-trading',
@@ -44,10 +62,10 @@ export const cryptoTakerFeeSchedule = Object.freeze({
   sellDebit: 'received-USD',
 } as const)
 
-export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint) => {
+export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint, takerFeeBps: CryptoTakerFeeBps) => {
   if (instrumentMarket(fill.symbol) !== MarketKind.Crypto) return { quantityAtoms: 0n, valueMicros: 0n, cashMicros: 0n }
   const denominator = BPS * MICROS
-  const rate = BigInt(cryptoTakerFeeSchedule.takerBps) * multiplier
+  const rate = BigInt(takerFeeBps) * multiplier
   if (fill.side === 'sell') {
     const increment = BigInt(cryptoTakerFeeSchedule.cashRoundingMicros)
     const cashMicros =
@@ -64,13 +82,15 @@ export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint) => {
 
 export const calculateSessionFees = (
   fills: readonly FeeInput[],
-  model: ExecutionModel,
+  model: Pick<ExecutionModel, 'fees'>,
   costMultiplierMicros: bigint,
+  takerFeeBps: CryptoTakerFeeBps,
+  at: string,
 ): ExecutionResult<FeeBreakdown> => {
   if (costMultiplierMicros <= 0n) {
     return fail({ _tag: 'InvalidFeeCostMultiplier', costMultiplierMicros, minimum: 1n })
   }
-  const crypto = fills.map((fill) => receivedCryptoFee(fill, costMultiplierMicros))
+  const crypto = fills.map((fill) => receivedCryptoFee(fill, costMultiplierMicros, takerFeeBps))
   const cryptoMicros = crypto.reduce((sum, fee) => sum + fee.valueMicros, 0n)
   const cryptoCashMicros = crypto.reduce((sum, fee) => sum + fee.cashMicros, 0n)
   const equityFills = fills.filter((fill) => instrumentMarket(fill.symbol) === MarketKind.Equity)
@@ -83,7 +103,7 @@ export const calculateSessionFees = (
       rounding: ensureUnsigned(model.fees.roundingIncrementMicros, 'fee rounding increment', 1n),
       commissionRate: scaledNumber(model.fees.commissionBps, 'commission basis points'),
       secRate: scaledNumber(model.fees.secSellBps, 'SEC basis points'),
-      tafRate: ensureUnsigned(model.fees.tafSellPerShareMicros, 'TAF share rate'),
+      tafRate: equityFills.length === 0 ? Result.succeed(0n) : equityTafRate(model, at),
       tafCap: ensureUnsigned(model.fees.tafMaximumPerOrderMicros, 'TAF order cap'),
       catRate: ensureUnsigned(model.fees.catPerShareMicros, 'CAT share rate'),
     }),

@@ -26,7 +26,7 @@
   "revokeRefreshToken": true,
   "refreshTokenMaxReuse": 0,
   "defaultSignatureAlgorithm": "RS256",
-  "browserFlow": "tengri-github",
+  "browserFlow": "platform-browser",
   "firstBrokerLoginFlow": "tengri-first-github",
   "webAuthnPolicyRpEntityName": "Tengri",
   "webAuthnPolicyRpId": "auth.proompteng.ai",
@@ -50,6 +50,29 @@
   "adminEventsDetailsEnabled": false,
   "authenticationFlows": [
     {
+      "alias": "platform-browser",
+      "description": "Platform SSO with GitHub and verified passkeys",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": false
+        },
+        {
+          "flowAlias": "tengri-github",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
       "alias": "tengri-github",
       "description": "GitHub broker only",
       "providerId": "basic-flow",
@@ -63,6 +86,13 @@
           "priority": 10,
           "userSetupAllowed": false,
           "authenticatorFlow": false
+        },
+        {
+          "flowAlias": "tengri-passkey-level",
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true
         }
       ]
     },
@@ -133,7 +163,7 @@
       "alias": "tengri-level-two",
       "config": {
         "loa-condition-level": "2",
-        "loa-max-age": "0"
+        "loa-max-age": "28800"
       }
     }
   ],
@@ -220,6 +250,72 @@
       ],
       "webOrigins": [
         "https://proompteng.ai"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "pkce.code.challenge.required": "true",
+        "minimum.acr.value": "2",
+        "default.acr.values": "2",
+        "acr.loa.map": "{\"2\":2}",
+        "use.refresh.tokens": "false",
+        "oauth2.device.authorization.grant.enabled": "false"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "acr"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "github-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "github_id",
+            "claim.name": "github_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "verified-provider",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "identity_provider",
+            "claim.name": "identity_provider",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "platform-admin",
+      "name": "Proompteng workspace administration",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "secret": "",
+      "redirectUris": [
+        "https://admin.proompteng.ai/api/auth/callback"
+      ],
+      "webOrigins": [
+        "https://admin.proompteng.ai"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",

@@ -26,7 +26,7 @@ await test('routes the fixed TypeSafe endpoint through CONNECT without disclosin
     if (address === null || typeof address === 'string') throw new Error('Proxy did not bind a TCP port')
     const result = await Effect.runPromise(
       JevClient.pipe(
-        Effect.flatMap((client) => client.evaluate(requestFixture)),
+        Effect.flatMap((client) => client.evaluate(requestFixture, 1000)),
         Effect.provide(JevClientLive(Redacted.make('local-test-key'), 1000)),
         Effect.provide(JevHttpClientLive(`http://127.0.0.1:${address.port}`)),
         Effect.result,

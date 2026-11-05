@@ -1,11 +1,14 @@
 # Ofz implementation status
 
+The current backup destination is the [Ceph recovery store](../../services/ofz/recovery.md). The October 25 migration
+retires the NUC store for Ofz and Keycloak; the NUC qualification notes below are historical evidence, not active configuration.
+
 The migration is incomplete. The delivery target is [the enterprise authorization plan](ofz-enterprise-authorization-plan.md),
 including deployed allow/deny/revocation, failure and failover checks, independent restore and the required soak.
 Work proceeds directly, without subagents, through the existing native GitHub stack. Historical decisions and detailed
 fixture evidence remain in [the implementation trail](ofz-implementation-decisions.tsv).
 
-## Current release boundary
+## Historical release boundary
 
 The active source frontier is encrypted independent recovery on `codex/ofz-recovery-encryption`.
 The dedicated identity source merged in [#15038](https://github.com/proompteng/lab/pull/15038) at
@@ -186,7 +189,7 @@ not Kubernetes exporter adoption, independent database/home restore or the final
 - [ ] Deliver dedicated native Kubernetes RBAC and the scoped broker; verify effective permissions and real denied requests.
 - [ ] Deliver the reviewed connector catalog, target/credential controls, destination validation and response budgets.
 - [ ] Complete IdP offboarding, copied-credential rotation and clean-environment recovery for quarantined homes.
-- [ ] Install independent immutable audit, database/home backups and restore on the approved NUC destination.
+- [ ] Complete restore qualification against the [active Ceph recovery store](../../services/ofz/recovery.md).
 - [ ] Publish and qualify the owner-only bootstrap/activation commands; install the protected approved input and
       complete both custodians' real passkey enrollment.
 - [ ] Enroll API/broker delivery, supply required credentials and activate the reviewed final contract through Kargo/Argo.

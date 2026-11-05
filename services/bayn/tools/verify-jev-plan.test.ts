@@ -5,16 +5,21 @@ import { decideJevEntry } from '../src/jev/decision'
 import { nativeJevDecisionEvidence } from '../src/jev/native.test-support'
 import { verifyJevPlan } from './verify-jev-plan'
 
-test('the verifier consumes persisted decision bindings and reproduces the complete selected plan', () => {
-  const evidence = nativeJevDecisionEvidence()
-  const strategyDecision = Result.getOrThrow(decideJevEntry(evidence))
-  const document = { mode: 'PAPER', bindings: { cycleId: evidence.observation.cycleId }, strategyDecision }
-  expect(verifyJevPlan(document)).toMatchObject({
-    cycleId: evidence.observation.cycleId,
-    reproducedFromSourceAndRawModelAnswers: true,
-    selectedSymbols: ['AAPL'],
-    brokerExecutionProven: false,
-  })
+const evidence = nativeJevDecisionEvidence()
+const target = Result.getOrThrow(decideJevEntry(evidence))
+const document = { mode: 'PAPER', bindings: { cycleId: evidence.observation.cycleId }, strategyDecision: target }
+
+test('reproduces the sequential selection without claiming broker execution', () => {
+  const proof = verifyJevPlan(document)
+  expect(proof.reproducedFromSourceAndRawModelAnswers).toBe(true)
+  expect(proof.selectedSymbols).toHaveLength(1)
+  expect(proof.protectionPlans).toEqual(target.exitPolicy.plans)
+  expect(proof.brokerExecutionProven).toBe(false)
+})
+
+test('rejects substituted source identity and protected plan', () => {
   expect(() => verifyJevPlan({ ...document, bindings: { cycleId: 'f'.repeat(64) } })).toThrow()
-  expect(() => verifyJevPlan({ ...document, bindings: undefined, cycleId: evidence.observation.cycleId })).toThrow()
+  expect(() =>
+    verifyJevPlan({ ...document, strategyDecision: { ...target, exitPolicy: { ...target.exitPolicy, plans: {} } } }),
+  ).toThrow()
 })

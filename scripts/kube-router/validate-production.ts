@@ -30,6 +30,7 @@ export const productionPaths = {
   buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
   grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
   proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
+  platformAdminPolicies: 'argocd/applications/proompteng/admin-network-policy.yaml',
   restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
   restateExamplePolicies: 'argocd/applications/restate-example/networkpolicy.yaml',
   cassandra311Policies: 'argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml',
@@ -40,6 +41,7 @@ export const productionPaths = {
   elasticRehearsalPolicies: 'argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml',
   hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
   tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
+  relayPolicies: 'argocd/applications/relay/network-policy.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
   readme: 'argocd/applications/kube-router/README.md',
@@ -60,7 +62,7 @@ export const productionPaths = {
 export const reviewedPolicySources = {
   buzz: ['buzzPolicies'],
   observability: ['grafanaRehearsalPolicies'],
-  proompteng: ['proomptengPolicies'],
+  proompteng: ['proomptengPolicies', 'platformAdminPolicies'],
   restate: ['restatePolicies'],
   'restate-example': ['restateExamplePolicies'],
   temporal: [
@@ -283,6 +285,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const hookContainer = hook?.spec?.template?.spec?.containers?.[0]
   const expectedHermesPolicyHash = networkPolicyHash(files.hermesPolicies)
   const expectedTengriPolicyHash = networkPolicyHash(files.tengriPolicies)
+  const expectedRelayPolicyHash = networkPolicyHash(files.relayPolicies)
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -297,6 +300,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')}`,
     '} | sort -u',
     'kubectl -n kube-system get namespace tengri',
+    'kubectl -n kube-system get namespace relay',
+    "printf '%s\\n' relay",
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
     'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
@@ -306,6 +311,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'network-policy.proompteng.ai/retired-rollout-policy',
     `expected_hermes_policy_hash=${expectedHermesPolicyHash}`,
     `expected_tengri_policy_hash=${expectedTengriPolicyHash}`,
+    `expected_relay_policy_hash=${expectedRelayPolicyHash}`,
+    'if [[ "$actual_relay_policy_hash" != "$expected_relay_policy_hash" ]]',
     'kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json',
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
@@ -323,6 +330,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
     `printf '%s\\n' hermes ${reviewedNamespaces.join(' ')}`,
+    'kubectl -n kube-system get namespace relay',
+    "printf '%s\\n' relay",
   ])
   const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
   for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
@@ -509,6 +518,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.impactMap, files.impactMap, [
     '- argocd/applications/kube-router/**',
     '- argocd/applications/tengri/network-policies.yaml',
+    '- argocd/applications/relay/network-policy.yaml',
     '- docs/runbooks/kube-router-network-policy-rollout.md',
   ])
   requireTerms(failures, productionPaths.pullRequestWorkflow, files.pullRequestWorkflow, [

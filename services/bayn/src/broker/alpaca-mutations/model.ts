@@ -10,6 +10,21 @@ import { submissionDenialReason, type SubmissionDenialReason } from '../../execu
 
 const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
 
+/** Measured request handling, including the projection guard and complete response body. */
+export const MutationRoutingSchema = Schema.Struct({
+  startedAt: UtcInstant,
+  requestDispatchedAt: Schema.NullOr(UtcInstant),
+  completedAt: UtcInstant,
+}).check(
+  Schema.makeFilter(
+    (routing) =>
+      (routing.startedAt <= routing.completedAt &&
+        (routing.requestDispatchedAt === null ||
+          (routing.startedAt <= routing.requestDispatchedAt && routing.requestDispatchedAt <= routing.completedAt))) ||
+      'routing clocks must be ordered',
+  ),
+)
+
 export enum MutationOperation {
   Submit = 'SUBMIT',
   Cancel = 'CANCEL',
@@ -27,6 +42,7 @@ export const MutationEvidenceSchema = Schema.Struct({
   status: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })),
   contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   observedAt: UtcInstant,
+  routing: Schema.optionalKey(MutationRoutingSchema),
 })
 export type MutationEvidence = typeof MutationEvidenceSchema.Type
 export type PartialMutationEvidence = {

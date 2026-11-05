@@ -160,6 +160,10 @@ export const measurePositionEpisodes = (
         selected.symbol !== transaction.symbol ||
         selected.side !== transaction.side ||
         selected.quantityAtoms !== transaction.quantityAtoms ||
+        (selected.priceAtoms !== undefined && selected.priceAtoms !== transaction.priceAtoms) ||
+        (selected.notionalMicros !== undefined && selected.notionalMicros !== transaction.notionalMicros) ||
+        selected.feeMicros !== transaction.feeMicros ||
+        selected.realizedPnlMicros !== transaction.realizedPnlMicros ||
         selected.occurredAt !== transaction.occurredAt
       )
         return unavailable(PositionEpisodeReason.ScopeMismatch, evidenceHash)

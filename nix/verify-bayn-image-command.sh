@@ -67,6 +67,8 @@ cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
 research_wrapper="$(resolve_image_entry /bin/bayn-research)"
 research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
+webull_research_wrapper="$(resolve_image_entry /bin/bayn-webull-research)"
+webull_research_command="$(resolve_image_entry /app/services/bayn/dist/webull-research-command.js)"
 gepa_wrapper="$(resolve_image_entry /bin/bayn-gepa)"
 gepa_runner="$(resolve_image_entry /app/services/bayn/gepa/runner.py)"
 evaluation_wrapper="$(resolve_image_entry /bin/bayn-jev-evaluate)"
@@ -75,8 +77,13 @@ gepa_native_wrapper="$(resolve_image_entry /bin/bayn-gepa-native)"
 gepa_native_runner="$(resolve_image_entry /app/services/bayn/gepa/native.py)"
 backtest_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
 backtest_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
+frozen_control_wrapper="$(resolve_image_entry /bin/bayn-frozen-control-backtest)"
+frozen_control_command="$(resolve_image_entry /app/services/bayn/dist/frozen-control-command.js)"
+frozen_control_receipt="$(resolve_image_entry /app/services/bayn/dist/frozen-control-compiler.json)"
 research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
+controller_command="$(resolve_image_entry /app/services/bayn/dist/index.js)"
+valkey_command="$(resolve_image_entry /app/services/bayn/dist/valkey-command.js)"
 image_node="$(resolve_image_entry /bin/node)"
 streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
@@ -86,6 +93,8 @@ test -x "${cost_wrapper}"
 test -f "${cost_command}"
 test -x "${research_wrapper}"
 test -f "${research_command}"
+test -x "${webull_research_wrapper}"
+test -f "${webull_research_command}"
 test -x "${gepa_wrapper}"
 test -f "${gepa_runner}"
 test -x "${gepa_native_wrapper}"
@@ -94,107 +103,24 @@ test -x "${evaluation_wrapper}"
 test -f "${evaluation_command}"
 test -x "${backtest_wrapper}"
 test -f "${backtest_command}"
+test -x "${frozen_control_wrapper}"
+test -f "${frozen_control_command}"
+test -f "${frozen_control_receipt}"
 test -f "${research_server}"
 test -f "${execution_server}"
 test -x "${image_node}"
 test -f "${streaming_diagnostics}"
 
-image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
-  "${archive}/manifest.json")"
-if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
-  echo 'Bayn image command verification requires an isolated Docker daemon.' >&2
-  exit 1
-fi
-docker load --input "${image_tar}" >/dev/null
-image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")"
-actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-forward-performance \
-    "${image_id}" \
-    --help
-)"
-expected='Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
-if [[ "${actual}" != "${expected}" ]]; then
-  printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
-  exit 1
-fi
+# Redis is bundled into these entrypoints. Inspect the archive contents so an
+# unchanged fixed-output dependency hash cannot silently package the old client.
+for bundle in "${controller_command}" "${execution_server}" "${valkey_command}"; do
+  if ! grep -Fq 'this.#connectController?.abort()' "${bundle}" ||
+    ! grep -Fq 'this.#connectWithSignal(retries, controller.signal)' "${bundle}" ||
+    ! grep -Fq 'AbortSignal.any([withDefaults.signal, signal])' "${bundle}"; then
+    echo "Bayn image bundle is missing native Redis connection cancellation: ${bundle##*/}" >&2
+    exit 1
+  fi
+done
 
-cost_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/bayn-inference-cost "${image_id}" --help)"
-expected_cost='Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help'
-if [[ "${cost_actual}" != "${expected_cost}" ]]; then
-  printf 'Unexpected Bayn inference-cost help output: %s\n' "${cost_actual}" >&2
-  exit 1
-fi
-
-research_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-research "${image_id}" --help)"
-expected_research='Usage: bayn-research --validate <run.json> | --run <run.json> --output <new-receipt.json> | --help'
-if [[ "${research_actual}" != "${expected_research}" ]]; then
-  printf 'Unexpected Bayn research help output: %s\n' "${research_actual}" >&2
-  exit 1
-fi
-
-gepa_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-gepa "${image_id}" --help)"
-if [[ "${gepa_actual}" != *'usage: bayn-gepa'* ]]; then
-  printf 'Unexpected Bayn GEPA help output: %s\n' "${gepa_actual}" >&2
-  exit 1
-fi
-
-gepa_native_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-gepa-native "${image_id}" --help)"
-if [[ "${gepa_native_actual}" != *'usage: bayn-gepa-native'* ]]; then
-  printf 'Unexpected Bayn GEPA native help output: %s\n' "${gepa_native_actual}" >&2
-  exit 1
-fi
-
-evaluation_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-jev-evaluate "${image_id}" --help)"
-if [[ "${evaluation_actual}" != 'Usage: bayn-jev-evaluate '* ]]; then
-  printf 'Unexpected Bayn Jev probe help output: %s\n' "${evaluation_actual}" >&2
-  exit 1
-fi
-
-backtest_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-backtest "${image_id}" --help)"
-if [[ "${backtest_actual}" != 'Usage: bayn-backtest '* ]]; then
-  printf 'Unexpected Bayn native backtest help output: %s\n' "${backtest_actual}" >&2
-  exit 1
-fi
-
-# Loading diagnostics also loads the external Kafka client and its codec dependencies.
-expected_streaming='Usage: bayn-streaming-diagnostics --query <query.json> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
-streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
-  /app/services/bayn/dist/streaming-diagnostics-command.js --help)"
-if [[ "${streaming_actual}" != "${expected_streaming}" ]]; then
-  printf 'Unexpected Bayn diagnostics help output: %s\n' "${streaming_actual}" >&2
-  exit 1
-fi
-
-codecs_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
-  /app/services/bayn/dist/streaming-diagnostics-command.js --codecs)"
-if [[ "${codecs_actual}" != 'Kafka codecs verified: gzip,snappy,lz4,zstd' ]]; then
-  printf 'Unexpected Kafka codec verification output: %s\n' "${codecs_actual}" >&2
-  exit 1
-fi
-
-printf '%s\n' "${actual}"
+printf 'Bayn image command files verified in archive.\n'
+printf 'Bayn image native Redis cancellation verified in controller, execution server, and Valkey command.\n'

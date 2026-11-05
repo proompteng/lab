@@ -20,8 +20,10 @@ import type { MarketSource } from '../market-data/streaming/raw-events'
 export const cryptoMarketFixture = (
   candidate: 'BTC/USD' | 'ETH/USD' | 'SOL/USD' = 'BTC/USD',
   timing: {
+    readonly benchmarkEvidence?: boolean
     readonly firstMinute?: boolean
     readonly tradeLagMs?: number
+    readonly tradePrice?: number
     readonly quoteLagMs?: number
     readonly benchmarkQuoteLagMs?: number
     readonly quoteSpreadBps?: number
@@ -120,7 +122,7 @@ export const cryptoMarketFixture = (
                     ap: ask,
                     as: timing.quoteAskSize ?? 0.031234567,
                   }
-                : { T: 't', S: symbol, t: at, p: bid, s: 0.000000001 },
+                : { T: 't', S: symbol, t: at, p: timing.tradePrice ?? bid, s: 0.000000001 },
           }),
         },
         source,
@@ -153,16 +155,20 @@ export const cryptoMarketFixture = (
     calendar: continuousMarketHours,
     sessionDate: '2026-10-11' as const,
     observedAt: new Date(observedAtMs).toISOString(),
-    rangeStartAt: new Date(end - 30 * 60_000).toISOString(),
+    rangeStartAt: new Date(end - 120 * 60_000).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
     universeId: source.universeId,
     universeSymbolHash: source.universeSymbolHash,
     universe: source.symbols,
-    symbols: [candidate, jevBenchmarkSymbol(candidate)].sort(),
+    symbols: timing.benchmarkEvidence === true ? [candidate, jevBenchmarkSymbol(candidate)].sort() : [candidate],
+    ...(timing.benchmarkEvidence === true
+      ? {
+          benchmarkEvidencePolicy: cryptoMarketProfile.benchmarkEvidencePolicy,
+          benchmarkSymbols: [jevBenchmarkSymbol(candidate)],
+        }
+      : {}),
     candidateSymbols: [candidate],
-    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
-    benchmarkEvidencePolicy: cryptoMarketProfile.benchmarkEvidencePolicy,
-    benchmarkSymbols: [jevBenchmarkSymbol(candidate)],
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
     feed: cryptoMarketProfile.feed,
     delayClass: cryptoMarketProfile.delayClass,
     sourceTopics: cryptoMarketProfile.sourceTopics,
@@ -172,3 +178,8 @@ export const cryptoMarketFixture = (
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, query))
   return { cut, query, snapshot, rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)), fixtures }
 }
+
+export const cryptoMomentumFixture = (
+  candidate?: Parameters<typeof cryptoMarketFixture>[0],
+  timing?: Parameters<typeof cryptoMarketFixture>[1],
+) => cryptoMarketFixture(candidate, { ...timing, benchmarkEvidence: true })

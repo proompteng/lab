@@ -61,7 +61,7 @@ it('retains the completed scrub profile rollout annotation during runtime reserv
 
   expect(values).toContain('osd_scrub_auto_repair: "true"')
   expect(values).toContain('osd_scrub_auto_repair_num_errors: "5"')
-  expect(values).toContain('osd_max_scrubs: "1"')
+  expect(values).toContain('osd_max_scrubs: "3"')
   expect(kustomization).toContain('path: cephcluster-osd-config-rollout.yaml')
   expect(kustomization).toContain('kind: CephCluster')
   expect(kustomization).toContain('name: rook-ceph')
@@ -81,7 +81,10 @@ it('protects clients while allowing all-day scrub progress without overcommittin
   expect(osd.osd_mclock_profile).toBe('high_client_ops')
   expect(osd.osd_scrub_begin_hour).toBe('0')
   expect(osd.osd_scrub_end_hour).toBe('0')
-  expect(osd.osd_max_scrubs).toBe('1')
+  expect(osd.osd_max_scrubs).toBe('3')
+  expect(osd.osd_scrub_chunk_min).toBe('5')
+  expect(osd.osd_scrub_chunk_max).toBe('5')
+  expect(osd.osd_deep_scrub_stride).toBe('4194304')
   expect(osd).not.toHaveProperty('osd_scrub_sleep')
   // The built-in profile owns all scheduler shares; retained custom overrides prevent the migration.
   expect(Object.keys(osd).filter((key) => key.startsWith('osd_mclock_scheduler_'))).toEqual([])

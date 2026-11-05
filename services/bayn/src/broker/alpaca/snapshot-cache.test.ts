@@ -73,6 +73,7 @@ const fixture = (
                     : equityMicros
                 return {
                   cryptoStatus: null,
+                  cryptoFeeTier: null,
                   cashReportingQuantumMicros: '1' as const,
                   nonMarginableBuyingPowerMicros: null,
 
@@ -166,6 +167,49 @@ const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
   })
 
 describe('durable broker observations', () => {
+  test('requires a new poll cut after history changes instead of retrying the original ticket', async () => {
+    const source = fixture()
+    let scans = 0
+    const changing: BrokerReadShape = {
+      ...source.read,
+      feeActivities: (query) =>
+        source.read.feeActivities(query).pipe(
+          Effect.map((result) => ({
+            ...result,
+            value: {
+              items:
+                ++scans === 1 ? [] : [{ accountId, activityId: 'fee-1', date: '1970-01-01', netAmountMicros: '-1' }],
+            },
+          })),
+        ),
+    }
+    await run(
+      Effect.gen(function* () {
+        const pending = yield* captureBrokerObservation(changing, yield* currentUtcInstant, 15_000).pipe(
+          Effect.result,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(1_000)
+        const result = yield* Fiber.join(pending)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure.cause).toMatchObject({ failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } })
+        }
+        expect(scans).toBe(2)
+        const fresh = yield* captureBrokerObservation(changing, yield* currentUtcInstant, 15_000)
+        expect(fresh.startedAt).toBe('1970-01-01T00:00:01.000Z')
+        expect(fresh.snapshot.history.fees).toHaveLength(1)
+        expect(scans).toBe(4)
+        scans = 0
+        const direct = yield* readStableBrokerSnapshot(changing, currentUtcInstant).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(1_000)
+        expect((yield* Fiber.join(direct)).history.fees).toHaveLength(1)
+        expect(scans).toBe(4)
+      }),
+    )
+  })
   test('cancels broker acquisition at the polling deadline without producing a partial cut', async () => {
     const source = fixture()
     await run(
@@ -276,7 +320,13 @@ describe('durable broker observations', () => {
         const sql = (() =>
           Effect.sync(() => {
             queries += 1
-            return [{ state_hash: snapshotHash, snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)) }]
+            return [
+              {
+                state_hash: snapshotHash,
+                snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)),
+                observedAt: value.observedAt,
+              },
+            ]
           })) as unknown as PgClient.PgClient
         const store = makeBrokerObservationStore(
           sql,
@@ -289,6 +339,7 @@ describe('durable broker observations', () => {
               return Effect.succeed(Option.some(JSON.stringify(payload)))
             },
             put: () => Effect.die('read-only probe'),
+            putAll: () => Effect.die('read-only probe'),
             remove: () => Effect.die('read-only probe'),
           }),
         )

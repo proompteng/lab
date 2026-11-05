@@ -4,7 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { ConfigProvider, Console, Deferred, Effect, Exit, Fiber, Layer, Logger, Metric, References } from 'effect'
+import {
+  ConfigProvider,
+  Console,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Metric,
+  References,
+  Tracer,
+} from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 
@@ -21,6 +33,88 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test.each(
+    ['success', 'failure', 'defect', 'interruption'].flatMap((outcome) =>
+      ['logger', 'timing'].map((sink) => ({ outcome, sink })),
+    ),
+  )('diagnostic-only stages preserve $outcome when the $sink sink throws', async ({ outcome, sink }) => {
+    const failure = { reason: 'original operation failure' }
+    const operation =
+      outcome === 'success'
+        ? Effect.succeed('committed')
+        : outcome === 'failure'
+          ? Effect.fail(failure)
+          : outcome === 'defect'
+            ? Effect.die(failure)
+            : Effect.interrupt
+    const actual = await Effect.runPromiseExit(
+      operation.pipe(
+        withObservedStage('bayn.jev.batch-completion.phase', {
+          operation: 'lock',
+          recordCompletion: true,
+          diagnosticOnly: true,
+        }),
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              if (sink === 'logger') throw new Error('diagnostic sink failed')
+            }),
+          ]),
+        ),
+        Effect.provideService(
+          ExecutionStageTimings,
+          new (class extends Map<string, ExecutionStageTiming> {
+            override set(key: string, value: ExecutionStageTiming) {
+              if (sink === 'timing') throw new Error('diagnostic timing sink failed')
+              return super.set(key, value)
+            }
+          })(),
+        ),
+      ),
+    )
+    if (outcome === 'success') {
+      expect(Exit.isSuccess(actual)).toBe(true)
+      if (Exit.isSuccess(actual)) expect(actual.value).toBe('committed')
+    } else {
+      expect(Exit.isFailure(actual)).toBe(true)
+      if (Exit.isFailure(actual)) {
+        expect(actual.cause.reasons).toHaveLength(1)
+        const reason = actual.cause.reasons[0]
+        expect(reason?._tag).toBe(outcome === 'failure' ? 'Fail' : outcome === 'defect' ? 'Die' : 'Interrupt')
+        if (reason?._tag === 'Fail') expect(reason.error).toBe(failure)
+        if (reason?._tag === 'Die') expect(reason.defect).toBe(failure)
+      }
+    }
+  })
+
+  test.each(['success', 'failure', 'defect', 'interruption'])(
+    'retains the native millisecond interval through %s and finalizes once',
+    async (outcome) => {
+      const spans: Tracer.Span[] = []
+      let finalized = 0
+      const exit = await Effect.runPromiseExit(
+        Effect.gen(function* () {
+          spans.push(yield* Effect.currentSpan.pipe(Effect.orDie))
+          yield* TestClock.adjust(25)
+          if (outcome === 'failure') return yield* Effect.fail('fixture failure')
+          if (outcome === 'defect') return yield* Effect.die('fixture defect')
+          if (outcome === 'interruption') return yield* Effect.interrupt
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => finalized++)),
+          withObservedStage('bayn.postgres.commit'),
+          Effect.provide(TestClock.layer()),
+          Effect.provide(Logger.layer([])),
+        ),
+      )
+      expect(Exit.isSuccess(exit)).toBe(outcome === 'success')
+      expect(finalized).toBe(1)
+      expect(spans).toHaveLength(1)
+      expect(spans[0]?.attributes.get('bayn.native_wall.clock')).toBe('effect.Clock.currentTimeMillis')
+      expect(spans[0]?.attributes.get('bayn.native_wall.started_at')).toBe('1970-01-01T00:00:00.000Z')
+      expect(spans[0]?.attributes.get('bayn.native_wall.finished_at')).toBe('1970-01-01T00:00:00.025Z')
+    },
+  )
+
   test('published research telemetry uses its embedded source without a deployment revision variable', async () => {
     const directory = await mkdtemp(join(import.meta.dir, '.telemetry-build-'))
     const sourceRevision = 'a'.repeat(40)

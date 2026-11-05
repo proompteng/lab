@@ -151,6 +151,7 @@ const partialExit = (
     accountId,
     openingCash: { cash_micros: '100000000000', observed_at: '2026-10-19T03:00:00.000Z' },
     transactions,
+    fillExecutionTimes: new Map<string, string>(),
     fees: [],
     brokerFeeAccruals: accruals,
     brokerFeeCashDeltaMicros: '0',
@@ -164,7 +165,8 @@ const partialExit = (
     projectedPositions: [{ symbol: position.symbol, quantityAtoms: String(quantity), costBasisMicros: String(cost) }],
     snapshot: {
       account: {
-        schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+        schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+        cryptoFeeTier: null,
         accountId,
         status: AccountStatus.Active,
         currency: 'USD' as const,

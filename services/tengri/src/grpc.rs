@@ -46,18 +46,20 @@ pub mod proto {
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
     CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
-    CodexModels, CodexRun, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
-    CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest, Empty, FileEntry, FileEvent,
-    FileEventKind, GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest,
-    GetCodexRunRequest, InterruptCodexTurnRequest, IssueDesktopSessionRequest,
-    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
-    ListCodexModelsRequest, ListFilesRequest, ListFilesResponse, ListTerminalsRequest,
-    ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    CodexModels, CodexRun, CodexRuns, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
+    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest,
+    Empty, FileEntry, FileEvent, FileEventKind, GetActiveCodexRunsRequest, GetAgentRequest,
+    GetCodexAccountRequest, GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
+    IssueDesktopSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListCodexThreadsRequest,
+    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
+    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
     ResolveCodexApprovalRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest,
-    SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, StartCodexLoginRequest,
-    SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
-    UpdatePowerSettingsRequest, WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest,
-    WriteFileRequest, WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
+    SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, SetCodexThreadArchivedRequest,
+    StartCodexLoginRequest, StatFileRequest, SteerCodexInputRequest, TerminalSession,
+    TerminalTicket, TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
+    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
+    micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -85,7 +87,6 @@ pub struct ControlPlane {
     activity: ActivityTracker,
     terminal_creation_locks: TerminalCreationLockManager,
     provisional_terminal_leases: ProvisionalTerminalLeaseManager,
-    connectors_enabled: bool,
 }
 
 pub struct ControlPlaneConfig {
@@ -134,7 +135,6 @@ impl ControlPlane {
             activity,
             terminal_creation_locks: TerminalCreationLockManager::default(),
             provisional_terminal_leases,
-            connectors_enabled: std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true"),
         })
     }
 
@@ -452,11 +452,26 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let power = power_settings_from_request(&request)?;
         for _ in 0..3 {
-            let agent = self.authorized_agent(&principal, &request.id).await?;
-            let now = Utc::now();
+            let authorized = self.authorized_agent(&principal, &request.id).await?;
             let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+            let agent = api.get(&request.id).await.map_err(map_kube_error)?;
+            if agent.uid() != authorized.uid()
+                || agent.spec.owner_hash != authorized.spec.owner_hash
+                || agent.spec.runtime_epoch != authorized.spec.runtime_epoch
+            {
+                return Err(Status::permission_denied("authorized workspace changed"));
+            }
+            if agent.spec.desired_state == MicroVMDesiredState::Running
+                && crate::activity::has_idle_sleep_claim(&agent)
+            {
+                return Err(Status::failed_precondition(
+                    "automatic sleep already committed",
+                ));
+            }
+            let now = Utc::now();
             let patch = json!({
                 "metadata": {
+                    "uid": agent.uid(),
                     "resourceVersion": agent.resource_version(),
                     "annotations": {crate::activity::LAST_ACTIVITY_ANNOTATION: now.to_rfc3339()},
                 },
@@ -477,6 +492,21 @@ impl MicroVmControlPlane for ControlPlane {
         Err(Status::aborted(
             "agent settings changed concurrently; retry the request",
         ))
+    }
+
+    async fn stat_file(
+        &self,
+        request: Request<StatFileRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request, "StatFile").await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .stat_file(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(result)))
     }
 
     async fn list_files(
@@ -752,7 +782,9 @@ impl MicroVmControlPlane for ControlPlane {
         let issued = self
             .provisional_terminal_leases
             .issue_and_confirm(&request.agent_id, &request.terminal_id, || async {
-                self.activity.admit_control(&claim).await?;
+                self.activity
+                    .admit_control(&claim, crate::activity::ControlActivity::Observation)
+                    .await?;
                 self.tickets
                     .issue_terminal(&principal, &request.agent_id, &request.terminal_id)
                     .await
@@ -819,9 +851,6 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<proto::ConnectorAgentRequest>,
     ) -> Result<Response<CodexModels>, Status> {
-        if !self.connectors_enabled {
-            return Err(Status::unimplemented("connectors are not enabled"));
-        }
         let principal = self.authorize(&request, "ConnectorAgent").await?;
         let request = request.into_inner();
         let method = match request.action.as_str() {
@@ -885,6 +914,66 @@ impl MicroVmControlPlane for ControlPlane {
             return Err(Status::not_found("no Codex device login is active"));
         }
         Ok(Response::new(codex_login(snapshot.result, started_at)))
+    }
+
+    async fn list_codex_threads(
+        &self,
+        request: Request<ListCodexThreadsRequest>,
+    ) -> Result<Response<CodexThreads>, Status> {
+        let principal = self.authorize(&request, "ListCodexThreads").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid chat cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call(
+                "thread/list",
+                json!({
+                    "archived": request.archived,
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "cwd": "/workspace",
+                    "sortKey": "updated_at",
+                    "limit": 50,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexThreads {
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn set_codex_thread_archived(
+        &self,
+        request: Request<SetCodexThreadArchivedRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "SetCodexThreadArchived").await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        let guest = self
+            .guest(&principal, &request.agent_id, &request.thread_id)
+            .await?;
+        if request.archived
+            && crate::runs::thread_active(self, &principal, &request.thread_id).await?
+        {
+            return Err(Status::failed_precondition(
+                "Wait for the response to finish before archiving this chat",
+            ));
+        }
+        guest
+            .codex_call(
+                if request.archived {
+                    "thread/archive"
+                } else {
+                    "thread/unarchive"
+                },
+                json!({ "threadId": request.thread_id }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
     }
 
     async fn create_codex_thread(
@@ -1011,19 +1100,21 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(codex_run(snapshot)?))
     }
 
-    async fn get_active_codex_run(
+    async fn get_active_codex_runs(
         &self,
-        request: Request<GetAgentRequest>,
-    ) -> Result<Response<CodexRun>, Status> {
-        let principal = self.authorize(&request, "GetActiveCodexRun").await?;
+        request: Request<GetActiveCodexRunsRequest>,
+    ) -> Result<Response<CodexRuns>, Status> {
+        let principal = self.authorize(&request, "GetActiveCodexRuns").await?;
         let request = request.into_inner();
         self.agent_access(&principal, &request.id, "").await?;
-        let result = match crate::runs::active(self, &principal).await? {
-            Some(snapshot) if snapshot.agent_id == request.id => codex_run(snapshot)?,
-            Some(_) => return Err(Status::permission_denied("run unavailable")),
-            None => CodexRun::default(),
-        };
-        Ok(Response::new(result))
+        let mut runs = Vec::new();
+        for snapshot in crate::runs::active(self, &principal, &request.thread_id).await? {
+            if snapshot.agent_id != request.id {
+                return Err(Status::permission_denied("run unavailable"));
+            }
+            runs.push(codex_run(snapshot)?);
+        }
+        Ok(Response::new(CodexRuns { runs }))
     }
 
     async fn get_codex_run(
@@ -1221,7 +1312,9 @@ impl MicroVmControlPlane for ControlPlane {
         let (agent, _, _) = self.guest_access(&principal, &request.agent_id, "").await?;
         let claim = crate::slot::client::claim_for(&agent)
             .map_err(|_| Status::unavailable("workspace runtime claim unavailable"))?;
-        self.activity.admit_control(&claim).await?;
+        self.activity
+            .admit_control(&claim, crate::activity::ControlActivity::Interaction)
+            .await?;
         let issued = self
             .tickets
             .issue_preview(&principal, &request.agent_id, port, &path, &fragment)
@@ -2630,6 +2723,16 @@ fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
+        GuestError::IncompatibleProtocol { .. } => {
+            let mut status = Status::failed_precondition(
+                "This workspace needs a runtime upgrade before it can reconnect.",
+            );
+            status.metadata_mut().insert(
+                "x-tengri-error-code",
+                tonic::metadata::MetadataValue::from_static("runtime_upgrade_required"),
+            );
+            status
+        }
         GuestError::NotReady(message) | GuestError::MissingGuestIp(message) => {
             Status::unavailable(message)
         }
@@ -2665,6 +2768,39 @@ fn map_guest_error(error: GuestError) -> Status {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[tokio::test]
+    async fn incompatible_guest_reports_required_runtime_upgrade() {
+        use crate::guest::rpc::{
+            proto::GuestInfo,
+            test_server::{TestServer, TestService},
+        };
+
+        let fixture = TestServer::start(TestService {
+            get_info: Some(std::sync::Arc::new(|_| {
+                Ok(GuestInfo {
+                    microvm_id: "expected".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION - 1,
+                    ..Default::default()
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let error = fixture
+            .guest
+            .rpc
+            .verify_identity("expected")
+            .await
+            .unwrap_err();
+        let status = map_guest_error(error);
+
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.metadata().get("x-tengri-error-code").unwrap(),
+            "runtime_upgrade_required"
+        );
+    }
 
     #[test]
     fn validates_codex_images_and_image_only_messages() {
@@ -2733,11 +2869,10 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn dormant_connector_rpc_stops_before_authentication_and_workspace_access() {
+    async fn connector_rpc_requires_authentication_before_workspace_access() {
         let (service, _handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let mut control = test_control_plane(Client::new(service, "tengri"));
-        control.connectors_enabled = false;
+        let control = test_control_plane(Client::new(service, "tengri"));
         let denied = control
             .connector_agent(Request::new(proto::ConnectorAgentRequest {
                 agent_id: "unavailable-workspace".into(),
@@ -2746,7 +2881,7 @@ pub(crate) mod tests {
             }))
             .await
             .unwrap_err();
-        assert_eq!(denied.code(), tonic::Code::Unimplemented);
+        assert_eq!(denied.code(), tonic::Code::Unauthenticated);
     }
 
     #[tokio::test]
@@ -2855,9 +2990,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
-    async fn runtime_shared_state_capability_issuance_admits_activity_before_tickets() {
+    async fn runtime_shared_state_capability_issuance_preserves_sleep_admission() {
         use crate::{
-            activity::{ACTIVE_RUN_ANNOTATION, LAST_ACTIVITY_ANNOTATION},
+            activity::{
+                ACTIVE_RUN_ANNOTATION, CONTROL_ADMISSION_ANNOTATION, LAST_ACTIVITY_ANNOTATION,
+            },
             guest::rpc::{
                 proto as guest_proto,
                 test_server::{TestServer, TestService},
@@ -2927,14 +3064,17 @@ pub(crate) mod tests {
                         status = HttpStatusCode::SERVICE_UNAVAILABLE;
                         json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"ServiceUnavailable","message":"API unavailable","code":503})
                     } else {
-                        let at = patch["metadata"]["annotations"][LAST_ACTIVITY_ANNOTATION]
-                            .as_str()
-                            .unwrap();
-                        agent
-                            .metadata
-                            .annotations
-                            .get_or_insert_default()
-                            .insert(LAST_ACTIVITY_ANNOTATION.into(), at.into());
+                        for (key, value) in patch["metadata"]["annotations"].as_object().unwrap() {
+                            assert!(
+                                key == LAST_ACTIVITY_ANNOTATION
+                                    || key == CONTROL_ADMISSION_ANNOTATION
+                            );
+                            agent
+                                .metadata
+                                .annotations
+                                .get_or_insert_default()
+                                .insert(key.clone(), value.as_str().unwrap().into());
+                        }
                         let version = agent.resource_version().unwrap().parse::<u64>().unwrap() + 1;
                         agent.metadata.resource_version = Some(version.to_string());
                         writes.fetch_add(1, Ordering::SeqCst);
@@ -3063,13 +3203,27 @@ pub(crate) mod tests {
                 assert_eq!(
                     patches.load(Ordering::SeqCst),
                     admitted,
-                    "cold and cached ticket issuance must admit activity before returning a capability"
+                    "cold and cached ticket issuance must win admission before returning a capability"
                 );
                 assert_eq!(count().await, initial_tickets + offset);
-                assert!(!crate::activity::idle_deadline_passed(
-                    &current.lock().unwrap(),
-                    Utc::now()
-                ));
+                let current = current.lock().unwrap();
+                assert_eq!(
+                    crate::activity::idle_deadline_passed(&current, Utc::now()),
+                    terminal,
+                    "terminal reconnects preserve idle expiry; opening a preview records user activity"
+                );
+                assert!(
+                    current
+                        .metadata
+                        .annotations
+                        .as_ref()
+                        .unwrap()
+                        .contains_key(if terminal {
+                            CONTROL_ADMISSION_ANNOTATION
+                        } else {
+                            LAST_ACTIVITY_ANNOTATION
+                        })
+                );
             }
             // A reservation may already exist, or win after admission's GET.
             for already_reserved in [true, false] {
@@ -3272,6 +3426,121 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn power_settings_refresh_activity_changes_without_changing_authorized_workspace() {
+        for changed in ["activity", "uid", "owner", "epoch", "sleep"] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = WorkspaceAuthorization::SynchronizedFixture(barrier.clone());
+            let mut agent = provisional_terminal_test_agent(Utc::now());
+            agent.metadata.resource_version = Some("7".into());
+            agent.spec.power.idle_timeout_minutes = 1;
+            agent.spec.idle_deadline = (Utc::now() + chrono::Duration::minutes(1)).to_rfc3339();
+            let principal = Principal::fixture(
+                &agent.spec.owner_hash,
+                &agent.uid().unwrap(),
+                crate::ofz::proto::Action::WorkspacePowerConfigure,
+            );
+            let request = crate::auth::signed_fixture_request(
+                UpdatePowerSettingsRequest {
+                    id: agent.name_any(),
+                    idle_timeout_minutes: Some(60),
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move { control.update_power_settings(request).await });
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            agent.metadata.resource_version = Some("8".into());
+            agent.annotations_mut().insert(
+                crate::activity::LAST_ACTIVITY_ANNOTATION.into(),
+                Utc::now().to_rfc3339(),
+            );
+            match changed {
+                "uid" => agent.metadata.uid = Some(uuid::Uuid::new_v4().to_string()),
+                "owner" => agent.spec.owner_hash = owner_hash("github:another-owner"),
+                "epoch" => agent.spec.runtime_epoch = uuid::Uuid::new_v4().to_string(),
+                "sleep" => {
+                    let claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+                    agent
+                        .annotations_mut()
+                        .insert(crate::activity::ACTIVE_RUN_ANNOTATION.into(), claim);
+                }
+                _ => {}
+            }
+            barrier.wait().await;
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            if changed != "activity" {
+                assert_eq!(
+                    tokio::time::timeout(std::time::Duration::from_secs(2), task)
+                        .await
+                        .expect("a committed sleep must reject the power change before patching")
+                        .unwrap()
+                        .unwrap_err()
+                        .code(),
+                    if changed == "sleep" {
+                        tonic::Code::FailedPrecondition
+                    } else {
+                        tonic::Code::PermissionDenied
+                    }
+                );
+                continue;
+            }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::PATCH);
+            let patch: Value =
+                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                    .unwrap();
+            assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+            assert_eq!(patch["metadata"]["resourceVersion"], "8");
+            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 60);
+            let deadline = patch["spec"]["idleDeadline"].as_str().unwrap();
+            assert!(
+                DateTime::parse_from_rfc3339(deadline).unwrap()
+                    > Utc::now() + chrono::Duration::minutes(59),
+                "increasing the timeout must replace the old one-minute deadline"
+            );
+            assert!(patch["spec"].get("desiredState").is_none());
+            agent.spec.power.idle_timeout_minutes = 60;
+            agent.spec.idle_deadline = deadline.into();
+            assert!(!crate::activity::idle_deadline_passed(
+                &agent,
+                Utc::now() + chrono::Duration::minutes(2)
+            ));
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            assert_eq!(
+                task.await
+                    .unwrap()
+                    .unwrap()
+                    .into_inner()
+                    .idle_timeout_minutes,
+                Some(60)
+            );
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
     async fn runtime_shared_state_power_settings_do_not_wake_and_obey_ofz() {
         let database = Arc::new(
@@ -3327,6 +3596,14 @@ pub(crate) mod tests {
                 );
                 continue;
             }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
             let (request, response) = handle.next_request().await.unwrap();
             assert_eq!(request.method(), http::Method::PATCH);
             let patch: Value =

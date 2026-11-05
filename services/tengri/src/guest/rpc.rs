@@ -243,11 +243,9 @@ impl RpcClient {
             });
         }
         if info.protocol_version != tengri::GUEST_API_PROTOCOL_VERSION {
-            return Err(GuestError::Api {
-                status: StatusCode::BAD_GATEWAY,
-                message:
-                    "The agent requires a retained-home runtime upgrade before it can reconnect."
-                        .into(),
+            return Err(GuestError::IncompatibleProtocol {
+                actual: info.protocol_version,
+                required: tengri::GUEST_API_PROTOCOL_VERSION,
             });
         }
         Ok(())
@@ -292,6 +290,20 @@ impl RpcClient {
             });
         }
         Ok(())
+    }
+    pub async fn stat_file(&self, path: &str) -> Result<FileEntry, GuestError> {
+        Ok(self
+            .call(
+                "StatFile",
+                path,
+                proto::Path { path: path.into() },
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.stat_file(request).await },
+            )
+            .await
+            .map_err(rpc_error)?
+            .into_inner()
+            .into())
     }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         let result = self

@@ -328,7 +328,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND decision.document #> '{targetPlan,intentTargets}' = '[]'::jsonb
             AND NOT EXISTS (SELECT 1 FROM intents intent WHERE intent.cycle_id = cycle.cycle_id)
         ), settled_cycles AS MATERIALIZED (
-          SELECT cycle.cycle_id
+          SELECT cycle.cycle_id, cycle.decision_hash, cycle.terminal_at
           FROM current_generation AS generation
           JOIN autonomous_cycles AS cycle
             ON cycle.account_id = generation.account_id
@@ -337,7 +337,6 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
            AND decision.decision_hash = cycle.decision_hash
           WHERE generation.requires_blocked_cycle
             AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-            AND cycle.terminal_at >= generation.restricted_at
             AND cycle.terminal_at <= ${input.observedAt}::timestamptz
             AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
             AND (
@@ -360,7 +359,35 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               NOT generation.requires_blocked_cycle
               OR EXISTS (SELECT 1 FROM blocked_cycles)
               OR EXISTS (SELECT 1 FROM preserved_cycles)
-              OR EXISTS (SELECT 1 FROM settled_cycles)
+              OR EXISTS (
+                SELECT 1 FROM settled_cycles AS cycle
+                WHERE cycle.terminal_at >= generation.restricted_at
+              )
+              OR (
+                generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+                AND EXISTS (
+                  SELECT 1 FROM intents AS intent
+                  JOIN mutation_events AS event ON event.intent_id = intent.intent_id
+                  WHERE intent.authority_generation_hash = generation.generation_hash
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM autonomous_cycles AS cycle
+                  WHERE cycle.account_id = generation.account_id
+                    AND cycle.state IN ('PENDING', 'ACTIVE')
+                )
+                AND observe_recovery_account_settled(
+                  generation.generation_hash, generation.account_id, ${input.observedAt}::timestamptz
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM autonomous_cycle_shadow_decisions AS decision
+                  WHERE decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+                    AND NOT EXISTS (
+                      SELECT 1 FROM settled_cycles AS cycle
+                      WHERE cycle.cycle_id = decision.cycle_id AND cycle.decision_hash = decision.decision_hash
+                    )
+                  OFFSET 0
+                )
+              )
               OR (
                 generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
                 AND NOT EXISTS (

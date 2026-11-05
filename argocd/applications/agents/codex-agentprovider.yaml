@@ -18,6 +18,8 @@ spec:
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -46,6 +48,9 @@ spec:
         [projects."/root"]
         trust_level = "trusted"
   outputArtifacts:
+    - name: runner-result
+      path: /workspace/.agent/result.json
+      key: "{{ inputs.artifactKey }}"
     - name: runner-log
       path: /workspace/.agent/runner.log
     - name: runner-status

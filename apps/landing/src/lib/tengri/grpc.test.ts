@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
-import type { TengriIdentity } from './auth'
+import { RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { SessionSchema } from './generated/proompteng/authz/v1/platform_pb'
+import type { PlatformIdentity } from '../platform/auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
@@ -29,7 +30,8 @@ let removalCheck: (() => void) | undefined
 const removalOperations = new Set<string>()
 let loseCommandResponse = false
 let supersedeRuntimeCommand = false
-const identity: TengriIdentity = {
+let conflictedConversationResumes = 0
+const identity: PlatformIdentity = {
   subject: 'github:42',
   user: { id: '42', name: 'Fixture', email: '', image: null },
   session: create(SessionSchema, {
@@ -91,7 +93,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 7
+let receiverGuestApiProtocolVersion = 10
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -101,7 +103,24 @@ let catalogRequestStarted: (() => void) | null = null
 let catalogRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
+let codexRunReadStarted: (() => void) | null = null
+let codexRunReadCancelled: (() => void) | null = null
 let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
+
+function waitForCodexRunReadCancellation(
+  call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+  callback: grpc.sendUnaryData<Record<string, unknown>>,
+) {
+  codexRunReadStarted?.()
+  const timer = setTimeout(
+    () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'test run read was not cancelled'), null),
+    2_000,
+  )
+  call.on('cancelled', () => {
+    clearTimeout(timer)
+    codexRunReadCancelled?.()
+  })
+}
 
 beforeAll(async () => {
   fixture = await createSpiffeFixture()
@@ -115,11 +134,11 @@ beforeAll(async () => {
     }),
   ) as unknown as {
     proompteng: {
-      authz: { v1: { AuthorizationService: grpc.ServiceClientConstructor & { service: grpc.ServiceDefinition } } }
+      authz: { v1: { TengriAuthorizationService: grpc.ServiceClientConstructor & { service: grpc.ServiceDefinition } } }
     }
   }
   ofzServer = new grpc.Server()
-  ofzServer.addService(authzDescriptor.proompteng.authz.v1.AuthorizationService.service, {
+  ofzServer.addService(authzDescriptor.proompteng.authz.v1.TengriAuthorizationService.service, {
     getPolicyState(
       _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -220,7 +239,7 @@ beforeAll(async () => {
     ),
   )
   process.env.OFZ_GRPC_ENDPOINT = `localhost:${ofzPort}`
-  process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+  process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     getRequestAudience(
@@ -315,6 +334,10 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      if (call.request.id === 'sleep-committed') {
+        callback(serviceError(grpc.status.FAILED_PRECONDITION, 'automatic sleep already committed'))
+        return
+      }
       callback(null, {
         id: call.request.id,
         displayName: 'Tengri',
@@ -423,6 +446,12 @@ beforeAll(async () => {
         attached: false,
       })
     },
+    listCodexThreads(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { rawJson: '{"data":[{}],"nextCursor":null}' })
+    },
     listCodexModels(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -431,6 +460,12 @@ beforeAll(async () => {
       receivedRequest = call.request
       if (call.request.agentId === 'unimplemented-catalog') {
         callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
+        return
+      }
+      if (call.request.agentId === 'retained-runtime-upgrade') {
+        const error = serviceError(grpc.status.FAILED_PRECONDITION, 'retained guest protocol differs')
+        error.metadata.set('x-tengri-error-code', 'runtime_upgrade_required')
+        callback(error, null)
         return
       }
       if (call.request.agentId === 'catalog-cancel') {
@@ -473,28 +508,38 @@ beforeAll(async () => {
         stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
       })
     },
-    getActiveCodexRun(
+    getActiveCodexRuns(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.id === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      callback(
-        null,
-        call.request.id === 'agent-empty'
-          ? {}
-          : {
-              runId: '11111111-1111-4111-8111-111111111111',
-              agentId: call.request.id,
-              threadId: 'thread-selected',
-              stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
-            },
-      )
+      callback(null, {
+        runs:
+          call.request.id === 'agent-empty'
+            ? []
+            : [
+                {
+                  runId: '11111111-1111-4111-8111-111111111111',
+                  agentId: call.request.id,
+                  threadId: 'thread-selected',
+                  stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+                },
+              ],
+      })
     },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.agentId === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -686,6 +731,10 @@ beforeAll(async () => {
         call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
+      if (threadId === 'conflicted-conversation' && conflictedConversationResumes++ === 0) {
+        call.emit('error', serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'))
+        return
+      }
       call.write({
         part: 'CODEX_HISTORY_PART_THREAD',
         rawJson: JSON.stringify({
@@ -770,15 +819,34 @@ describe('Tengri gRPC BFF transport', () => {
     ).toMatchObject({ status: 409, code: 'control_not_dispatched' })
   })
   test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
-    const { getActiveCodexRun } = await import('./grpc')
-    expect(await getActiveCodexRun(identity, 'agent-test')).toEqual({
-      runId: '11111111-1111-4111-8111-111111111111',
-      agentId: 'agent-test',
-      threadId: 'thread-selected',
-      state: { phase: 'running', turnId: 'turn-selected' },
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await getActiveCodexRuns(identity, 'agent-test')).toEqual([
+      {
+        runId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-test',
+        threadId: 'thread-selected',
+        state: { phase: 'running', turnId: 'turn-selected' },
+      },
+    ])
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: '' })
+    expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
+  })
+  test('carries the selected conversation in the signed active-run request', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    const runs = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.threadId).toBe('thread-selected')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
+    expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+    expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
+  })
+  test('rejects an out-of-scope active-run response instead of treating the selected conversation as idle', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await rejection(getActiveCodexRuns(identity, 'agent-test', 'thread-another'))).toMatchObject({
+      message: 'Invalid active run scope',
+      status: 503,
     })
-    expect(receivedRequest).toEqual({ id: 'agent-test' })
-    expect(await getActiveCodexRun(identity, 'agent-empty')).toBeNull()
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
@@ -799,11 +867,24 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
+  test('accepts guest API 10 before sending canonical file writes', async () => {
+    const { writeFile } = await import('./grpc')
+    const before = fileWriteCalls
+    const previous = receiverGuestApiProtocolVersion
+    try {
+      receiverGuestApiProtocolVersion = 10
+      await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
+      expect(fileWriteCalls).toBe(before + 1)
+    } finally {
+      receiverGuestApiProtocolVersion = previous
+    }
+  })
+
   test('refuses incompatible controllers before sending canonical file writes', async () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 5, 6, 8]) {
+      for (const version of [0, 4, 5, 6, 7, 8, 9, 11]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -811,7 +892,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 7
+      receiverGuestApiProtocolVersion = 10
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)
@@ -1004,6 +1085,14 @@ describe('Tengri gRPC BFF transport', () => {
       client.close()
       oldController.forceShutdown()
     }
+  })
+
+  test('classifies malformed chat indexes as validation failures', async () => {
+    const { listCodexThreads } = await import('./grpc')
+    expect(await rejection(listCodexThreads(identity, 'agent-test', false))).toMatchObject({
+      status: 502,
+      code: 'chat_index_invalid',
+    })
   })
 
   test('treats missing model RPCs and invalid catalogs as failures without negotiating guest capabilities', async () => {
@@ -1456,6 +1545,16 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
   })
 
+  test('does not report a saved timeout after automatic sleep has committed', async () => {
+    const { updatePowerSettings } = await import('./grpc')
+    expect(await rejection(updatePowerSettings(identity, 'sleep-committed', { idleTimeoutMinutes: 60 }))).toMatchObject(
+      {
+        status: 409,
+        message: 'The agent has started sleeping. Resume it, then change this setting.',
+      },
+    )
+  })
+
   test('reports uncertain runtime readiness as unavailable without inventing a failed agent', async () => {
     const { listAgents } = await import('./grpc')
     const previousPhase = runtimePhase
@@ -1658,6 +1757,41 @@ describe('Tengri gRPC BFF transport', () => {
     codexAccountRequestCancelled = null
   })
 
+  test.each(['active runs', 'run status'] as const)('cancels %s gRPC when the browser request aborts', async (kind) => {
+    const { getActiveCodexRuns, getCodexRun } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      codexRunReadStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      codexRunReadCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = (
+      kind === 'active runs'
+        ? getActiveCodexRuns(identity, 'codex-run-read-cancel', 'thread-selected', controller.signal)
+        : getCodexRun(identity, 'codex-run-read-cancel', '11111111-1111-4111-8111-111111111111', controller.signal)
+    ).catch((error: unknown) => error)
+    try {
+      await started
+      controller.abort()
+      expect(
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Run read cancellation timed out')), 500),
+          ),
+        ]),
+      ).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+      await Promise.race([
+        cancelled,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Run read gRPC was not cancelled')), 500)),
+      ])
+    } finally {
+      codexRunReadStarted = null
+      codexRunReadCancelled = null
+    }
+  })
+
   test('cancels the model catalog gRPC when the browser request aborts', async () => {
     const { listCodexModels } = await import('./grpc')
     const started = new Promise<void>((resolve) => {
@@ -1785,6 +1919,16 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
+  test('identifies an incompatible retained guest as requiring a runtime upgrade', async () => {
+    const { listCodexModels } = await import('./grpc')
+
+    expect(await rejection(listCodexModels(identity, 'retained-runtime-upgrade'))).toMatchObject({
+      message: 'This workspace needs a runtime upgrade before it can reconnect.',
+      status: 412,
+      code: 'runtime_upgrade_required',
+    })
+  })
+
   test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
     const thread = await restoredThread('thread-test')
     expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
@@ -1834,6 +1978,18 @@ describe('Tengri gRPC BFF transport', () => {
       status: 503,
       code: undefined,
     })
+  })
+
+  test('keeps a conversation resume conflict retryable without exposing guest details', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread(identity, 'agent-test', 'conflicted-conversation'))).toMatchObject({
+      message: 'The conversation changed while loading. Reconnecting…',
+      status: 503,
+      code: undefined,
+    })
+    expect(await restoredThread('conflicted-conversation')).toMatchObject({ id: 'conflicted-conversation' })
+    expect(conflictedConversationResumes).toBe(2)
   })
 
   test('sanitizes upstream failures and treats verifier failures as service errors', async () => {

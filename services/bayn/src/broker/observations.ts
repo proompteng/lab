@@ -291,7 +291,8 @@ export const accountObservation = (
   result: ReadResult<AlpacaAccount>,
 ): Result.Result<BrokerEventInput, BrokerObservationError> => {
   const account = {
-    schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+    schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+    cryptoFeeTier: result.value.cryptoFeeTier,
     accountId: result.value.id,
     status: accountStatus(result.value),
     currency: result.value.currency,

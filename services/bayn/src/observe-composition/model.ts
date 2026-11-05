@@ -27,6 +27,7 @@ import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
+import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevPositionStore } from '../jev/portfolio'
 
 export type ReconciliationRuntime =
@@ -45,6 +46,7 @@ export type ObserveDecisionRuntime =
   | JevBatchStore
   | JevEvaluationStore
   | JevClient
+  | EntryInferenceJournal
   | JevPositionStore
 
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime

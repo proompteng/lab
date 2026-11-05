@@ -4,6 +4,7 @@ import { Context, Effect, Schema } from 'effect'
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import { CashReportingQuantumSchema } from './cash-reporting'
+import { CryptoFeeTierSchema } from '../crypto-fees'
 import {
   AccountStatus,
   AssetClass,
@@ -51,6 +52,7 @@ const account = Schema.Struct({
   equityMicros: micros,
   lastEquityMicros: micros,
   cryptoStatus: Schema.NullOr(Schema.String),
+  cryptoFeeTier: Schema.NullOr(CryptoFeeTierSchema),
   nonMarginableBuyingPowerMicros: Schema.NullOr(micros),
   buyingPowerMicros: micros,
   accountBlocked: Schema.Boolean,

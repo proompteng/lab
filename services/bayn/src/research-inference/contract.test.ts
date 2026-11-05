@@ -44,6 +44,32 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test.each([
+    ['qwen36-flamingo', '739af1e7aac320af1682ed1e0cce369af4c5265d'],
+    ['qwen38-flamingo', '017b9c7af6b5689d5dd426a76e0bc077eb5ca20a'],
+  ] as const)('verifies %s retired receipts while rejecting retired registrations', (model, checkpoint) => {
+    const current = editorFixture()
+    const old = {
+      ...current,
+      policy: {
+        ...current.policy,
+        model,
+        checkpoint,
+        tokenizerRevision: checkpoint,
+        chatTemplateRevision: checkpoint,
+      },
+    }
+    const retained = Result.getOrThrow(decodeRetainedResearchRun(old))
+    const receipt = retainedReceiptFixture(retained)
+    expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
+    expect(JSON.stringify(retained)).toBe(JSON.stringify(old))
+    expect(Result.getOrThrow(verifyResearchReceipt(retained, receipt))).toEqual(receipt)
+    expect(Result.getOrThrow(researchExpensePlan(retained, receipt)).transfers[0]?.amount).toBe(1001000002n)
+    expect(Result.isFailure(verifyResearchReceipt(current, receipt))).toBe(true)
+    expect(
+      Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
+    ).toBe(true)
+  })
   test('recovers priced retained editor receipts without admitting new inference for that policy', () => {
     const old = retainedEditorFixture()
     const before = JSON.stringify(old)

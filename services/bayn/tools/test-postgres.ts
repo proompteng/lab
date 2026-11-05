@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url'
 
 const files = [
+  'src/db/candidate-cutover-diagnostics.integration.test.ts',
+  'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
   'src/db/remove-unused-schema.integration.test.ts',
   'src/db/current-jev-cycle-migration.integration.test.ts',
@@ -11,6 +13,7 @@ const files = [
   'src/db/available-history-migration.integration.test.ts',
   'src/execution/writer-fence.integration.test.ts',
   'src/db/postgres-backend-tracing.integration.test.ts',
+  'src/db/snapshot-rows.integration.test.ts',
   'src/db/broker-observations.integration.test.ts',
   'src/cycle/store/observability.integration.test.ts',
   'src/db/execution-store.integration.test.ts',
@@ -24,15 +27,21 @@ const files = [
   'src/db/streaming-snapshot.integration.test.ts',
   'src/db/native-arrival-postgres.integration.test.ts',
   'src/db/jev-evaluation-postgres.integration.test.ts',
+  'src/db/jev-evaluation-cohort-postgres.integration.test.ts',
+  'src/db/entry-inference-postgres.integration.test.ts',
   'src/db/jev-batch-postgres.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',
   'src/db/jev-native-postgres.integration.test.ts',
   'src/intraday-replay/clock.integration.test.ts',
   'src/inference-costs-postgres.integration.test.ts',
   'src/inference-expense-postgres.integration.test.ts',
+  'src/inference-expense-runtime.integration.test.ts',
   'src/research-inference/store.integration.test.ts',
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',
+  'src/system-assessment/postgres.integration.test.ts',
+  'src/system-assessment/operational-source-cut.integration.test.ts',
+  'src/db/risk-clock-rejection.integration.test.ts',
 ]
 const [shard = '1/1', ...extra] = process.argv.slice(2)
 if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)
@@ -50,4 +59,9 @@ const run = (args: readonly string[]) => {
 }
 
 run(['--isolate', `--shard=${shard}`, '--timings=tools/ci-postgres-timings.json', ...files])
-if (shard.startsWith('1/')) run(['src/shadow-decision.test.ts', '--test-name-pattern', 'migrated cycle guard'])
+if (shard.startsWith('1/'))
+  run([
+    'src/shadow-decision.test.ts',
+    '--test-name-pattern',
+    'migrated cycle guard|PostgreSQL entry binding and nested',
+  ])
