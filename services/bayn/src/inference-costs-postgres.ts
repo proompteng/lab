@@ -119,57 +119,60 @@ export const readInferenceExpenseSnapshot = (
                 ORDER BY quote_hash COLLATE "C"
               ) AS item
           `
-          const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
-          const requests: DecodedInferenceCostRequest[] = []
-          yield* Stream.runForEach(sourceQuery.stream, (input) =>
-            Effect.gen(function* () {
+          return yield* Stream.runCollect(sourceQuery.stream)
+        }),
+      )
+      .pipe(
+        Effect.flatMap((inputs) =>
+          Effect.gen(function* () {
+            const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
+            const requests: DecodedInferenceCostRequest[] = []
+            for (const input of inputs) {
               const row = yield* Schema.decodeUnknownEffect(SnapshotSchema.value)(input)
               if (row.kind === SnapshotRowKind.Request) {
                 requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
               }
               rows.push(row)
-            }),
-          )
-          const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
-          const cut = cuts[0]
-          if (
-            cuts.length !== 1 ||
-            cut === undefined ||
-            rows.some(
-              (row) =>
-                row.as_of !== cut.as_of ||
-                row.request_count !== cut.request_count ||
-                row.quote_count !== cut.quote_count,
+            }
+            const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
+            const cut = cuts[0]
+            if (
+              cuts.length !== 1 ||
+              cut === undefined ||
+              rows.some(
+                (row) =>
+                  row.as_of !== cut.as_of ||
+                  row.request_count !== cut.request_count ||
+                  row.quote_count !== cut.quote_count,
+              )
             )
-          )
-            return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
-          const quoteRows = rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : []))
-          if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
-            return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
-          const evidence: DecodedInferenceCostEvidence = {
-            schemaVersion: requests.some((row) => row.stagedCheckpoint !== undefined)
-              ? 'bayn.inference-cost-evidence.v4'
-              : requests.some((row) => row.chartCheckpoint !== undefined)
-                ? 'bayn.inference-cost-evidence.v3'
-                : 'bayn.inference-cost-evidence.v2',
-            accountBindingHash,
-            sessionDate: scope.sessionDate,
-            asOf: cut.as_of,
-            requests,
-          }
-          const quotes = yield* decodeInferenceExpenseSessionRows(quoteRows, scope.sessionDate)
-          return {
-            evidence: {
-              ...evidence,
-              requests: evidence.requests.toSorted((left, right) =>
-                left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
-              ),
-            },
-            quotes,
-          }
-        }),
-      )
-      .pipe(
+              return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
+            const quoteRows = rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : []))
+            if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
+              return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
+            const evidence: DecodedInferenceCostEvidence = {
+              schemaVersion: requests.some((row) => row.stagedCheckpoint !== undefined)
+                ? 'bayn.inference-cost-evidence.v4'
+                : requests.some((row) => row.chartCheckpoint !== undefined)
+                  ? 'bayn.inference-cost-evidence.v3'
+                  : 'bayn.inference-cost-evidence.v2',
+              accountBindingHash,
+              sessionDate: scope.sessionDate,
+              asOf: cut.as_of,
+              requests,
+            }
+            const quotes = yield* decodeInferenceExpenseSessionRows(quoteRows, scope.sessionDate)
+            return {
+              evidence: {
+                ...evidence,
+                requests: evidence.requests.toSorted((left, right) =>
+                  left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
+                ),
+              },
+              quotes,
+            }
+          }),
+        ),
         Effect.mapError((cause) =>
           cause instanceof InferenceCostError
             ? cause
