@@ -1,0 +1,18 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path-keeper
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+    storage.proompteng.ai/durability: keeper-raft-quorum-required
+    storage.proompteng.ai/purpose: torghut-keeper-replicas
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: kubernetes.io/hostname
+        values:
+          - talos-192-168-1-85
+          - turin
+          - talos-192-168-1-194

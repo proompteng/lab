@@ -316,11 +316,11 @@ jobs:
       matrix:
         group:
           - runtime
-          - backtest-core
-          - backtest-latency-jev
-          - backtest-latency-ablation
-          - backtest-latency-momentum
-          - backtest-latency-momentum-trading
+          - backtest
+          - latency-jev
+          - latency-ablation
+          - latency-momentum
+          - latency-momentum-trading
           - frozen-control
           - restart
           - inference
