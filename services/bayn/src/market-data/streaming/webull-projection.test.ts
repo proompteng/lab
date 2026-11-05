@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { Result } from 'effect'
 
+import { jevSignalFor } from '../../jev/trading-signals'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { emptyStreamingProjection, incorporateMarketRecord } from './projection'
@@ -88,6 +89,23 @@ const initial = () => emptyStreamingProjection('webull-test', undefined, topic)
 const select = (state: ReturnType<typeof initial>, at = end + 3000) =>
   selectWebullBars(state.webull, ['AAPL', 'SPY'], end, at)
 
+const decisionCut = () => {
+  const projection = incorporateMarketRecord(fixture.cut.projection, record(), universe, end + 1500)
+  const position = { topic, partition: 0, offset: '1' }
+  return {
+    ...fixture.cut,
+    projection,
+    positions: [...fixture.cut.positions, position].toSorted((a, b) => a.topic.localeCompare(b.topic)),
+    bootstrap: {
+      ...fixture.cut.bootstrap,
+      partitions: [
+        ...fixture.cut.bootstrap.partitions,
+        { topic, partition: 0, logStartOffset: '0', startOffset: '0', endOffset: '1' },
+      ].toSorted((a, b) => a.topic.localeCompare(b.topic)),
+    },
+  }
+}
+
 test('the existing consumer accepts native batches once and retains real first availability', () => {
   const state = incorporateMarketRecord(initial(), record(), universe, end + 1500)
   expect(state.sequence).toBe(1)
@@ -155,20 +173,8 @@ test('bar gaps and invalid captures remove only optional context, with scope and
 })
 
 test('a recorded decision cut binds native proof and replays without changing IEX bars or pricing', () => {
-  const projection = incorporateMarketRecord(fixture.cut.projection, record(), universe, end + 1500)
-  const position = { topic, partition: 0, offset: '1' }
-  const cut = {
-    ...fixture.cut,
-    projection,
-    positions: [...fixture.cut.positions, position].toSorted((a, b) => a.topic.localeCompare(b.topic)),
-    bootstrap: {
-      ...fixture.cut.bootstrap,
-      partitions: [
-        ...fixture.cut.bootstrap.partitions,
-        { topic, partition: 0, logStartOffset: '0', startOffset: '0', endOffset: '1' },
-      ].toSorted((a, b) => a.topic.localeCompare(b.topic)),
-    },
-  }
+  const cut = decisionCut()
+  const projection = cut.projection
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, fixture.query))
   expect(snapshot.bars).toEqual(fixture.snapshot.bars)
   expect(snapshot.latestQuotes).toEqual(fixture.snapshot.latestQuotes)
@@ -215,6 +221,23 @@ test('a recorded decision cut binds native proof and replays without changing IE
     const manifest = { ...snapshot.manifest, streaming: { ...snapshot.manifest.streaming, webull: mutation } }
     expect(Result.isFailure(reproduceStreamingSnapshot(manifest, rows))).toBe(true)
   }
+})
+
+test('an IEX-excluded candidate retains independent Webull evidence without becoming tradable', () => {
+  const cut = decisionCut()
+  const bars = new Map(cut.projection.bars)
+  bars.set(
+    'AAPL',
+    (bars.get('AAPL') ?? []).filter((bar) => Date.parse(bar.value.eventAt) !== end - 60_000),
+  )
+  const snapshot = Result.getOrThrow(
+    constructStreamingSnapshot({ ...cut, projection: { ...cut.projection, bars } }, fixture.query),
+  )
+  expect(snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === 'AAPL')).toBe(true)
+  expect(snapshot.manifest.streaming.webull?.bars.map((bar) => bar.symbol)).toEqual(['AAPL', 'SPY'])
+  expect(Result.isFailure(jevSignalFor(snapshot, 'AAPL'))).toBe(true)
+  const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+  expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows)).manifest).toEqual(snapshot.manifest)
 })
 
 test('native evidence does not grow with recovery polls and never refreshes old bars', () => {
