@@ -3,6 +3,7 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { ConnectionError, SqlError } from 'effect/sql/SqlError'
 import { CreateAccountStatus, CreateTransferStatus } from 'tigerbeetle-node'
 
+import { InferenceStage, InferenceUsageStatus } from './inference-costs'
 import {
   buildInferenceExpensePlan,
   makeInferenceExpenseQuote,
@@ -17,6 +18,10 @@ import {
   makeConditionalEvaluationReceipt,
 } from './jev/conditional-entry.test-support'
 import { JevOutcome } from './jev/evidence'
+import {
+  entryEvaluationRequestFixture as stagedRequestFixture,
+  stagedCheckpointFixture,
+} from './jev/entry-inference.test-support'
 import { makeJevResolution, JevResolutionStatus } from './jev/resolution'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { runInferenceExpensePass } from './inference-expense-runtime'
@@ -34,14 +39,43 @@ const quote = Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture()
 const plan = Result.getOrThrow(buildInferenceExpensePlan([quote]))
 const rows = (quotes: readonly InferenceExpenseQuote[]) =>
   quotes.map((quote) => ({ quote, verifiedAt: '1970-01-01T00:01:00.000Z' }))
-const snapshot = (quotes: readonly InferenceExpenseQuote[]) => ({
+const snapshot = (quotes: readonly InferenceExpenseQuote[], asOf = '1970-01-01T00:02:00.000Z') => ({
   evidence: {
-    accountBindingHash: quote.accountBindingHash,
-    sessionDate: quote.sessionDate,
-    asOf: '1970-01-01T00:02:00.000Z',
+    accountBindingHash: (quotes[0] ?? quote).accountBindingHash,
+    sessionDate: (quotes[0] ?? quote).sessionDate,
+    asOf,
   },
   quotes: rows(quotes),
 })
+const stagedExpenseQuote = (stage: InferenceStage.Chart | InferenceStage.BaseStart, completed: boolean) => {
+  const request = stagedRequestFixture()
+  const checkpoint = stagedCheckpointFixture(request)
+  return Result.getOrThrow(
+    makeInferenceExpenseQuote(
+      {
+        accountId: 'stage-expense-ledger-test',
+        sessionDate: '2026-10-25',
+        asOf: request.expiresAt,
+        requestId: request.requestId,
+        cycleId: request.cycleId,
+        authorityGenerationHash: request.authorityGenerationHash,
+        request,
+        receipt: null,
+        resolution: null,
+        handoff: null,
+        stagedCheckpoint: {
+          claims: checkpoint.claims.filter((row) => stage === InferenceStage.BaseStart || row.stage === stage),
+          terminals: checkpoint.terminals.filter(
+            (row) => (stage === InferenceStage.BaseStart || row.stage === stage) && (row.stage !== stage || completed),
+          ),
+          skips: [],
+        },
+      },
+      inferenceExpenseRateCard,
+      stage,
+    ),
+  )
+}
 const expectFailure = async <A, E>(operation: Effect.Effect<A, E>, message: string) => {
   const exit = await Effect.runPromiseExit(operation)
   expect(Exit.isFailure(exit)).toBe(true)
@@ -252,6 +286,99 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
     expect(report.knownEstimatedCostPicoUsd).toBe('18400000')
     expect(report.exactLedgerPrefix).toBe(true)
   })
+  for (const stage of [InferenceStage.Chart, InferenceStage.BaseStart] as const) {
+    for (const reversed of [false, true]) {
+      test(`counts a priced ${stage} terminal after its pending quote in ${reversed ? 'reverse' : 'forward'} order`, async () => {
+        const pending = stagedExpenseQuote(stage, false)
+        const priced = stagedExpenseQuote(stage, true)
+        expect(pending.line.usageStatus).toBe(InferenceUsageStatus.Unknown)
+        expect(priced.line.estimatedCostPicoUsd).not.toBeNull()
+        expect(pending.line.receiptHash).toBeNull()
+        expect(priced.line.receiptHash).toBeNull()
+        const quotes = reversed ? [priced, pending] : [pending, priced]
+        const ledger = memoryLedger()
+        await Effect.runPromise(
+          postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(quotes))),
+        )
+        const report = await Effect.runPromise(
+          readInferenceExpenseLedger(
+            ledger.client,
+            snapshot(quotes, '2026-10-25T08:00:00.000Z'),
+            Effect.succeed(rows(quotes)),
+          ),
+        )
+        expect(report.quotedRequestCount).toBe(1)
+        expect(report.claimedRequestCount).toBe(1)
+        expect(report.pricedRequestCount).toBe(1)
+        expect(report.gapRequestCount).toBe(0)
+        expect(report.transferCount).toBe(1)
+        expect(report.knownEstimatedCostPicoUsd).toBe(priced.line.estimatedCostPicoUsd)
+      })
+    }
+  }
+
+  test('keeps an unknown provider stage explicit when another stage is priced', async () => {
+    const quotes = [
+      stagedExpenseQuote(InferenceStage.Chart, false),
+      stagedExpenseQuote(InferenceStage.BaseStart, false),
+      stagedExpenseQuote(InferenceStage.Chart, true),
+    ]
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(quotes))))
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(
+        ledger.client,
+        snapshot(quotes, '2026-10-25T08:00:00.000Z'),
+        Effect.succeed(rows(quotes)),
+      ),
+    )
+    expect(report.quotedRequestCount).toBe(2)
+    expect(report.claimedRequestCount).toBe(1)
+    expect(report.pricedRequestCount).toBe(1)
+    expect(report.gapRequestCount).toBe(1)
+    expect(report.transferCount).toBe(1)
+  })
+
+  test('does not resolve a captured pending stage from a later priced owner quote', async () => {
+    const pending = stagedExpenseQuote(InferenceStage.Chart, false)
+    const priced = stagedExpenseQuote(InferenceStage.Chart, true)
+    const current = [pending, priced]
+    const ledger = memoryLedger()
+    await Effect.runPromise(postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan(current))))
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(
+        ledger.client,
+        snapshot([pending], '2026-10-25T08:00:00.000Z'),
+        Effect.succeed(rows(current)),
+      ),
+    )
+    expect(report.quotedRequestCount).toBe(1)
+    expect(report.pricedRequestCount).toBe(0)
+    expect(report.gapRequestCount).toBe(1)
+    expect(report.verifiedSessionTransferCount).toBe(1)
+    expect(report.transferCount).toBe(0)
+    expect(report.knownEstimatedCostPicoUsd).toBe('0')
+  })
+
+  test('counts proven non-dispatch as priced with zero cost and no transfer', async () => {
+    const skipped = Result.getOrThrow(
+      makeInferenceExpenseQuote(expenseSourceFixture({ notDispatched: true }), expenseRateFixture),
+    )
+    expect(skipped.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
+    const ledger = memoryLedger()
+    await Effect.runPromise(
+      postInferenceExpenses(ledger.client, Result.getOrThrow(buildInferenceExpensePlan([skipped]))),
+    )
+    const report = await Effect.runPromise(
+      readInferenceExpenseLedger(ledger.client, snapshot([skipped]), Effect.succeed(rows([skipped]))),
+    )
+    expect(report.quotedRequestCount).toBe(1)
+    expect(report.pricedRequestCount).toBe(1)
+    expect(report.gapRequestCount).toBe(0)
+    expect(report.transferCount).toBe(0)
+    expect(report.knownEstimatedCostPicoUsd).toBe('0')
+  })
+
   test('reports a captured quote set while later valid requests extend the session ledger', async () => {
     const ledger = memoryLedger()
     const later = Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture({ key: 'b' }), expenseRateFixture))
