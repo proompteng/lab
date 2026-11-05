@@ -33,6 +33,11 @@ mandate and its three runtime inputs, then runs OBSERVE. After verifying the pub
 cutover, restore the same sandbox account's PAPER mandate through reviewed GitOps, bound to that image and the v38
 strategy. Broker credentials, risk limits, fees, funding, loss history and turnover remain unchanged.
 
+Migration 179 restricts a clear v37 PAPER generation with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. Native recovery then
+settles the prior generation and requires fresh exact reconciliation before creating clear OBSERVE authority.
+Existing operator holds, v38 grants and immutable financial history remain intact. Removing the sealed request alone
+does not change durable authority and cannot complete this handoff.
+
 Both stages require the reviewed protocol-cutover approval. Do not merge this source cutover before that approval.
 After PAPER restoration, verify natural model requests contain source-bound Webull context, exact reconciliation,
 unchanged limits and successful native receipts. OBSERVE alone does not complete integration. Rollback follows the
