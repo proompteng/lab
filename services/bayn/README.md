@@ -228,7 +228,9 @@ are absent from the current numerical input. Independent momentum qualification 
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
 Migration 178 admits only v38 requests and dispatch after the existing flat, reconciled cutover. Original v35, v36 and v37 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
 
-The current source uses `jev` protocol v38, verified numerical input v24, batch v8 and entry inference input v8. It retains the
+The current source uses `jev` protocol v39, verified numerical input v24, batch v8 and entry inference input v8. Its
+[reviewed cutover](../../docs/bayn/effective-entry-allowance-cutover.md) is separate from the still-v38 deployed mandate;
+the draft source change leaves GitOps activation and sealed authority unchanged. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks pinned Jev 1.13 for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -239,7 +241,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v38 and its exact question-policy hash.
+current execution and database guards accept v39 and its exact question-policy hash.
 
 All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
 BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
@@ -1125,10 +1127,14 @@ account clock. This is the server acceptance boundary, not a guarantee about whe
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
 
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
-tick. The retained v38 `numericalState.entryEconomics` fields `maximumEntryQuoteDriftBps` and
-`maximumEntryLimitSlippageBps` record legacy protocol values of 10 bps each; effective entry pricing applies 0 bps
-for both. These fields are part of hashed request and batch evidence. Correcting the model-facing values requires
-versioned reconstruction that preserves existing v38 hashes.
+tick. Protocol v39 reports effective values of 0 bps for `numericalState.entryEconomics.maximumEntryQuoteDriftBps`
+and `maximumEntryLimitSlippageBps`. Retained v38 inputs still record the original 10 bps values and reconstruct their
+unchanged request and batch hashes. Both versions enforce the same zero entry allowances and broker tick rounding.
+Shared protocol fields remain 10 bps because liquidation and proposal stop economics still consume them. Fees,
+funding, exit prices and thresholds are unchanged. Migration 183 requires already-OBSERVE authority and a settled,
+flat, freshly reconciled account; it does not restrict, rotate or activate authority itself. The
+[cutover procedure](../../docs/bayn/effective-entry-allowance-cutover.md) must be reviewed before this draft is merged
+into the automatic delivery path.
 
 Quote-backed instrument-quantized closes use LIMIT/DAY equity or LIMIT/IOC crypto orders with an allowance bounded
 by the existing risk policy, currently ten basis points from the verified bid. Close prices round toward the quote

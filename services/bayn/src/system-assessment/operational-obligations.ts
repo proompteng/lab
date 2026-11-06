@@ -2,7 +2,7 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
-import type { SystemSourceCut } from './source-cut'
+import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
 import type { ScheduledEvaluation } from './policy'
 import { SystemAssessmentError } from './economics'
 import { ObligationClass, ObligationOutcome, type ObligationCompletionSchema } from './reliability'

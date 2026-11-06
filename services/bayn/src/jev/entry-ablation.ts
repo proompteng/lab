@@ -14,6 +14,25 @@ import { entryProposalExitPlan, type JevFundedExitPlan } from './strategy-exit-p
 import { jevEntryQuoteExclusion } from './trading-signals'
 
 /** The candidate's loss and identity tie-breakers, with the Jev ranking removed. */
+export const selectFundedEntryAblationProposal = ({
+  handoff,
+  jev,
+}: Pick<Result.Result.Success<ReturnType<typeof entryInferenceAvailableAt>>, 'handoff' | 'jev'>) =>
+  Result.gen(function* () {
+    if (handoff.disposition.status === 'SOURCE_INFEASIBLE' || handoff.disposition.status === 'NO_FUNDED_PROPOSALS')
+      return null
+    if (handoff.disposition.status !== 'READY' || jev.status !== 'OMITTED_BY_POLICY')
+      return yield* Result.fail(
+        new JevContractError({ message: 'Ablation requires actual funded chart proposals and explicit Jev omission' }),
+      )
+    const proposals = handoff.disposition.evaluation.proposals.toSorted((left, right) => {
+      const leftLoss = BigInt(left.funding.acquisitionCostMicros) - BigInt(left.funding.estimatedStopNetMicros)
+      const rightLoss = BigInt(right.funding.acquisitionCostMicros) - BigInt(right.funding.estimatedStopNetMicros)
+      return leftLoss < rightLoss ? -1 : leftLoss > rightLoss ? 1 : left.proposalId.localeCompare(right.proposalId)
+    })
+    return proposals[0] ?? null
+  })
+
 export const selectEntryAblationProposal = (input: {
   readonly request: unknown
   readonly receipt: unknown
@@ -35,18 +54,7 @@ export const selectEntryAblationProposal = (input: {
       input.decidedAt,
       'bayn.entry-ablation-input.v1',
     )
-    if (handoff.disposition.status === 'SOURCE_INFEASIBLE' || handoff.disposition.status === 'NO_FUNDED_PROPOSALS')
-      return { request, receipt, proposal: null }
-    if (handoff.disposition.status !== 'READY' || jev.status !== 'OMITTED_BY_POLICY')
-      return yield* Result.fail(
-        new JevContractError({ message: 'Ablation requires actual funded chart proposals and explicit Jev omission' }),
-      )
-    const proposals = handoff.disposition.evaluation.proposals.toSorted((left, right) => {
-      const leftLoss = BigInt(left.funding.acquisitionCostMicros) - BigInt(left.funding.estimatedStopNetMicros)
-      const rightLoss = BigInt(right.funding.acquisitionCostMicros) - BigInt(right.funding.estimatedStopNetMicros)
-      return leftLoss < rightLoss ? -1 : leftLoss > rightLoss ? 1 : left.proposalId.localeCompare(right.proposalId)
-    })
-    return { request, receipt, proposal: proposals[0] ?? null }
+    return { request, receipt, proposal: yield* selectFundedEntryAblationProposal({ handoff, jev }) }
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Ablation selection could not reproduce its source evidence', cause }),
