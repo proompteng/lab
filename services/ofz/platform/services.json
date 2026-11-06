@@ -71,6 +71,11 @@
           "kind": "kubernetes.namespace",
           "id": "galactic/f16c9bf3-6947-4438-8158-cef04834b558",
           "name": "opencode"
+        },
+        {
+          "kind": "google.project",
+          "id": "952507162578",
+          "name": "proompteng-ai"
         }
       ],
       "initial_clients": ["tengri-web", "opencode"],
