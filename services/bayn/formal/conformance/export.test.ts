@@ -5,7 +5,7 @@ import { delimiter, join, resolve } from 'node:path'
 import { Result, Schema } from 'effect'
 
 const formal = process.env['BAYN_FORMAL_EXECUTABLE'] === undefined ? describe.skip : describe
-const directory = resolve(import.meta.dir, '../../formal')
+const directory = resolve(import.meta.dir, '..')
 const ScopeSchema = Schema.fromJsonString(
   Schema.Struct({
     modules: Schema.Array(Schema.String),
@@ -54,8 +54,10 @@ formal('complete owned Lean proof export', () => {
       'Bayn.safety_has_no_error_budget',
       'Bayn.conditional_radius_never_understates_variance',
       'Bayn.registered_expected_profit_bound',
-      'Bayn.conditional_qualification_preserves_every_requirement',
-      'Bayn.single_session_without_arbitrary_activity_quota_is_reachable',
+      'Bayn.executable_radius_covers_registered_expected_profit',
+      'Bayn.evaluated_economics_requires_positive_observed_profit',
+      'Bayn.supported_series_contains_every_observation',
+      'Bayn.mismatched_calendar_cannot_reconcile',
       'Bayn.bestMomentum',
       'Bayn.expenseCoverage',
       'Bayn.latestBatchCompletion',

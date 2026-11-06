@@ -162,7 +162,7 @@ for (const fault of faults) {
   check(fault.model, directory, fault.violation)
 }
 
-const conformance = Bun.spawnSync([process.execPath, 'test', 'src/system-assessment/tla-conformance.test.ts'], {
+const conformance = Bun.spawnSync([process.execPath, 'test', 'formal/conformance/tla.test.ts'], {
   cwd: service,
   env: { ...process.env, BAYN_TLA_STATE_DIRECTORY: output },
   stdout: 'inherit',
