@@ -123,10 +123,11 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` admits `bayn.system-registration.v3`: a nonempty prospective calendar, candidate and at
-least one selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original
-deadlines, statistical assumptions, allocation, and a bootstrap plan. Block length, replicate budget, and seed are
-immutable before the first open. The allocation must fit every bound source-approved risk policy. Both existing
+`validateSystemRegistration` validates current `bayn.system-registration.v4` registrations and retained historical
+versions; new admission accepts only v4. It binds a nonempty prospective calendar, candidate and at least one
+selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original deadlines,
+allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
+have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
