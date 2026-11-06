@@ -102,9 +102,13 @@ const baseRegistrationFixture = (
   )
   const momentumIdentity = Result.getOrThrow(repeatedMomentumStrategyIdentity(makeRepeatedMomentumPolicy(protocol)))
   return {
-    schemaVersion: 'bayn.system-registration.v3',
+    schemaVersion: 'bayn.system-registration.v4',
     allocationMicros: '100000000000',
-    bootstrap: { blockLengthSessions: Math.min(2, sessionCount), replicates: 10000, seed: 20260921 },
+    statisticalPlan: {
+      method: 'CONDITIONAL_HOEFFDING_V1',
+      meanModel: 'DETERMINISTIC_CONDITIONAL_SESSION_MEANS',
+      supports: [],
+    },
     program: 'BAYN_SYSTEM_QUALIFICATION',
     environment: 'PAPER',
     policyHash: Result.getOrThrow(systemQualificationPolicyHash()),
@@ -215,6 +219,24 @@ const baseRegistrationFixture = (
 export const withRegistrationCommitments = (registration: SystemRegistration): SystemRegistration => {
   const derived = {
     ...registration,
+    ...(registration.schemaVersion === 'bayn.system-registration.v4'
+      ? {
+          statisticalPlan: {
+            ...registration.statisticalPlan,
+            supports: registration.policies.map(
+              (definition) =>
+                registration.statisticalPlan.supports.find((support) => support.policy === definition.policy) ?? {
+                  policy: definition.policy,
+                  lowerMicros: '-5000000000',
+                  upperMicros: '5000000000',
+                  sourceHash: testHash('prospectively assumed synthetic support'),
+                  assumption:
+                    'Synthetic bounded-support test process; no claim that broker loss limits guarantee this support.',
+                },
+            ),
+          },
+        }
+      : {}),
     costAllocationPlans: registration.policies.flatMap((definition) =>
       registration.calendar.sessions.flatMap((session) =>
         Object.values(OperatingCostCategory).map((category) => ({
@@ -260,7 +282,7 @@ export const registrationFixture = (
   version = JevAcceptanceVersion.Current,
 ): SystemRegistration => {
   const protocol =
-    version === JevAcceptanceVersion.Current
+    version === JevAcceptanceVersion.Current || version === JevAcceptanceVersion.RetainedV5
       ? Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
       : Result.getOrThrow(
           Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
@@ -311,14 +333,19 @@ export const registrationFixture = (
       },
     })),
   }
-  if (usesLegacyAcceptance(version) && registration.schemaVersion === 'bayn.system-registration.v3') {
-    const { allocationMicros: _allocation, bootstrap: _bootstrap, ...retained } = registration
-    registration = {
-      ...retained,
-      schemaVersion: 'bayn.system-registration.v2',
-      policyHash: Result.getOrThrow(systemQualificationPolicyHash(version)),
-      acceptanceProtocolHash: Result.getOrThrow(jevAcceptanceProtocolHash(version)),
-    }
+  if (registration.schemaVersion !== 'bayn.system-registration.v4')
+    throw new Error('Expected current fixture construction')
+  if (version !== JevAcceptanceVersion.Current) {
+    const { statisticalPlan: _statistics, ...retained } = registration
+    if (usesLegacyAcceptance(version)) {
+      const { allocationMicros: _allocation, ...legacy } = retained
+      registration = { ...legacy, schemaVersion: 'bayn.system-registration.v2' }
+    } else
+      registration = {
+        ...retained,
+        schemaVersion: 'bayn.system-registration.v3',
+        bootstrap: { blockLengthSessions: Math.min(2, sessionCount), replicates: 10000, seed: 20260921 },
+      }
   }
   return withRegistrationCommitments({
     ...registration,
@@ -345,6 +372,8 @@ export const assessmentFixture = (registration: SystemRegistration = registratio
   source(registration.latencyStressProtocolHash)
   source(registration.latencyReplayExecutionModelHash)
   for (const plan of registration.costAllocationPlans) source(plan.basisSourceHash)
+  if (registration.schemaVersion === 'bayn.system-registration.v4')
+    for (const support of registration.statisticalPlan.supports) source(support.sourceHash)
   for (const hash of [
     registration.obligations.decisionScheduleHash,
     registration.obligations.reconciliationScheduleHash,
@@ -618,4 +647,24 @@ export const supportedAssessmentFixture = (
     },
   }
 }
+/** A controlled deterministic process, declared before observations; not a model for market returns. */
+export const knownPayoffAssessmentFixture = () => {
+  const base = registrationFixture(undefined, 1)
+  if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
+  const registration = withRegistrationCommitments({
+    ...base,
+    statisticalPlan: {
+      ...base.statisticalPlan,
+      supports: base.policies.map((policy) => ({
+        policy: policy.policy,
+        lowerMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
+        upperMicros: policy.policy === JevResearchPolicy.Candidate ? '1000000000' : '100000000',
+        sourceHash: testHash('prospectively fixed synthetic deterministic payouts'),
+        assumption: 'Synthetic deterministic net payouts known before registration; not a claim about market returns.',
+      })),
+    },
+  })
+  return supportedAssessmentFixture(1, registration)
+}
+
 import { ReplayImagePlatform } from './replay-image-platform'

@@ -68,11 +68,14 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: services/bayn/formal/.lake
-          key: bayn-lean-linux-${{ hashFiles('services/bayn/formal/lean-toolchain', 'services/bayn/formal/lake-manifest.json') }}
+          key: bayn-lean-linux-${{ hashFiles('services/bayn/formal/lean-toolchain', 'services/bayn/formal/lake-manifest.json', 'services/bayn/formal/lakefile.toml') }}
       - name: Install TypeScript dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
       - name: Build, independently recheck proofs, and verify production conformance
-        run: bun run --filter @proompteng/bayn verify:formal
+        working-directory: services/bayn/formal
+        run: |
+          lake exe cache get Mathlib.Probability.Moments.SubGaussian
+          bun run --filter @proompteng/bayn verify:formal
       - name: Verify committed visual stage claims and inference handoffs against Lean
         env:
           BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
