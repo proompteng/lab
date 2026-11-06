@@ -1101,8 +1101,13 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
+
 New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
-tick. Current protocol entry funding and submission do not spend the retained ten-basis-point policy allowance.
+tick. The retained v38 `numericalState.entryEconomics` fields `maximumEntryQuoteDriftBps` and
+`maximumEntryLimitSlippageBps` record legacy protocol values of 10 bps each; effective entry pricing applies 0 bps
+for both. These fields are part of hashed request and batch evidence. Correcting the model-facing values requires
+versioned reconstruction that preserves existing v38 hashes.
+
 Quote-backed instrument-quantized closes use LIMIT/DAY equity or LIMIT/IOC crypto orders with an allowance bounded
 by the existing risk policy, currently ten basis points from the verified bid. Close prices round toward the quote
 to stay within that allowance. The durable
