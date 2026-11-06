@@ -217,6 +217,12 @@ const normalizeStringMap = (
   return Object.keys(output).length > 0 ? output : undefined
 }
 
+const normalizeMetadataName = (value: unknown): string => {
+  if (typeof value !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value))
+    throw new Error('metadata.name must be a Kubernetes name of at most 63 characters')
+  return value
+}
+
 const normalizeMetadataGenerateName = (value: unknown): string | undefined => {
   if (value == null) return undefined
   const generateName = asString(value)
@@ -490,9 +496,12 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   if (payload.metadata != null && !metadataRaw) {
     throw new Error('metadata must be an object')
   }
+  if (metadataRaw?.name != null && metadataRaw.generateName != null)
+    throw new Error('Choose metadata.name or metadata.generateName')
   const metadata =
     metadataRaw != null
       ? {
+          name: metadataRaw.name == null ? undefined : normalizeMetadataName(metadataRaw.name),
           generateName: normalizeMetadataGenerateName(metadataRaw.generateName),
           labels: normalizeStringMap(asRecord(metadataRaw.labels), 'metadata.labels'),
           annotations: normalizeStringMap(asRecord(metadataRaw.annotations), 'metadata.annotations'),
@@ -843,7 +852,9 @@ export const createAgentRunResource = (
   apiVersion: 'agents.proompteng.ai/v1alpha1',
   kind: 'AgentRun',
   metadata: {
-    generateName: parsed.metadata?.generateName ?? `${parsed.agentRef.name}-`,
+    ...(parsed.metadata?.name
+      ? { name: parsed.metadata.name }
+      : { generateName: parsed.metadata?.generateName ?? `${parsed.agentRef.name}-` }),
     namespace: parsed.namespace,
     labels: {
       ...parsed.metadata?.labels,

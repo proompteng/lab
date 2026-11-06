@@ -56,6 +56,45 @@
           "subjects": ["workload"]
         }
       ]
+    },
+    {
+      "kind": "agents.target",
+      "nativeType": "agents_target",
+      "relations": [
+        {
+          "name": "reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "reader_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "log_reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "log_reader_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "starter",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "starter_workspace",
+          "subjects": ["workspace"]
+        },
+        {
+          "name": "canceller",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "canceller_workspace",
+          "subjects": ["workspace"]
+        }
+      ],
+      "workspaceScoped": true
     }
   ],
   "actions": [
@@ -84,6 +123,34 @@
       "id": "tengri.delegations.manage",
       "resourceKind": "tengri.workspace",
       "permission": "manage_grants"
+    },
+    {
+      "id": "agents.runs.read",
+      "resourceKind": "agents.target",
+      "permission": "read",
+      "grantRelation": "reader",
+      "workspaceGrantRelation": "reader_workspace"
+    },
+    {
+      "id": "agents.runs.logs",
+      "resourceKind": "agents.target",
+      "permission": "read_logs",
+      "grantRelation": "log_reader",
+      "workspaceGrantRelation": "log_reader_workspace"
+    },
+    {
+      "id": "agents.runs.start",
+      "resourceKind": "agents.target",
+      "permission": "start",
+      "grantRelation": "starter",
+      "workspaceGrantRelation": "starter_workspace"
+    },
+    {
+      "id": "agents.runs.cancel",
+      "resourceKind": "agents.target",
+      "permission": "cancel",
+      "grantRelation": "canceller",
+      "workspaceGrantRelation": "canceller_workspace"
     }
   ]
 }

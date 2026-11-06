@@ -12,6 +12,13 @@ pub mod proompteng {
 }
 pub use proompteng::{authz::v1 as authz, relay::v1 as relay};
 pub mod tls;
+pub async fn jwt_svid(audience: &str, identity: &str) -> anyhow::Result<String> {
+    let identity: spiffe::SpiffeId = identity.parse()?;
+    let client = spiffe::WorkloadApiClient::connect_env().await?;
+    let svid = client.fetch_jwt_svid([audience], Some(&identity)).await?;
+    anyhow::ensure!(svid.spiffe_id() == &identity, "unexpected JWT-SVID identity");
+    Ok(svid.token().to_owned())
+}
 pub const MAX_EXECUTION_BODY_BYTES: usize = 65_536;
 pub const MAX_RELAY_REQUEST_BYTES: usize = 262_144;
 pub fn request<T>(value: T) -> tonic::Request<T> {

@@ -100,10 +100,9 @@ export function selectConnectionScope(operations: ConnectorOperation[], request:
   if (
     selected.length === 0 ||
     selected.length !== request.operations.length ||
-    new Set(request.operations).size !== request.operations.length ||
-    selected.some((operation) => !operation.readOnly)
+    new Set(request.operations).size !== request.operations.length
   )
-    throw new Error('Select registered read-only operations')
+    throw new Error('Select registered operations')
   const resources = request.targets.map((target) => {
     const registered = selected[0]?.targets.find(
       (candidate) => candidate.resource?.kind === target.kind && candidate.resource.id === target.id,
@@ -140,18 +139,16 @@ export function savedConnectionOperations(
   if (
     selected.length === 0 ||
     connection.actions.some((action) => !selected.some((operation) => operation.action === action)) ||
-    selected.some(
-      (operation) =>
-        !operation.readOnly ||
-        connection.resources.some(
-          (resource) =>
-            !operation.targets.some(
-              (target) =>
-                target.resource?.kind === resource.kind &&
-                target.resource.id === resource.id &&
-                target.resource.target === resource.target,
-            ),
-        ),
+    selected.some((operation) =>
+      connection.resources.some(
+        (resource) =>
+          !operation.targets.some(
+            (target) =>
+              target.resource?.kind === resource.kind &&
+              target.resource.id === resource.id &&
+              target.resource.target === resource.target,
+          ),
+      ),
     )
   )
     throw new Error('The saved scope is unavailable. Review this connection before changing it.')

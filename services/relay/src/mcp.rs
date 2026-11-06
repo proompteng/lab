@@ -84,12 +84,14 @@ pub enum Transport {
 pub struct McpOperation {
     pub operation: Operation,
     pub tool: String,
+    #[serde(default)]
+    pub relay_context: bool,
 }
 
 pub struct Mcp {
     id: String,
     transport: Transport,
-    operations: BTreeMap<String, (RegisteredOperation, String)>,
+    operations: BTreeMap<String, (RegisteredOperation, String, bool)>,
 }
 
 pub(crate) fn validate(transport: &Transport, operations: &[McpOperation]) -> anyhow::Result<()> {
@@ -125,6 +127,15 @@ pub(crate) fn validate(transport: &Transport, operations: &[McpOperation]) -> an
     for entry in operations {
         let operation = RegisteredOperation::new(entry.operation.clone())?;
         anyhow::ensure!(
+            operation.read_only() || entry.relay_context,
+            "MCP mutations require Relay invocation context"
+        );
+        anyhow::ensure!(
+            !entry.relay_context
+                || matches!(transport, Transport::Http { authentication, .. } if !matches!(authentication, Authentication::None)),
+            "Relay invocation context requires authenticated HTTPS"
+        );
+        anyhow::ensure!(
             names.insert(operation.name().to_owned())
                 && tools.insert(entry.tool.clone())
                 && !entry.tool.is_empty()
@@ -149,7 +160,10 @@ impl Mcp {
         let mut registered = BTreeMap::new();
         for entry in operations {
             let operation = RegisteredOperation::new(entry.operation)?;
-            registered.insert(operation.name().into(), (operation, entry.tool));
+            registered.insert(
+                operation.name().into(),
+                (operation, entry.tool, entry.relay_context),
+            );
         }
         Ok(Self {
             id,
@@ -162,8 +176,9 @@ impl Mcp {
         &self,
         service: &RunningService<RoleClient, ()>,
         prepared: &Prepared,
+        invocation: Option<&crate::connector::Invocation>,
     ) -> Result<Output, Status> {
-        let (operation, name) = self
+        let (operation, name, relay_context) = self
             .operations
             .get(&prepared.operation)
             .ok_or_else(|| Status::internal("normalized MCP operation missing"))?;
@@ -180,9 +195,12 @@ impl Mcp {
                 if serde_json::Value::Object(tool.input_schema.as_ref().clone())
                     != *operation.input_schema()
                     || tool.annotations.as_ref().is_some_and(|annotations| {
-                        annotations.read_only_hint == Some(false)
-                            || annotations.destructive_hint == Some(true)
+                        operation.read_only()
+                            && (annotations.read_only_hint == Some(false)
+                                || annotations.destructive_hint == Some(true))
                     })
+                    || (!operation.read_only()
+                        && tool.annotations.as_ref().and_then(|a| a.read_only_hint) != Some(false))
                 {
                     return Err(Status::failed_precondition(
                         "MCP tool changed; review its registration before reconnecting",
@@ -206,13 +224,15 @@ impl Mcp {
                 "registered MCP tool is absent from its bounded catalog",
             ));
         }
+        let mut call = serde_json::json!({"name":name,"arguments":prepared.arguments});
+        if *relay_context {
+            call["_meta"] = serde_json::json!({"io.proompteng.relay": invocation.ok_or_else(|| Status::internal("authorized invocation required"))?});
+        }
         let result = service
             .peer()
             .call_tool(
-                serde_json::from_value(
-                    serde_json::json!({"name":name,"arguments":prepared.arguments}),
-                )
-                .map_err(|_| Status::internal("encode upstream MCP call"))?,
+                serde_json::from_value(call)
+                    .map_err(|_| Status::internal("encode upstream MCP call"))?,
             )
             .await
             .map_err(|error| {
@@ -238,7 +258,12 @@ impl Mcp {
         })
     }
 
-    async fn run(&self, prepared: Prepared, bearer: Option<&str>) -> Result<Output, Status> {
+    async fn run(
+        &self,
+        prepared: Prepared,
+        bearer: Option<&str>,
+        invocation: Option<&crate::connector::Invocation>,
+    ) -> Result<Output, Status> {
         let mut process = None;
         let service = match &self.transport {
             Transport::Stdio { process: profile } => {
@@ -275,7 +300,7 @@ impl Mcp {
                     .map_err(|error| provider_error(&error, "upstream MCP initialization failed"))?
             }
         };
-        let result = self.invoke(&service, &prepared).await;
+        let result = self.invoke(&service, &prepared, invocation).await;
         if service.cancel().await.is_err() {
             eprintln!("upstream MCP session cleanup failed");
         }
@@ -302,7 +327,7 @@ impl Connector for Mcp {
     fn operations(&self, access: Option<&[PlatformConnectionScope]>) -> Vec<ConnectorOperation> {
         self.operations
             .values()
-            .filter_map(|(operation, _)| operation.discovery(&self.id, access))
+            .filter_map(|(operation, _, _)| operation.discovery(&self.id, access))
             .collect()
     }
     fn normalize(&self, operation: &str, arguments: &[u8]) -> Result<Normalized, Status> {
@@ -317,12 +342,15 @@ impl Connector for Mcp {
             status: Status::internal("invalid normalized MCP request"),
             upstream_status: 0,
         })?;
-        tokio::time::timeout(Duration::from_secs(10), self.run(prepared, bearer))
-            .await
-            .map_err(|_| Failure {
-                status: Status::deadline_exceeded("upstream MCP operation timed out"),
-                upstream_status: 0,
-            })?
-            .map_err(Failure::from)
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            self.run(prepared, bearer, request.invocation.as_ref()),
+        )
+        .await
+        .map_err(|_| Failure {
+            status: Status::deadline_exceeded("upstream MCP operation timed out"),
+            upstream_status: 0,
+        })?
+        .map_err(Failure::from)
     }
 }

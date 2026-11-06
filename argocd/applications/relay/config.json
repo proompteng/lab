@@ -8,9 +8,225 @@
       "ca_file": "/var/run/relay/kubernetes/ca.crt",
       "token_file": "/var/run/relay/kubernetes/token",
       "namespaces": [
-        { "name": "ofz", "uid": "f4b6e45e-cd1b-426d-acd3-41b50219182e" },
-        { "name": "tengri", "uid": "32d21018-eca9-4c2c-8502-aa5dd41320eb" },
-        { "name": "opencode", "uid": "f16c9bf3-6947-4438-8158-cef04834b558" }
+        {
+          "name": "ofz",
+          "uid": "f4b6e45e-cd1b-426d-acd3-41b50219182e"
+        },
+        {
+          "name": "tengri",
+          "uid": "32d21018-eca9-4c2c-8502-aa5dd41320eb"
+        },
+        {
+          "name": "opencode",
+          "uid": "f16c9bf3-6947-4438-8158-cef04834b558"
+        }
+      ]
+    },
+    {
+      "type": "mcp",
+      "id": "agents",
+      "transport": {
+        "type": "http",
+        "endpoint": "https://agents.k8s.proompteng.ai/mcp/relay/lab",
+        "authentication": {
+          "type": "spiffe_jwt",
+          "audience": "https://agents.k8s.proompteng.ai/mcp/relay"
+        }
+      },
+      "operations": [
+        {
+          "operation": {
+            "name": "start_run",
+            "description": "Start one task using the approved agent and repository. Returns a durable runId after admission. If the reply is lost, use get_run with the Relay operationId as runId; never submit the task again to recover it.",
+            "action": "agents.runs.start",
+            "target": {
+              "name": "Lab agents",
+              "kind": "agents.target",
+              "id": "agents/lab"
+            },
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "task": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20000
+                },
+                "tokenBudget": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 10000000
+                }
+              },
+              "required": [
+                "task"
+              ],
+              "additionalProperties": false
+            },
+            "read_only": false
+          },
+          "tool": "start_run",
+          "relay_context": true
+        },
+        {
+          "operation": {
+            "name": "list_runs",
+            "description": "List recent runs in this approved Agents target.",
+            "action": "agents.runs.read",
+            "target": {
+              "name": "Lab agents",
+              "kind": "agents.target",
+              "id": "agents/lab"
+            },
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 20,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                }
+              },
+              "required": [
+                "limit"
+              ],
+              "additionalProperties": false
+            },
+            "read_only": true
+          },
+          "tool": "list_runs",
+          "relay_context": true
+        },
+        {
+          "operation": {
+            "name": "get_run",
+            "description": "Read the current state and progress of a run. Also reconciles a lost start reply using its Relay operationId without submitting another run.",
+            "action": "agents.runs.read",
+            "target": {
+              "name": "Lab agents",
+              "kind": "agents.target",
+              "id": "agents/lab"
+            },
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "runId"
+              ],
+              "additionalProperties": false
+            },
+            "read_only": true
+          },
+          "tool": "get_run",
+          "relay_context": true
+        },
+        {
+          "operation": {
+            "name": "read_logs",
+            "description": "Read bounded recent logs from a run in this target.",
+            "action": "agents.runs.logs",
+            "target": {
+              "name": "Lab agents",
+              "kind": "agents.target",
+              "id": "agents/lab"
+            },
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "lines": {
+                  "default": 100,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 500
+                }
+              },
+              "required": [
+                "runId",
+                "lines"
+              ],
+              "additionalProperties": false
+            },
+            "read_only": true
+          },
+          "tool": "read_logs",
+          "relay_context": true
+        },
+        {
+          "operation": {
+            "name": "get_result",
+            "description": "Read the retained final response from a completed run. A pending or failed run is not reported as successful.",
+            "action": "agents.runs.read",
+            "target": {
+              "name": "Lab agents",
+              "kind": "agents.target",
+              "id": "agents/lab"
+            },
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "runId"
+              ],
+              "additionalProperties": false
+            },
+            "read_only": true
+          },
+          "tool": "get_result",
+          "relay_context": true
+        },
+        {
+          "operation": {
+            "name": "cancel_run",
+            "description": "Request cancellation of the exact run. Preserves its result and history; get_run confirms when cleanup finishes.",
+            "action": "agents.runs.cancel",
+            "target": {
+              "name": "Lab agents",
+              "kind": "agents.target",
+              "id": "agents/lab"
+            },
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": [
+                "runId"
+              ],
+              "additionalProperties": false
+            },
+            "read_only": false
+          },
+          "tool": "cancel_run",
+          "relay_context": true
+        }
       ]
     }
   ]

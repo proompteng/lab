@@ -27,3 +27,19 @@ definition platform_delegation {
     relation issuer: human
     permission use = subject
 }
+
+definition agents_target {
+    relation reader: human | workload
+    relation log_reader: human | workload
+    relation starter: human | workload
+    relation canceller: human | workload
+    relation reader_workspace: platform_workspace
+    relation log_reader_workspace: platform_workspace
+    relation starter_workspace: platform_workspace
+    relation canceller_workspace: platform_workspace
+
+    permission read = reader + reader_workspace->human_member
+    permission read_logs = log_reader + log_reader_workspace->human_member
+    permission start = starter + starter_workspace->human_member
+    permission cancel = canceller + canceller_workspace->human_member
+}

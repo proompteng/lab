@@ -547,6 +547,36 @@ describe('AgentRun v1 API', () => {
     expect(kube.apply).toHaveBeenCalled()
   })
 
+  it('uses a deterministic name for an accepted Relay submission and rejects ambiguous or invalid names', async () => {
+    for (const metadata of [
+      { name: 'relay-original' },
+      { name: 'bad/name' },
+      { name: 'relay-original', generateName: 'other-' },
+    ]) {
+      const store = createStoreMock(),
+        kube = createKubeMock()
+      const response = await postAgentRunsHandler(
+        buildRequest({
+          agentRef: { name: 'demo-agent' },
+          namespace: 'agents',
+          metadata,
+          implementation: { text: 'Task' },
+          runtime: { type: 'job', config: {} },
+        }),
+        { storeFactory: () => store, kubeClient: kube, validatePolicies: vi.fn(async () => {}) },
+      )
+      if (metadata.name === 'relay-original' && !metadata.generateName) {
+        expect(response.status).toBe(201)
+        expect(kube.apply).toHaveBeenCalledWith(
+          expect.objectContaining({ metadata: expect.objectContaining({ name: 'relay-original' }) }),
+        )
+      } else {
+        expect(response.status).toBe(400)
+        expect(kube.apply).not.toHaveBeenCalled()
+      }
+    }
+  })
+
   it('preserves submitted AgentRun metadata while keeping Agents delivery labels authoritative', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()

@@ -8,6 +8,7 @@ pub enum Authentication {
     None,
     BearerFile { path: String },
     Oauth2 { profile: String },
+    SpiffeJwt { audience: String },
 }
 
 pub struct Provider<'a> {
@@ -22,6 +23,13 @@ impl Authentication {
                 Self::None => true,
                 Self::BearerFile { path } => std::path::Path::new(path).is_absolute(),
                 Self::Oauth2 { profile } => crate::config::identifier(profile),
+                Self::SpiffeJwt { audience } =>
+                    reqwest::Url::parse(audience).is_ok_and(|url| url.scheme() == "https"
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.query().is_none()
+                        && url.fragment().is_none()),
             },
             "invalid connector authentication registration"
         );
@@ -40,6 +48,11 @@ impl Authentication {
         let token = match self {
             Self::None => return Ok(None),
             Self::BearerFile { path } => read_file(path).await?,
+            Self::SpiffeJwt { audience } => {
+                platform_client::jwt_svid(audience, "spiffe://proompteng.ai/ns/relay/sa/relay")
+                    .await
+                    .map_err(|_| Status::unavailable("Relay workload credential unavailable"))?
+            }
             Self::Oauth2 { .. } => provided
                 .ok_or_else(|| {
                     Status::failed_precondition(

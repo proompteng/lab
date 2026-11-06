@@ -140,6 +140,16 @@ jobs:
     if: ${{ needs.plan.outputs.run_unit == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -186,7 +196,10 @@ jobs:
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service typecheck and unit tests
+        env:
+          AGENTS_STORE_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
         run: |
+          bun run services/agents/scripts/generate-relay-registration.ts --check
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
 
