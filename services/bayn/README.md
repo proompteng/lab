@@ -590,6 +590,7 @@ The production image also provides `bayn-webull-research`.
 {
   "startAt": "2026-11-03T14:30:00.000Z",
   "durationMinutes": 30,
+  "evidenceAsOf": "2026-11-03T15:00:10.000Z",
   "selection": { "kind": "symbols", "symbols": ["AAPL", "NVDA", "SPY"] }
 }
 ```
@@ -597,9 +598,24 @@ The production image also provides `bayn-webull-research`.
 Use `"selection": { "kind": "catalog" }` for all symbols represented in captured requests. A five-minute catalog
 window fits a full supported sweep; narrow longer windows if any query exceeds 100,000 rows. The command fails on
 truncation, malformed rows, future windows or query timeout and refuses to overwrite output. Windows are minute-aligned,
-1–360 minutes, and bounded by collector receipt as well as completed bar time. The report hashes its content and
+1–360 minutes, and bounded by collector receipt as well as completed bar time. Optional `evidenceAsOf` sets a separate
+receipt cutoff for both feeds, from window end through six minutes after it; it defaults to window end and cannot be
+in the future. The report hashes its content and
 retains exact decimal OHLCV, receipt/archive nanoseconds, payload hashes, UUIDs and Kafka coordinates. Recovery repeats
 collapse by provider/feed/symbol/minute/session, retaining the latest received revision and its observation count. Counts include repeated recovery responses or Kafka publications.
+
+Research report v2 also retains the earliest valid collector receipt and its capture UUID, payload hash and Kafka
+coordinate separately from the latest revision. Per-symbol and total `collectorTiming` counts compare that first
+receipt with minute close using the same inclusive ten-second budget as live context. The comparison retains
+nanosecond precision at the boundary, and repeated recovery polls cannot improve a minute's original timing.
+The report retains every requested symbol/minute slot. Only slots whose full ten-second budget has elapsed by
+`evidenceAsOf` enter the eligible denominator: late, missing and conflicting minutes remain explicit. Other slots
+remain `pendingMinutes`, separately from missing data. The default cutoff leaves the final minute pending; using
+window end plus ten seconds closes that budget without changing the completed-bar window.
+Closed or inactive periods still occupy slots; this diagnostic does not infer a market calendar or expected trades.
+Catalog selection covers only captured symbols. Collector timing is a necessary upstream measurement, not evidence
+of actual Bayn consumer availability; a timely collector receipt can still reach the consumer too late. The retained
+first receipt can precede a later price correction and does not qualify that correction's availability.
 
 Coverage keeps `EMPTY`, `EXCLUDED`, `OMITTED`, `REJECTED` and missing-request states explicit. Freshness is measured
 from bar start with a six-minute budget; an empty response does not establish a fresh bar. Gap captures remain in the

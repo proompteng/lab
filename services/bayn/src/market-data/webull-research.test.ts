@@ -40,6 +40,12 @@ const barWire = {
   source_topic: 'dorvud.webull.raw.v1',
   source_partition: 1,
   source_offset: '9007199254740993',
+  first_received_ns: '1793610061123456789',
+  first_capture_id: '514a5cd9-a548-4c1f-b88d-a72ddc1b49ed',
+  first_source_topic: 'dorvud.webull.raw.v1',
+  first_source_partition: 1,
+  first_source_offset: '9007199254740991',
+  first_payload_sha256: 'b'.repeat(64),
   capture_observations: '2',
 }
 const requestWire = {
@@ -95,14 +101,164 @@ const rows: WebullResearchRows = {
 test('research preserves native precision and provenance, keeps request states and labels venue differences', () => {
   const report = Result.getOrThrow(makeWebullResearchReport(input, rows))
   expect(report.qualification).toBe('UNQUALIFIED')
+  expect(report.schemaVersion).toBe('bayn.webull-research.v2')
   expect(report.bars[0]?.open).toBe('1.123456789123456789')
   expect(report.bars[0]?.received_ns).toBe('1793610241123456789')
   expect(report.bars[0]?.source_offset).toBe('9007199254740993')
+  expect(report.bars[0]?.first_received_ns).toBe(barWire.first_received_ns)
+  expect(report.bars[0]?.first_source_offset).toBe(barWire.first_source_offset)
+  expect(report.bars[0]?.first_payload_sha256).toBe(barWire.first_payload_sha256)
   expect(report.summary.repeatedBarObservations).toBe('1')
   expect(report.coverage.map((row) => row.requestState)).toEqual(['OBSERVED', 'EMPTY', 'EXCLUDED', 'OMITTED'])
   expect(report.comparison[0]?.differingFields).toEqual(['open', 'close', 'volume'])
   expect(report.issues).toContain('Latest requests include provider omissions or rejected payloads')
   expect(report.reportHash).toBe(Result.getOrThrow(makeWebullResearchReport(input, rows)).reportHash)
+})
+
+test('collector timing preserves first receipt across repeated polls and keeps all requested minute slots', () => {
+  const report = Result.getOrThrow(makeWebullResearchReport(input, rows))
+  expect(report.collectorTimingBudgetMs).toBe(10_000)
+  expect(report.summary.collectorTiming).toEqual({
+    requestedMinuteSlots: 20,
+    eligibleMinuteSlots: 16,
+    pendingMinutes: 4,
+    observedMinutes: 1,
+    timelyMinutes: 1,
+    lateMinutes: 0,
+    missingMinutes: 15,
+    conflictingMinutes: 0,
+  })
+  expect(report.coverage[0]?.collectorTiming.latestFirstReceiptLagMs).toBe(1123.456789)
+  expect(report.coverage[1]?.collectorTiming).toMatchObject({
+    requestedMinuteSlots: 5,
+    eligibleMinuteSlots: 4,
+    pendingMinutes: 1,
+    observedMinutes: 0,
+    missingMinutes: 4,
+    latestFirstReceiptLagMs: null,
+  })
+  const repeated = Result.getOrThrow(
+    makeWebullResearchReport(input, {
+      ...rows,
+      bars: rows.bars.map((bar) => ({ ...bar, received_ns: '1793610299123456789', capture_observations: '100' })),
+    }),
+  )
+  expect(repeated.summary.collectorTiming).toEqual(report.summary.collectorTiming)
+  expect(repeated.coverage[0]?.collectorTiming).toEqual(report.coverage[0]?.collectorTiming)
+  expect(repeated.summary.repeatedBarObservations).toBe('99')
+})
+
+test('the collector budget is inclusive at ten seconds and rejects one nanosecond beyond it', () => {
+  const minuteEndNs = (BigInt(barWire.bar_start_ms) + 60_000n) * 1_000_000n
+  const bars = [10_000_000_000n, 10_000_000_001n].map((lag, index) =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(WebullResearchBarSchema)({
+        ...barWire,
+        symbol: index === 0 ? 'TEST' : 'EMPTY',
+        first_received_ns: String(minuteEndNs + lag),
+      }),
+    ),
+  )
+  const report = Result.getOrThrow(makeWebullResearchReport(input, { ...rows, bars }))
+  expect(report.summary.collectorTiming).toMatchObject({
+    observedMinutes: 2,
+    timelyMinutes: 1,
+    lateMinutes: 1,
+    missingMinutes: 14,
+  })
+  expect(report.coverage[0]?.collectorTiming.latestFirstReceiptLagMs).toBe(10_000)
+  expect(report.coverage[1]?.collectorTiming.latestFirstReceiptLagMs).toBe(10_000.000001)
+  const repeatedLate = Result.getOrThrow(
+    makeWebullResearchReport(input, {
+      ...rows,
+      bars: bars.map((bar) => ({ ...bar, capture_observations: '100', received_ns: '1793610299123456789' })),
+    }),
+  )
+  expect(repeatedLate.summary.collectorTiming).toEqual(report.summary.collectorTiming)
+})
+
+test('duplicate or conflicting minutes cannot increase collector timing coverage', () => {
+  for (const session of [WebullSession.Pre, WebullSession.Regular]) {
+    const report = Result.getOrThrow(
+      makeWebullResearchReport(input, {
+        ...rows,
+        bars: [...rows.bars, ...rows.bars.map((bar) => ({ ...bar, session }))],
+      }),
+    )
+    expect(report.summary.collectorTiming).toEqual({
+      requestedMinuteSlots: 20,
+      eligibleMinuteSlots: 16,
+      pendingMinutes: 4,
+      observedMinutes: 0,
+      timelyMinutes: 0,
+      lateMinutes: 0,
+      missingMinutes: 15,
+      conflictingMinutes: 1,
+    })
+    expect(report.coverage[0]?.collectorTiming.latestFirstReceiptLagMs).toBeNull()
+  }
+})
+
+test('empty windows retain missing minute slots and explicit collector gaps', () => {
+  const gap = {
+    affected_channel: 'bars',
+    reason: 'timeout',
+    error_class: 'TimeoutException',
+    from_time: '',
+    to_time: '',
+    received_ns: barWire.received_ns,
+    source_topic: barWire.source_topic,
+    source_partition: 1,
+    source_offset: barWire.source_offset,
+    payload_sha256: barWire.payload_sha256,
+  }
+  const report = Result.getOrThrow(makeWebullResearchReport(input, { bars: [], requests: [], gaps: [gap], alpaca: [] }))
+  expect(report.summary.collectorTiming).toMatchObject({
+    requestedMinuteSlots: 20,
+    timelyMinutes: 0,
+    eligibleMinuteSlots: 16,
+    pendingMinutes: 4,
+    missingMinutes: 16,
+  })
+  expect(report.gaps).toEqual([gap])
+  expect(report.coverage.every((row) => row.collectorTiming.latestFirstReceiptLagMs === null)).toBe(true)
+})
+
+test('the final minute stays pending until its full collector budget closes, separately from missing data', () => {
+  const oneMinute = { ...input, durationMinutes: 1 }
+  const empty = { bars: [], requests: [], gaps: [], alpaca: [] }
+  const pending = Result.getOrThrow(makeWebullResearchReport(oneMinute, empty))
+  expect(pending.evidenceAsOf).toBe('2026-11-02T09:01:00.000Z')
+  expect(pending.summary.collectorTiming).toMatchObject({
+    requestedMinuteSlots: 4,
+    eligibleMinuteSlots: 0,
+    pendingMinutes: 4,
+    missingMinutes: 0,
+  })
+  const beforeDeadline = { ...oneMinute, evidenceAsOf: '2026-11-02T09:01:09.999Z' }
+  expect(Result.getOrThrow(makeWebullResearchReport(beforeDeadline, empty)).summary.collectorTiming).toEqual(
+    pending.summary.collectorTiming,
+  )
+  const atDeadline = { ...oneMinute, evidenceAsOf: '2026-11-02T09:01:10.000Z' }
+  expect(Result.getOrThrow(makeWebullResearchReport(atDeadline, empty)).summary.collectorTiming).toMatchObject({
+    requestedMinuteSlots: 4,
+    eligibleMinuteSlots: 4,
+    pendingMinutes: 0,
+    missingMinutes: 4,
+  })
+  const received = { ...rows, bars: rows.bars.map((bar) => ({ ...bar, received_ns: bar.first_received_ns })) }
+  expect(Result.getOrThrow(makeWebullResearchReport(beforeDeadline, received)).summary.collectorTiming).toMatchObject({
+    eligibleMinuteSlots: 0,
+    pendingMinutes: 4,
+    observedMinutes: 0,
+    missingMinutes: 0,
+  })
+  expect(Result.getOrThrow(makeWebullResearchReport(atDeadline, received)).summary.collectorTiming).toMatchObject({
+    eligibleMinuteSlots: 4,
+    pendingMinutes: 0,
+    timelyMinutes: 1,
+    missingMinutes: 3,
+  })
 })
 
 test('coverage distinguishes missing requests, stale bars and conflicting sessions without inventing data', () => {
@@ -130,6 +286,8 @@ test('input and SQL boundaries reject duplicate symbols, unfinished boundaries, 
     { ...input, selection: { kind: 'symbols', symbols: ['TEST', 'TEST'] } },
     { ...input, startAt: '2026-11-02T09:00:30.000Z' },
     { ...input, durationMinutes: 361 },
+    { ...input, evidenceAsOf: '2026-11-02T09:04:59.999Z' },
+    { ...input, evidenceAsOf: '2026-11-02T09:11:00.001Z' },
   ])
     expect(Result.isFailure(Schema.decodeUnknownResult(WebullResearchInputSchema)(value))).toBe(true)
   for (const changes of [
@@ -138,6 +296,10 @@ test('input and SQL boundaries reject duplicate symbols, unfinished boundaries, 
     { close: '1e999999' },
     { session: 'unknown' },
     { source_offset: 9007199254740992 },
+    { first_received_ns: '1793610059999999999' },
+    { first_received_ns: '1793610241123456790' },
+    { first_capture_id: 'invalid' },
+    { first_source_offset: 9007199254740992 },
   ])
     expect(Result.isFailure(Schema.decodeUnknownResult(WebullResearchBarSchema)({ ...barWire, ...changes }))).toBe(true)
 })
@@ -195,6 +357,8 @@ test('the scoped official client decodes all four read-only queries and retains 
           const report = yield* readWebullResearch(input).pipe(Effect.provide(layer))
           expect(report.summary.completedBars).toBe(1)
           expect(report.bars[0]?.received_ns).toBe(barWire.received_ns)
+          expect(report.bars[0]?.first_received_ns).toBe(barWire.first_received_ns)
+          expect(report.summary.collectorTiming.timelyMinutes).toBe(1)
         }),
     ),
   ))
