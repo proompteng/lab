@@ -88,3 +88,11 @@ strict. Partial metadata purges and terminal receipt cleanup resume safely. Vers
 batches require the explicit [verified recovery gate](../../../docs/registry/manual-garbage-collection.md#version-2-recovery-gate),
 not automatic rebaselining. Failure stderr is bounded and included in the scheduled
 Job log even if Pod replacement prevents removing its temporary script.
+
+When original collection provenance is unavailable, the reviewed `recover.py` tool
+can restore a version 2 batch without giving it deletion authority. It verifies all
+payload digests and recorded identities online, then uses the existing bounded
+maintenance lifecycle to restore missing content and preserve destination conflicts.
+The original receipt and recovery evidence remain archived. Normal retention then
+collects restored candidates with the sole version 3 purge contract. This requires
+an explicit recovery request; the daily scheduler does not restore legacy batches.

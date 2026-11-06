@@ -2,11 +2,10 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, JevFailure } from './contract'
-import { decodeEntryHandoff, decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
+import { decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
 import { type EntryHandoff } from './entry-inference'
 import {
   decodeJevEvaluationRequest,
-  decodeJevEvaluationReceipt,
   JevOutcome,
   JevEvaluationRequestSchema,
   JevEvaluationReceiptSchema,
@@ -28,6 +27,7 @@ import {
   RetainedJevProtocolV34Schema,
   RetainedJevProtocolV35Schema,
   RetainedJevProtocolV36Schema,
+  RetainedJevProtocolV37Schema,
 } from './protocol'
 import * as retainedChartStages from './retained-filtered-staged-chart-questions'
 import * as currentChartStages from './staged-chart-questions'
@@ -63,7 +63,11 @@ const RetainedRequest = Schema.Struct({
   request: Schema.Union([
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
-      protocol: Schema.Union([RetainedJevProtocolV35Schema, RetainedJevProtocolV36Schema]),
+      protocol: Schema.Union([
+        RetainedJevProtocolV35Schema,
+        RetainedJevProtocolV36Schema,
+        RetainedJevProtocolV37Schema,
+      ]),
     }),
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
@@ -95,6 +99,7 @@ const RetainedRequest = Schema.Struct({
         RetainedJevProtocolV34Schema,
         RetainedJevProtocolV35Schema,
         RetainedJevProtocolV36Schema,
+        RetainedJevProtocolV37Schema,
       ]),
     }),
   ]),
@@ -193,13 +198,15 @@ export const readStagedInferenceCostEvidence = (row: {
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v37'
     const retainedQuestions =
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v37'
         ? makeEntryJudgmentRequest
         : identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
           ? makeRetainedFundedEntryJudgmentRequest
@@ -209,8 +216,8 @@ export const readStagedInferenceCostEvidence = (row: {
       : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
     const request = decoded.request
     const stages =
-      decoded._tag === 'Current'
-        ? currentChartStages
+      decoded._tag === 'Current' || request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+        ? currentChartStages.makeFinancialChartStageReplay()
         : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
             request.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
           ? observedChartStages
@@ -225,19 +232,23 @@ export const readStagedInferenceCostEvidence = (row: {
       observedAt: request.observedAt,
       expiresAt: request.expiresAt,
     }
+    // Both request decoders above reproduce the complete source and its input hash.
+    // Share only chart derivation; the independent handoff still passes every evidence check.
     const handoff =
       row.handoff === null
         ? null
-        : yield* decoded._tag === 'Retained'
-            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions, stages)
-            : decodeEntryHandoff({ ...source, input: decoded.request.request }, row.handoff)
+        : yield* decodeStagedEntryHandoff(
+            source,
+            row.handoff,
+            request.requestHash,
+            decoded._tag === 'Retained' ? retainedQuestions : makeEntryJudgmentRequest,
+            stages,
+          )
     const receipt =
       row.receipt === null
         ? null
-        : yield* decoded._tag === 'Retained'
-            ? Schema.decodeUnknownResult(JevEvaluationReceiptSchema, strictParseOptions)(row.receipt)
-            : decodeJevEvaluationReceipt(decoded.request, row.receipt)
-    if (retained && receipt !== null) {
+        : yield* Schema.decodeUnknownResult(JevEvaluationReceiptSchema, strictParseOptions)(row.receipt)
+    if (receipt !== null) {
       const { receiptHash, ...material } = receipt
       if (
         receiptHash !== (yield* canonicalHashV1Result(material)) ||
@@ -245,14 +256,16 @@ export const readStagedInferenceCostEvidence = (row: {
         receipt.startedAt < request.observedAt ||
         receipt.completedAt < receipt.startedAt
       )
-        return yield* invalid('Retained staged receipt identity or original clocks do not reproduce')
+        return yield* invalid('Staged receipt identity or original clocks do not reproduce')
       if (receipt.outcome.status === JevOutcome.Completed) {
         const { handoff: completedHandoff, ...completion } = receipt.outcome.completion
+        // The independent handoff above already reproduces the full source graph. Require its
+        // complete receipt copy to match before verifying the remaining completion and clocks.
         if (
           handoff === null ||
           (yield* canonicalHashV1Result(completedHandoff)) !== (yield* canonicalHashV1Result(handoff))
         )
-          return yield* invalid('Retained staged completion differs from its committed handoff')
+          return yield* invalid('Staged completion differs from its committed handoff')
         yield* verifyEntryCompletion(source, completion, handoff)
         if (
           completion.completedAt > receipt.completedAt ||
@@ -261,12 +274,12 @@ export const readStagedInferenceCostEvidence = (row: {
             handoff.disposition.status !== 'SOURCE_INFEASIBLE' &&
             handoff.disposition.visual.startedAt < receipt.startedAt)
         )
-          return yield* invalid('Retained staged receipt precedes its provider evidence')
+          return yield* invalid('Staged receipt precedes its provider evidence')
       } else if (
         receipt.outcome.failure === JevFailure.NotDispatched &&
         (receipt.startedAt >= request.expiresAt || receipt.completedAt < request.expiresAt)
       )
-        return yield* invalid('Retained staged non-dispatch does not prove original expiry')
+        return yield* invalid('Staged non-dispatch does not prove original expiry')
     }
     const resolution = row.resolution === null ? null : yield* decodeJevResolution(request, receipt, row.resolution)
     if (handoff !== null) yield* verifyStagedCheckpointHandoff(checkpoint, handoff)

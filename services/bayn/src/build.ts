@@ -4,6 +4,7 @@ import { operationalError, type OperationalError } from './errors'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageRepositorySchema as ImageRepository,
+  ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as StrictNonEmptyString,
 } from './schemas'
@@ -15,6 +16,13 @@ declare const __BAYN_BUILD_STRATEGY_PARAMETER_HASH__: string
 declare const __BAYN_BUILD_STRATEGY_NAME__: string
 declare const __BAYN_BUILD_STRATEGY_PROTOCOL_HASH__: string
 declare const __BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__: string
+
+export const ExecutionBuildSchema = Schema.Struct({
+  sourceRevision: SourceRevision,
+  imageRepository: ImageRepository,
+  imageDigest: ImageDigest,
+})
+export type ExecutionBuild = typeof ExecutionBuildSchema.Type
 
 export const EmbeddedBuildMetadataSchema = Schema.Struct({
   sourceRevision: SourceRevision,

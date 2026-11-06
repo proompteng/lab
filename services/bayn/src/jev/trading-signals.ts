@@ -34,6 +34,7 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
+import { webullEntryContext } from './webull-entry-context'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -329,6 +330,7 @@ const requestFromSnapshot = (
       askMicros: candidate.prices.ask,
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
+    const webullContext = yield* webullEntryContext(snapshot, symbol)
     return yield* prepareEntryInferenceInput({
       ...(selectionPolicy === null
         ? { schemaVersion: 'bayn.entry-inference-input.v8' }
@@ -354,6 +356,7 @@ const requestFromSnapshot = (
       },
       numericalState: {
         schemaVersion: native.protocol.inputDefinition,
+        webullContext,
         task: {
           positionPolicy: 'long-only',
           horizonMinutes: native.protocol.horizonMinutes,

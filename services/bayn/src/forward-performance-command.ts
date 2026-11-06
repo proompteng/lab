@@ -1,7 +1,10 @@
+import { readRegisteredFinancialIdentity } from './system-assessment/capital-identity'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
 import { loadForwardPerformanceConfig } from './forward-performance/config'
+import { decodeConfiguredCapitalActivation } from './composition/capital-activation'
+import { JevResearchPolicy } from './jev/acceptance'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
@@ -15,8 +18,13 @@ import {
   registerSystemQualification,
   assessAndPersistSystem,
   readSystemRegistration,
+  registerOperationalPeriod,
+  assessAndPersistOperational,
 } from './system-assessment/postgres'
+import { OperationalRegistrationSchema, validateOperationalRegistration } from './system-assessment/operational-period'
+import { OperationalAssessmentInputSchema } from './system-assessment/operational-assessment'
 import { captureSystemSourceCut } from './system-assessment/capture'
+import { ValkeyCacheLive } from './valkey-cache'
 import { qualificationRuntime } from './system-assessment/configuration'
 import { validateSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
@@ -142,7 +150,11 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
     Effect.gen(function* () {
       const config = yield* loadForwardPerformanceConfig()
       const result = yield* Effect.gen(function* () {
-        if (command._tag === 'SystemCapture') return yield* captureSystemSourceCut(config, command.registrationHash)
+        if (command._tag === 'SystemCapture')
+          return yield* captureSystemSourceCut(config, command.registrationHash).pipe(
+            // @effect-diagnostics-next-line strictEffectProvide:off -- private capture owns its scoped cache reader
+            Effect.provide(ValkeyCacheLive),
+          )
         const packet = yield* readSystemEvidencePacket(command.path)
         if (command._tag === 'SystemCaptureReplay') {
           const request = yield* Schema.decodeUnknownEffect(
@@ -158,7 +170,9 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
         if (command._tag === 'SystemHistory')
           return yield* initializeQualificationHistory(packet.payload, packet.verifiedSources)
         if (command._tag === 'SystemRegister') {
-          const { registration } = yield* Effect.fromResult(validateSystemRegistration(packet.payload))
+          const { registration } = Schema.is(OperationalRegistrationSchema)(packet.payload)
+            ? yield* Effect.fromResult(validateOperationalRegistration(packet.payload))
+            : yield* Effect.fromResult(validateSystemRegistration(packet.payload))
           const runtime = qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol()))
           if (
             (yield* Effect.fromResult(canonicalHashV1Result(runtime))) !==
@@ -167,8 +181,57 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
             return yield* new SystemAssessmentError({
               message: 'Prospective registration must use the configured runtime deadlines and strategy protocol',
             })
-          return yield* registerSystemQualification(registration, packet.verifiedSources)
+          const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+          if (
+            candidate === undefined ||
+            candidate.sourceRevision !== config.build.sourceRevision ||
+            `sha256:${candidate.imageDigest}` !== config.build.imageDigest
+          )
+            return yield* new SystemAssessmentError({
+              message: 'Prospective registration must bind the current physical worker build',
+            })
+          if (config.capitalActivationRequestJson !== undefined) {
+            const configured = yield* Effect.fromResult(
+              decodeConfiguredCapitalActivation(
+                config.capitalActivationRequestJson,
+                config.researchCapitalBuildLineageJson,
+              ),
+            ).pipe(Effect.mapError((message) => new SystemAssessmentError({ message })))
+            const expected =
+              configured.buildLineage === null
+                ? undefined
+                : { request: configured.request, buildLineage: configured.buildLineage }
+            if (
+              (candidate.capitalAuthorization === undefined) !== (expected === undefined) ||
+              (expected !== undefined &&
+                (yield* Effect.fromResult(
+                  canonicalHashV1Result(
+                    candidate.capitalAuthorization === undefined
+                      ? undefined
+                      : {
+                          request: candidate.capitalAuthorization.request,
+                          buildLineage: candidate.capitalAuthorization.buildLineage,
+                        },
+                  ),
+                )) !== (yield* Effect.fromResult(canonicalHashV1Result(expected))))
+            )
+              return yield* new SystemAssessmentError({
+                message: 'Prospective registration must preserve the configured reviewed capital lineage',
+              })
+          }
+          if (
+            candidate.capitalAuthorization !== undefined &&
+            (yield* readRegisteredFinancialIdentity(candidate)) === null
+          )
+            return yield* new SystemAssessmentError({
+              message: 'Registration requires its existing durable capital generation',
+            })
+          return registration.program === 'BAYN_OPERATIONAL_RELIABILITY'
+            ? yield* registerOperationalPeriod(registration, packet.verifiedSources)
+            : yield* registerSystemQualification(registration, packet.verifiedSources)
         }
+        if (Schema.is(OperationalAssessmentInputSchema)(packet.payload))
+          return yield* assessAndPersistOperational(packet.payload, packet.verifiedSources)
         const input = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(packet.payload)
         yield* readSystemRegistration(yield* Effect.fromResult(canonicalHashV1Result(input.registration)))
         const images = yield* verifyLatencyStressImages(

@@ -15,7 +15,13 @@ import { captureForwardFinancialEvidence as captureFinancial, type DecisionSessi
 import { registrationFixture, testHash } from './fixtures.test-support'
 import { coinRoundTrip, coinActivity } from '../forward-performance/coin-fee-episodes.test-support'
 import { prepareAccounting } from '../accounting/domain'
-import { OrderSide } from '../execution/contracts'
+import { OrderSide, Authority, makeResearchCapitalGrantGenerationResult } from '../execution/contracts'
+import {
+  makeResearchCapitalPlanHash,
+  makeResearchCapitalActivationRequest,
+  researchCapitalGrantProof,
+} from '../execution/configuration'
+import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 
 const captureForwardFinancialEvidence = (
   registration: Parameters<typeof captureFinancial>[0],
@@ -124,6 +130,123 @@ const cashSettlements = (fills: ReturnType<typeof coinRoundTrip>['fills']) =>
   })
 
 describe('registered financial capture', () => {
+  test('financial capture keeps the authorizing build distinct from the registered physical worker', () => {
+    const { registration, forward } = fixture(JevResearchPolicy.Candidate)
+    const definition = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+    if (definition === undefined) throw new Error('Missing candidate')
+    const broker = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: forward.account.accountId,
+      }),
+    )
+    const material = {
+      activation: {
+        sourceRevision: '0'.repeat(40),
+        imageRepository: 'registry.example.test/bayn',
+        imageDigest: `sha256:${'0'.repeat(64)}`,
+      },
+      strategy: {
+        name: 'jev',
+        behaviorHash: definition.strategyHash,
+        parameterHash: definition.parametersHash,
+        parameterSchemaVersion: registration.obligations.configuration.protocol.schemaVersion,
+        protocolHash: definition.protocolHash,
+      },
+      broker: { environment: broker.environment, accountId: broker.accountId, identityHash: broker.identityHash },
+      riskPolicyHash: definition.riskPolicyHash,
+      limits: { maxOpenOrders: 0, maxPositions: 0 },
+    } as const
+    const planHash = Result.getOrThrow(
+      makeResearchCapitalPlanHash({ schemaVersion: 'bayn.research-execution-plan.v1', ...material }),
+    )
+    const request = Result.getOrThrow(
+      makeResearchCapitalActivationRequest({
+        schemaVersion: 'bayn.research-execution-mandate.v1',
+        grant: { _tag: 'Research', planHash },
+        ...material,
+      }),
+    )
+    const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(request)
+    const generation = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        ...proof,
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Execution,
+        previousGenerationHash: '1'.repeat(64),
+        reconciliationId: '2'.repeat(64),
+        reconciliationContentHash: '3'.repeat(64),
+        activationSourceRevision: 'b'.repeat(40),
+        activationImageDigest: `sha256:${'b'.repeat(64)}`,
+      }),
+    )
+    const buildLineage = {
+      schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
+      requestHash: request.requestHash,
+      authoredActivation: request.activation,
+      activation: {
+        sourceRevision: definition.sourceRevision,
+        imageRepository: request.activation.imageRepository,
+        imageDigest: `sha256:${definition.imageDigest}`,
+      },
+    }
+    const scoped = {
+      ...registration,
+      policies: registration.policies.map((p) =>
+        p.policy === JevResearchPolicy.Candidate
+          ? {
+              ...p,
+              authorityGenerationHash: generation.generationHash,
+              capitalAuthorization: { request, buildLineage, generation },
+            }
+          : p,
+      ),
+    }
+    const binding = {
+      accountId: broker.accountId,
+      accountReferenceHash: broker.identityHash,
+      provider: broker.provider,
+      environment: broker.environment,
+      qualificationRunId: generation.grant.planHash,
+      strategyName: generation.strategyName,
+      strategyProtocolHash: generation.strategyProtocolHash,
+      strategyBehaviorHash: generation.strategyBehaviorHash,
+      strategyParameterHash: generation.strategyParameterHash,
+      strategyParameterSchemaVersion: generation.strategyParameterSchemaVersion,
+      executionPolicyHash: definition.riskPolicyHash,
+      sourceRevision: generation.activationSourceRevision,
+      imageRepository: generation.activationImageRepository,
+      imageDigest: generation.activationImageDigest,
+    }
+    const captured = {
+      ...forward,
+      account: { ...forward.account, accountReferenceHash: broker.identityHash },
+      durableExecutionBindings: [binding],
+    }
+    expect(Result.isSuccess(captureForwardFinancialEvidence(scoped, JevResearchPolicy.Candidate, captured, []))).toBe(
+      true,
+    )
+    for (const changed of [
+      { ...binding, sourceRevision: definition.sourceRevision, imageDigest: `sha256:${definition.imageDigest}` },
+      { ...binding, sourceRevision: request.activation.sourceRevision, imageDigest: request.activation.imageDigest },
+      { ...binding, qualificationRunId: testHash('foreign grant') },
+      { ...binding, accountId: 'foreign-account' },
+      { ...binding, imageRepository: 'registry.example.test/foreign' },
+    ])
+      expect(
+        Result.isFailure(
+          captureForwardFinancialEvidence(
+            scoped,
+            JevResearchPolicy.Candidate,
+            { ...captured, durableExecutionBindings: [changed] },
+            [],
+          ),
+        ),
+      ).toBe(true)
+  })
+
   test('exact-cent trades and separately armed exit fills retain financial coverage without invented rounding receipts', () => {
     const { registration, forward } = fixture(JevResearchPolicy.Candidate)
     const first = registration.calendar.sessions[0]!

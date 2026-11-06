@@ -20,12 +20,12 @@ const isLinearWebhookRequest = (request: Request | undefined) =>
 
 const runtime = makeAppRuntime()
 const config = runtime.runSync(
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     return yield* AppConfigService
   }),
 )
 const kafka = runtime.runSync(
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     return yield* KafkaProducer
   }),
 )

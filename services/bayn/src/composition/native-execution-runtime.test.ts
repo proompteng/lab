@@ -17,6 +17,8 @@ import {
   ScopedRef,
 } from 'effect'
 import { TestClock } from 'effect/testing'
+import { PgClient } from '@effect/sql-pg'
+import { nativeActivationPreflight, NativeActivationPreflightError } from './native-activation-preflight'
 
 import type { ApplicationPlan } from '../app'
 import type { NativeExecutionRuntime } from '../restate/restate-execution-controller'
@@ -40,12 +42,12 @@ import { CandidateObservationStore, type CandidateObservation } from '../observe
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
+import { executionControllerPlanHash } from '../execution/controller'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
-  executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionProjectionRuntime,
   makePublishedExecutionCycleDriverLive,
@@ -59,6 +61,12 @@ import {
   type RecoveryFirstCycleDriverSlot,
   type RecoveryFirstCycleDriverSlotState,
 } from './native-execution-runtime'
+
+const executionBuild = {
+  sourceRevision: 'a'.repeat(40),
+  imageRepository: 'registry.example.test/lab/bayn',
+  imageDigest: `sha256:${'1'.repeat(64)}`,
+}
 
 const hash = (character: string): string => character.repeat(64)
 const sourceRevision = 'a'.repeat(40)
@@ -177,6 +185,7 @@ const withExecutionRuntime = (
           ScopedRef.getUnsafe(managed),
           { runPromise: Effect.runPromise },
           controllerPlanHash,
+          () => Promise.resolve(),
         )
         yield* Effect.promise(() => use(runtime))
       }),
@@ -241,6 +250,91 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
 }
 
 describe('native execution runtime', () => {
+  const observePreflight = <E>(read: Effect.Effect<readonly unknown[], E>) => {
+    const original = plan({ brokerAccess: 'read-only' })
+    const { capitalActivationRequestJson: _request, ...config } = original.config
+    const sql = (() => read) as unknown as PgClient.PgClient
+    return nativeActivationPreflight({ ...original, config }).pipe(Effect.provideService(PgClient.PgClient, sql))
+  }
+  const authorityRow = {
+    schema_version: 'bayn.paper-authority.v1',
+    generation_hash: 'a'.repeat(64),
+    maximum: 'OBSERVE',
+    effective: 'OBSERVE',
+    kill_state: 'CLEAR',
+    reason: null,
+    version: '1',
+    updated_at: '2026-11-05T18:00:00.000Z',
+    observed_at: new Date('2026-11-05T18:01:00.000Z'),
+  }
+
+  test.each([{ rows: [] }, { rows: [authorityRow] }])(
+    'authority preflight reads once without initializing or replacing execution resources: %j',
+    async ({ rows }) => {
+      let reads = 0
+      await Effect.runPromise(
+        observePreflight(
+          Effect.sync(() => {
+            reads += 1
+            return rows
+          }),
+        ),
+      )
+      expect(reads).toBe(1)
+    },
+  )
+
+  test.each([
+    { ...authorityRow, maximum: 'PAPER', effective: 'PAPER' },
+    { ...authorityRow, maximum: 'invalid' },
+    { ...authorityRow, version: '0' },
+    { ...authorityRow, updated_at: '2026-11-05T18:02:00.000Z' },
+  ])('authority preflight rejects incompatible or invalid durable state: %j', async (row) => {
+    const result = await Effect.runPromise(observePreflight(Effect.succeed([row])).pipe(Effect.result))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(NativeActivationPreflightError)
+  })
+
+  test('authority preflight retains typed read failures and propagates defects', async () => {
+    const failure = new Error('database unavailable')
+    const result = await Effect.runPromise(observePreflight(Effect.fail(failure)).pipe(Effect.result))
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { cause: failure } })
+    const defect = await Effect.runPromiseExit(observePreflight(Effect.die(failure)))
+    expect(Exit.isFailure(defect)).toBe(true)
+    if (Exit.isFailure(defect)) expect(Cause.hasDies(defect.cause)).toBe(true)
+  })
+
+  test.each(['timeout', 'interruption'])(
+    'authority preflight cancels its read and finalizes once on %s',
+    async (kind) => {
+      let released = 0
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const read = Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined)
+            return yield* Effect.never
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                released += 1
+              }),
+            ),
+          )
+          const fiber = yield* Effect.forkChild(observePreflight(read))
+          yield* Deferred.await(started)
+          if (kind === 'timeout') yield* TestClock.adjust(30_000)
+          else yield* Fiber.interrupt(fiber)
+          return yield* Fiber.await(fiber)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+      expect(Exit.isFailure(result)).toBe(true)
+      expect(released).toBe(1)
+      if (Exit.isFailure(result) && kind === 'timeout') {
+        expect(Cause.hasFails(result.cause)).toBe(true)
+      }
+    },
+  )
   test('retains exact Jev observation references across stores, waiting, recovery and subsequent passes', async () => {
     const firstHash = hash('b')
     const recoveredHash = hash('a')
@@ -285,10 +379,10 @@ describe('native execution runtime', () => {
             state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
             ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
           }
-          yield* captureRecoveryFirstCycleDriver(slot)(currentDriver).pipe(
-            Effect.provideContext(context),
-            Effect.forkScoped,
-          )
+          yield* captureRecoveryFirstCycleDriver(
+            slot,
+            executionBuild,
+          )(currentDriver).pipe(Effect.provideContext(context), Effect.forkScoped)
           yield* Deferred.await(slot.ready)
           const bound = yield* readRecoveryFirstCycleDriverSlot(slot)
           return [yield* bound.advance, yield* bound.advance]
@@ -297,10 +391,12 @@ describe('native execution runtime', () => {
     )
     expect(results[0]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
     })
     expect(results[1]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [], complete: true },
     })
     expect(retainedPolicies).toEqual([momentum, undefined])
@@ -333,7 +429,10 @@ describe('native execution runtime', () => {
               state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
               ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
             }
-            yield* captureRecoveryFirstCycleDriver(slot)({
+            yield* captureRecoveryFirstCycleDriver(
+              slot,
+              executionBuild,
+            )({
               ...driver,
               advance: Effect.gen(function* () {
                 if (retainEarlier)
@@ -387,7 +486,10 @@ describe('native execution runtime', () => {
               state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
               ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
             }
-            yield* captureRecoveryFirstCycleDriver(slot)({
+            yield* captureRecoveryFirstCycleDriver(
+              slot,
+              executionBuild,
+            )({
               ...driver,
               advance: Effect.gen(function* () {
                 const store = yield* CandidateObservationStore
@@ -414,6 +516,7 @@ describe('native execution runtime', () => {
       expect(result.nextDelayMs).toBe(1_000)
       expect(result.observation).toEqual({
         ...windowClosedObservation,
+        executionBuild,
         jevObservationReferences: {
           hashes:
             mode === 'overflow'
@@ -636,9 +739,10 @@ describe('native execution runtime', () => {
       }),
     }
     const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(capturedDriver).pipe(
-        Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>),
-      ),
+      captureRecoveryFirstCycleDriver(
+        slot,
+        executionBuild,
+      )(capturedDriver).pipe(Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>)),
     )
 
     await Effect.runPromise(Deferred.await(slot.ready))
@@ -659,6 +763,7 @@ describe('native execution runtime', () => {
   test('keeps replacement registration and projection writer-fence-free until the first execution tick', async () => {
     let acquired = 0
     let released = 0
+    let preflights = 0
     let publishedSlot: RecoveryFirstCycleDriverSlot | undefined
     const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const executionResources = Layer.merge(
@@ -673,7 +778,11 @@ describe('native execution runtime', () => {
             Effect.sync(() => {
               released += 1
             }),
-        ).pipe(Effect.andThen(captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context))))
+        ).pipe(
+          Effect.andThen(
+            captureRecoveryFirstCycleDriver(slot, executionBuild)(driver).pipe(Effect.provideContext(context)),
+          ),
+        )
       }),
       Layer.succeed(
         ExecutionControllerStatusStore,
@@ -710,8 +819,14 @@ describe('native execution runtime', () => {
             projectionManaged,
             hostRunner,
             controllerPlanHash,
+            async () => {
+              preflights += 1
+            },
           )
 
+          expect(acquired).toBe(0)
+          yield* Effect.promise(() => runtime.prepareActivation(new AbortController().signal))
+          expect(preflights).toBe(1)
           expect(acquired).toBe(0)
           yield* Effect.promise(() => runtime.log('info', 'inactive worker discovery', {}))
           expect(acquired).toBe(0)
@@ -865,6 +980,7 @@ describe('native execution runtime', () => {
               projectionManaged,
               hostRunner,
               controllerPlanHash,
+              () => Promise.resolve(),
             )
             if (failure instanceof NativeExecutionRuntimeError) {
               yield* Effect.promise(() => runtime.advance(command, new AbortController().signal))
@@ -1075,6 +1191,50 @@ describe('native execution runtime', () => {
       lastPass: windowClosedObservation,
     })
   })
+
+  test.each([false, true])(
+    'retains a pass only in its existing projection epoch (stored inactive: %s)',
+    async (storedInactive) => {
+      const retained = status({
+        lastPass: windowClosedObservation,
+        active: !storedInactive,
+        epoch: storedInactive ? command.epoch + 1 : command.epoch,
+      })
+      if (!executionControllerStatusHasCompletion(retained)) throw new Error('Expected a retained completion')
+      let projected: ExecutionControllerStatus | undefined
+      await Effect.runPromise(
+        projectExecutionControllerState(
+          command.controllerKey,
+          {
+            schemaVersion: 1,
+            active: false,
+            epoch: command.epoch + 1,
+            planHash: controllerPlanHash,
+            sourceRevision,
+            initialSequence: command.sequence,
+            nextSequence: command.sequence + 1,
+            lastCompletion: {
+              sequence: retained.lastSequence,
+              outcome: retained.lastOutcome,
+              receiptHash: retained.lastReceiptHash,
+              completedAt: retained.completedAt,
+            },
+          },
+          {
+            read: () => Effect.succeed(retained),
+            project: (candidate) =>
+              Effect.sync(() => {
+                projected = candidate
+                return { _tag: 'Applied' as const, status: candidate }
+              }),
+          },
+        ),
+      )
+      expect(projected).toMatchObject({ epoch: command.epoch + 1, lastReceiptHash: retained.lastReceiptHash })
+      if (storedInactive) expect(projected).toHaveProperty('lastPass', windowClosedObservation)
+      else expect(projected).not.toHaveProperty('lastPass')
+    },
+  )
 
   test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
     let projected: ExecutionControllerStatus | undefined
@@ -1436,6 +1596,7 @@ describe('native execution runtime', () => {
               ScopedRef.getUnsafe(managed),
               runner,
               controllerPlanHash,
+              () => Promise.resolve(),
             )
             yield* Effect.promise(() =>
               context.with(trace.setSpanContext(context.active(), nativeParent), () =>
@@ -1524,7 +1685,7 @@ describe('native execution runtime', () => {
     )
     const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context)),
+      captureRecoveryFirstCycleDriver(slot, executionBuild)(driver).pipe(Effect.provideContext(context)),
     )
 
     await Effect.runPromise(Deferred.await(slot.ready))
