@@ -41,7 +41,10 @@ unverified rejections and rollback failures remain failures. This wait is unavai
 strategy abstention or a successful reliability obligation. Risk, quote and broker freshness checks remain unchanged.
 
 Cycle discovery bounds the authoritative equity-calendar read to the original five seconds. An unavailable calendar
-remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
+remains an operational failure. Discovery and decision preparation share an identical successful calendar read only
+within one bounded recovery pass, retaining its original evidence and observation times. A new pass, changed query,
+session boundary or backward clock movement requires a fresh read; failed or interrupted reads are never retained.
+Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
 crypto buys before final authorization or transmission. Retained crypto sells still require normal capital, ownership,
 funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v38 requires its reviewed
@@ -98,6 +101,14 @@ CPU work cannot leave that read transaction idle beyond its unchanged connection
 its enclosing writer transaction and deadline. Every session's frozen inference expenses are verified once.
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
+
+Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
+authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
+fees include recorded fill fees and posted broker fee effects; unposted charges and operating expenses remain outside
+that subtotal. When no account receipt is persisted, `forwardPerformance` stays null and
+`forwardPerformanceUnavailableReason` is `NO_PERSISTED_RECEIPT`. A retained receipt exposes its own authority generation,
+source revision and measurement window, independently of the current authority and running image. Unknown retained
+source or window values remain null.
 
 Inference expense snapshots drain one PostgreSQL statement before verifying request, receipt and cost evidence.
 Verification cannot hold that statement open and exhaust its database deadline. An owned read-only transaction closes
