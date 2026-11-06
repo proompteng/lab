@@ -1,14 +1,14 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
-import { listPullRequestCheckFailures } from '@/services/github/reviews'
-import type { ListCheckFailuresOptions } from '@/services/github/types'
+import { listPullRequestBlockingChecks } from '@/services/github/reviews'
+import type { ListBlockingChecksOptions } from '@/services/github/types'
 
 const createResponse = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' }, ...init })
 
-describe('listPullRequestCheckFailures', () => {
-  const baseOptions: Omit<ListCheckFailuresOptions, 'fetchImplementation'> = {
+describe('listPullRequestBlockingChecks', () => {
+  const baseOptions: Omit<ListBlockingChecksOptions, 'fetchImplementation'> = {
     repositoryFullName: 'proompteng/lab',
     headSha: 'abc123',
     token: 'test-token',
@@ -36,7 +36,7 @@ describe('listPullRequestCheckFailures', () => {
         return createResponse({ check_runs: [] })
       }
 
-      if (url.endsWith('/status')) {
+      if (url.includes('/status?')) {
         return createResponse({
           statuses: [
             {
@@ -50,10 +50,10 @@ describe('listPullRequestCheckFailures', () => {
       }
 
       throw new Error(`unexpected url: ${url}`)
-    }) as unknown as ListCheckFailuresOptions['fetchImplementation']
+    }) as unknown as ListBlockingChecksOptions['fetchImplementation']
 
     const result = await Effect.runPromise(
-      listPullRequestCheckFailures({
+      listPullRequestBlockingChecks({
         ...baseOptions,
         fetchImplementation: fetchStub,
       }),
@@ -70,6 +70,64 @@ describe('listPullRequestCheckFailures', () => {
     expect(result.checks.find((check) => check.name === 'lint')?.details).toContain('Formatting failed')
   })
 
+  it.each([
+    ['queued', null, true],
+    ['in_progress', null, true],
+    ['completed', 'failure', true],
+    ['completed', null, true],
+    ['completed', 'success', false],
+    ['completed', 'skipped', false],
+    ['completed', 'neutral', false],
+  ] as const)('treats %s / %s as blocking=%s', async (status, conclusion, blocked) => {
+    const result = await Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async (input) =>
+          createResponse(
+            input.includes('/check-runs') ? { check_runs: [{ name: 'CI', status, conclusion }] } : { statuses: [] },
+          ),
+      }),
+    )
+    expect(result).toMatchObject({ ok: true })
+    if (result.ok) expect(result.checks.length > 0).toBe(blocked)
+  })
+
+  it('blocks a pending commit status even when check runs passed', async () => {
+    const result = await Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async (input) =>
+          createResponse(
+            input.includes('/check-runs')
+              ? { check_runs: [{ name: 'CI', status: 'completed', conclusion: 'success' }] }
+              : { statuses: [{ context: 'external', state: 'pending' }] },
+          ),
+      }),
+    )
+    expect(result).toMatchObject({ ok: true, checks: [{ name: 'external', conclusion: 'pending' }] })
+  })
+
+  it('blocks when CI has not reported any checks', async () => {
+    const result = await Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async (input) =>
+          createResponse(input.includes('/check-runs') ? { check_runs: [] } : { statuses: [] }),
+      }),
+    )
+    expect(result).toMatchObject({ ok: true, checks: [{ conclusion: 'pending' }] })
+  })
+
+  it('rejects malformed check data instead of treating it as passing', async () => {
+    const result = await Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async () => createResponse({ check_runs: [{ name: 'CI' }] }),
+      }),
+    )
+    expect(result).toMatchObject({ ok: false, reason: 'invalid-json' })
+  })
+
   it('propagates API errors as structured results', async () => {
     const fetchStub = vi.fn(async (input: string | URL) => {
       const url = String(input)
@@ -77,10 +135,10 @@ describe('listPullRequestCheckFailures', () => {
         return new Response('nope', { status: 500, headers: { 'content-type': 'application/json' } })
       }
       throw new Error(`unexpected url: ${url}`)
-    }) as unknown as ListCheckFailuresOptions['fetchImplementation']
+    }) as unknown as ListBlockingChecksOptions['fetchImplementation']
 
     const result = await Effect.runPromise(
-      listPullRequestCheckFailures({
+      listPullRequestBlockingChecks({
         ...baseOptions,
         fetchImplementation: fetchStub,
       }),

@@ -56,7 +56,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   key: token
-                  name: github-token
+                  name: froussard-github-token
             - name: DISCORD_PUBLIC_KEY
               valueFrom:
                 secretKeyRef:
