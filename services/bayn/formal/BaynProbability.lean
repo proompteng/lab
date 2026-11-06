@@ -134,4 +134,30 @@ theorem registered_expected_profit_bound {Ω : Type*} {mΩ : MeasurableSpace Ω}
   simpa only [Finset.sum_sub_distrib, equalMeans] using bound
 
 
+/-- Instantiate the concentration theorem with the exact radius computed by the executable model. -/
+theorem executable_radius_covers_registered_expected_profit
+    {Ω : Type*} {mΩ : MeasurableSpace Ω} {μ : Measure Ω}
+    [IsProbabilityMeasure μ] [StandardBorelSpace Ω] {X : ℕ → Ω → ℝ} {ℱ : Filtration ℕ mΩ}
+    (means : ℕ → ℝ) (n width denominator : Nat)
+    (nonempty : 0 < n) (positiveWidth : 0 < width) (positiveAlpha : 0 < denominator)
+    (meanIdentity : ∀ i < n, means i = ∫ ω, X i ω ∂μ)
+    (adapted : StronglyAdapted ℱ (fun i ω => X i ω - means i))
+    (first : HasSubgaussianMGF (fun ω => X 0 ω - means 0) ((width : ℝ≥0)^2/4) μ)
+    (conditional : ∀ i < n - 1, HasCondSubgaussianMGF (ℱ i) (ℱ.le i)
+      (fun ω => X (i+1) ω - means (i+1)) ((width : ℝ≥0)^2/4) μ) :
+    μ.real {ω | (conditionalRadius n width denominator : ℝ) ≤
+      (∑ i ∈ Finset.range n, X i ω) - (∑ i ∈ Finset.range n, ∫ x, X i x ∂μ)} ≤
+        1 / (denominator : ℝ) := by
+  apply registered_expected_profit_bound (c := fun _ => (width : ℝ≥0)^2/4) means n denominator meanIdentity adapted first conditional
+    ((n : ℝ) * width^2) (conditionalRadius n width denominator)
+  · positivity
+  · positivity
+  · simp only [Finset.sum_const, Finset.card_range, nsmul_eq_mul]
+    push_cast
+    ring
+  · have normalized : n * width^2 * conditionalLogBound denominator ≤ 2 * (conditionalRadius n width denominator)^2 := by
+      simpa only [pow_two, Nat.mul_assoc] using conditional_radius_never_understates_variance n width denominator
+    exact_mod_cast normalized
+  · exact positiveAlpha
+
 end Bayn

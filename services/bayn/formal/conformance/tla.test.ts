@@ -3,24 +3,24 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Result, Schema } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations/model'
-import { AutonomousCycleSchema, CycleState } from '../cycle/model'
-import { DecisionReadinessReason } from '../cycle/runner/readiness'
-import { Authority, KillState } from '../execution/contracts'
-import { completeExecutionControllerTick, decideExecutionControllerTick } from '../execution/controller'
-import { ExecutionControllerOutcome } from '../execution/controller-status'
+import { MutationOperation } from '../../src/broker/alpaca-mutations/model'
+import { AutonomousCycleSchema, CycleState } from '../../src/cycle/model'
+import { DecisionReadinessReason } from '../../src/cycle/runner/readiness'
+import { Authority, KillState } from '../../src/execution/contracts'
+import { completeExecutionControllerTick, decideExecutionControllerTick } from '../../src/execution/controller'
+import { ExecutionControllerOutcome } from '../../src/execution/controller-status'
 import {
   allowsOutcomeEvent,
   decideMutationAuthority,
   decideMutationStartReplay,
   mutationIdResult,
-} from '../execution/mutations/decisions'
-import { MutationEventType, type MutationEvent } from '../execution/mutations/model'
-import { nativeJevFixture } from '../jev/native.test-support'
-import { preflightTransfers, verifyExactTransfers } from '../ledger-plan/verification'
-import type { LedgerTransferRecord } from '../ledger-plan/model'
-import { decisionReadinessContinuationDelayMs } from '../observe-composition/recovery-driver'
-import { strictParseOptions } from '../schemas'
+} from '../../src/execution/mutations/decisions'
+import { MutationEventType, type MutationEvent } from '../../src/execution/mutations/model'
+import { nativeJevFixture } from '../../src/jev/native.test-support'
+import { preflightTransfers, verifyExactTransfers } from '../../src/ledger-plan/verification'
+import type { LedgerTransferRecord } from '../../src/ledger-plan/model'
+import { decisionReadinessContinuationDelayMs } from '../../src/observe-composition/recovery-driver'
+import { strictParseOptions } from '../../src/schemas'
 
 const directory = process.env['BAYN_TLA_STATE_DIRECTORY']
 const states = (model: string): readonly unknown[] => {
