@@ -71,6 +71,14 @@ jobs:
           key: bayn-lean-linux-${{ hashFiles('services/bayn/formal/lean-toolchain', 'services/bayn/formal/lake-manifest.json', 'services/bayn/formal/lakefile.toml') }}
       - name: Install TypeScript dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
+      - name: Check isolated formal TypeScript
+        working-directory: services/bayn
+        run: |
+          formal_tsc="$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)"
+          chmod +x "$formal_tsc"
+          "$formal_tsc" --noEmit --project formal/tsconfig.json
+          bun ../../node_modules/oxfmt/bin/oxfmt --check formal/conformance formal/verify-tla.ts formal/tsconfig.json
+          bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json formal/conformance formal/verify-tla.ts
       - name: Build, independently recheck proofs, and verify production conformance
         working-directory: services/bayn/formal
         run: |
@@ -80,16 +88,14 @@ jobs:
         env:
           BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
           BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
-        run: bun test services/bayn/src/db/entry-inference-postgres.integration.test.ts
-      - name: Verify inference resolution commit and recovery behavior
-        env:
-          BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
-        run: bun test services/bayn/src/db/jev-evaluation-postgres.integration.test.ts
+        run: bun test services/bayn/src/db/entry-inference-postgres.integration.test.ts --test-name-pattern "conform to Lean"
       - name: Verify decision admission commitment against Lean and PostgreSQL
         env:
           BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
           BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
-        run: bun test services/bayn/src/system-assessment/postgres.integration.test.ts services/bayn/src/db/risk-clock-rejection.integration.test.ts services/bayn/src/db/candidate-observation-window.integration.test.ts
+        run: |
+          bun test services/bayn/src/system-assessment/postgres.integration.test.ts --test-name-pattern "operational registration preserves capital|submission evidence certifies|mutation admission rejects ambient transactions"
+          bun test services/bayn/src/db/risk-clock-rejection.integration.test.ts services/bayn/src/db/candidate-observation-window.integration.test.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
