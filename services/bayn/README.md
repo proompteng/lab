@@ -928,6 +928,21 @@ with a one-millisecond minimum; a clock regression cannot extend the original re
 the requested and scheduled delays plus completion-to-schedule time. Actual delivery still depends on Restate
 availability and the next pass repeats the normal execution guards.
 
+Ordinary controller ticks capture their receipt timestamp inside the existing durable advance, using eight journal
+entries instead of ten. They still await the advance's durable acknowledgement before committing controller state
+and scheduling the successor. Terminal failures retain the timestamp in bounded journal metadata, so explicit retry
+and recovery deliveries preserve it. A worker lost before completion projection or failure journaling can resample
+that receipt timestamp; durable mutation identities and live execution deadlines are independent of it. A committed
+completion always replays its original receipt and timestamp, and a competing completion cannot replace that winner.
+Issued-at latency describes the attempt whose completion was committed; it cannot measure an abandoned attempt or
+cover that attempt's earlier schedule window. Its value alone is not evidence of improved storage or delivery latency.
+This removes one clock acknowledgement round trip; it does not bound Restate storage or delivery latency.
+
+Removing the clock operation changes the journal shape. Roll this out through the existing immutable
+`RestateDeployment` revisions: in-flight invocations must drain on their pinned old deployment, while new invocations
+use the new revision. Do not force-repin old invocations to this journal shape. Controller state and tick payload
+schemas remain unchanged. See [Restate service versioning](https://docs.restate.dev/services/versioning).
+
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
