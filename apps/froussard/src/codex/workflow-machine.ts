@@ -6,7 +6,7 @@ export const ImplementationCommandSchema = Schema.Struct({
   agentRun: Schema.Unknown,
 })
 
-export type ImplementationCommand = Schema.Schema.Type<typeof ImplementationCommandSchema>
+export type ImplementationCommand = typeof ImplementationCommandSchema.Type
 
 export const ReadyApprovalCommandSchema = Schema.Struct({
   repositoryFullName: Schema.String,
@@ -15,9 +15,9 @@ export const ReadyApprovalCommandSchema = Schema.Struct({
   body: Schema.String,
 })
 
-export type ReadyApprovalCommand = Schema.Schema.Type<typeof ReadyApprovalCommandSchema>
+export type ReadyApprovalCommand = typeof ReadyApprovalCommandSchema.Type
 
-export const WorkflowCommandSchema = Schema.Union(
+export const WorkflowCommandSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('submitImplementation'),
     data: ImplementationCommandSchema,
@@ -26,6 +26,6 @@ export const WorkflowCommandSchema = Schema.Union(
     type: Schema.Literal('approveReadyPullRequest'),
     data: ReadyApprovalCommandSchema,
   }),
-)
+])
 
-export type WorkflowCommand = Schema.Schema.Type<typeof WorkflowCommandSchema>
+export type WorkflowCommand = typeof WorkflowCommandSchema.Type

@@ -56,63 +56,69 @@ const LIST_REVIEW_THREADS_QUERY = `
 `
 
 const ReviewThreadCommentSchema = Schema.Struct({
-  bodyText: Schema.optionalWith(Schema.String, { nullable: true }),
-  url: Schema.optionalWith(Schema.String, { nullable: true }),
-  author: Schema.optionalWith(
-    Schema.Struct({
-      login: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
+  bodyText: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+  author: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
   ),
 })
 
 const ReviewThreadNodeSchema = Schema.Struct({
-  isResolved: Schema.optionalWith(Schema.Boolean, { nullable: true }),
-  path: Schema.optionalWith(Schema.String, { nullable: true }),
-  comments: Schema.optionalWith(
-    Schema.Struct({
-      nodes: Schema.optionalWith(Schema.Array(ReviewThreadCommentSchema), { nullable: true }),
-    }),
-    { nullable: true },
+  isResolved: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  path: Schema.optional(Schema.NullOr(Schema.String)),
+  comments: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nodes: Schema.optional(Schema.NullOr(Schema.Array(ReviewThreadCommentSchema))),
+      }),
+    ),
   ),
 })
 
 const ReviewThreadsResponseSchema = Schema.Struct({
-  data: Schema.optionalWith(
-    Schema.Struct({
-      repository: Schema.optionalWith(
-        Schema.Struct({
-          pullRequest: Schema.optionalWith(
+  data: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        repository: Schema.optional(
+          Schema.NullOr(
             Schema.Struct({
-              reviewThreads: Schema.optionalWith(
-                Schema.Struct({
-                  nodes: Schema.optionalWith(Schema.Array(ReviewThreadNodeSchema), { nullable: true }),
-                  pageInfo: Schema.optionalWith(
-                    Schema.Struct({
-                      hasNextPage: Schema.optionalWith(Schema.Boolean, { nullable: true }),
-                      endCursor: Schema.optionalWith(Schema.String, { nullable: true }),
-                    }),
-                    { nullable: true },
-                  ),
-                }),
-                { nullable: true },
+              pullRequest: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({
+                    reviewThreads: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Struct({
+                          nodes: Schema.optional(Schema.NullOr(Schema.Array(ReviewThreadNodeSchema))),
+                          pageInfo: Schema.optional(
+                            Schema.NullOr(
+                              Schema.Struct({
+                                hasNextPage: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                                endCursor: Schema.optional(Schema.NullOr(Schema.String)),
+                              }),
+                            ),
+                          ),
+                        }),
+                      ),
+                    ),
+                  }),
+                ),
               ),
             }),
-            { nullable: true },
           ),
-        }),
-        { nullable: true },
-      ),
-    }),
-    { nullable: true },
+        ),
+      }),
+    ),
   ),
-  errors: Schema.optionalWith(
-    Schema.Array(Schema.Struct({ message: Schema.optionalWith(Schema.String, { nullable: true }) })),
-    { nullable: true },
+  errors: Schema.optional(
+    Schema.NullOr(Schema.Array(Schema.Struct({ message: Schema.optional(Schema.NullOr(Schema.String)) }))),
   ),
 })
 
-const decodeReviewThreadsResponse = Schema.decodeUnknown(ReviewThreadsResponseSchema)
+const decodeReviewThreadsResponse = Schema.decodeUnknownEffect(ReviewThreadsResponseSchema)
 
 interface ReviewApiErrorHttp {
   readonly type: 'http-error'
@@ -187,7 +193,7 @@ const requestJson = (fetchFn: FetchLike, input: string, init: FetchInit): Effect
         response.ok
           ? readText(response).pipe(Effect.flatMap(parseJson))
           : readText(response)
-              .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
+              .pipe(Effect.catch(() => Effect.succeed<string | undefined>(undefined)))
               .pipe(
                 Effect.flatMap((detail) =>
                   Effect.fail<ReviewApiError>({
@@ -230,7 +236,7 @@ const mapCheckError = (error: ReviewApiError): ListBlockingChecksResult => {
   }
 }
 
-const threadsFromNodes = (nodes: Schema.Schema.Type<typeof ReviewThreadNodeSchema>[]): PullRequestReviewThread[] =>
+const threadsFromNodes = (nodes: (typeof ReviewThreadNodeSchema.Type)[]): PullRequestReviewThread[] =>
   nodes
     .filter((node) => !node?.isResolved)
     .map((node) => {
@@ -286,7 +292,7 @@ const collectReviewThreads = (
   repo: string,
   pullNumber: number,
 ): Effect.Effect<PullRequestReviewThread[], ReviewApiError> =>
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     let cursor: string | null = null
     const accumulator: PullRequestReviewThread[] = []
 
@@ -320,7 +326,7 @@ const CheckRunsSchema = Schema.Struct({
       name: Schema.String,
       status: Schema.String,
       conclusion: Schema.NullOr(Schema.String),
-      details_url: Schema.optionalWith(Schema.String, { nullable: true }),
+      details_url: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 })
@@ -329,8 +335,8 @@ const CommitStatusesSchema = Schema.Struct({
     Schema.Struct({
       context: Schema.String,
       state: Schema.String,
-      target_url: Schema.optionalWith(Schema.String, { nullable: true }),
-      description: Schema.optionalWith(Schema.String, { nullable: true }),
+      target_url: Schema.optional(Schema.NullOr(Schema.String)),
+      description: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 })
@@ -346,12 +352,14 @@ const collectBlockingChecks = (
     let observed = 0
     for (let page = 1; ; page++) {
       const { check_runs: runs } = yield* requestJson(fetchFn, `${checkRunsUrl}${page}`, { headers }).pipe(
-        Effect.flatMap((value) => Schema.decodeUnknown(CheckRunsSchema)(value).pipe(Effect.mapError(toInvalidJson))),
+        Effect.flatMap((value) =>
+          Schema.decodeUnknownEffect(CheckRunsSchema)(value).pipe(Effect.mapError(toInvalidJson)),
+        ),
       )
       observed += runs.length
       for (const run of runs) {
         if (run.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(run.conclusion ?? '')) {
-          blocked.push({ name: run.name, conclusion: run.conclusion ?? run.status, url: run.details_url })
+          blocked.push({ name: run.name, conclusion: run.conclusion ?? run.status, url: run.details_url ?? undefined })
         }
       }
       if (runs.length < 100) break
@@ -361,7 +369,7 @@ const collectBlockingChecks = (
         headers,
       }).pipe(
         Effect.flatMap((value) =>
-          Schema.decodeUnknown(CommitStatusesSchema)(value).pipe(Effect.mapError(toInvalidJson)),
+          Schema.decodeUnknownEffect(CommitStatusesSchema)(value).pipe(Effect.mapError(toInvalidJson)),
         ),
       )
       observed += statuses.length
@@ -370,7 +378,7 @@ const collectBlockingChecks = (
           blocked.push({
             name: status.context,
             conclusion: status.state,
-            url: status.target_url,
+            url: status.target_url ?? undefined,
             details: summarizeText(status.description, 240) ?? undefined,
           })
         }
@@ -396,7 +404,7 @@ export const listPullRequestReviewThreads = (
 
   const effectiveFetch = fetchImplementation ?? globalFetch
 
-  return Effect.gen(function* (_) {
+  return Effect.gen(function* () {
     const { owner, repo } = yield* parseRepository(repositoryFullName)
     const fetchFn = yield* ensureFetch(effectiveFetch)
     const graphqlUrl = resolveGitHubGraphqlUrl(apiBaseUrl)
@@ -412,7 +420,7 @@ export const listPullRequestReviewThreads = (
     return threads
   }).pipe(
     Effect.map((threads) => ({ ok: true as const, threads })),
-    Effect.catchAll((error) => Effect.succeed(mapThreadError(error))),
+    Effect.catch((error) => Effect.succeed(mapThreadError(error))),
   )
 }
 
@@ -430,7 +438,7 @@ export const listPullRequestBlockingChecks = (
 
   const effectiveFetch = fetchImplementation ?? globalFetch
 
-  return Effect.gen(function* (_) {
+  return Effect.gen(function* () {
     const { owner, repo } = yield* parseRepository(repositoryFullName)
     const fetchFn = yield* ensureFetch(effectiveFetch)
 
@@ -448,7 +456,7 @@ export const listPullRequestBlockingChecks = (
     return failures
   }).pipe(
     Effect.map((checks) => ({ ok: true as const, checks })),
-    Effect.catchAll((error) => Effect.succeed(mapCheckError(error))),
+    Effect.catch((error) => Effect.succeed(mapCheckError(error))),
   )
 }
 
@@ -498,7 +506,7 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
     }
     const identity = yield* requestJson(fetchFn, `${base}/user`, { headers }).pipe(
       Effect.flatMap((value) =>
-        Schema.decodeUnknown(Schema.Struct({ login: Schema.String }))(value).pipe(Effect.mapError(toInvalidJson)),
+        Schema.decodeUnknownEffect(Schema.Struct({ login: Schema.String }))(value).pipe(Effect.mapError(toInvalidJson)),
       ),
     )
     if (identity.login.toLowerCase() !== 'tuslagch')
@@ -532,14 +540,14 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         { headers },
       ).pipe(
         Effect.flatMap((value) =>
-          Schema.decodeUnknown(Schema.Array(AutomationCommentSchema))(value).pipe(Effect.mapError(toInvalidJson)),
+          Schema.decodeUnknownEffect(Schema.Array(AutomationCommentSchema))(value).pipe(Effect.mapError(toInvalidJson)),
         ),
       )
       for (const comment of comments) {
         if (comment.user.login !== 'chatgpt-codex-connector[bot]') continue
         const state = /<!-- codex-review-state:v1 ([\s\S]*?) -->/.exec(comment.body)?.[1]
         if (state === undefined) continue
-        const decoded = yield* Schema.decodeUnknown(Schema.parseJson(CodexReviewStateSchema))(state).pipe(
+        const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CodexReviewStateSchema))(state).pipe(
           Effect.mapError(toInvalidJson),
         )
         verifiedReview =
@@ -561,7 +569,9 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
       for (let page = 1; ; page++) {
         const rows = yield* requestJson(fetchFn, `${reviewsUrl}?per_page=100&page=${page}`, { headers }).pipe(
           Effect.flatMap((value) =>
-            Schema.decodeUnknown(Schema.Array(AutomationReviewSchema))(value).pipe(Effect.mapError(toInvalidJson)),
+            Schema.decodeUnknownEffect(Schema.Array(AutomationReviewSchema))(value).pipe(
+              Effect.mapError(toInvalidJson),
+            ),
           ),
         )
         reviews.push(...rows.filter((review) => review.user.login.toLowerCase() === 'tuslagch'))
@@ -587,9 +597,9 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         method: 'POST',
         headers,
         body: JSON.stringify({ commit_id: options.headSha, body: options.body }),
-      }).pipe(Effect.either)
-      if (created._tag === 'Right') {
-        pending = yield* Schema.decodeUnknown(AutomationReviewSchema)(created.right).pipe(
+      }).pipe(Effect.result)
+      if (created._tag === 'Success') {
+        pending = yield* Schema.decodeUnknownEffect(AutomationReviewSchema)(created.success).pipe(
           Effect.mapError(toInvalidJson),
         )
       } else {
@@ -597,7 +607,7 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         const reconciled = approved(reviews)
         if (reconciled !== undefined) return { ok: true as const, reviewUrl: reconciled.html_url }
         pending = reviews.find((review) => review.state === 'PENDING')
-        if (pending === undefined) return yield* Effect.fail(created.left)
+        if (pending === undefined) return yield* Effect.fail(created.failure)
       }
     }
     if (pending.commit_id !== options.headSha || pending.body !== options.body)
@@ -627,13 +637,13 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
       method: 'POST',
       headers,
       body: JSON.stringify({ event: 'APPROVE', body: options.body }),
-    }).pipe(Effect.either)
-    if (submitted._tag === 'Left') {
+    }).pipe(Effect.result)
+    if (submitted._tag === 'Failure') {
       const reconciled = approved(yield* readReviews)
       if (reconciled !== undefined) return { ok: true as const, reviewUrl: reconciled.html_url }
-      return yield* Effect.fail(submitted.left)
+      return yield* Effect.fail(submitted.failure)
     }
-    const review = yield* Schema.decodeUnknown(AutomationReviewSchema)(submitted.right).pipe(
+    const review = yield* Schema.decodeUnknownEffect(AutomationReviewSchema)(submitted.success).pipe(
       Effect.mapError(toInvalidJson),
     )
     if (
@@ -647,7 +657,7 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
       })
     return { ok: true as const, reviewUrl: review.html_url }
   }).pipe(
-    Effect.catchAll(
+    Effect.catch(
       (error): Effect.Effect<ApprovePullRequestResult> =>
         Effect.succeed({
           ok: false,
@@ -677,13 +687,13 @@ export const listCommitPullRequests = (
             ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
           },
         },
-      ).pipe(Effect.flatMap((value) => Schema.decodeUnknown(schema)(value).pipe(Effect.mapError(toInvalidJson))))
+      ).pipe(Effect.flatMap((value) => Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(toInvalidJson))))
       pullNumbers.push(...pulls.filter((pull) => pull.state === 'open').map((pull) => pull.number))
       if (pulls.length < 100) break
     }
     return { ok: true as const, pullNumbers }
   }).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed({
         ok: false as const,
         reason: error.type,

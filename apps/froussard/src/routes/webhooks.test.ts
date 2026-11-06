@@ -689,6 +689,43 @@ describe('createWebhookHandler', () => {
     expect(githubServiceMock.approvePullRequest).toHaveBeenCalledTimes(2)
   })
 
+  it('bounds concurrent GitHub API calls across deliveries to four', async () => {
+    const release = Promise.withResolvers<void>()
+    let active = 0
+    let peak = 0
+    githubServiceMock.fetchPullRequest.mockImplementation(() =>
+      Effect.promise(async () => {
+        active++
+        peak = Math.max(peak, active)
+        await release.promise
+        active--
+        return { ok: false as const, reason: 'not-found' as const }
+      }),
+    )
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const deliveries = Array.from({ length: 12 }, (_, number) =>
+      handler(
+        buildRequest(
+          {
+            repository: { full_name: 'owner/repo' },
+            action: 'edited',
+            pull_request: { number: number + 1 },
+          },
+          { ...scenarioHeaders('pull_request', 'edited'), 'x-github-delivery': `concurrent-${number}` },
+        ),
+        'github',
+      ),
+    )
+    try {
+      await vi.waitFor(() => expect(active).toBe(4))
+    } finally {
+      release.resolve()
+    }
+    expect((await Promise.all(deliveries)).every((response) => response.status === 202)).toBe(true)
+    expect(peak).toBe(4)
+    expect(githubServiceMock.fetchPullRequest).toHaveBeenCalledTimes(12)
+  })
+
   it.each(webhookScenarios)('$name', async ({ event, action, payload, setup, assert, configOverride }) => {
     setup?.()
     const config: WebhookConfig = {

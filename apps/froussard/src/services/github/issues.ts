@@ -67,7 +67,7 @@ export const postIssueReaction = (options: PostIssueReactionOptions): Effect.Eff
       }
 
       return readResponseText(response)
-        .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
+        .pipe(Effect.catch(() => Effect.succeed<string | undefined>(undefined)))
         .pipe(
           Effect.map((detail) => ({
             ok: false as const,
@@ -77,7 +77,7 @@ export const postIssueReaction = (options: PostIssueReactionOptions): Effect.Eff
           })),
         )
     }),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed<PostIssueReactionResult>({
         ok: false,
         reason: 'network-error',
@@ -141,7 +141,7 @@ export const postIssueCommentReaction = (
       }
 
       return readResponseText(response)
-        .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
+        .pipe(Effect.catch(() => Effect.succeed<string | undefined>(undefined)))
         .pipe(
           Effect.map((detail) => ({
             ok: false as const,
@@ -151,7 +151,7 @@ export const postIssueCommentReaction = (
           })),
         )
     }),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed<PostIssueCommentReactionResult>({
         ok: false,
         reason: 'network-error',
@@ -210,10 +210,10 @@ export const issueHasReaction = (options: IssueReactionPresenceOptions): Effect.
           detail: error instanceof Error ? error.message : String(error),
         }),
       onSuccess: (response) =>
-        Effect.gen(function* (_) {
+        Effect.gen(function* () {
           if (!response.ok) {
             const detail = yield* readResponseText(response).pipe(
-              Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+              Effect.catch(() => Effect.succeed<string | undefined>(undefined)),
             )
             return {
               ok: false as const,
@@ -223,18 +223,18 @@ export const issueHasReaction = (options: IssueReactionPresenceOptions): Effect.
             }
           }
 
-          const bodyResult = yield* readResponseText(response).pipe(Effect.either)
-          if (bodyResult._tag === 'Left') {
+          const bodyResult = yield* readResponseText(response).pipe(Effect.result)
+          if (bodyResult._tag === 'Failure') {
             return {
               ok: false as const,
               reason: 'network-error' as const,
-              detail: bodyResult.left.message,
+              detail: bodyResult.failure.message,
             }
           }
 
           let parsed: unknown
           try {
-            parsed = bodyResult.right.length === 0 ? [] : JSON.parse(bodyResult.right)
+            parsed = bodyResult.success.length === 0 ? [] : JSON.parse(bodyResult.success)
           } catch (error) {
             return {
               ok: false as const,
@@ -333,7 +333,7 @@ export const createIssueComment = (options: CreateIssueCommentOptions): Effect.E
       }
 
       return readResponseText(response).pipe(
-        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+        Effect.catch(() => Effect.succeed<string | undefined>(undefined)),
         Effect.map(
           (detail): CreateIssueCommentResult => ({
             ok: false,
@@ -344,7 +344,7 @@ export const createIssueComment = (options: CreateIssueCommentOptions): Effect.E
         ),
       )
     }),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.succeed<CreateIssueCommentResult>({
         ok: false,
         reason: 'network-error',

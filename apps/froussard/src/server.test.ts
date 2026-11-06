@@ -6,9 +6,9 @@ const ensureConnectedSpy = vi.fn()
 
 vi.mock('@/effect/config', () => {
   const effect = require('effect') as typeof import('effect')
-  const { Effect, Layer } = effect
+  const { Context, Layer } = effect
 
-  class AppConfigService extends Effect.Tag('@test/AppConfig')<AppConfigService, AppConfig>() {}
+  class AppConfigService extends Context.Service<AppConfigService, AppConfig>()('@test/AppConfig') {}
 
   const config: AppConfig = {
     idempotency: {
@@ -86,16 +86,16 @@ vi.mock('@/effect/config', () => {
 
 vi.mock('@/services/kafka', () => {
   const effect = require('effect') as typeof import('effect')
-  const { Effect, Layer } = effect
+  const { Context, Effect, Layer } = effect
 
-  class KafkaProducer extends Effect.Tag('@test/KafkaProducer')<
+  class KafkaProducer extends Context.Service<
     KafkaProducer,
     {
       publish: (message: unknown) => ReturnType<typeof Effect.succeed>
       ensureConnected: ReturnType<typeof Effect.succeed>
       isReady: ReturnType<typeof Effect.succeed<boolean>>
     }
-  >() {}
+  >()('@test/KafkaProducer') {}
 
   const KafkaProducerLayer = Layer.succeed(KafkaProducer, {
     publish: () => Effect.succeed(undefined),
@@ -116,9 +116,9 @@ vi.mock('@/services/kafka', () => {
 
 vi.mock('@/services/github/service', () => {
   const effect = require('effect') as typeof import('effect')
-  const { Effect, Layer } = effect
+  const { Context, Effect, Layer } = effect
 
-  class GithubService extends Effect.Tag('@test/GithubService')<
+  class GithubService extends Context.Service<
     GithubService,
     {
       postIssueReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
@@ -131,7 +131,7 @@ vi.mock('@/services/github/service', () => {
       listPullRequestReviewThreads: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestBlockingChecks: (options: unknown) => ReturnType<typeof Effect.succeed>
     }
-  >() {}
+  >()('@test/GithubService') {}
 
   const GithubServiceLayer = Layer.succeed(GithubService, {
     postIssueReaction: () => Effect.succeed({ ok: true }),

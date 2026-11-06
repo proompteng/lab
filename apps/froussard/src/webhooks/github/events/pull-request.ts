@@ -189,9 +189,9 @@ export const handleReadinessEvent = async (params: PullRequestBaseParams & { eve
   const isReview = eventName === 'pull_request_review' && ['submitted', 'dismissed'].includes(actionValue ?? '')
   const isThread = eventName === 'pull_request_review_thread' && actionValue === 'resolved'
   if (!isCheck && !isStatus && !isComment && !isReview && !isThread) return
-  const decoded = Schema.decodeUnknownEither(ReadinessEventSchema)(params.parsedPayload)
-  if (decoded._tag === 'Left') return
-  const payload = decoded.right
+  const decoded = Schema.decodeUnknownResult(ReadinessEventSchema)(params.parsedPayload)
+  if (decoded._tag === 'Failure') return
+  const payload = decoded.success
   if (
     isComment &&
     (payload.issue?.pull_request === undefined || payload.comment?.user.login !== 'chatgpt-codex-connector[bot]')

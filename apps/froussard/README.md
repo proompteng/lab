@@ -8,6 +8,9 @@ and completed passing CI. It skips drafts, conflicts, and PRs authored by
 existing approvals are reconciled per commit. See the
 [GitOps credential configuration](../../argocd/applications/froussard/README.md#github-identity).
 
+Froussard uses Effect 4.1.2 for services, schemas, concurrency, and resource lifetimes. Its
+Agents client uses the same version. There is no Effect 3 adapter in the runtime.
+
 Froussard is a TypeScript service running on Bun (Elysia HTTP runtime) that receives webhook
 deliveries (GitHub, Linear issues, and Discord slash commands), verifies signatures, and forwards
 trusted events to the owning downstream system. Froussard is the only public webhook ingress for
