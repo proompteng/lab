@@ -61,7 +61,7 @@ import {
   makeExecutionIntentFromDecodedPlan,
 } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
-import { canonicalHashV1Result, sha256 } from './hash'
+import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { intradayAgeNanos, millisecondsAsNanos } from './market-data/intraday/time'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
@@ -2095,6 +2095,31 @@ export const CycleDecisionDocumentSchema = Schema.Union([
 ])
 export type CycleDecisionDocument = typeof CycleDecisionDocumentSchema.Type
 
+// Only owned, deeply frozen graphs receive this receipt. Copies and stored JSON
+// still cross the full schema boundary; a claimed contentHash never earns reuse.
+const verifiedCycleDocuments = new WeakMap<object, CycleDecisionDocument>()
+const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(document: A): A => {
+  const owned = structuredClone(document)
+  const freeze = (value: unknown): void => {
+    if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
+    for (const child of Object.values(value)) freeze(child)
+    Object.freeze(value)
+  }
+  freeze(owned)
+  verifiedCycleDocuments.set(owned, owned)
+  return owned
+}
+
+export const decodeCycleDecisionDocument = (input: unknown) => {
+  const verified = typeof input === 'object' && input !== null ? verifiedCycleDocuments.get(input) : undefined
+  return verified === undefined
+    ? Result.map(
+        Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(input),
+        retainVerifiedCycleDocument,
+      )
+    : Result.succeed(verified)
+}
+
 interface MakeShadowDecisionDocumentIssue {
   readonly operation: 'make'
   readonly reason: 'canonicalization' | 'contract'
@@ -2176,12 +2201,19 @@ export const makeExecutionDecisionDocument = (
     return Result.fail(makeDocumentFailure('contract', 'execution decision material must be an object'))
   }
   return Result.flatMap(
-    Result.mapError(canonicalHashV1Result(material), (cause) =>
+    Result.mapError(canonicalJsonV1Result(material), (cause) =>
       makeDocumentFailure('canonicalization', 'execution decision material is not canonicalizable', cause),
     ),
-    (contentHash) =>
-      Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
-        makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
+    (json) =>
+      Result.map(
+        Result.mapError(
+          Schema.decodeUnknownResult(
+            ExecutionDecisionMaterialSchema.check(Schema.makeFilter(executionMaterialIssues)),
+            strictParseOptions,
+          )(JSON.parse(json)),
+          (cause) => makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
+        ),
+        (decoded) => retainVerifiedCycleDocument({ ...decoded, contentHash: sha256(json) }),
       ),
   )
 }
