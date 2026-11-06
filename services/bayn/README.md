@@ -56,10 +56,11 @@ exact reconciliation before OBSERVE rollover. It preserves the plan and all trad
 continues through the existing mandate checks.
 
 Live Kafka ingestion and native arrival retention run in one scoped Node worker thread per application runtime.
-The controller receives detached native cuts, so synchronous financial decision verification cannot block ingestion.
+The controller receives detached cuts containing only the requested snapshot inputs; readiness checks transfer no
+retained records. Synchronous financial decision verification cannot block ingestion.
 The thread owns the existing consumer and archive connection; shutdown finishes the arrival journal finalizers before
-acknowledging closure. Worker failure invalidates reads, and interrupted snapshot requests cancel their remote work. Kafka bootstrap,
-source verification, availability timestamps and archive queue bounds retain their existing contracts.
+acknowledging closure. Worker failure invalidates reads, and interrupted snapshot requests cancel their remote work.
+Kafka bootstrap, source verification, availability timestamps and archive queue bounds retain their existing contracts.
 
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,

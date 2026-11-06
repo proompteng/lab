@@ -5,13 +5,17 @@ import { Cause, Context, Effect, Exit, FiberMap, FiberSet, Layer, Logger, Redact
 
 import { NativeArrivalArchiveLive } from '../../db/native-arrival-archive'
 import { makeNativeArrivalStore } from '../../db/native-arrival-postgres'
-import { KafkaMarketFailure, KafkaMarketProjection, makeKafkaMarketProjection } from './kafka'
+import { makeConfiguredTelemetryRuntimeLayer } from '../../telemetry'
+import { KafkaMarketFailure, makeKafkaMarketProjection } from './kafka'
+import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
+import { compactStreamingProjection } from './query-cut'
+import { snapshotCutMeasurement, snapshotFailureMeasurement } from './telemetry'
 import { nativeArrivalCaptureId } from './native-arrival'
 import { makeNativeArrivalJournal } from './native-arrival-journal'
 import type { ProjectionWorkerOptions, ProjectionWorkerRequest, ProjectionWorkerResponse } from './worker'
 
 export const serveProjectionWorker = (
-  projection: KafkaMarketProjection['Service'],
+  projection: Effect.Success<ReturnType<typeof makeKafkaMarketProjection>>,
   close: Effect.Effect<void>,
   port: NonNullable<typeof parentPort>,
 ) =>
@@ -34,13 +38,32 @@ export const serveProjectionWorker = (
               const result = yield* Effect.exit(
                 Effect.gen(function* () {
                   switch (request.operation) {
-                    case 'read':
-                    case 'liquidation':
+                    case 'check':
+                      yield* projection.check
+                      return {
+                        _tag: 'Checked',
+                        id: request.id,
+                        status: yield* projection.status,
+                      } satisfies ProjectionWorkerResponse
+                    case 'read': {
+                      const cut = yield* request.query.purpose === IntradaySnapshotPurpose.Liquidation
+                        ? projection.readForLiquidation
+                        : projection.read
+                      const bounded = yield* Effect.fromResult(compactStreamingProjection(cut, request.query)).pipe(
+                        Effect.tapError((cause) =>
+                          Effect.logWarning('Streaming market snapshot rejected').pipe(
+                            Effect.annotateLogs(snapshotFailureMeasurement(cause, request.query, cut.projection)),
+                            Effect.annotateLogs({ inputCut: snapshotCutMeasurement(cut, request.query) }),
+                          ),
+                        ),
+                      )
                       return {
                         _tag: 'Read',
                         id: request.id,
-                        value: yield* request.operation === 'read' ? projection.read : projection.readForLiquidation,
+                        value: { ...cut, projection: bounded },
+                        status: yield* projection.status,
                       } satisfies ProjectionWorkerResponse
+                    }
                     case 'status':
                       return {
                         _tag: 'Status',
@@ -50,13 +73,23 @@ export const serveProjectionWorker = (
                     case 'stop':
                       yield* close
                       return { _tag: 'Stopped', id: request.id } satisfies ProjectionWorkerResponse
-                    case 'cancel':
-                      return yield* Effect.die('Cancellation must be handled before starting a projection request')
                   }
                 }),
               )
               if (Exit.isSuccess(result)) return yield* send(result.value)
               const failure = Cause.squash(result.cause)
+              if (failure instanceof IntradaySnapshotFailure)
+                return yield* send({
+                  _tag: 'SnapshotFailure',
+                  id: request.id,
+                  reason: failure.reason,
+                  message: failure.message,
+                  ...(failure.facts === undefined ? {} : { facts: failure.facts }),
+                  ...(failure.ingestionDelayDirection === undefined
+                    ? {}
+                    : { ingestionDelayDirection: failure.ingestionDelayDirection }),
+                  cause: Cause.pretty(result.cause),
+                })
               return yield* send({
                 _tag: 'Failure',
                 id: request.id,
@@ -86,37 +119,39 @@ export const projectionWorkerProgram = (options: ProjectionWorkerOptions, port: 
       ...options.archive,
       postgres: { ...options.archive.postgres, url: Redacted.make(options.archive.postgres.url) },
     })
-    const projectionLayer = Layer.effect(
-      KafkaMarketProjection,
-      Effect.gen(function* () {
-        const store = makeNativeArrivalStore(yield* PgClient.PgClient)
-        return yield* makeKafkaMarketProjection(
-          { ...options.kafka, password: Redacted.make(options.kafka.password) },
-          options.sources,
-          undefined,
-          undefined,
-          (bootstrap, sources) =>
-            Effect.gen(function* () {
-              const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(options.build, bootstrap, sources))
-              return yield* makeNativeArrivalJournal(
-                {
-                  schemaVersion: 'bayn.native-arrival-epoch.v1',
-                  captureId,
-                  build: options.build,
-                  bootstrap,
-                  sources,
-                },
-                store,
-              )
-            }),
-        )
-      }),
-    ).pipe(Layer.provide(archive), Layer.provide(NodeServices.layer))
-    const context = yield* Layer.buildWithScope(projectionLayer, scope)
-    return yield* serveProjectionWorker(
-      Context.get(context, KafkaMarketProjection),
-      Scope.close(scope, Exit.void),
-      port,
+    const parent = yield* Effect.context<never>()
+    const outerScope = yield* Effect.scope
+    const context = yield* Layer.buildWithScope(
+      archive.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-market-projection')),
+      ),
+      scope,
+    )
+    const services = Context.add(Context.merge(parent, context), Scope.Scope, scope)
+    const store = makeNativeArrivalStore(Context.get(context, PgClient.PgClient))
+    const projection = yield* makeKafkaMarketProjection(
+      { ...options.kafka, password: Redacted.make(options.kafka.password) },
+      options.sources,
+      undefined,
+      undefined,
+      (bootstrap, sources) =>
+        Effect.gen(function* () {
+          const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(options.build, bootstrap, sources))
+          return yield* makeNativeArrivalJournal(
+            {
+              schemaVersion: 'bayn.native-arrival-epoch.v1',
+              captureId,
+              build: options.build,
+              bootstrap,
+              sources,
+            },
+            store,
+          )
+        }),
+    ).pipe(Effect.provideContext(services))
+    return yield* serveProjectionWorker(projection, Scope.close(scope, Exit.void), port).pipe(
+      Effect.provideContext(Context.add(services, Scope.Scope, outerScope)),
     )
   })
 

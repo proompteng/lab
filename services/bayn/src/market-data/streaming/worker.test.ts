@@ -6,7 +6,6 @@ import { Effect, Exit, Fiber, Result, Schedule } from 'effect'
 
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
-import { decodeWebullCapture, WebullCaptureKind } from './webull-capture'
 import { makeThreadedKafkaProjection, type ProjectionWorkerOptions } from './worker'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { constructStreamingSnapshot } from './snapshot'
@@ -60,54 +59,87 @@ const setup = (mode: 'consume' | 'hang' | 'fail' | 'fixture' = 'consume') => {
   }
 }
 
-test('a transferred native cut reproduces the same snapshot and complete source rows', async () => {
+const query = streamingFixture().query
+const cancelled = (signals: Int32Array) =>
+  Effect.sync(() => Atomics.load(signals, 5)).pipe(
+    Effect.repeat({ until: (value) => value === 1, schedule: Schedule.spaced('1 millis') }),
+    Effect.timeout('1 second'),
+  )
+
+test('a query-owned native cut reproduces the same snapshot and complete source rows', async () => {
   const fixture = setup('fixture')
   const expected = streamingFixture()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const projection = yield* fixture.projection
-        const snapshot = Result.getOrThrow(constructStreamingSnapshot(yield* projection.read, expected.query))
+        const cut = yield* projection.read(expected.query)
+        const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, expected.query))
         expect(snapshot.manifest).toEqual(expected.snapshot.manifest)
         const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
         expect(rows).toEqual(Result.getOrThrow(persistIntradayRecordRows(expected.snapshot)))
         expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+        expect([...cut.projection.quoteHistory.values()].every((history) => history.length <= 1)).toBe(true)
+        const copiedBars = cut.projection.bars
+        if (!(copiedBars instanceof Map)) throw new Error('Transferred projection must retain native Maps')
+        copiedBars.clear()
+        const next = yield* projection.read(expected.query)
+        expect(Result.getOrThrow(constructStreamingSnapshot(next, expected.query)).manifest).toEqual(
+          expected.snapshot.manifest,
+        )
       }),
     ),
   )
 }, 10_000)
 
-test('native Webull ingestion advances while the controller event loop is blocked and seals the same evidence', async () => {
+test('rejected queries retain their snapshot reason and facts across the worker boundary', async () => {
+  const fixture = setup('fixture')
+  const expected = streamingFixture()
+  const request = {
+    ...expected.query,
+    rangeStartAt: new Date(Date.parse(expected.query.rangeStartAt) - 60_000).toISOString(),
+  }
+  const rejected = constructStreamingSnapshot(expected.cut, request)
+  if (Result.isSuccess(rejected)) throw new Error('Earlier source window must fail the fixture')
+  expect(rejected.failure.facts).toBeDefined()
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* fixture.projection
+        const actual = yield* projection.read(request).pipe(Effect.result)
+        if (Result.isSuccess(actual)) throw new Error('Incomplete source window must be rejected by the owner')
+        expect(actual.failure).toMatchObject({
+          _tag: 'IntradaySnapshotFailure',
+          reason: rejected.failure.reason,
+          message: rejected.failure.message,
+          facts: rejected.failure.facts,
+        })
+      }),
+    ),
+  )
+}, 10_000)
+
+test('native Webull ingestion advances while the controller event loop is blocked and seals its evidence', async () => {
   const fixture = setup()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const projection = yield* fixture.projection
         Atomics.store(fixture.signals, 0, 1)
-        // Waiting blocks this event loop. Only an independent ingestion thread can acknowledge the native arrival.
+        // Only an independent ingestion thread can acknowledge arrival while this event loop is blocked.
         expect(Atomics.wait(fixture.signals, 1, 0, 1500)).not.toBe('timed-out')
-        expect(Atomics.load(fixture.signals, 1)).toBe(1)
+        expect(Atomics.load(fixture.signals, 6)).toBe(1)
+        expect(Atomics.load(fixture.signals, 7)).toBe(1)
         const sent = Number(Atomics.load(fixture.times, 0))
         const available = Number(Atomics.load(fixture.times, 1))
         expect(available).toBeGreaterThanOrEqual(sent)
         expect(available - sent).toBeLessThan(500)
-        const cut = yield* projection.readForLiquidation
-        const bar = cut.projection.webull.bars.get('AAPL')?.[0]
-        expect(bar?.delivery.availableAtMs).toBe(available)
-        if (bar === undefined) throw new Error('Webull native bar was not incorporated')
-        expect(Result.getOrThrow(decodeWebullCapture(bar.delivery.record)).kind).toBe(WebullCaptureKind.Bars)
-        expect(cut.consumerSequence).toBe(1)
-        expect(bar.delivery.record.offset).toBe('0')
-        expect(cut.deliveredPositions.find((p) => p.topic === 'webull')?.offset).toBe('1')
-        const copiedBars = cut.projection.webull.bars
-        if (!(copiedBars instanceof Map)) throw new Error('Transferred projection must retain native Maps')
-        copiedBars.clear()
-        expect((yield* projection.readForLiquidation).projection.webull.bars.has('AAPL')).toBe(true)
-        const status = yield* projection.status.pipe(
+        yield* projection.status.pipe(
           Effect.repeat({ until: (value) => value.ready, schedule: Schedule.spaced('10 millis') }),
         )
-        expect(status.epoch).toBe(cut.projection.epoch)
-        expect((yield* projection.read).projection.sequence).toBe(1)
+        yield* projection.check
+        const rejected = yield* projection.read(query).pipe(Effect.result)
+        expect(Result.isFailure(rejected)).toBe(true)
       }),
     ),
   )
@@ -122,12 +154,11 @@ test('interruption cancels the remote read while keeping the projection availabl
     Effect.scoped(
       Effect.gen(function* () {
         const projection = yield* fixture.projection
-        const reading = yield* projection.read.pipe(Effect.forkChild)
+        const reading = yield* projection.read(query).pipe(Effect.forkChild)
         yield* Effect.sleep('30 millis')
         yield* Fiber.interrupt(reading)
-        const status = yield* projection.status
-        expect(status.failure).toBeUndefined()
-        expect(Atomics.load(fixture.signals, 5)).toBe(1)
+        yield* cancelled(fixture.signals)
+        expect((yield* projection.status).failure).toBeUndefined()
       }),
     ),
   )
@@ -139,29 +170,29 @@ test('a request deadline cancels remote work and reports a failure', async () =>
     Effect.scoped(
       Effect.gen(function* () {
         const projection = yield* fixture.projection
-        const result = yield* Effect.exit(projection.read)
-        expect(Exit.isFailure(result)).toBe(true)
-        yield* projection.status
-        expect(Atomics.load(fixture.signals, 5)).toBe(1)
+        expect(Exit.isFailure(yield* Effect.exit(projection.read(query)))).toBe(true)
+        yield* cancelled(fixture.signals)
+        expect((yield* projection.status).failure).toBeUndefined()
       }),
     ),
   )
 }, 10_000)
 
-test('thread failure invalidates reads and retains the last real source identity', async () => {
-  const fixture = setup()
+test('thread failure invalidates reads and retains the last real source identity and deadline', async () => {
+  const fixture = setup('fixture')
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const projection = yield* fixture.projection
-        Atomics.store(fixture.signals, 0, 1)
-        expect(Atomics.wait(fixture.signals, 1, 0, 1500)).not.toBe('timed-out')
-        const before = yield* projection.readForLiquidation
+        const initial = yield* projection.status
+        const before = yield* projection.read(query)
+        expect(before.projection.sequence).toBeGreaterThan(initial.sequence)
         yield* Effect.promise(() => fixture.worker?.terminate() ?? Promise.resolve(0))
-        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        expect(Exit.isFailure(yield* Effect.exit(projection.read(query)))).toBe(true)
         expect(yield* projection.status).toEqual({
           epoch: before.projection.epoch,
           sequence: before.projection.sequence,
+          bootstrapDeadlineAtMs: null,
           ready: false,
           failure: 'Kafka projection thread exited before shutdown was acknowledged',
         })
@@ -172,7 +203,6 @@ test('thread failure invalidates reads and retains the last real source identity
 
 test('startup failure propagates and releases the worker', async () => {
   const fixture = setup('fail')
-  const result = await Effect.runPromiseExit(Effect.scoped(fixture.projection))
-  expect(Exit.isFailure(result)).toBe(true)
+  expect(Exit.isFailure(await Effect.runPromiseExit(Effect.scoped(fixture.projection)))).toBe(true)
   expect(fixture.worker?.threadId).toBe(-1)
 }, 10_000)

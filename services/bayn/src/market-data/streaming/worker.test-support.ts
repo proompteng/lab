@@ -14,6 +14,7 @@ import { nativeArrivalCaptureId } from './native-arrival'
 import { nativeArrivalEpochFixture } from './native-arrival.test-support'
 import { serveProjectionWorker } from './market-projection-worker'
 import { sha256 } from '../../hash'
+import { CaptureDisposition } from './transport-evidence'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 
 if (parentPort === null) throw new Error('Test requires a worker port')
@@ -35,6 +36,7 @@ const positions = Object.values(source.topics).map((topic) => ({ topic, partitio
 const program = Effect.gen(function* () {
   if (mode === 'fixture') {
     const fixture = streamingFixture()
+    let read = false
     const cut = {
       ...fixture.cut,
       consumerSequence: fixture.cut.projection.sequence,
@@ -42,9 +44,18 @@ const program = Effect.gen(function* () {
     }
     return yield* serveProjectionWorker(
       {
-        read: Effect.succeed(cut),
+        check: Effect.void,
+        read: Effect.sync(() => {
+          read = true
+          return cut
+        }),
         readForLiquidation: Effect.succeed(cut),
-        status: Effect.succeed({ epoch: cut.projection.epoch, sequence: cut.projection.sequence, ready: true }),
+        status: Effect.sync(() => ({
+          epoch: cut.projection.epoch,
+          sequence: read ? cut.projection.sequence : 0,
+          ready: true,
+          bootstrapDeadlineAtMs: null,
+        })),
       },
       Effect.void,
       port,
@@ -117,6 +128,8 @@ const program = Effect.gen(function* () {
             journal.observe(input).pipe(
               Effect.andThen(
                 Effect.sync(() => {
+                  Atomics.store(signals, 6, input.disposition === CaptureDisposition.Accepted ? 1 : -1)
+                  Atomics.store(signals, 7, input.projectionSequence)
                   Atomics.store(times, 1, BigInt(input.availableAtMs))
                   Atomics.store(signals, 1, 1)
                   Atomics.notify(signals, 1)

@@ -10,6 +10,7 @@ import {
   type KafkaProjectionRead,
   type KafkaMarketProjection,
 } from './kafka'
+import { IntradaySnapshotFailure, type IntradaySnapshotQuery } from '../intraday/model'
 
 export type ProjectionStatus = Effect.Success<KafkaMarketProjection['Service']['status']>
 
@@ -23,16 +24,32 @@ export interface ProjectionWorkerOptions {
   readonly build: NativeArrivalEpoch['build']
 }
 
-export type ProjectionWorkerRequest = {
-  readonly id: number
-  readonly operation: 'read' | 'liquidation' | 'status' | 'stop' | 'cancel'
-}
+type ProjectionWorkerOperation =
+  | { readonly operation: 'check' | 'status' | 'stop' }
+  | { readonly operation: 'cancel' }
+  | { readonly operation: 'read'; readonly query: IntradaySnapshotQuery }
+export type ProjectionWorkerRequest = ProjectionWorkerOperation & { readonly id: number }
 
 export type ProjectionWorkerResponse =
   | { readonly _tag: 'Ready'; readonly value: ProjectionStatus }
-  | { readonly _tag: 'Read'; readonly id: number; readonly value: KafkaProjectionRead }
+  | {
+      readonly _tag: 'Read'
+      readonly id: number
+      readonly value: KafkaProjectionRead
+      readonly status: ProjectionStatus
+    }
+  | { readonly _tag: 'Checked'; readonly id: number; readonly status: ProjectionStatus }
   | { readonly _tag: 'Status'; readonly id: number; readonly value: ProjectionStatus }
   | { readonly _tag: 'Stopped'; readonly id: number }
+  | {
+      readonly _tag: 'SnapshotFailure'
+      readonly id: number
+      readonly reason: IntradaySnapshotFailure['reason']
+      readonly message: string
+      readonly ingestionDelayDirection?: IntradaySnapshotFailure['ingestionDelayDirection']
+      readonly facts?: Readonly<Record<string, unknown>>
+      readonly cause: string
+    }
   | {
       readonly _tag: 'Failure'
       readonly id: number
@@ -92,12 +109,7 @@ export const makeThreadedKafkaProjection = (
       pending.delete(reply.id)
       if (reply._tag === 'Stopped') stopped = true
       if (reply._tag === 'Status') lastStatus = reply.value
-      if (reply._tag === 'Read' && lastStatus !== undefined)
-        lastStatus = {
-          ...lastStatus,
-          epoch: reply.value.projection.epoch,
-          sequence: reply.value.projection.sequence,
-        }
+      if (reply._tag === 'Read' || reply._tag === 'Checked') lastStatus = reply.status
       if (resume === undefined) return
       resume(
         reply._tag === 'Failure'
@@ -119,7 +131,7 @@ export const makeThreadedKafkaProjection = (
     worker.on('error', onError)
     worker.on('exit', onExit)
 
-    const request = (operation: Exclude<ProjectionWorkerRequest['operation'], 'cancel'>) =>
+    const request = (message: Exclude<ProjectionWorkerOperation, { readonly operation: 'cancel' }>) =>
       Effect.callback<Reply, KafkaMarketFailure>((resume) => {
         if (terminal !== undefined || stopped) {
           resume(Effect.fail(terminal ?? unavailable('Kafka projection thread is stopped')))
@@ -128,7 +140,7 @@ export const makeThreadedKafkaProjection = (
         const id = ++sequence
         pending.set(id, resume)
         try {
-          worker.postMessage({ id, operation } satisfies ProjectionWorkerRequest)
+          worker.postMessage({ ...message, id } satisfies ProjectionWorkerRequest)
         } catch (cause) {
           pending.delete(id)
           resume(Effect.fail(unavailable('Kafka projection request could not be sent', cause)))
@@ -143,13 +155,13 @@ export const makeThreadedKafkaProjection = (
         })
       }).pipe(
         Effect.timeoutOrElse({
-          duration: options.kafka.operationTimeoutMs * (operation === 'stop' ? 5 : 1),
-          orElse: () => Effect.fail(unavailable(`Kafka projection ${operation} request timed out`)),
+          duration: options.kafka.operationTimeoutMs * (message.operation === 'stop' ? 5 : 1),
+          orElse: () => Effect.fail(unavailable(`Kafka projection ${message.operation} request timed out`)),
         }),
       )
 
     yield* Effect.addFinalizer(() =>
-      request('stop').pipe(
+      request({ operation: 'stop' }).pipe(
         Effect.catchCause((cause) => Effect.logError('Kafka projection thread did not acknowledge shutdown', cause)),
         Effect.ensuring(
           Effect.promise(() => worker.terminate()).pipe(
@@ -171,18 +183,37 @@ export const makeThreadedKafkaProjection = (
         orElse: () => Effect.fail(unavailable('Kafka projection thread startup timed out')),
       }),
     )
-    const read = (operation: 'read' | 'liquidation') =>
-      request(operation).pipe(
-        Effect.flatMap((reply) =>
-          reply._tag === 'Read'
-            ? Effect.succeed(reply.value)
-            : Effect.fail(unavailable('Kafka projection returned the wrong response')),
+    const read = (query: IntradaySnapshotQuery) =>
+      request({ operation: 'read', query }).pipe(
+        Effect.flatMap(
+          (reply): Effect.Effect<KafkaProjectionRead, KafkaMarketFailure | IntradaySnapshotFailure> =>
+            reply._tag === 'SnapshotFailure'
+              ? Effect.fail(
+                  new IntradaySnapshotFailure({
+                    reason: reply.reason,
+                    message: reply.message,
+                    cause: reply.cause,
+                    ...(reply.facts === undefined ? {} : { facts: reply.facts }),
+                    ...(reply.ingestionDelayDirection === undefined
+                      ? {}
+                      : { ingestionDelayDirection: reply.ingestionDelayDirection }),
+                  }),
+                )
+              : reply._tag === 'Read'
+                ? Effect.succeed(reply.value)
+                : Effect.fail(unavailable('Kafka projection returned the wrong response')),
         ),
       )
     return {
-      read: read('read'),
-      readForLiquidation: read('liquidation'),
-      status: request('status').pipe(
+      check: request({ operation: 'check' }).pipe(
+        Effect.flatMap((reply) =>
+          reply._tag === 'Checked'
+            ? Effect.void
+            : Effect.fail(unavailable('Kafka projection returned the wrong readiness response')),
+        ),
+      ),
+      read,
+      status: request({ operation: 'status' }).pipe(
         Effect.flatMap((reply) =>
           reply._tag === 'Status'
             ? Effect.succeed(reply.value)

@@ -38,6 +38,7 @@ import {
   type StreamingProjection,
 } from './projection'
 import { marketSourceForTopic, marketSourceKind, type KafkaMarketRecord, type MarketSources } from './raw-events'
+import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
 
 export interface KafkaMarketConfig {
   readonly webullBarsTopic?: string | undefined
@@ -324,8 +325,10 @@ export interface KafkaProjectionRead extends KafkaProjectionCut {
 export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
   {
-    readonly read: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
-    readonly readForLiquidation: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
+    readonly check: Effect.Effect<void, KafkaMarketFailure>
+    readonly read: (
+      query: IntradaySnapshotQuery,
+    ) => Effect.Effect<KafkaProjectionRead, KafkaMarketFailure | IntradaySnapshotFailure>
     readonly status: Effect.Effect<{
       readonly epoch: string
       readonly ready: boolean
@@ -839,6 +842,7 @@ export const makeKafkaMarketProjection = (
           : Effect.fail(lastFailure ?? failure('read', 'Kafka projection is rebuilding required history'))
       })
     return {
+      check: readCut(true).pipe(Effect.asVoid),
       read: readCut(true),
       readForLiquidation: readCut(false),
       status: Effect.sync(() => ({
