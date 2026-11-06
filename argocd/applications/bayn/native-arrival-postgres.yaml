@@ -37,8 +37,12 @@ spec:
       memory: 2Gi
   storage:
     storageClass: rook-ceph-block
-    size: 100Gi
+    size: 200Gi
     resizeInUseVolumes: true
+  walStorage:
+    storageClass: local-path-bayn-wal
+    size: 32Gi
+    resizeInUseVolumes: false
   bootstrap:
     initdb:
       database: bayn_native_arrival
@@ -73,6 +77,8 @@ spec:
     metricsQueriesTTL: 1s
     customQueriesConfigMap:
       - name: cnpg-default-monitoring
+        key: queries
+      - name: bayn-postgres-monitoring
         key: queries
     disableDefaultQueries: false
   plugins:
