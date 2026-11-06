@@ -14,7 +14,7 @@ patches:
       apiVersion: bitnami.com/v1alpha1
       kind: SealedSecret
       metadata:
-        name: github-token
+        name: froussard-github-token
         namespace: froussard
         annotations:
           argocd.argoproj.io/sync-wave: "-1"

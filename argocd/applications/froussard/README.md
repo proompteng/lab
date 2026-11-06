@@ -7,11 +7,13 @@ ingress after the canary and cutover.
 
 ## GitHub identity
 
-Froussard uses `tuslagch` through `froussard/github-token`, sourced from
+Froussard uses `tuslagch` through `froussard/froussard-github-token`, sourced from
 `op://infra/tuslagch-github/token`. The reseal helper's `FROUSSARD_GITHUB_TOKEN_OP_PATH`
 overrides that source. Argo Workflows keeps its separate existing token from
 `op://infra/github/personal-access-token` (`ARGO_WORKFLOWS_GITHUB_TOKEN_OP_PATH`).
-Do not substitute Froussard's credential into the Argo Workflows secret.
+The dedicated Secret avoids the existing `github-token` mirror from Jangar, which
+the Sealed Secrets controller cannot own. Do not substitute Froussard's credential
+into that mirror or the Argo Workflows secret.
 Argo waits for the Froussard token's decrypted generation in sync wave `-1` before
 starting the new workload, so the new revision cannot capture the old identity.
 

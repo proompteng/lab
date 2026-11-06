@@ -173,7 +173,7 @@ export const main = async () => {
       controllerNamespace,
     }),
     sealSecret({
-      name: 'github-token',
+      name: 'froussard-github-token',
       namespace: 'froussard',
       literals: [['token', githubToken]],
       controllerName,
