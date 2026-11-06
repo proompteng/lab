@@ -92,7 +92,7 @@ jobs:
           BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
           BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
         run: |
-          bun test services/bayn/src/system-assessment/postgres.integration.test.ts --test-name-pattern "submission evidence certifies|mutation admission rejects ambient transactions"
+          bun test services/bayn/src/system-assessment/postgres.integration.test.ts --test-name-pattern "operational registration preserves capital|submission evidence certifies|mutation admission rejects ambient transactions"
           bun test services/bayn/src/db/risk-clock-rejection.integration.test.ts services/bayn/src/db/candidate-observation-window.integration.test.ts
       - uses: actions/upload-artifact@v4
         if: always()
