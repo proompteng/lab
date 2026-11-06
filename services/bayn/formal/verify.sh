@@ -34,4 +34,4 @@ lean_prefix="$(lean --print-prefix)"
 bash check.sh
 
 export BAYN_FORMAL_EXECUTABLE="$project_dir/.lake/build/bin/bayn-model"
-bun test "$service_dir/src/system-assessment/formal-conformance.test.ts"
+bun test "$service_dir/src/system-assessment/formal-conformance.test.ts" "$service_dir/src/system-assessment/formal-export.test.ts"
