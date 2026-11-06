@@ -198,6 +198,17 @@ const preservedStates = [
   },
 ]
 
+const unsettledHistory = `
+  INSERT INTO intents VALUES ('unresolved-intent','PLANNED','account');
+  INSERT INTO autonomous_cycles VALUES ('ACTIVE');
+  INSERT INTO accounting_transactions VALUES ('account','SPY',1,1,'unreceipted-event');
+  INSERT INTO fills VALUES ('unaccounted-fill');
+  INSERT INTO position_snapshots VALUES ('account',1,clock_timestamp(),'held-position');
+  INSERT INTO broker_events VALUES ('open-order-event',1);
+  INSERT INTO orders VALUES ('account','open-order','NEW','open-order-event');
+  INSERT INTO jev_evaluation_requests VALUES ('unresolved-request',jsonb_build_object('expiresAt',clock_timestamp()+interval '1 hour'));
+  DELETE FROM reconciliations`
+
 integration('effective-entry native OBSERVE cutover', () => {
   let runtime: ReturnType<typeof makeRuntime>
   beforeAll(() => {
@@ -250,34 +261,38 @@ integration('effective-entry native OBSERVE cutover', () => {
     )
   })
 
-  test.each([
-    ...blockers,
-    ...['PAPER', 'OBSERVE'].flatMap((maximum) =>
-      reconciliationBlockers.map(({ name, seed }) => ({
-        name: `${maximum}: ${name}`,
-        seed: `UPDATE authority_state SET maximum='${maximum}',effective='${maximum}'; ${seed}`,
-      })),
-    ),
-  ])('$name rejects before changing authority or retained evidence', async ({ seed }) => {
-    await runtime.runPromise(
-      withGuardFixture(
-        seed,
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const before = yield* readState
-          const retained = yield* readRetainedRows
-          const result = yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.result)
-          expect(Result.isFailure(result)).toBe(true)
-          if (Result.isFailure(result))
-            expect(result.failure).toMatchObject({ reason: { cause: { code: '55000', message: rejectionMessage } } })
-          expect(yield* readState).toEqual(before)
-          expect(yield* readRetainedRows).toEqual(retained)
-        }),
-      ),
-    )
-  })
+  test.each([...blockers, ...reconciliationBlockers.map(({ name, seed }) => ({ name: `PAPER: ${name}`, seed }))])(
+    '$name rejects before changing authority or retained evidence',
+    async ({ seed }) => {
+      await runtime.runPromise(
+        withGuardFixture(
+          seed,
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const before = yield* readState
+            const retained = yield* readRetainedRows
+            const result = yield* sql.withTransaction(effectiveEntryObserveCutover).pipe(Effect.result)
+            expect(Result.isFailure(result)).toBe(true)
+            if (Result.isFailure(result))
+              expect(result.failure).toMatchObject({ reason: { cause: { code: '55000', message: rejectionMessage } } })
+            expect(yield* readState).toEqual(before)
+            expect(yield* readRetainedRows).toEqual(retained)
+          }),
+        ),
+      )
+    },
+  )
 
-  test.each(preservedStates)('$name remains unchanged', async ({ seed }) => {
+  test.each([
+    ...preservedStates.map(({ name, seed }) => ({
+      name: `${name} with unsettled history`,
+      seed: `${seed}; ${unsettledHistory}`,
+    })),
+    ...reconciliationBlockers.map(({ name, seed }) => ({
+      name: `clear OBSERVE: ${name}`,
+      seed: `UPDATE authority_state SET maximum='OBSERVE',effective='OBSERVE'; ${seed}`,
+    })),
+  ])('$name remains unchanged without applying a PAPER-only guard', async ({ seed }) => {
     await runtime.runPromise(
       withGuardFixture(
         seed,
