@@ -1076,6 +1076,7 @@ const executeBoundExecutionCycle = (
         delayMs: mutationIntentReconciliationDelayMs(executed),
         logContext,
         observedAt: step.observedAt,
+        cancellationConfirmationIntentId: step.action === 'CANCEL' ? step.intentId : undefined,
       }
     return { _tag: 'Wait' as const, observedAt: step.observedAt, waitReason: 'MUTATION_NOT_ADVANCED' }
   })

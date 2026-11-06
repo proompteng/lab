@@ -131,6 +131,8 @@ export type PostMutationReconciliation = {
   readonly delayMs: number
   readonly logContext: ExecutionMutationLogContext
   readonly observedAt: string
+  /** Only ordinary durable cancel intents support lookup-only confirmation before reconciliation. */
+  readonly cancellationConfirmationIntentId?: string | undefined
 }
 
 export type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation

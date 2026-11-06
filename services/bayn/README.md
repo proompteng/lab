@@ -156,6 +156,12 @@ Final submission keeps its separate single-use broker-state check. A committed s
 the next protocol signal time, so the controller can wake before its original unused-entry lease expires. This keeps
 the source failure visible and never extends the lease or turns missing data into a successful decision.
 
+After an accepted ordinary intent cancellation, the same serialized driver's next continuation confirms that exact durable
+cancellation through the existing lookup-only recovery path and unchanged consistency delay. It then requires fresh
+post-recovery reconciliation before cycle work. The local hint grants no authority, cannot submit or cancel, and is
+lost safely on restart; normal durable recovery remains the fallback. Missing, failed or unresolved confirmation
+retains fail-closed restrictions. Native protective-order cancellations keep their separate reconciliation path.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
