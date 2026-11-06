@@ -15,7 +15,7 @@ import {
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { ScheduledEvaluation } from './policy'
 import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
-import { JevProtocolSchema, type JevProtocolMaterial } from '../jev/protocol'
+import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import { exchangeSessions, isContinuousMarket, marketHoursAreCanonical } from '../market-hours'
@@ -39,7 +39,7 @@ export const ControllerPassEvidenceSchema = Schema.Struct({
 })
 export type ControllerPassEvidence = typeof ControllerPassEvidenceSchema.Type
 
-export const sourceFitsRegisteredSession = (
+const sourceMarketScopeSupported = (
   manifest: Readonly<Record<string, unknown>>,
   registration: ScheduledEvaluation,
   observedAt: string,
@@ -48,40 +48,56 @@ export const sourceFitsRegisteredSession = (
     (profile) => profile.feed === manifest['feed'],
   )
   const native = registration.calendar.operatingHours === 'NATIVE'
-  const registered = registration.calendar.sessions.find((s) =>
-    native ? s.openAt <= observedAt && observedAt < s.closeAt : s.sessionDate === manifest['sessionDate'],
-  )
   if (
     profile === undefined ||
     !registration.calendar.tradingMarkets.includes(profile.market) ||
     manifest['universeId'] !== profile.universeId ||
-    manifest['universeSymbolHash'] !== profile.universeSymbolHash ||
-    registered === undefined ||
-    observedAt < registered.openAt ||
-    observedAt >= registered.closeAt
+    manifest['universeSymbolHash'] !== profile.universeSymbolHash
   )
     return false
   const hours = Schema.decodeUnknownResult(SnapshotCalendarSchema)(manifest['calendar'])
   if (Result.isFailure(hours) || !marketHoursAreCanonical(hours.success)) return false
   if (isContinuousMarket(hours.success)) return profile.market === MarketKind.Crypto
   if (profile.market !== MarketKind.Equity) return false
-  if (native)
-    return exchangeSessions(hours.success).some(
+  const registered = registration.calendar.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
+  if (
+    registered === undefined ||
+    !exchangeSessions(hours.success).some(
       (session) =>
         session.date === manifest['sessionDate'] && session.openAt <= observedAt && observedAt < session.closeAt,
     )
+  )
+    return false
+  if (native) return true
   const calendar = qualificationCalendar(manifest['calendar'])
   if (Result.isFailure(calendar)) return false
   const source = calendar.success.sessions.find((s) => s.sessionDate === manifest['sessionDate'])
   return source !== undefined && source.openAt === registered.openAt && source.closeAt === registered.closeAt
 }
 
+export const sourceFitsRegisteredSession = (
+  manifest: Readonly<Record<string, unknown>>,
+  registration: ScheduledEvaluation,
+  observedAt: string,
+) => {
+  const native = registration.calendar.operatingHours === 'NATIVE'
+  return (
+    registration.calendar.sessions.some(
+      (session) =>
+        (native || session.sessionDate === manifest['sessionDate']) &&
+        session.openAt <= observedAt &&
+        observedAt < session.closeAt,
+    ) && sourceMarketScopeSupported(manifest, registration, observedAt)
+  )
+}
+
+// A prior decision can own inventory or mutations inside this reporting period. Retain its source without counting it as period work.
 export const decisionMarketScopeSupported = (document: ExecutionDecisionDocument, registration: ScheduledEvaluation) =>
   [document.bindings.decisionMarketData, document.bindings.executionMarketData].every(
     (binding) =>
       binding === undefined ||
       !isSnapshotExecutionMarketDataBinding(binding) ||
-      sourceFitsRegisteredSession(binding, registration, binding.observedAt),
+      sourceMarketScopeSupported(binding, registration, binding.observedAt),
   )
 
 const entryDecisionWork = (strategy: ProtectedEntryTarget, completedAt: string) => {
@@ -197,7 +213,7 @@ const registeredControllerOwns = (
     const historicalBehavior = sha256(
       protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
         protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
-        protocol.schemaVersion === 'bayn.jev.protocol.v37'
+        usesJevOnlyInference(protocol)
         ? 'bayn.candidate-chart-entry.behavior.v1'
         : 'bayn.chart-first-entry.behavior.v1',
     )

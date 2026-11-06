@@ -204,6 +204,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v35',
       'bayn.jev.protocol.v36',
       'bayn.jev.protocol.v37',
+      'bayn.jev.protocol.v38',
       'bayn.entry-ablation-policy.v1',
       'bayn.repeated-momentum-policy.v1',
     ]),

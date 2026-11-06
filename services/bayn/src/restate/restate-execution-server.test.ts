@@ -69,6 +69,7 @@ describe('native Restate execution server', () => {
       {
         advance: () => Promise.reject(new Error('discovery must not advance execution')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       },
       'd'.repeat(64),
@@ -190,6 +191,7 @@ describe('native Restate execution server', () => {
       {
         advance: () => Promise.reject(new Error('unsigned discovery must not advance execution')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       },
       'd'.repeat(64),

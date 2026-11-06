@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { CycleState, AutonomousCycleSchema } from '../cycle/model'
+import { CycleState, CycleTerminalReason, AutonomousCycleSchema } from '../cycle/model'
 import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { type CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
@@ -17,7 +17,7 @@ import {
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { currentUtcInstant } from '../time'
-import { decisionReadinessContinuationDelayMs } from './recovery-driver'
+import { decisionReadinessContinuationDelayMs, unusedEntryHandoffDelayMs } from './recovery-driver'
 
 const native = nativeJevFixture(undefined, '2026-09-04T14:56:54.802Z')
 const observedAt = native.query.observedAt
@@ -55,6 +55,40 @@ const waiting = (
     },
   }) as const
 
+test('unused-entry handoff accelerates only an expired, unbound block before the original cutoff', () => {
+  const expired = {
+    outcome: 'RECOVERED',
+    action: 'BLOCKED',
+    observedAt: instant(60_000),
+    cycle: {
+      ...cycle,
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.UnusedEntryExpired,
+    },
+  } as const
+  expect(unusedEntryHandoffDelayMs(expired, 30_000, instant(60_000))).toBe(1)
+  expect(unusedEntryHandoffDelayMs(expired, 30_000, instant(59_999))).toBeUndefined()
+  expect(unusedEntryHandoffDelayMs(expired, 30_000, cycle.window.submissionCutoffAt)).toBeUndefined()
+  expect(
+    unusedEntryHandoffDelayMs(
+      { ...expired, cycle: { ...expired.cycle, state: CycleState.Active } },
+      30_000,
+      instant(60_000),
+    ),
+  ).toBeUndefined()
+  expect(
+    unusedEntryHandoffDelayMs(
+      { ...expired, cycle: { ...expired.cycle, terminalReason: CycleTerminalReason.Risk } },
+      30_000,
+      instant(60_000),
+    ),
+  ).toBeUndefined()
+  for (const bindings of [{ snapshotId: '1'.repeat(64) }, { decisionHash: '2'.repeat(64) }])
+    expect(
+      unusedEntryHandoffDelayMs({ ...expired, cycle: { ...expired.cycle, bindings } }, 30_000, instant(60_000)),
+    ).toBeUndefined()
+})
+
 test.each([DecisionReadinessReason.SignalWindowObserved, DecisionReadinessReason.LookbackWarmup])(
   '%s schedules the known future boundary before the normal poll',
   (reason) => {
@@ -62,6 +96,39 @@ test.each([DecisionReadinessReason.SignalWindowObserved, DecisionReadinessReason
     expect(decisionReadinessContinuationDelayMs(waiting(reason), 5_000, observedAt)).toBeUndefined()
     expect(decisionReadinessContinuationDelayMs(waiting(reason), 7_000, observedAt)).toBeUndefined()
     expect(decisionReadinessContinuationDelayMs(waiting(reason), 30_000, instant(2_000))).toBe(5_000)
+  },
+)
+
+test.each([DecisionReadinessReason.SnapshotUnavailable, DecisionReadinessReason.SnapshotStale])(
+  '%s preserves the known next-window wake before the original unused entry expires',
+  (reason) => {
+    const prior = Schema.decodeUnknownSync(AutonomousCycleSchema)({
+      ...cycle,
+      createdAt: instant(-33_864),
+      updatedAt: instant(-33_864),
+    })
+    const result = { ...waiting(reason, instant(4_471)), cycle: prior }
+    expect(unusedEntryExpiresAt(prior)).toBe(observedMs + 26_136)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, observedAt)).toBe(4_471)
+    expect(hasExpiredUnusedEntryAdmission(prior, instant(30_000))).toBe(true)
+    expect(hasExpiredUnusedEntryAdmission(prior, result.readiness.availableAt ?? '')).toBe(false)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(4_471))).toBeUndefined()
+    for (const at of [instant(26_136), instant(26_137)])
+      expect(
+        decisionReadinessContinuationDelayMs(
+          { ...result, readiness: { ...result.readiness, availableAt: at } },
+          90_000,
+          observedAt,
+        ),
+      ).toBeUndefined()
+    for (const bindings of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
+      expect(
+        decisionReadinessContinuationDelayMs({ ...result, cycle: { ...prior, bindings } }, 30_000, observedAt),
+      ).toBeUndefined()
+    for (const state of Object.values(CycleState).filter((s) => s !== CycleState.Active))
+      expect(
+        decisionReadinessContinuationDelayMs({ ...result, cycle: { ...prior, state } }, 30_000, observedAt),
+      ).toBeUndefined()
   },
 )
 
@@ -98,6 +165,8 @@ test.each(
     (reason) =>
       reason !== DecisionReadinessReason.LookbackWarmup &&
       reason !== DecisionReadinessReason.SignalWindowObserved &&
+      reason !== DecisionReadinessReason.SnapshotUnavailable &&
+      reason !== DecisionReadinessReason.SnapshotStale &&
       reason !== DecisionReadinessReason.ExecutionRiskExpired &&
       reason !== DecisionReadinessReason.InferenceExpired,
   ),
@@ -161,33 +230,63 @@ const pendingInputs = (previousWindowEndAt?: string) => ({
   },
 })
 
-test.each([undefined, native.query.rangeEndAt, instant(60_000), 'invalid'])(
-  'initial or already consumed missing inputs keep the ordinary cadence (%s)',
+test.each([native.query.rangeEndAt, instant(60_000), 'invalid'])(
+  'already consumed or inconsistent missing inputs keep the ordinary cadence (%s)',
   (previousWindowEndAt) => {
     const result = pendingInputs(previousWindowEndAt)
     expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(37_171))).toBeUndefined()
   },
 )
 
-test('rechecks pending snapshot inputs before the captured remaining admission expires', () => {
-  // The retained 16:24 cycle had 22,829 ms left when its next feature cut was unavailable.
-  const checkedAt = instant(37_171)
-  const result = pendingInputs(instant(-60_000))
-  expect(decisionReadinessContinuationDelayMs(result, 30_000, checkedAt)).toBe(1_000)
-  expect(Date.parse(checkedAt) + 30_000).toBeGreaterThan(unusedEntryExpiresAt(cycle))
-  expect(decisionReadinessContinuationDelayMs(result, 500, checkedAt)).toBe(500)
-  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(59_900))).toBe(100)
-  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(60_000))).toBeUndefined()
-  expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(-1))).toBeUndefined()
-  expect(decisionReadinessContinuationDelayMs(result, 30_000, 'invalid')).toBeUndefined()
-  for (const state of [CycleState.Pending, CycleState.NoTrade, CycleState.Completed, CycleState.Blocked])
-    expect(
-      decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, state } }, 30_000, checkedAt),
-    ).toBeUndefined()
-  for (const bindings of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
-    expect(
-      decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, bindings } }, 30_000, checkedAt),
-    ).toBeUndefined()
+test.each([undefined, instant(-60_000)])(
+  'rechecks initial or later snapshot inputs inside the original admission (%s)',
+  (previousWindowEndAt) => {
+    // The retained 16:24 cycle had 22,829 ms left when its next feature cut was unavailable.
+    const checkedAt = instant(37_171)
+    const result = pendingInputs(previousWindowEndAt)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, checkedAt)).toBe(1_000)
+    expect(Date.parse(checkedAt) + 30_000).toBeGreaterThan(unusedEntryExpiresAt(cycle))
+    expect(decisionReadinessContinuationDelayMs(result, 500, checkedAt)).toBe(500)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(59_900))).toBe(100)
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(60_000))).toBeUndefined()
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, instant(-1))).toBeUndefined()
+    expect(decisionReadinessContinuationDelayMs(result, 30_000, 'invalid')).toBeUndefined()
+    for (const state of [CycleState.Pending, CycleState.NoTrade, CycleState.Completed, CycleState.Blocked])
+      expect(
+        decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, state } }, 30_000, checkedAt),
+      ).toBeUndefined()
+    for (const bindings of [{ snapshotId: 'a'.repeat(64) }, { decisionHash: 'b'.repeat(64) }])
+      expect(
+        decisionReadinessContinuationDelayMs({ ...result, cycle: { ...cycle, bindings } }, 30_000, checkedAt),
+      ).toBeUndefined()
+  },
+)
+
+test('initial missing inputs recheck during a quote window that the ordinary poll misses', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      // Retained 16:54 pass: first wait ended 2,466ms after issue; MU arrived at +17,380ms.
+      const firstWaitMs = 2_466
+      const quoteAvailableMs = 17_380
+      const quoteExpiresMs = 25_904
+      yield* TestClock.setTime(observedMs + firstWaitMs)
+      const result = pendingInputs()
+      let retries = 0
+      while (Date.parse(yield* currentUtcInstant) < observedMs + quoteAvailableMs) {
+        const delay = decisionReadinessContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
+        expect(delay).toBe(1_000)
+        if (delay === undefined) return yield* Effect.die('Initial missing inputs require a bounded continuation')
+        yield* TestClock.adjust(delay)
+        retries += 1
+      }
+      const readyAt = Date.parse(yield* currentUtcInstant)
+      expect(retries).toBe(15)
+      expect(readyAt).toBeLessThan(observedMs + quoteExpiresMs)
+      expect(observedMs + firstWaitMs + 30_000).toBeGreaterThan(observedMs + quoteExpiresMs)
+      expect(hasExpiredUnusedEntryAdmission(cycle, yield* currentUtcInstant)).toBe(false)
+      expect(unusedEntryExpiresAt(cycle)).toBe(observedMs + 60_000)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
 })
 
 test('the captured late-commit retry pattern finishes before the unchanged entry expiry', async () => {
@@ -268,11 +367,15 @@ test('does not accelerate non-readiness waits, terminal results or closed window
   for (const result of results) expect(decisionReadinessContinuationDelayMs(result, 30_000, observedAt)).toBeUndefined()
 })
 
-test('persists a one-shot boundary wake through the existing receipt and restart-safe controller chain', async () => {
+test.each([
+  DecisionReadinessReason.SignalWindowObserved,
+  DecisionReadinessReason.SnapshotUnavailable,
+  DecisionReadinessReason.SnapshotStale,
+])('persists a %s boundary wake through the receipt and restart-safe controller chain', async (reason) => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(observedMs)
-      const result = waiting()
+      const result = waiting(reason)
       const command = {
         controllerKey: 'a'.repeat(64),
         epoch: 1,

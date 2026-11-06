@@ -51,6 +51,7 @@ describeRestate('Real Restate execution deployment activation', () => {
           outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 500 },
         }
       },
+      prepareActivation: () => Promise.resolve(),
       projectState: async () => {
         controllerActivations += 1
       },
@@ -300,6 +301,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                   outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'f'.repeat(64), nextDelayMs: 500 },
                 }
               },
+              prepareActivation: () => Promise.resolve(),
               projectState: async (_key, next) => {
                 projected.push(next)
               },

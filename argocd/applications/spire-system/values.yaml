@@ -70,4 +70,32 @@ spiffe-csi-driver:
     limits:
       memory: 128Mi
 spiffe-oidc-discovery-provider:
-  enabled: false
+  enabled: true
+  namespaceOverride: spire-system
+  replicaCount: 2
+  jwtIssuer: https://oidc-discovery.proompteng.ai
+  bundleSource: ConfigMap
+  bundleConfigMap: spire-bundle
+  config:
+    jwksUri: https://oidc-discovery.proompteng.ai/keys
+    setKeyUse: true
+  tls:
+    spire:
+      enabled: false
+    externalSecret:
+      enabled: true
+      secretName: oidc-discovery-proompteng-ai-tls
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: spiffe-oidc-discovery-provider
+          app.kubernetes.io/instance: spire
