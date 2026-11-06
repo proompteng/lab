@@ -6,7 +6,7 @@ import type { ForwardPerformanceEvidenceInput, ForwardPerformanceReceipt } from 
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
 import type { SystemAssessment } from '../system-assessment/assessment'
-import { JevResearchPolicy } from '../jev/acceptance'
+import { forwardCostDiagnostics } from './cost-diagnostics'
 
 export enum ForwardPerformanceScopeKind {
   Account = 'ACCOUNT',
@@ -21,10 +21,13 @@ export type ForwardPerformanceReportScope =
     }
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v6'
+  readonly schemaVersion: 'bayn.forward-performance-report.v7'
   /** Requested query scope; this does not supply missing financial source or strategy evidence. */
   readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
+  /** A read-only report does not inspect persistence or certify that its generation has ended. */
+  readonly receiptPersistence: 'NOT_CHECKED' | 'PERSISTED_TERMINAL'
+  readonly costDiagnostics: ReturnType<typeof forwardCostDiagnostics>
   readonly positionEpisodes: PositionEpisodeEvidence
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
   readonly operatingCostCoverage: 'COMPLETE' | 'INCOMPLETE'
@@ -58,17 +61,17 @@ export const makeForwardPerformanceReport = (
       authorityGenerationHash === undefined
         ? { kind: ForwardPerformanceScopeKind.Account }
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
-    const candidate = systemAssessment?.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+    const costDiagnostics = forwardCostDiagnostics(receipt, inferenceExpenses, systemAssessment)
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v6' as const,
+      schemaVersion: 'bayn.forward-performance-report.v7' as const,
       scope,
       receipt,
+      receiptPersistence: 'NOT_CHECKED' as const,
+      costDiagnostics,
       positionEpisodes,
       inferenceExpenses,
       operatingCostCoverage:
-        candidate !== undefined &&
-        candidate.sessions.length > 0 &&
-        candidate.sessions.every((session) => session.costs?.fullyCosted === true)
+        costDiagnostics.assessmentOperatingCosts.coverage === 'COMPLETE'
           ? ('COMPLETE' as const)
           : ('INCOMPLETE' as const),
       operatingCostScope:
@@ -92,3 +95,21 @@ export const makeForwardPerformanceReport = (
     )
     return { ...material, reportHash }
   })
+
+/** Call only after the terminal-generation append has committed successfully. */
+export const recordForwardPerformancePersistence = (
+  report: ForwardPerformanceReport,
+): Result.Result<ForwardPerformanceReport, ForwardPerformanceDomainFailure> => {
+  const { reportHash: _reportHash, ...previous } = report
+  const material = { ...previous, receiptPersistence: 'PERSISTED_TERMINAL' as const }
+  return canonicalHashV1Result(material).pipe(
+    Result.map((reportHash) => ({ ...material, reportHash })),
+    Result.mapError(
+      (cause): ForwardPerformanceDomainFailure => ({
+        _tag: 'ForwardPerformanceDomainFailure',
+        operation: 'hash-report',
+        cause,
+      }),
+    ),
+  )
+}

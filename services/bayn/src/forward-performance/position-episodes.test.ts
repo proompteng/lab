@@ -1032,6 +1032,8 @@ describe('position episodes', () => {
       missingQuoteCount: 0,
       unverifiedRequestCount: 0,
       gapRequestCount: 0,
+      matchedQuoteHashes: ['c'.repeat(64)],
+      requestsWithCoverageIssues: [],
       completeMeteredCoverage: true,
       exactSessionLedger: true,
       ledgerTimestampMax: '1791050000000000000',
@@ -1086,7 +1088,7 @@ describe('position episodes', () => {
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v7')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
@@ -1129,7 +1131,7 @@ describe('position episodes', () => {
   })
 })
 
-test('v6 exposes complete operating costs only for the attached registered assessment scope', () => {
+test('exposes complete operating costs only for the attached registered assessment scope', () => {
   const { input, verifiedSources } = supportedAssessmentFixture()
   const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
   const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, assessment))
@@ -1143,7 +1145,7 @@ test('v6 exposes complete operating costs only for the attached registered asses
   expect(Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [])).operatingCostScope).toBeNull()
 })
 
-test('v6 keeps operating cost coverage incomplete without candidate session evidence', () => {
+test('keeps operating cost coverage incomplete without candidate session evidence', () => {
   const { input, verifiedSources } = supportedAssessmentFixture()
   const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
   const missingCandidate = {
@@ -1165,7 +1167,7 @@ test('v6 keeps operating cost coverage incomplete without candidate session evid
   }
 })
 
-test('v6 requires complete costs for every candidate session', () => {
+test('requires complete costs for every candidate session', () => {
   const { input, verifiedSources } = supportedAssessmentFixture()
   const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
   const candidate = assessment.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
