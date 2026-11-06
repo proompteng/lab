@@ -272,7 +272,7 @@ export function ConnectionsPanel({
     }
   }, [active, agent.id, catalog, pendingKey, principalId, providers, reset, save, snapshot])
 
-  const available = catalog?.operations.filter((operation) => operation.readOnly) ?? []
+  const available = catalog?.operations ?? []
   const serviceIds = [
     ...new Set([
       ...available.map((operation) => operation.connectorId),
@@ -286,7 +286,7 @@ export function ConnectionsPanel({
         operation.targets.some((target) => target.resource.kind === 'kubernetes.namespace'),
     )
       ? 'Kubernetes'
-      : id
+      : id.charAt(0).toUpperCase() + id.slice(1)
   const targetNames = new Map(
     catalog?.operations
       .flatMap((operation) => operation.targets)
