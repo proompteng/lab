@@ -216,6 +216,23 @@ describe('Relay AgentRuns', () => {
     expect(f.store.createAgentRun).toHaveBeenCalledTimes(1)
     expect(f.submit).toHaveBeenCalledTimes(1)
   })
+  it('links a reconciler-created projection without requiring a submission request on that projection', async () => {
+    const f = fixture(),
+      ctx = invocation(),
+      original = f.submit.getMockImplementation()!
+    f.submit.mockImplementation(async (request) => {
+      await original(request)
+      const record = f.projections.get(ctx.operationId)!
+      record.payload = { resource: record.payload.resource, status: { phase: 'Running' } }
+      throw new Error('submission projection write lost')
+    })
+    await expect(f.service.call('start_run', { task: 'x' }, ctx, target)).rejects.toThrow('write lost')
+    expect(
+      await f.service.call('get_run', { runId: ctx.operationId }, invocation('agents.runs.read'), target),
+    ).toMatchObject({ runId: ctx.operationId, status: 'Running' })
+    expect(f.rows.get(ctx.operationId)!.projection_id).toBe(f.projections.get(ctx.operationId)!.id)
+    expect(f.submit).toHaveBeenCalledTimes(1)
+  })
   it('retains uncertainty across restart when no accepted run can be found', async () => {
     const f = fixture(),
       ctx = invocation()

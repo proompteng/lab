@@ -20,7 +20,8 @@ describe.skipIf(!url)('Relay submissions on PostgreSQL', () => {
         pool: new Pool({ connectionString: url, max: 8, options: `-c search_path=${schema}` }),
       }),
     })
-    await sql`CREATE TABLE agent_runs (id uuid PRIMARY KEY, status text NOT NULL DEFAULT 'Pending')`.execute(db)
+    await sql`CREATE TABLE agent_runs (id uuid PRIMARY KEY, status text NOT NULL DEFAULT 'Pending',
+      delivery_id text NOT NULL, external_run_id text NOT NULL, payload jsonb NOT NULL)`.execute(db)
     await up(db)
   })
   afterAll(async () => {
@@ -38,9 +39,35 @@ describe.skipIf(!url)('Relay submissions on PostgreSQL', () => {
     actor: 'workload:fixture',
     authorization_receipt_id: crypto.randomUUID(),
     request_hash: 'hash',
-    request_payload: { implementation: { text: 'task' } },
+    request_payload: {
+      namespace: 'agents',
+      metadata: { annotations: { 'relay.proompteng.ai/namespace-uid': 'namespace-uid' } },
+      implementation: { text: 'task' },
+    },
     run_name: 'relay-fixture',
   })
+  const projectionPayload = (request: NewSubmission) => ({
+    resource: {
+      metadata: {
+        name: request.run_name,
+        namespace: 'agents',
+        uid: crypto.randomUUID().toString(),
+        annotations: {
+          'relay.proompteng.ai/request-hash': request.request_hash,
+          'relay.proompteng.ai/target': request.target_id,
+          'relay.proompteng.ai/namespace-uid': 'namespace-uid',
+        },
+      },
+    },
+  })
+  const insertProjection = async (request: NewSubmission, payload: Record<string, unknown>, status = 'Pending') => {
+    const id = crypto.randomUUID()
+    await sql`INSERT INTO agent_runs(id, delivery_id, external_run_id, payload, status)
+      VALUES (${id}, ${request.operation_id}, ${request.run_name}, ${JSON.stringify(payload)}::jsonb, ${status})`.execute(
+      db,
+    )
+    return id
+  }
   it('gives only one concurrent caller submission authority and survives a new store instance', async () => {
     const first = createSubmissionStore(db),
       request = input()
@@ -61,9 +88,8 @@ describe.skipIf(!url)('Relay submissions on PostgreSQL', () => {
     expect((await store.list(request.workspace_id, request.target_id, 1)).map((row) => row.operation_id)).toEqual([
       request.operation_id,
     ])
-    const id = crypto.randomUUID(),
-      replacement = crypto.randomUUID()
-    await sql`INSERT INTO agent_runs(id) VALUES (${id}), (${replacement})`.execute(db)
+    const id = await insertProjection(request, projectionPayload(request)),
+      replacement = await insertProjection(request, projectionPayload(request))
     await store.accepted(request.operation_id, id)
     await store.accepted(request.operation_id, id)
     await expect(store.accepted(request.operation_id, replacement)).rejects.toThrow()
@@ -73,4 +99,48 @@ describe.skipIf(!url)('Relay submissions on PostgreSQL', () => {
       rejection: null,
     })
   })
+  it.each(['Cancelling', 'Succeeded', 'needs_human'])(
+    'enriches a reconciler projection without changing %s evidence',
+    async (status) => {
+      const store = createSubmissionStore(db),
+        request = input()
+      await store.reserve(request)
+      const payload = {
+        ...projectionPayload(request),
+        cancellation: { requestedAt: 'original' },
+        result: { response: 'retained' },
+      }
+      const id = await insertProjection(request, payload, status)
+      await Promise.all(Array.from({ length: 8 }, () => store.accepted(request.operation_id, id)))
+      const record = await db.selectFrom('agent_runs').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+      expect(record.status).toBe(status)
+      expect(record.payload).toEqual({ ...payload, request: request.request_payload })
+      expect((await store.get(request.operation_id, request.workspace_id, request.target_id))?.projection_id).toBe(id)
+    },
+  )
+  it.each(['namespace', 'name', 'uid', 'hash', 'target', 'namespaceUid', 'request', 'delivery'])(
+    'rejects a projection with mismatched %s before linking or changing it',
+    async (field) => {
+      const store = createSubmissionStore(db),
+        request = input()
+      await store.reserve(request)
+      const payload: Record<string, unknown> = projectionPayload(request)
+      const metadata = (payload.resource as ReturnType<typeof projectionPayload>['resource']).metadata
+      if (field === 'namespace') metadata.namespace = 'other'
+      if (field === 'name') metadata.name = 'other'
+      if (field === 'uid') metadata.uid = ''
+      if (field === 'hash') metadata.annotations['relay.proompteng.ai/request-hash'] = 'other'
+      if (field === 'target') metadata.annotations['relay.proompteng.ai/target'] = 'other'
+      if (field === 'namespaceUid') metadata.annotations['relay.proompteng.ai/namespace-uid'] = 'other'
+      if (field === 'request') payload.request = { namespace: 'other' }
+      const id = await insertProjection(
+        field === 'delivery' ? { ...request, operation_id: crypto.randomUUID() } : request,
+        payload,
+      )
+      await expect(store.accepted(request.operation_id, id)).rejects.toThrow()
+      expect((await store.get(request.operation_id, request.workspace_id, request.target_id))?.projection_id).toBeNull()
+      const record = await db.selectFrom('agent_runs').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+      expect(record.payload).toEqual(payload)
+    },
+  )
 })

@@ -1,4 +1,4 @@
-import type { Selectable } from 'kysely'
+import { sql, type Selectable } from 'kysely'
 import type { Db, RelayRunSubmission } from '../db'
 import { ensureMigrations } from '../kysely-migrations'
 
@@ -62,13 +62,39 @@ export const createSubmissionStore = (db: Db): SubmissionStore => ({
       .execute()
   },
   accepted: async (id, projectionId) => {
-    await db
-      .updateTable('agent_run_relay_submissions')
-      .set({ projection_id: projectionId })
-      .where('operation_id', '=', id)
-      .where((eb) => eb.or([eb('projection_id', 'is', null), eb('projection_id', '=', projectionId)]))
-      .returning('operation_id')
-      .executeTakeFirstOrThrow()
+    await db.transaction().execute(async (trx) => {
+      const submission = await trx
+        .selectFrom('agent_run_relay_submissions')
+        .selectAll()
+        .where('operation_id', '=', id)
+        .forUpdate()
+        .executeTakeFirstOrThrow()
+      if (submission.projection_id && submission.projection_id !== projectionId)
+        throw new Error('submission projection identity changed')
+      const request = JSON.stringify(submission.request_payload)
+      // The reconciler may create this row first. Attach only the original request, preserving current run state.
+      await trx
+        .updateTable('agent_runs')
+        .set({ payload: sql`payload || jsonb_build_object('request', ${request}::jsonb)` })
+        .where('id', '=', projectionId)
+        .where('delivery_id', '=', id)
+        .where('external_run_id', '=', submission.run_name)
+        .where(sql<boolean>`payload #>> '{resource,metadata,name}' = ${submission.run_name}
+          and payload #>> '{resource,metadata,namespace}' = ${request}::jsonb->>'namespace'
+          and coalesce(payload #>> '{resource,metadata,uid}', '') <> ''
+          and payload #>> '{resource,metadata,annotations,relay.proompteng.ai/request-hash}' = ${submission.request_hash}
+          and payload #>> '{resource,metadata,annotations,relay.proompteng.ai/target}' = ${submission.target_id}
+          and payload #>> '{resource,metadata,annotations,relay.proompteng.ai/namespace-uid}' =
+            ${request}::jsonb #>> '{metadata,annotations,relay.proompteng.ai/namespace-uid}'
+          and (not (payload ? 'request') or payload->'request' = ${request}::jsonb)`)
+        .returning('id')
+        .executeTakeFirstOrThrow()
+      await trx
+        .updateTable('agent_run_relay_submissions')
+        .set({ projection_id: projectionId })
+        .where('operation_id', '=', id)
+        .execute()
+    })
   },
   rejected: async (id, status, message) => {
     await db

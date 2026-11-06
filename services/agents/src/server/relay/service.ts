@@ -65,11 +65,6 @@ export const createRelayRunsService = (deps: RelayRunsDependencies) => {
       await store.ready
       const existing = await store.getAgentRunByDeliveryId(submission.operation_id)
       if (existing) {
-        if (
-          existing.externalRunId !== submission.run_name ||
-          readNested(existing.payload, ['request', 'namespace']) !== target.namespace
-        )
-          throw new Error('submission projection identity changed')
         await deps.submissions.accepted(submission.operation_id, existing.id)
         return existing.id
       }
