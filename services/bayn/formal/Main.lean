@@ -853,6 +853,35 @@ def evaluate (json : Json) : Except String Json := do
     return match rate with
       | some value => toJson (toString value)
       | none => Json.null
+  | "conditionalBound" =>
+    let values ← readIntegerArray (← json.getObjVal? "values")
+    let lower ← readInteger json "lower"
+    let upper ← readInteger json "upper"
+    let denominator ← readNatural json "denominator"
+    if upper < lower || denominator = 0 then throw "invalid registered support or alpha"
+    let width := (upper-lower).toNat
+    let count := values.size
+    let radius := conditionalRadius count width denominator
+    let sum := values.toList.sum
+    let bound := sum - (radius : Int)
+    return Json.mkObj [("count",toJson (toString count)), ("sumMicros",toJson (toString sum)),
+      ("squaredRangesMicros2",toJson (toString (count*width*width))),
+      ("logUpperBound",toJson (toString (conditionalLogBound denominator))),
+      ("radiusMicros",toJson (toString radius)), ("lowerSumMicros",toJson (toString bound)),
+      ("meanLowerBoundMicros",Json.mkObj [("numerator",toJson (toString bound)),("denominator",toJson (toString count))])]
+  | "conditionalQualification" =>
+    let reliability ← (← (← json.getObjVal? "reliability").getArr?).mapM fun row => do
+      return (← readNatural row "good", ← readNatural row "scheduled")
+    let evidence : ConditionalQualificationEvidence := {
+      sessionCount := ← readNatural json "sessionCount", controlCount := ← readNatural json "controlCount",
+      netProfit := ← readInteger json "netProfit", profitLowerBoundTotal := ← readInteger json "profitLowerBoundTotal",
+      pairedLowerBoundTotals := (← readIntegerArray (← json.getObjVal? "pairedLowerBoundTotals")).toList,
+      maximumSessionLoss := ← readNatural json "maximumSessionLoss", maximumDrawdown := ← readNatural json "maximumDrawdown",
+      maximumSessionLossLimit := ← readNatural json "maximumSessionLossLimit", maximumDrawdownLimit := ← readNatural json "maximumDrawdownLimit",
+      reliability := reliability.toList, safetyViolations := ← readNatural json "safetyViolations",
+      completeEvidence := ← json.getObjValAs? Bool "completeEvidence", supportedRealism := ← json.getObjValAs? Bool "supportedRealism"
+    }
+    return toJson (decide (conditionalQualificationPass evidence))
   | "qualification" =>
     let reliability ← (← (← json.getObjVal? "reliability").getArr?).mapM fun row => do
       return (← readNatural row "good", ← readNatural row "scheduled")
@@ -942,6 +971,12 @@ def evaluate (json : Json) : Except String Json := do
       | none => throw "deadline must be an integer string or null")
     return toJson (marketHandoffReadiness (← json.getObjValAs? Bool "ready")
       (← json.getObjValAs? Bool "failed") deadline (← readInteger json "now"))
+  | "nativeSafetyJournalInsert" =>
+    return toJson (nativeSafetyJournalInsertAllowed (← readNatural json "triggerDepth"))
+  | "nativeSafetyCoverage" =>
+    let checks ← (← json.getObjValAs? (Array Json) "checks").toList.mapM fun check => do
+      return { kind := ← check.getObjValAs? String "kind", status := ← check.getObjValAs? String "status" : SafetyCheck }
+    return toJson (if nativeSafetyComplete checks then "COMPLETE" else "INCOMPLETE")
   | "currentTradingScope" =>
     let market ← json.getObjValAs? String "market"
     let sell ← json.getObjValAs? Bool "sell"

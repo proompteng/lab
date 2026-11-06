@@ -14,7 +14,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] 
 rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
-spiffe = { version = "0.16.1", features = ["x509-source"] }
+spiffe = { version = "0.16.1", features = ["x509-source", "workload-api-jwt"] }
 spiffe-rustls = { version = "0.8.0", default-features = false, features = ["aws-lc-rs"] }
 tokio = { version = "1.53.1", features = ["net", "time", "io-util"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
