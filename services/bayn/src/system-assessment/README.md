@@ -1,7 +1,9 @@
 # System assessment
 
 These modules report a registered PAPER policy against its economic, matched-control, reliability, safety, and
-realism requirements. Current bootstrap outputs are research diagnostics, not a coverage certificate. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
+realism requirements. Current statistical qualification uses prospectively registered conditional support and exact
+microdollar bounds. Retained bootstrap outputs remain research diagnostics. `evaluateSystemAssessment` is pure;
+the capture and persistence paths bind its input to
 immutable source records. An assessment never admits an order or grants capital authority.
 
 ## Economics
@@ -32,6 +34,81 @@ windows remain `UNDETERMINED`. Retained policy versions keep their original empt
 impossible timestamps fail validation. Safe failures and late recoveries count as missed service. Safety violations
 are evaluated separately by the combined assessment and have no error budget.
 
+Operational reporting uses `bayn.operational-registration.v1` in the `BAYN_OPERATIONAL_RELIABILITY` program. It binds
+one existing native PAPER policy, its sealed capital generation and physical execution build, the unchanged runtime
+deadlines, the compiled runtime entry scope, and a prospective contiguous reporting period.
+The current scope is equities only; retaining the mixed-market capital protocol does not re-enable crypto entries. The registration retains
+the earlier incident evidence. Its scope source is the canonical equity calendar captured before registration;
+an unexpected empty or substituted calendar cannot be treated as a legitimate closure. Its attempt chain is append-only; a later period cannot erase an earlier failure.
+There is no research control, bootstrap, profit quota, minimum session count, or trade quota in this operating claim.
+
+New operational registrations bind the native execution controller's plan identity directly. The optional
+read-only status expectation is not that identity and cannot replace or remove it. PostgreSQL rejects new missing
+or substituted plan bindings. Earlier registrations and receipts retain their original contents and results;
+the first operational attempt with a missing plan remains incomplete or failed rather than being rewritten.
+
+Controller projection observes the committed status in a separate database statement before returning.
+This supplies a durability witness without waiting for another trading tick. The observation cannot witness
+its own transaction or released savepoint; rolled-back and deferred-rejected sources remain unwitnessed.
+Repeated observations preserve the first witness and the original completion time, epoch, sequence and deadline.
+
+The native schedule keeps globally aligned signal and reconciliation times. One exact post-due reconciliation may
+complete several pending checks for the same account; each check retains its own original freshness deadline, and
+a late reconciliation cannot repair an expired obligation. Starting a report does not restart the
+signal warmup or an admitted mutation's clock. Obligations due before the final reporting boundary keep their original
+deadlines afterward. Capture retains the whole event sequence for mutations active across the opening boundary,
+including unresolved work with no event inside the period. A report remains incomplete while required evidence or
+original deadlines are outstanding. Closed entry windows count only with retained calendar, policy, account,
+generation, physical worker and causal arrival evidence. Bare historical closed ticks and read-only capital holds do not
+prove correct decision work. Closed evidence preserves the original admission clock through calendar I/O.
+The reporter reproduces the native admission rule and the registered day's hours before accepting the abstention.
+
+Operational accounting requires the reader's exact fill/receipt and ledger verification, the complete retained
+transaction and cash-settlement rows, and the existing cash-settlement identity checks. Economic qualification
+remains separate; open inventory or an unpaid, accounted fee liability does not impose a new operating quota.
+
+`evaluateOperationalAssessment` shares the financial evaluator's schedule, durable witnesses, integer reliability
+measurement, capital identity checks, and safety audit predicate. Its separate immutable receipt can report
+`OPERATIONALLY_RELIABLE_PAPER`, `REJECTED`, or `INCONCLUSIVE`; economics remain `NOT_ASSESSED`. No operational receipt
+can certify economic qualification or grant capital. Operational safety audit artifacts bind the exact coverage,
+registration, evidence cut, violations and verified scan-evidence hash. A verified unrelated file cannot certify zero violations. An operating period's dated scope does not establish behavior
+outside that period or substitute for the required native equity-opening verification.
+
+Operational capture validates every inference source, frozen quote and native ledger prefix before retaining source
+fingerprints and complete quote and ledger evidence. It omits raw inference bodies from the operational cut; economics
+remain `NOT_ASSESSED`. Financial capture retains each complete inference request once, with its source fingerprint in
+the accounting material. Session reads paginate all retained cost records rather than rejecting sessions above a
+fixed record count. Immutable source tables and earlier cuts and assessment receipts remain unchanged.
+
+New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native decisions and controller receipts
+one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
+archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
+identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+Controller pass capture uses active completion projections. Deactivation preserves the last completion summary while
+advancing the controller epoch; it does not perform that pass again. Its inactive projection cannot reattribute the
+earlier receipt to the new epoch. The original completion and every raw projection remain retained, and conflicting
+active evidence still fails capture.
+Already-stored inactive projections replay exactly without rewriting their retained pass; they do not count as new completed work.
+The archive is persisted before the manifest, and PostgreSQL rejects missing references, repeated native identities,
+and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
+retry verifies and reuses their exact contents rather than replacing evidence.
+
+Whole-session decision reads retain premarket and later decisions as source context, including the original owners of
+inventory and mutations carried into the reporting period. Their market, universe and native exchange session must
+match the registered policy. Context outside the registered reporting window cannot complete scheduled decision work;
+the original window and deadlines still determine every numerator and denominator.
+
+Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
+witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
+the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
+and their receipt hashes remain reproducible. Financial qualification continues to require its full financial cut;
+an operational manifest cannot certify profit. Temporary spool files are private and removed when capture exits,
+including failure and interruption.
+The reporting API has a 4 GiB disk-backed temporary volume for the source snapshot. Its former 256 MiB volume cannot
+hold a complete native session's evidence. This storage bound is separate from trading deadlines and reliability
+targets; exhausted storage fails capture without dropping records or creating a successful assessment. Trading
+workers keep their existing resources.
+
 ## Realism
 
 `measureRealism` verifies causal input availability, persistence and routing order, position ownership, fixed order
@@ -46,19 +123,20 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` admits `bayn.system-registration.v3`: a nonempty prospective calendar, candidate and at
-least one selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original
-deadlines, statistical assumptions, allocation, and a bootstrap plan. Block length, replicate budget, and seed are
-immutable before the first open. The allocation must fit every bound source-approved risk policy. Both existing
+`validateSystemRegistration` validates current `bayn.system-registration.v4` registrations and retained historical
+versions; new admission accepts only v4. It binds a nonempty prospective calendar, candidate and at least one
+selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original deadlines,
+allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
+have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
 
-The candidate requires continuous Jev and OpenAI model tariff coverage from the first open through the final close.
-The chart ablation requires OpenAI coverage. The frozen deterministic deployed control and repeated momentum do not
+The v37 and v38 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
+Retained historical protocols still require their original provider tariffs for financial verification. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
-Replay requests use `bayn.backtest.v10` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
+Replay requests use `bayn.backtest.v11` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
 Adjacent periods may have different prices. Each retained call uses the registered provider/model rate effective at its
 simulated start, with per-call rounding retained. Missing, overlapping, or substituted rates leave usage unresolved.
 The replay binder retains the complete registered schedule; replacing it with one fixed price fails source binding.
@@ -76,10 +154,24 @@ reset the attempt history. These functions require verified audit and allocation
 
 ## Evidence and assessment
 
+Source cuts retain each complete batch once in `batches`; the provenance material does not copy those payloads.
+Earlier cuts retain their original bytes and hashes. The private reporting command runs on the API workload,
+with a 3 GiB Node heap inside its 4 GiB memory limit, separately from the native trading controller.
+Stream command output to a private file. A local capacity measurement using 540 copies of one retained
+514 KB batch exceeded Node's string limit with duplicate payloads. A single copy serialized 279 MB with a
+2.62 GiB process peak. This is reporting capacity evidence, not trading or reliability qualification.
+
 `captureSystemSourceCut` reads the registered accounts and authority generations, financial and inference records,
 source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
 or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
+Runtime capture preserves the original unscoped hash of historical financial registrations that omit `entryMarkets`.
+All originally committed runtime fields must still match; registrations that include entry scope retain its exact
+hash commitment. Capture stores the matching runtime shape without rewriting the immutable registration.
+A persisted historical registration with a null controller plan also keeps that null commitment when the current
+builder supplies the native plan, whether its entry scope is present or absent. Capture still queries the registered
+null plan, so it cannot borrow native controller observations. Non-null plans, scoped entry markets, and all other
+runtime fields retain exact hash checks. New operational registration admission still requires the native plan.
 
 IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
 the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
@@ -140,14 +232,29 @@ selected paired net edge, and compliance with the registered source-approved los
 turnover, control-profit ratios, best-session removal, ten-basis-point stress, and p95 latency are diagnostics.
 Missing stress evidence leaves that diagnostic unresolved; supplied contradictory evidence still rejects binding.
 There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
-including losses, downtime, blocked decisions, and zero-trade costs. The bootstrap preregisters its dependence block,
-seed, and finite work budget. Its nominal error allocation covers absolute profit and selected comparisons across attempts only if the constituent bounds have valid coverage.
+including losses, downtime, blocked decisions, and zero-trade costs.
+
+New `bayn.system-registration.v4` registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
+prospective support interval, source artifact and explicit assumption for every selected policy. They have no
+bootstrap or replicate budget. `economic-qualification.ts` uses actual fully attributed session net profit and exact
+conditional Hoeffding lower bounds for the candidate and every paired control. Its estimand is average registered
+expected session net profit over the fixed calendar, not future or stationary returns. Supports are assumptions about
+the complete policy, including costs and failures; observed extrema and stop limits do not establish those assumptions.
+The registered `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS` assumes each session's conditional expected
+net profit given prior information equals its expected net profit given registration information. Session means
+may differ across dates; this is not inferred from observed returns. There are no default production support bounds. Out-of-support observations reject the model rather than being clipped.
+
+The result retains support assumptions, conditional MGF, registered mean model and causal-filtration assumptions, exact alpha, integer radius
+and rational mean bound. The familywise 0.05 budget is shared across all claims and immutable attempts. Missing evidence
+cannot qualify. Failed statistical targets report `NOT_ESTABLISHED`; an incomplete result remains `UNDETERMINED`.
 See the [statistical procedure](../../../../docs/bayn/jev-migration-validation.md#statistical-comparison).
 
-Current assessments include `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, retain observed profit and bootstrap diagnostics,
-and cannot emit established edge or `QUALIFIED_PAPER`. Known violations still reject; otherwise the result is
-inconclusive. No fixed calendar length or activity quota repairs the missing coverage argument. A future inferential
-method requires its own justified assumptions and versioned policy before it can establish qualification.
+Stored v5 research assessments retain `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, their original bootstrap outputs and
+policy hash. Stored v4 and earlier assessments retain their original rules. New admission accepts only v4 registration
+with the current policy identities; it cannot upgrade an earlier attempt or reset the history. The private reporting
+command owns current assessment. `tools/jev-acceptance.ts --retained-input` reproduces the retained v5 numerical research
+checker and is not a current qualification route.
+
 A complete failed window and an incomplete window retain distinct outcomes. Source calendar evidence must support
 the market and hours claimed. The supported reference calendar remains broker-observed US regular sessions;
 that scope does not establish continuous-market performance.
@@ -194,9 +301,9 @@ its prospectively registered operation timeout; the CLI does not replace it with
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
 assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
-Migrations 169 and 170 admit only current v3 registrations under the research-only qualification policy, preserve ordered attempts and append-only financial history,
-and support selected controls and preregistered bootstrap terms. New registrations require the current policy.
-Retained v2/v3/v4 acceptance records keep their original terms and policy identities;
+Migrations 169 and 170 retain the historical v3 research registration contract. Migration 182 admits current v4
+registrations with conditional statistical support, preserving ordered attempts and append-only financial history.
+Retained v2/v3/v4/v5 acceptance records keep their original terms and policy identities;
 they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
@@ -231,6 +338,39 @@ evidence obligation.
    its receipt.
 6. `--authority-generation <sha256> --assessment <sha256>` includes the saved assessment in the scoped financial
    report. `--persist-receipt` also persists that forward-performance report.
+
+The same history, register, capture, and assess commands accept operational packets. Their program and schema select
+the operational evaluator. Current `bayn.operational-assessment-input.v3` packets contain only the saved
+registration and source-cut hash. The evaluator derives the native safety audit from the same cut; supplied clean
+audit declarations are rejected. Results bind `evaluationPolicy: bayn.operational-native-safety.v1` and retain each
+native check, its source identity and the explicit provider and database assumptions.
+
+Migration 181 adds append-only authority-at-registration, authority-transition and mutation-admission journals in the
+original PostgreSQL transactions. Rollback removes the original write and its journal together. Existing registrations
+are not backfilled with invented authority baselines. Capture retains the currently published full broker observation,
+raw durable order/fill and intent/risk records, and the complete account ledger and cash settlements. A missing
+baseline, broker observation, ownership, authority transition or accounting record yields incomplete evidence; known
+unauthorized effects or invalid risk terms remain violations. No order is submitted to create coverage.
+
+Counters and successful-event totals come from committed witnesses. Operational registration still requires verified
+calendar/scope and retained incident artifacts and the existing durable authorized generation. Registration and
+reporting do not change trading authority or risk limits. Stored v1 and v2 inputs reproduce their original immutable
+receipts only on historical read and cannot enter current assessment admission.
+Their original source/digest controller comparison is frozen separately from the current build matcher.
+Those historical results do not establish a certificate under the current build-binding rule.
+Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is
+unchanged. Current evaluation checks every retained controller build, including unwitnessed passes, using small
+receipt/timing summaries without retaining complete archived records. A replay-policy/input mismatch is rejected.
+Current assessment of a retained registration with a null controller plan adds `UNBOUND_CONTROLLER_PLAN` even
+without captured controller passes. Independent decision witnesses cannot replace this missing provenance;
+historical v1 receipt reproduction and new-registration admission retain their original separate rules.
+
+Retained controller passes must match the registered physical worker build through the reporting period and any
+remaining original obligation deadlines. A missing or mismatched build adds `UNBOUND_CONTROLLER_BUILD` and prevents
+operational certification, even when independent decision documents complete scheduled obligations. A pass known to
+start after that period and all required work has completed cannot invalidate the finished claim. This exemption
+requires ordered issue, observation and completion clocks ending no later than the cut; missing or contradictory
+clocks remain fail-closed. Retained source documents and measured obligation counters are not discarded or rewritten.
 
 The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
 unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective

@@ -1,4 +1,5 @@
-import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
+import { registeredReplayInferenceTariff } from './inference-costs'
+import { InferenceRateCardSchema } from '../inference-costs'
 import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
@@ -43,7 +44,6 @@ import { reproduceJevCandidateObservation } from '../jev/observation'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import { NativeReplayIdentitySchema, NativeReplayPolicySchema, nativeReplayPolicyIdentity } from './native-policy'
 import { JevClient } from '../jev/client'
-import { DecisionsClient, decisionsModel } from '../jev/decisions'
 import { jevModel } from '../jev/contract'
 import {
   makeReplayInferenceBudget,
@@ -136,13 +136,13 @@ export const assessBacktestSession = (input: {
 }
 
 const inferenceFields = {
-  models: Schema.Struct({ jev: Schema.Literal(jevModel), chart: Schema.Literal(decisionsModel) }),
+  models: Schema.Struct({ jev: Schema.Literal(jevModel) }),
   inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
   costs: InferenceRateCardSchema,
   maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
 }
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v10'),
+  schemaVersion: Schema.Literal('bayn.backtest.v11'),
   policy: NativeReplayPolicySchema,
   latencyStress: Schema.NullOr(SystemLatencyReplaySchema),
   jevInstructionsHash: Sha256Schema,
@@ -199,15 +199,17 @@ export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) 
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
-    const { rates } = yield* prepareInferenceRateCard(supplied.inference.costs)
+    const costs = yield* registeredReplayInferenceTariff(
+      supplied.inference.costs,
+      supplied.interval,
+      supplied.policy,
+      defaultJevProtocolDocument,
+    )
     const decoded = {
       ...supplied,
       inference: {
         ...supplied.inference,
-        costs: {
-          ...supplied.inference.costs,
-          rates: rates.toSorted((a, b) => a.rateHash.localeCompare(b.rateHash)).map(({ rate }) => rate),
-        },
+        costs,
       },
       assets: [...supplied.assets].sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
       calendar: [...supplied.calendar].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
@@ -501,7 +503,16 @@ export const runBacktest = (
       return yield* new ReplayBrokerFailure({ message: 'Native replay requires an independent elapsed-time clock' })
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash, providerClock)
     const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
-      { advanceTo: (atMs) => clock.excludeSourceTime(source.advanceTo(atMs)) },
+      {
+        advanceTo: (atMs) =>
+          source.advanceTo(atMs, (work) =>
+            clock
+              .excludeSourceTime(work)
+              .pipe(
+                Effect.mapError((cause) => new ReplaySourceFailure({ message: 'Replay source clock failed', cause })),
+              ),
+          ),
+      },
       clock,
       prepared.closeMs + databases.operationTimeoutMs + 10_000,
     )
@@ -582,11 +593,7 @@ export const runBacktest = (
       clock,
       recordPass: () => Effect.void,
       ...prepared.input.cadence,
-    }).pipe(
-      Effect.provideService(JevClient, timing.clients.jev),
-      Effect.provideService(DecisionsClient, timing.clients.chart),
-      run,
-    )
+    }).pipe(Effect.provideService(JevClient, timing.clients.jev), run)
     const initializationCompletedAtMs = yield* Clock.currentTimeMillis
     if (initializationCompletedAtMs > prepared.openMs)
       return yield* new ReplayBrokerFailure({ message: 'Replay initialization missed the first session open' })

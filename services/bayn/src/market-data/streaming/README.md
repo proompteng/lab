@@ -83,6 +83,10 @@ required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+An unavailable coordinator can reject `LeaveGroup` before the SDK closes its sockets. The transport always closes
+the underlying pool after a failed group shutdown. A coordinator-only failure retains its diagnostic and uses the
+existing bounded reconnect schedule once local teardown succeeds. Authentication and other shutdown failures retain
+the fatal-close cooldown. Every replacement still rebuilds and verifies its own complete history before entry reads.
 Invalidation belongs to its consumer epoch. A delayed callback from a closed consumer cannot invalidate its replacement;
 an invalidation without a cause still revokes reads and triggers the same bounded rebuild. Readiness requires both
 completed bootstrap and no retained failure. Measurements report bootstrap completion and read availability separately,
@@ -160,7 +164,7 @@ Native execution provides telemetry while acquiring its worker resources, so Kaf
 measurement fibers inherit the JSON logger and trace exporter. Retained projection measurements are one JSON line
 per sample rather than multiline console fragments.
 
-`Streaming market snapshot rejected` retains `bayn.market-snapshot-failure.v1` diagnostics for a rejected observation:
+`Streaming market snapshot rejected` retains `bayn.market-snapshot-failure.v2` diagnostics for a rejected observation:
 the query window and observation time, query-bound symbol and topic, exact millisecond or nanosecond event and
 ingestion times, and the publication delay and governing bound when available. The allowlist excludes raw payloads,
 exception messages, arbitrary failure facts and credentials. Missing fields remain unknown. These warnings preserve
@@ -173,6 +177,13 @@ Only this rejection branch computes the missing list, which the validated query 
 additional feed, archive, database or broker request is made, and these diagnostics do not supply a replacement bar.
 Coverage is computed at the live logging boundary; decision failure facts and frozen replay report identities retain
 their original contents.
+
+The same warning's `inputCut` (`bayn.snapshot-cut-diagnostic.v1`) separates missing source incorporation,
+non-observed availability, epoch mismatch, missing required partitions, incomplete bootstrap offsets, and a bootstrap
+cut newer than the requested observation. Empty `reasons` means these cut gates passed, not that market inputs or
+execution are ready. Complete bar coverage does not override an incomplete cut. Pending partition coordinates are
+limited to eight entries with total count and a truncation flag; no raw messages, credentials or exception text are
+included. Liquidation examines only its existing quote bootstrap requirement. This is diagnostic evidence only.
 
 Each worker logs `Kafka feature incorporated` for accepted features before join-history retention can discard them.
 Retries of retained semantic IDs do not create another receipt; deduplicate by epoch and feature ID when aggregating. The

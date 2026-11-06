@@ -1,6 +1,7 @@
+import { entryProviderFixture } from './entry-inference.test-support'
 import { evaluateFixtureEntry } from './evaluation.test-support'
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Fiber, Layer, Result } from 'effect'
+import { Clock, Effect, Fiber, Layer, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
@@ -8,7 +9,6 @@ import { operationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
 import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
-import { DecisionsClient, DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { EntryInferenceJournal, type EntryHandoff } from './entry-inference'
 import { decodeEntryHandoff, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput, type EntryInferenceInput } from './entry-inference-input'
@@ -33,7 +33,8 @@ const fixture = () => {
     input: {
       schemaVersion: 'bayn.entry-inference-input.v8' as const,
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: defaultJevProtocolDocument.inputDefinition,
+        webullContext: null,
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
@@ -97,71 +98,6 @@ const providers = (
       return { dispatchAllowed: options.existingHandoff !== true }
     })
   const layer = Layer.mergeAll(
-    Layer.succeed(DecisionsClient, {
-      evaluate: (input) =>
-        Effect.gen(function* () {
-          events.push('visual')
-          checkpointEvents.push('visual')
-          const started = yield* Clock.currentTimeMillis
-          const prepared = Result.getOrThrow(prepareDecisionsRequest(input))
-          const isBase = prepared.request.questions.length === 1
-          if (options.visualFailure || (isBase && options.baseFailure))
-            return yield* new DecisionsError({
-              category: 'STATUS',
-              message: 'Limited',
-              status: 429,
-              requestHash: prepared.requestHash,
-              responseHash: 'b'.repeat(64),
-              usage: {
-                input_tokens: 100,
-                input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-                output_tokens: 0,
-                total_tokens: 100,
-              },
-            })
-          if (options.visualDelay !== undefined && prepared.request.questions.length > 1)
-            yield* Effect.sleep(options.visualDelay)
-          if (isBase && options.baseDelay !== undefined) yield* Effect.sleep(options.baseDelay)
-          const anchors: Readonly<Record<string, number>> = {
-            support_anchor: 0,
-            resistance_anchor: 0,
-            base_last_bar: 0,
-          }
-          const response = Result.getOrThrow(
-            decodeDecisionsResponse(prepared.request, {
-              model: prepared.request.model,
-              answers: prepared.request.questions.map((question) =>
-                question.type === 'predicate'
-                  ? { type: 'predicate', name: question.name, probability: 0.8 }
-                  : {
-                      type: 'choice',
-                      name: question.name,
-                      choice: question.choices[anchors[question.name] ?? 0]?.value,
-                      confidence: 0.8,
-                      probabilities: question.choices.map((choice, index) => ({
-                        value: choice.value,
-                        probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
-                      })),
-                    },
-              ),
-              usage: {
-                input_tokens: 100,
-                input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-                output_tokens: 0,
-                total_tokens: 100,
-              },
-            }),
-          )
-          options.afterVisual?.()
-          return {
-            requestHash: prepared.requestHash,
-            responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-            startedAt: utcInstantFromEpochMillis(started),
-            completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-            response,
-          }
-        }),
-    }),
     Layer.succeed(EntryInferenceJournal, {
       recordVisualClaims: (inputs) =>
         commit(
@@ -206,43 +142,105 @@ const providers = (
           }),
         ),
     }),
-    Layer.succeed(JevClient, {
-      evaluate: (input, timeoutMs) =>
-        Effect.gen(function* () {
-          expect(handoffs).toHaveLength(1)
-          jevBudgets.push(timeoutMs)
-          events.push('jev')
-          checkpointEvents.push('jev')
-          const prepared = Result.getOrThrow(prepareJevRequest(input))
-          if (options.jevFailure)
-            return yield* new JevError({
-              failure: JevFailure.Transport,
-              message: 'Unavailable',
-              requestHash: prepared.requestHash,
-            })
-          const started = yield* Clock.currentTimeMillis
-          if (options.jevDelay !== undefined) yield* Effect.sleep(options.jevDelay)
-          const response = Result.getOrThrow(
-            decodeJevResponse(prepared.request, {
-              model: prepared.request.model,
-              answers: Object.fromEntries(
-                Object.keys(prepared.request.questions).map((name) => [
-                  name,
-                  { type: 'noul', noul: name.endsWith('_target_obstructed') ? 0.1 : 0.9 },
-                ]),
-              ),
-              usage: { input_tokens: 200, output_tokens: 0 },
+    Layer.succeed(
+      JevClient,
+      entryProviderFixture(
+        {
+          evaluate: (input, timeoutMs) =>
+            Effect.gen(function* () {
+              expect(handoffs).toHaveLength(1)
+              jevBudgets.push(timeoutMs)
+              events.push('jev')
+              checkpointEvents.push('jev')
+              const prepared = Result.getOrThrow(prepareJevRequest(input))
+              if (options.jevFailure)
+                return yield* new JevError({
+                  failure: JevFailure.Transport,
+                  message: 'Unavailable',
+                  requestHash: prepared.requestHash,
+                })
+              const started = yield* Clock.currentTimeMillis
+              if (options.jevDelay !== undefined) yield* Effect.sleep(options.jevDelay)
+              const response = Result.getOrThrow(
+                decodeJevResponse(prepared.request, {
+                  model: prepared.request.model,
+                  answers: Object.fromEntries(
+                    Object.keys(prepared.request.questions).map((name) => [
+                      name,
+                      { type: 'noul', noul: name.endsWith('_target_obstructed') ? 0.1 : 0.9 },
+                    ]),
+                  ),
+                  usage: { input_tokens: 200, output_tokens: 0 },
+                }),
+              )
+              return {
+                requestHash: prepared.requestHash,
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                startedAt: utcInstantFromEpochMillis(started),
+                completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                response,
+              }
             }),
-          )
-          return {
-            requestHash: prepared.requestHash,
-            responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-            startedAt: utcInstantFromEpochMillis(started),
-            completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-            response,
-          }
-        }),
-    }),
+        },
+        {
+          evaluate: (input) =>
+            Effect.gen(function* () {
+              events.push('visual')
+              checkpointEvents.push('visual')
+              const started = yield* Clock.currentTimeMillis
+              const prepared = Result.getOrThrow(prepareJevRequest(input))
+              const isBase = Object.keys(prepared.request.questions).length === 1
+              if (options.visualFailure || (isBase && options.baseFailure))
+                return yield* new JevError({
+                  failure: JevFailure.Status,
+                  message: 'Limited',
+                  status: 429,
+                  requestHash: prepared.requestHash,
+                  responseHash: 'b'.repeat(64),
+                  rejectedResponse: Redacted.make({
+                    model: prepared.request.model,
+                    usage: { input_tokens: 100, output_tokens: 0 },
+                  }),
+                })
+              if (options.visualDelay !== undefined && Object.keys(prepared.request.questions).length > 1)
+                yield* Effect.sleep(options.visualDelay)
+              if (isBase && options.baseDelay !== undefined) yield* Effect.sleep(options.baseDelay)
+              const response = Result.getOrThrow(
+                decodeJevResponse(prepared.request, {
+                  model: prepared.request.model,
+                  answers: Object.fromEntries(
+                    Object.entries(prepared.request.questions).map(([name, question]) => {
+                      if (question.type === 'noul') return [name, { type: 'noul', noul: 0.8 }]
+                      if (question.type !== 'choice') throw new Error('Unexpected chart question')
+                      const choices = Object.keys(question.criteria)
+                      return [
+                        name,
+                        {
+                          type: 'choice',
+                          choice: choices[0],
+                          confidence: 0.8,
+                          probabilities: Object.fromEntries(
+                            choices.map((choice, index) => [choice, index === 0 ? 1 : 0]),
+                          ),
+                        },
+                      ]
+                    }),
+                  ),
+                  usage: { input_tokens: 100, output_tokens: 0 },
+                }),
+              )
+              options.afterVisual?.()
+              return {
+                requestHash: prepared.requestHash,
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                startedAt: utcInstantFromEpochMillis(started),
+                completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                response,
+              }
+            }),
+        },
+      ),
+    ),
   )
   return { events, checkpointEvents, handoffs, commits, jevBudgets, layer }
 }

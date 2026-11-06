@@ -6,6 +6,8 @@ resources:
   - storageclasses-turin-nvme.yaml
   - storageclass-ryzen.yaml
   - storageclass-ci-amd64.yaml
+  - storageclass-bayn-wal.yaml
+  - storageclass-keeper.yaml
   - compute-local-admission.yaml
 images:
   - name: rancher/local-path-provisioner

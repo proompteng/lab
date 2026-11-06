@@ -78,6 +78,7 @@ data class MarketDataArchiveConfig(
   val technicalFeaturesTopic: String? = null,
   val crypto: CryptoArchiveConfig? = null,
   val cryptoFeaturesTopic: String? = null,
+  val webullTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -194,6 +195,7 @@ data class MarketDataArchiveConfig(
         technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
         crypto = CryptoArchiveConfig.fromEnv(env),
         cryptoFeaturesTopic = optional("ARCHIVE_CRYPTO_FEATURES_TOPIC"),
+        webullTopic = optional("ARCHIVE_WEBULL_TOPIC"),
       )
     }
   }
@@ -327,6 +329,7 @@ internal fun configureMarketDataArchiveJob(
       topic,
     )
   }
+  config.webullTopic?.let { configureWebullMarketDataArchive(environment, config, it) }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {

@@ -97,7 +97,7 @@ describe('agents controller job-runtime module', () => {
 
     expect(podSpec.serviceAccountName).toBe('codex-linear-runner')
     expect(podSpec.automountServiceAccountToken).toBe(false)
-    expect(env.some((item) => item.name === 'AGENT_RUN_TELEMETRY_CONFIGMAP')).toBe(false)
+    expect(env).toContainEqual({ name: 'AGENT_RUN_UID', value: 'run-uid-1' })
     expect(
       applied.some((item) => (item.metadata as Record<string, unknown>)?.name === 'linear-run-job-telemetry'),
     ).toBe(false)
@@ -231,18 +231,10 @@ describe('agents controller job-runtime module', () => {
       []) as Record<string, unknown>[]
     const agentRunnerContainer = (env as Record<string, unknown>[] | undefined)?.[0] as Record<string, unknown>
 
-    expect(agentRunnerEnv).toContainEqual({ name: 'AGENT_RUN_TELEMETRY_CONFIGMAP', value: 'run-1-job-telemetry' })
     expect(agentRunnerEnv).toContainEqual({ name: 'AGENT_RUN_UID', value: 'run-uid-1' })
-    expect(
-      applied.find((item) => (item.metadata as Record<string, unknown>)?.name === 'run-1-job-telemetry'),
-    ).toMatchObject({
-      kind: 'ConfigMap',
-      metadata: {
-        namespace: 'agents',
-        ownerReferences: [{ kind: 'AgentRun', name: 'run-1', uid: 'run-uid-1' }],
-      },
-      data: { 'telemetry.json': 'null' },
-    })
+    expect(applied.some((item) => (item.metadata as Record<string, unknown>)?.name === 'run-1-job-telemetry')).toBe(
+      false,
+    )
 
     expect(runnerSpec).toMatchObject({
       schemaVersion: 'agents.proompteng.ai/runner/v1',

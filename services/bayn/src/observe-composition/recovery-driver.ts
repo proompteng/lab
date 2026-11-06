@@ -4,7 +4,8 @@ import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import type { AutonomousCycle } from '../cycle/model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
+import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import {
   CycleDecisionBuildError,
   CycleRunnerError,
@@ -29,7 +30,7 @@ import { type IntradayMarketDataService } from '../market-data/intraday/model'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import { AuthorityGenerationStore } from '../db/execution-store'
-import { ReconciliationStatus, type AuthorityState } from '../execution/contracts'
+import { OrderStatus, ReconciliationStatus, type AuthorityState } from '../execution/contracts'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
@@ -64,6 +65,10 @@ import {
   runRecoveryFirstCyclePass,
 } from './execution-cycle'
 
+type MutationReconciliationCadenceState = ReconciliationCadenceState & {
+  readonly lastResult?: ReconciliationPassResult
+}
+
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
@@ -95,6 +100,24 @@ const reconciliationReusableUntil = (
   if (observations.some((at) => at === null || !Number.isFinite(Date.parse(at)) || Date.parse(at) > now))
     return undefined
   return Math.min(...observations.map((at) => Date.parse(at ?? ''))) + maximumAgeMs
+}
+
+export const canReuseSourceWaitReconciliation = (
+  previous: ReconciliationPassResult,
+  authority: AuthorityState,
+  now: number,
+  maximumAgeMs: number,
+): boolean => {
+  const freshUntil = reconciliationReusableUntil(previous, authority, now, maximumAgeMs)
+  return (
+    freshUntil !== undefined &&
+    now < freshUntil &&
+    previous.brokerState.positions.length === 0 &&
+    previous.brokerState.unknownOrderCount === 0 &&
+    !previous.brokerState.orders.some((order) =>
+      [OrderStatus.New, OrderStatus.Pending, OrderStatus.PartiallyFilled].includes(order.status),
+    )
+  )
 }
 
 /** Owned by one serialized pass, discarded before its post-mutation continuation. */
@@ -239,8 +262,13 @@ const observeMutationPass = (
   )
 }
 
-const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
-  Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
+const markMutationReconciliationCompleted = (
+  cadence: Ref.Ref<MutationReconciliationCadenceState>,
+  lastResult: ReconciliationPassResult,
+): Effect.Effect<void> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastResult })),
+  )
 
 export const runRestateAdvanceWithinTimeout = <A, E, R>(
   operationPermit: Semaphore.Semaphore,
@@ -304,7 +332,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   })
 
 const attemptMutationIdleReconciliation = (
-  cadence: Ref.Ref<ReconciliationCadenceState>,
+  cadence: Ref.Ref<MutationReconciliationCadenceState>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ): Effect.Effect<ReconciliationPassResult, CycleRunnerError, ObserveDecisionRuntime> =>
   Clock.currentTimeNanos.pipe(
@@ -330,7 +358,8 @@ const isPendingBrokerReconciliation = (error: CycleRunnerError): boolean =>
 
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
-  cadence: Ref.Ref<ReconciliationCadenceState>,
+  maximumAgeMs: number,
+  cadence: Ref.Ref<MutationReconciliationCadenceState>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
@@ -343,12 +372,24 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
     )
       return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
-    return undefined
+    const previous = state.lastResult
+    if (previous === undefined) return undefined
+    const store = yield* AuthorityGenerationStore
+    const authority = yield* store.readAuthorityState.pipe(Effect.mapError(reconciliationRunnerError))
+    const now = yield* Clock.currentTimeMillis
+    return canReuseSourceWaitReconciliation(
+      previous,
+      authority,
+      now,
+      Math.min(maximumAgeMs, input.reconciliationIntervalMs),
+    )
+      ? previous
+      : undefined
   })
 
 const observeMutationCycleResult = (
   startup: Parameters<AutonomousCycleStartup>[0],
-  cadence: Ref.Ref<ReconciliationCadenceState>,
+  cadence: Ref.Ref<MutationReconciliationCadenceState>,
   result: CycleRunResult,
 ): Effect.Effect<AutonomousCyclePassObservation> =>
   Ref.get(cadence).pipe(
@@ -392,23 +433,80 @@ export const executionEvidenceContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
-/** A known future signal boundary may shorten one durable wait, without accelerating missing-data retries. */
-export const decisionReadinessContinuationDelayMs = (
+/** The expired attempt has ended; the next pass must revalidate a distinct attempt before the unchanged cutoff. */
+export const unusedEntryHandoffDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
 ): number | undefined => {
   if (
     result.outcome !== 'RECOVERED' ||
-    result.action !== 'WAITING' ||
-    result.readiness === undefined ||
+    result.action !== 'BLOCKED' ||
+    result.cycle.state !== CycleState.Blocked ||
+    result.cycle.terminalReason !== CycleTerminalReason.UnusedEntryExpired ||
+    result.cycle.bindings.snapshotId !== undefined ||
+    result.cycle.bindings.decisionHash !== undefined
+  )
+    return undefined
+  const now = Date.parse(observedAt)
+  return now >= unusedEntryExpiresAt(result.cycle) && now < Date.parse(result.cycle.window.submissionCutoffAt)
+    ? Math.min(1, normalDelayMs)
+    : undefined
+}
+
+/** Recheck missing entry inputs inside their original admission; consumed windows retain their backoff. */
+export const decisionReadinessContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.readiness === undefined) return undefined
+  const query = result.readiness.snapshotQuery
+  const pendingSnapshot =
+    result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable &&
+    query !== undefined &&
+    (query.previousWindowEndAt === undefined || Date.parse(query.previousWindowEndAt) < Date.parse(query.rangeEndAt))
+  if (
+    result.readiness.reason === DecisionReadinessReason.InferenceExpired ||
+    result.readiness.reason === DecisionReadinessReason.ExecutionRiskExpired ||
+    pendingSnapshot
+  ) {
+    const now = Date.parse(observedAt)
+    const cycle = result.cycle
+    const expiresAt = unusedEntryExpiresAt(cycle)
+    return cycle.state === CycleState.Active &&
+      cycle.bindings.snapshotId === undefined &&
+      cycle.bindings.decisionHash === undefined &&
+      now >= Math.max(Date.parse(cycle.createdAt), Date.parse(cycle.window.submissionOpenAt)) &&
+      now < expiresAt
+      ? pendingSnapshot
+        ? Math.min(1_000, normalDelayMs, expiresAt - now)
+        : 1
+      : undefined
+  }
+  const sourceWindow =
+    result.readiness.reason === DecisionReadinessReason.SnapshotUnavailable ||
+    result.readiness.reason === DecisionReadinessReason.SnapshotStale
+  if (
     (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
-      result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved) ||
+      result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved &&
+      !sourceWindow) ||
     result.readiness.availableAt === undefined
   )
     return undefined
   const availableAt = Date.parse(result.readiness.availableAt)
-  const remainingMs = availableAt - Date.parse(observedAt)
+  const now = Date.parse(observedAt)
+  const cycle = result.cycle
+  if (
+    sourceWindow &&
+    (cycle.state !== CycleState.Active ||
+      cycle.bindings.snapshotId !== undefined ||
+      cycle.bindings.decisionHash !== undefined ||
+      now < Math.max(Date.parse(cycle.createdAt), Date.parse(cycle.window.submissionOpenAt)) ||
+      availableAt >= unusedEntryExpiresAt(cycle))
+  )
+    return undefined
+  const remainingMs = availableAt - now
   return Number.isSafeInteger(remainingMs) &&
     remainingMs > 0 &&
     remainingMs < normalDelayMs &&
@@ -472,7 +570,7 @@ const makeRecoveryFirstCycleDriverEffect = (
   buildDecision: RecoveryFirstDecisionBuilder,
 ): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
-    const cadence = yield* Ref.make<ReconciliationCadenceState>({})
+    const cadence = yield* Ref.make<MutationReconciliationCadenceState>({})
     // A local continuation hint, not evidence or mutation authority. Restarting loses only acceleration.
     const postExitCloseAt = yield* Ref.make<string | undefined>(undefined)
     // The generation deadline can interrupt reconciliation before its own timeout is reported.
@@ -485,7 +583,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.tap((result) =>
         capability._tag === 'RecoveryOnly' ? Effect.void : capability.executionProgram.recordReconciliation(result),
       ),
-      Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+      Effect.tap((result) => markMutationReconciliationCompleted(cadence, result)),
       Effect.tap(() => Ref.set(postExitCloseAt, undefined)),
       Effect.onExit((exit) =>
         Exit.isFailure(exit) && capability._tag !== 'RecoveryOnly'
@@ -629,7 +727,12 @@ const makeRecoveryFirstCycleDriverEffect = (
             ),
         }),
       )
-    const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
+    const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(
+      input,
+      policy.maxBrokerStateAgeMs,
+      cadence,
+      reconcile,
+    )
     const runCycleAdvance = Ref.set(preflightOnly, true).pipe(
       Effect.andThen(reconciliationPreflight),
       Effect.matchEffect({
@@ -653,6 +756,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.map((observedAt) => {
             const cadence = advanced.nextDelayMs ?? nextDelayMs
             const continuation =
+              unusedEntryHandoffDelayMs(advanced.result, cadence, observedAt) ??
               executionEvidenceContinuationDelayMs(advanced.result, cadence, observedAt) ??
               decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
             const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
@@ -664,14 +768,47 @@ const makeRecoveryFirstCycleDriverEffect = (
                 nextWakeAt: new Date(Date.parse(observedAt) + delay).toISOString(),
               }
             }
-            return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
+            return continuation === undefined
+              ? advanced
+              : {
+                  ...advanced,
+                  nextDelayMs: continuation,
+                  nextWakeAt: new Date(Date.parse(observedAt) + continuation).toISOString(),
+                }
           }),
         )
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
+      runCycleAdvance.pipe(
+        Effect.tap((advanced) => {
+          const result = 'result' in advanced ? advanced.result : undefined
+          // Only an unbound source wait may carry a flat, exact preflight into a short retry.
+          // Every mutation, terminal/bound cycle, failure or other recovery path discards it.
+          if (
+            advanced.observation.result !== 'FAILURE' &&
+            result?.outcome === 'RECOVERED' &&
+            result.action === 'WAITING' &&
+            result.readiness !== undefined &&
+            [
+              DecisionReadinessReason.SnapshotUnavailable,
+              DecisionReadinessReason.SnapshotCoverage,
+              DecisionReadinessReason.SnapshotStale,
+              DecisionReadinessReason.ArchiveWatermark,
+              DecisionReadinessReason.LookbackWarmup,
+              DecisionReadinessReason.SignalWindowObserved,
+            ].includes(result.readiness.reason) &&
+            result.cycle.state === CycleState.Active &&
+            result.cycle.bindings.snapshotId === undefined &&
+            result.cycle.bindings.decisionHash === undefined
+          )
+            return Effect.void
+          return Ref.update(cadence, ({ lastResult: _lastResult, ...state }) => state)
+        }),
+        Effect.onExit((exit) => (Exit.isFailure(exit) ? Ref.set(cadence, {}) : Effect.void)),
+        withObservedStage('bayn.execution.cycle-pass'),
+      ),
       cyclePassTimeoutMs,
       observeTimeout,
     )

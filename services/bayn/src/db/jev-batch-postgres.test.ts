@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { expect, spyOn, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
@@ -430,13 +431,17 @@ test.each([
         recordAll: () => Effect.die('Admission must not record inference'),
         abandon: () => Effect.die('Admission must not abandon inference'),
       }),
-      Effect.provideService(JevClient, {
-        evaluate: () =>
-          Effect.sync(() => {
-            providerCalls += 1
-          }).pipe(Effect.andThen(Effect.die('Admission must not call the provider'))),
-      }),
       Effect.provide(entryInferenceFixtureLayer),
+      Effect.provideService(
+        JevClient,
+        entryProviderFixture({
+          evaluate: () =>
+            Effect.sync(() => {
+              providerCalls += 1
+            }).pipe(Effect.andThen(Effect.die('Admission must not call the provider'))),
+        }),
+      ),
+
       Effect.provide(TestClock.layer()),
       Effect.provide(Reactivity.layer),
     ),

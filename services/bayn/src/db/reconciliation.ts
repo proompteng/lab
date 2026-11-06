@@ -28,6 +28,7 @@ import {
   type AccountSnapshot,
   type AccountingReceipt,
   type Fill,
+  FillSchema,
   NativeProtectionSchema,
   type NativeProtection,
   type Order,
@@ -70,6 +71,7 @@ import {
   riskContextFromRow,
   validateReconciliationReadback,
   verifyAccountingReceipts,
+  verifyAccountingHistory,
   type ReconciliationAlgebraFailure,
 } from '../reconciliation/algebra'
 
@@ -127,6 +129,11 @@ export interface ReconciliationWriteResult extends ReconciliationReport {
 export interface ReconciledBrokerSnapshot {
   readonly snapshot: BrokerSnapshot
   readonly persisted: ReconciliationWriteResult
+}
+
+/** Ingestion reports whether it required fill accounting, including recovery of an incomplete receipt. */
+export interface ReconciliationIngestion extends BrokerSnapshot {
+  readonly ledgerPostingRequired: boolean
 }
 
 interface AccountingReadPhase {
@@ -236,7 +243,17 @@ const decodeBindings = Schema.decodeUnknownEffect(Schema.Array(IntentBindingRow)
 const decodeIntents = Schema.decodeUnknownEffect(Schema.Array(IntentRow), strictParseOptions)
 const decodeDurableFills = Schema.decodeUnknownEffect(Schema.Array(DurableFillRow), strictParseOptions)
 const decodeProjectedPositions = Schema.decodeUnknownEffect(Schema.Array(ProjectedPositionRow), strictParseOptions)
-const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(AccountingTransactionRowSchema), strictParseOptions)
+const decodeAccountingHistoryRows = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      ...AccountingTransactionRowSchema.fields,
+      fill: FillSchema,
+      prior_quantity_atoms: Schema.String,
+      prior_cost_micros: Schema.String,
+    }),
+  ),
+  strictParseOptions,
+)
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconciliationRows, strictParseOptions)
 const decodeContent = Schema.decodeUnknownEffect(ReconciliationContentRow, strictParseOptions)
@@ -299,6 +316,84 @@ const fromDecision = <A>(
     Effect.mapError((failure) => {
       const details = reconciliationAlgebraFailureDetails(failure)
       return storeError(operation, details.failure, details.message, details.cause)
+    }),
+  )
+
+export const readAccountingHistory = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  observedFills: readonly Fill[],
+  ledger: number,
+) =>
+  runStore(
+    'reconcile',
+    Effect.gen(function* () {
+      const rows = yield* sql<Record<string, unknown>>`
+      WITH inventory_debits AS MATERIALIZED (
+        SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at, posted
+        FROM broker_inventory_debits
+        WHERE account_id = ${accountId} AND posted
+      ), ranked AS (
+        SELECT
+          transaction.schema_version, transaction.transaction_id, transaction.broker_event_id,
+          transaction.intent_id, transaction.account_id, transaction.symbol, transaction.side,
+          transaction.quantity_atoms::text AS quantity_atoms,
+          transaction.price_atoms::text AS price_atoms,
+          transaction.notional_micros::text AS notional_micros,
+          transaction.fee_micros::text AS fee_micros,
+          transaction.cost_basis_micros::text AS cost_basis_micros,
+          transaction.realized_pnl_micros::text AS realized_pnl_micros,
+          transaction.quantity_delta_atoms::text AS quantity_delta_atoms,
+          transaction.cost_basis_delta_micros::text AS cost_basis_delta_micros,
+          transaction.cash_delta_micros::text AS cash_delta_micros,
+          transaction.ledger_plan_hash, transaction.content_hash, transaction.occurred_at,
+          jsonb_strip_nulls(jsonb_build_object(
+            'schemaVersion', historical_fill.schema_version,
+            'accountId', historical_fill.account_id,
+            'fillId', historical_fill.fill_id,
+            'brokerOrderId', historical_fill.broker_order_id,
+            'clientOrderId', historical_fill.client_order_id,
+            'intentId', historical_fill.intent_id,
+            'symbol', historical_fill.symbol,
+            'side', historical_fill.side,
+            'quantityAtoms', historical_fill.quantity_atoms::text,
+            'priceAtoms', historical_fill.price_atoms::text,
+            'feeMicros', historical_fill.fee_micros::text,
+            'occurredAt', to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          )) AS fill,
+          (COALESCE(sum(transaction.quantity_delta_atoms) OVER (
+            PARTITION BY transaction.account_id, transaction.symbol
+            ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ), 0) - COALESCE((SELECT sum(fee.quantity_atoms) FROM inventory_debits AS fee
+            WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
+              AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_quantity_atoms,
+          (COALESCE(sum(transaction.cost_basis_delta_micros) OVER (
+            PARTITION BY transaction.account_id, transaction.symbol
+            ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ), 0) - COALESCE((SELECT sum(fee.cost_basis_micros) FROM inventory_debits AS fee
+            WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
+              AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_cost_micros
+        FROM accounting_transactions AS transaction
+        JOIN fills AS historical_fill ON historical_fill.event_id = transaction.broker_event_id
+        JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+        WHERE transaction.account_id = ${accountId}
+      )
+      SELECT * FROM ranked ORDER BY occurred_at, transaction_id COLLATE "C"
+  `.pipe(Effect.flatMap(decodeAccountingHistoryRows))
+      const observed = new Map(observedFills.map((fill) => [fill.fillId, fill]))
+      return yield* fromDecision(
+        'reconcile',
+        verifyAccountingHistory(
+          rows.map((row) => ({
+            transaction: accountingTransactionFromRow(row),
+            fill: observed.get(row.fill.fillId) ?? row.fill,
+            prior: { quantityAtoms: row.prior_quantity_atoms, costMicros: row.prior_cost_micros },
+          })),
+          ledger,
+        ),
+      )
     }),
   )
 
@@ -467,13 +562,13 @@ export const verifyBrokerStateVersion = (
           AND d.document #>> '{bindings,accountId}' = ${accountId}
           AND (
             (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38'))
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
               AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
-              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36'))
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v33', 'bayn.jev.protocol.v34', 'bayn.jev.protocol.v35', 'bayn.jev.protocol.v36', 'bayn.jev.protocol.v37', 'bayn.jev.protocol.v38'))
           )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
@@ -527,7 +622,7 @@ export const makeReconciliation = (
     )
 
   const readAccountingPhase = (
-    accountId: string,
+    snapshot: BrokerSnapshot,
     feeAccounting: BrokerFeeAccounting,
     accruals: FeeAccrualRecords,
     cashSettlements: CashSettlementAccounting,
@@ -535,6 +630,7 @@ export const makeReconciliation = (
     runStore(
       'reconcile',
       Effect.gen(function* () {
+        const accountId = snapshot.account.accountId
         const intentRows = yield* sql<Record<string, unknown>>`
           SELECT
             intent.intent_id,
@@ -632,22 +728,8 @@ export const makeReconciliation = (
         const intents: readonly IntentExpectation[] = [...projected.intents, ...childExpectations]
         const unknownMutationCount = projected.unknownMutationCount
 
-        const transactionRows = yield* sql<Record<string, unknown>>`
-          SELECT
-            schema_version, transaction_id, broker_event_id, intent_id, account_id, symbol, side,
-            quantity_atoms::text AS quantity_atoms, price_atoms::text AS price_atoms,
-            notional_micros::text AS notional_micros, fee_micros::text AS fee_micros,
-            cost_basis_micros::text AS cost_basis_micros, realized_pnl_micros::text AS realized_pnl_micros,
-            quantity_delta_atoms::text AS quantity_delta_atoms,
-            cost_basis_delta_micros::text AS cost_basis_delta_micros,
-            cash_delta_micros::text AS cash_delta_micros, ledger_plan_hash, content_hash, occurred_at
-          FROM accounting_transactions
-          WHERE account_id = ${accountId}
-          ORDER BY occurred_at, transaction_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeTransactions))
-        const transactions = yield* Effect.fromResult(
-          attempt('reconcile', () => transactionRows.map(accountingTransactionFromRow)),
-        )
+        const prepared = yield* readAccountingHistory(sql, accountId, snapshot.fills, config.tigerBeetle.ledger)
+        const transactions = prepared.map(({ transaction }) => transaction)
         const receiptRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, receipt_id, intent_id, broker_event_id,
@@ -670,7 +752,7 @@ export const makeReconciliation = (
         )
         const { exactReceipts, plans } = yield* fromDecision(
           'reconcile',
-          verifyAccountingReceipts(transactions, receipts, config),
+          verifyAccountingReceipts(prepared, receipts, config),
         )
         const ledgerExact = yield* journal
           .verifyAccount(accountId, [
@@ -873,22 +955,24 @@ export const makeReconciliation = (
 
   const reconcileTransaction = (
     snapshot: BrokerSnapshot,
+    mode: 'post' | 'verify-only' = 'post',
   ): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
     runStore(
       'reconcile',
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
-        yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
-        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle).pipe(
+        // Inline verification retains the account lock acquired before preparation on this same transaction.
+        if (mode === 'post') yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
+        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle, mode).pipe(
           withObservedStage('bayn.reconciliation.cash-settlement'),
         )
-        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle).pipe(
+        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle, mode).pipe(
           withObservedStage('bayn.reconciliation.fee-posting'),
         )
         const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle).pipe(
           withObservedStage('bayn.reconciliation.accrual-read', { dependency: 'postgresql' }),
         )
-        const accounting = yield* readAccountingPhase(accountId, feeAccounting, accruals, cashSettlements).pipe(
+        const accounting = yield* readAccountingPhase(snapshot, feeAccounting, accruals, cashSettlements).pipe(
           withObservedStage('bayn.reconciliation.accounting-verify'),
         )
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting).pipe(
@@ -914,34 +998,80 @@ export const makeReconciliation = (
         'Broker fee plans must commit independently before ledger posting',
       )
   })
+  const hasPendingPosting = (accountId: string) =>
+    runStore(
+      'reconcile',
+      sql`
+        SELECT EXISTS (
+          SELECT 1 FROM broker_cash_settlements WHERE account_id=${accountId} AND posted_at IS NULL
+        ) OR EXISTS (
+          SELECT 1 FROM broker_fee_accruals a
+          JOIN broker_fee_match_corrections c ON c.accrual_id=a.accrual_id AND c.account_id=a.account_id
+          WHERE a.account_id=${accountId} AND c.posted_at IS NULL
+        ) OR EXISTS (
+          SELECT 1 FROM broker_fee_accruals a WHERE a.account_id=${accountId}
+            AND (a.posted_at IS NULL OR NOT EXISTS (
+              SELECT 1 FROM broker_fee_posting_acknowledgements p
+              WHERE p.account_id=a.account_id AND p.source_kind='ACCRUAL'
+                AND p.source_id=a.accrual_id AND p.ledger_plan_hash=a.ledger_plan_hash
+            ))
+        ) OR EXISTS (
+          SELECT 1 FROM broker_fee_accounting f WHERE f.account_id=${accountId}
+            AND (f.posted_at IS NULL OR NOT EXISTS (
+              SELECT 1 FROM broker_fee_posting_acknowledgements p
+              WHERE p.account_id=f.account_id AND p.source_kind='ACTIVITY'
+                AND p.source_id=f.activity_id AND p.ledger_plan_hash=f.ledger_plan_hash
+            ))
+        ) AS pending
+      `.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ pending: Schema.Boolean })]))),
+        Effect.map(([row]) => row.pending),
+      ),
+    )
   const reconcile = <E, R>(
     accountId: string,
-    ingestSnapshot: Effect.Effect<BrokerSnapshot, E, R>,
+    ingestSnapshot: Effect.Effect<ReconciliationIngestion, E, R>,
   ): Effect.Effect<ReconciledBrokerSnapshot, E | ReconciliationStoreError, R> =>
     Effect.gen(function* () {
       yield* requireAutocommit
-      const snapshot = yield* writerFence
-        .transaction(
+      type Phase =
+        | { readonly _tag: 'Prepared'; readonly snapshot: BrokerSnapshot; readonly inline: boolean }
+        | { readonly _tag: 'Completed'; readonly result: ReconciledBrokerSnapshot }
+      const preparation: Effect.Effect<Phase, E | ReconciliationStoreError, R> = Effect.gen(function* () {
+        yield* runStore('reconcile', sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`)
+        const recoveryRequired = yield* hasPendingPosting(accountId)
+        // Only previously committed plans exist here. Recover them before accounting any new fill.
+        // Ingestion and preparation then share one commit; newly prepared fees are posted below it.
+        if (recoveryRequired) {
+          yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
+          yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
+        }
+        const { ledgerPostingRequired, ...snapshot } = yield* ingestSnapshot
+        if (snapshot.account.accountId !== accountId)
+          return yield* storeError('reconcile', 'invariant', 'Reconciliation snapshot account binding changed')
+        yield* runStore(
+          'reconcile',
           Effect.gen(function* () {
-            // Only previously committed plans exist here. Recover them before accounting any new fill.
-            // Ingestion and preparation then share one commit; newly prepared fees are posted below it.
-            yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
-            yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
-            const snapshot = yield* ingestSnapshot
-            if (snapshot.account.accountId !== accountId)
-              return yield* storeError('reconcile', 'invariant', 'Reconciliation snapshot account binding changed')
-            yield* runStore(
-              'reconcile',
-              Effect.gen(function* () {
-                yield* retainAccountCashReporting(sql, snapshot)
-                yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
-                yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
-                yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
-                yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
-              }),
-            )
-            return snapshot
+            yield* retainAccountCashReporting(sql, snapshot)
+            yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
+            yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
+            yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
+            yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
           }),
+        )
+        const inline = !recoveryRequired && !ledgerPostingRequired
+        return { _tag: 'Prepared', snapshot, inline }
+      })
+      const phase = yield* writerFence
+        .transaction(preparation, (prepared): Effect.Effect<Phase, ReconciliationStoreError> | undefined =>
+          prepared._tag === 'Prepared' && prepared.inline
+            ? Effect.gen(function* () {
+                // This added read belongs to finalization: a failed query must not erase prepared broker facts.
+                if (yield* hasPendingPosting(accountId)) return prepared
+                const persisted = yield* reconcileTransaction(prepared.snapshot, 'verify-only')
+                return { _tag: 'Completed', result: { snapshot: prepared.snapshot, persisted } }
+              })
+            : undefined,
         )
         .pipe(
           Effect.mapError((cause) =>
@@ -950,8 +1080,9 @@ export const makeReconciliation = (
               : cause,
           ),
         )
-      const persisted = yield* runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
-      return { snapshot, persisted }
+      if (phase._tag === 'Completed') return phase.result
+      const persisted = yield* runStore('reconcile', writerFence.transaction(reconcileTransaction(phase.snapshot)))
+      return { snapshot: phase.snapshot, persisted }
     })
 
   const retainCashReporting = (snapshot: Parameters<typeof retainAccountCashReporting>[1]) =>

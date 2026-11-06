@@ -37,7 +37,8 @@ service MicroVMControlPlane {
   rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
   rpc SendCodexInput(SendCodexInputRequest) returns (CodexRun);
   rpc GetCodexRun(GetCodexRunRequest) returns (CodexRun);
-  rpc GetActiveCodexRuns(GetAgentRequest) returns (CodexRuns);
+  rpc RecoverCodexRun(InterruptCodexTurnRequest) returns (Empty);
+  rpc GetActiveCodexRuns(GetActiveCodexRunsRequest) returns (CodexRuns);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
   rpc ResolveCodexApproval(ResolveCodexApprovalRequest) returns (Empty);
@@ -127,6 +128,11 @@ message ListAgentsRequest {}
 message ConnectorAgentRequest { string agent_id = 1; string action = 2; string raw_json = 3; }
 message ListAgentsResponse { repeated Agent agents = 1; }
 message GetAgentRequest { string id = 1; }
+message GetActiveCodexRunsRequest {
+  string id = 1;
+  // Empty preserves workspace-wide recovery for existing clients.
+  string thread_id = 2;
+}
 message WatchAgentRequest { string id = 1; }
 
 message FileEntry {

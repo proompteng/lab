@@ -5,19 +5,18 @@ import { Sha256Schema, strictParseOptions } from '../schemas'
 import {
   chartQuestionPolicy,
   chartAssessmentsFromResponse,
-  buildChartDecisionsRequest,
+  buildChartJevRequest,
   type ChartDecisionSource,
 } from './chart-questions'
-import { JevContractError } from './contract'
-import { decodeDecisionsResponse, prepareDecisionsRequest, type DecisionsRequest } from './decisions'
+import { JevContractError, decodeJevResponse, prepareJevRequest, type JevRequest } from './contract'
 
 export const stagedChartQuestionPolicy = {
   ...chartQuestionPolicy,
-  transport: 'source-chart-then-selected-base-start.v3',
+  transport: 'jev-chart-then-selected-base-start.v1',
   predecessor: 'canonical-chart-request-and-response-hashes',
   skip: ['INSUFFICIENT_BARS', 'NO_ELIGIBLE_BASE', 'END_REFUSED', 'NO_BASE'],
 } as const
-export const makeInitialChartStageRequest = (source: ChartDecisionSource) => buildChartDecisionsRequest(source, 'CHART')
+export const makeInitialChartStageRequest = (source: ChartDecisionSource) => buildChartJevRequest(source, 'CHART')
 
 export const makeSelectedBaseStartStageRequest = (source: ChartDecisionSource, initialResponse: unknown) =>
   Result.gen(function* () {
@@ -39,35 +38,20 @@ const selectedBaseStartFromChart = (
     const predecessor = { requestHash: initial.requestHash, responseHash }
     if (chart.bars.length < 3)
       return { status: 'NOT_REQUESTED' as const, reason: 'INSUFFICIENT_BARS' as const, predecessor }
-    if (!initial.request.questions.some((question) => question.name === 'base_last_bar'))
+    if (!('base_last_bar' in initial.request.questions))
       return { status: 'NOT_REQUESTED' as const, reason: 'NO_ELIGIBLE_BASE' as const, predecessor }
-    const answer = response.answers.find((value) => value.name === 'base_last_bar')
-    if (answer?.type === 'refusal')
-      return { status: 'NOT_REQUESTED' as const, reason: 'END_REFUSED' as const, predecessor }
+    const answer = response.answers['base_last_bar']
     if (answer?.type === 'choice' && answer.choice === 'no_base')
       return { status: 'NOT_REQUESTED' as const, reason: 'NO_BASE' as const, predecessor }
     const end = chart.bars.slice(1, -1).find((bar) => answer?.type === 'choice' && bar.id === answer.choice)
     if (end === undefined)
       return yield* Result.fail(new JevContractError({ message: 'Selected base end is not an eligible source bar' }))
-    const selected = yield* buildChartDecisionsRequest(source, { selectedEnd: end.id })
-    if (selected.request.questions.length !== 1)
+    const selected = yield* buildChartJevRequest(source, { selectedEnd: end.id })
+    if (Object.keys(selected.request.questions).length !== 1)
       return yield* Result.fail(new JevContractError({ message: 'Selected base end has no eligible source intervals' }))
-    const input = selected.request.input
-    const prepared = yield* prepareDecisionsRequest({
+    const prepared = yield* prepareJevRequest({
       ...selected.request,
-      input: [
-        {
-          ...input[0],
-          content: [
-            input[0].content[0],
-            input[0].content[1],
-            {
-              type: 'input_json',
-              data: { source: input[0].content[2].data, predecessor, selectedEnd: end.id },
-            },
-          ],
-        },
-      ],
+      state: { source: selected.request.state, predecessor, selectedEnd: end.id },
     })
     return { status: 'PREPARED' as const, predecessor, selectedEnd: end.id, ...prepared }
   })
@@ -92,6 +76,17 @@ export const stagedChartAssessments = (source: ChartDecisionSource, initial: unk
     const prepared = yield* makeInitialChartStageRequest(source)
     const chartResponse = yield* decodeBoundStageResponse(prepared, initial)
     const next = yield* selectedBaseStartFromChart(source, prepared, chartResponse)
+    return yield* assessmentsFromPreparedStages(source, prepared, chartResponse, next, baseStart)
+  })
+
+const assessmentsFromPreparedStages = (
+  source: ChartDecisionSource,
+  prepared: Result.Result.Success<ReturnType<typeof makeInitialChartStageRequest>>,
+  chartResponse: Result.Result.Success<ReturnType<typeof decodeBoundStageResponse>>,
+  next: Result.Result.Success<ReturnType<typeof selectedBaseStartFromChart>>,
+  baseStart: unknown | null,
+) =>
+  Result.gen(function* () {
     if (next.status === 'NOT_REQUESTED') {
       if (baseStart !== null)
         return yield* Result.fail(new JevContractError({ message: 'Skipped base start has unexpected response' }))
@@ -104,17 +99,70 @@ export const stagedChartAssessments = (source: ChartDecisionSource, initial: unk
       source.chart,
       {
         ...chartResponse.response,
-        answers: [...chartResponse.response.answers, ...base.response.answers],
+        answers: { ...chartResponse.response.answers, ...base.response.answers },
       },
-      { ...prepared.request, questions: [...prepared.request.questions, ...next.request.questions] },
+      { ...prepared.request, questions: { ...prepared.request.questions, ...next.request.questions } },
     )
   })
+
+/** One synchronous financial evidence decode owns this replay; never retain it across requests. */
+export const makeFinancialChartStageReplay = () => {
+  let initialCache:
+    | { readonly key: string; readonly value: Result.Result.Success<ReturnType<typeof makeInitialChartStageRequest>> }
+    | undefined
+  const initial = (source: ChartDecisionSource) =>
+    Result.gen(function* () {
+      const key = yield* canonicalHashV1Result(source).pipe(
+        Result.mapError(
+          (cause) => new JevContractError({ message: 'Financial chart replay source is malformed', cause }),
+        ),
+      )
+      if (initialCache?.key === key) return initialCache.value
+      const value = yield* makeInitialChartStageRequest(source)
+      initialCache = { key, value }
+      return value
+    })
+  const prepareSelected = (source: ChartDecisionSource, response: unknown) =>
+    Result.gen(function* () {
+      const prepared = yield* initial(source)
+      const chartResponse = yield* decodeBoundStageResponse(prepared, response)
+      const next = yield* selectedBaseStartFromChart(source, prepared, chartResponse)
+      return { prepared, chartResponse, next }
+    })
+  let selectedCache:
+    | { readonly key: string; readonly value: Result.Result.Success<ReturnType<typeof prepareSelected>> }
+    | undefined
+  const selected = (source: ChartDecisionSource, response: unknown) =>
+    Result.gen(function* () {
+      // Include actual source and response bytes, not only their claimed hashes.
+      const key = yield* canonicalHashV1Result({ source, response }).pipe(
+        Result.mapError(
+          (cause) => new JevContractError({ message: 'Financial chart replay response is malformed', cause }),
+        ),
+      )
+      if (selectedCache?.key === key) return selectedCache.value
+      const value = yield* prepareSelected(source, response)
+      selectedCache = { key, value }
+      return value
+    })
+  return {
+    makeInitialChartStageRequest: initial,
+    makeSelectedBaseStartStageRequest: (source: ChartDecisionSource, response: unknown) =>
+      selected(source, response).pipe(Result.map(({ next }) => next)),
+    stagedChartAssessments: (source: ChartDecisionSource, response: unknown, baseStart: unknown | null) =>
+      selected(source, response).pipe(
+        Result.flatMap(({ prepared, chartResponse, next }) =>
+          assessmentsFromPreparedStages(source, prepared, chartResponse, next, baseStart),
+        ),
+      ),
+  }
+}
 
 // Identity checks only: no claim that these bytes were dispatched, durably stored,
 // paid for, or observed before a deadline. Integration must supply those proofs.
 const StageResponse = Schema.Struct({ requestHash: Sha256Schema, responseHash: Sha256Schema, response: Schema.Unknown })
 const decodeBoundStageResponse = (
-  prepared: { readonly request: DecisionsRequest; readonly requestHash: string },
+  prepared: { readonly request: JevRequest; readonly requestHash: string },
   input: unknown,
 ) =>
   Result.gen(function* () {
@@ -124,7 +172,7 @@ const decodeBoundStageResponse = (
     )(input).pipe(
       Result.mapError((cause) => new JevContractError({ message: 'Invalid chart stage response identity', cause })),
     )
-    const response = yield* decodeDecisionsResponse(prepared.request, receipt.response)
+    const response = yield* decodeJevResponse(prepared.request, receipt.response)
     const responseHash = yield* canonicalHashV1Result(response)
     if (receipt.requestHash !== prepared.requestHash || receipt.responseHash !== responseHash)
       return yield* Result.fail(

@@ -8,14 +8,18 @@ use std::{
 };
 
 fn fixture() -> ControlPlane {
+    let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
+    agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
+    agent.status = Some(crate::crd::MicroVMStatus {
+        phase: crate::crd::MicroVMPhase::Sleeping,
+        ..Default::default()
+    });
+    fixture_with_agent(agent)
+}
+
+fn fixture_with_agent(mut agent: crate::crd::MicroVM) -> ControlPlane {
     let (service, mut handle) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
     tokio::spawn(async move {
-        let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
-        agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
-        agent.status = Some(crate::crd::MicroVMStatus {
-            phase: crate::crd::MicroVMPhase::Sleeping,
-            ..Default::default()
-        });
         agent.metadata.resource_version = Some("1".into());
         let mut version = 1;
         while let Some((request, response)) = handle.next_request().await {
@@ -88,35 +92,27 @@ fn principal() -> Principal {
 
 #[tokio::test]
 async fn status_reads_accept_delayed_authorized_responses() {
-    let service = Arc::new(fixture());
+    let connections = Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    let observed_connections = connections.clone();
     let router = axum::Router::new().route(
-        "/restate/call/{service}/{key}/{handler}",
+        "/{handler}",
         axum::routing::post({
-            let service = service.clone();
-            move |axum::extract::Path((name, key, handler)): axum::extract::Path<(
-                String,
-                String,
-                String,
-            )>,
-                  axum::Json(envelope): axum::Json<Envelope>| {
-                let service = service.clone();
+            let connections = observed_connections.clone();
+            move |axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<
+                std::net::SocketAddr,
+            >,
+                  axum::extract::Path(handler): axum::extract::Path<String>,
+                  axum::Json(query): axum::Json<Query>| {
+                connections.lock().unwrap().insert(peer);
                 async move {
-                    let domain = if handler == "active" {
-                        "active-query"
-                    } else {
-                        "query"
-                    };
-                    let query: Query = open(&service, domain, &envelope).await.unwrap();
+                    let key = query.run_id.clone();
                     let now = crate::ofz::now_ms().unwrap();
                     assert!(query.expires_at_ms > now && query.expires_at_ms <= now + 2000);
                     assert_eq!(query.owner_hash, principal().owner_hash);
                     assert_eq!(query.workspace_uid, principal().context.workspace_uid);
                     let value = if handler == "active" {
-                        assert_eq!(name, "TengriWorkspaceRuns");
-                        assert_eq!(key, query.workspace_uid);
                         serde_json::json!([])
                     } else {
-                        assert_eq!(name, "TengriAgentRun");
                         assert_eq!(key, query.run_id);
                         serde_json::to_value(Snapshot {
                             run_id: key,
@@ -131,8 +127,137 @@ async fn status_reads_accept_delayed_authorized_responses() {
                         })
                         .unwrap()
                     };
-                    tokio::time::sleep(Duration::from_millis(2200)).await;
+                    tokio::time::sleep(Duration::from_secs(6)).await;
                     ([("x-restate-id", "inv_delayed-read")], axum::Json(value))
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::process::Command::new(std::env::current_exe().unwrap())
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "runs::tests::delayed_status_read_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("TENGRI_RUN_READER", format!("http://{address}"))
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    server.abort();
+    assert_eq!(
+        connections.lock().unwrap().len(),
+        1,
+        "run reads must reuse the existing ingress connection"
+    );
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "child process for the isolated status response deadline test"]
+async fn delayed_status_read_child() {
+    assert!(active(&principal(), "").await.unwrap().is_empty());
+    let id = Uuid::new_v4().to_string();
+    let snapshot = read(&principal(), &id, None).await.unwrap();
+    assert_eq!(snapshot.run_id, id);
+    assert!(matches!(snapshot.state, State::Succeeded { .. }));
+}
+
+#[test]
+fn active_run_request_preserves_existing_wire_shape_without_a_filter() {
+    use prost::Message;
+    let previous = crate::grpc::proto::GetAgentRequest {
+        id: "agent-current".into(),
+    }
+    .encode_to_vec();
+    let request =
+        crate::grpc::proto::GetActiveCodexRunsRequest::decode(previous.as_slice()).unwrap();
+    assert_eq!(request.id, "agent-current");
+    assert!(request.thread_id.is_empty());
+    assert_eq!(request.encode_to_vec(), previous);
+}
+
+#[tokio::test]
+async fn active_recovery_isolates_conversations_without_hiding_selected_failures() {
+    let router = axum::Router::new().route(
+        "/{handler}",
+        axum::routing::post({
+            move |axum::extract::Path(handler): axum::extract::Path<String>,
+                  axum::Json(query): axum::Json<Query>| {
+                async move {
+                    let key = query.run_id.clone();
+                    let (status, value) = if handler == "active" {
+                        (
+                            200,
+                            serde_json::json!([
+                                Claim {
+                                    workspace_uid: query.workspace_uid.clone(),
+                                    owner_hash: query.owner_hash.clone(),
+                                    thread_id: "thread-working".into(),
+                                    run_id: "run-working".into(),
+                                },
+                                Claim {
+                                    workspace_uid: query.workspace_uid.clone(),
+                                    owner_hash: query.owner_hash.clone(),
+                                    thread_id: "thread-unavailable".into(),
+                                    run_id: "run-unavailable".into(),
+                                },
+                                Claim {
+                                    workspace_uid: query.workspace_uid.clone(),
+                                    owner_hash: "b".repeat(64),
+                                    thread_id: "collaborator-thread".into(),
+                                    run_id: "foreign-run".into(),
+                                },
+                            ]),
+                        )
+                    } else if key == "run-working" {
+                        (
+                            200,
+                            serde_json::to_value(Snapshot {
+                                run_id: key,
+                                agent_id: "agent-current".into(),
+                                thread_id: "thread-working".into(),
+                                owner_hash: query.owner_hash,
+                                workspace_uid: query.workspace_uid,
+                                digest: "fixture".into(),
+                                state: State::Running {
+                                    turn_id: "turn-working".into(),
+                                },
+                            })
+                            .unwrap(),
+                        )
+                    } else {
+                        assert_eq!(key, "run-unavailable", "foreign runs must not be read");
+                        (
+                            404,
+                            serde_json::json!({"code":404,"message":"snapshot unavailable"}),
+                        )
+                    };
+                    (
+                        http::StatusCode::from_u16(status).unwrap(),
+                        [("x-restate-id", "inv_scoped-read")],
+                        axum::Json(value),
+                    )
                 }
             }
         }),
@@ -146,11 +271,11 @@ async fn status_reads_accept_delayed_authorized_responses() {
             .kill_on_drop(true)
             .args([
                 "--exact",
-                "runs::tests::delayed_status_read_child",
+                "runs::tests::scoped_status_read_child",
                 "--ignored",
                 "--nocapture",
             ])
-            .env("TENGRI_RESTATE_INGRESS", format!("http://{address}"))
+            .env("TENGRI_RUN_READER", format!("http://{address}"))
             .output(),
     )
     .await
@@ -166,43 +291,55 @@ async fn status_reads_accept_delayed_authorized_responses() {
 }
 
 #[tokio::test]
-#[ignore = "child process for the isolated status response deadline test"]
-async fn delayed_status_read_child() {
-    let service = fixture();
-    assert!(active(&service, &principal()).await.unwrap().is_empty());
-    let id = Uuid::new_v4().to_string();
-    let snapshot = read(&service, &principal(), &id, None).await.unwrap();
-    assert_eq!(snapshot.run_id, id);
-    assert!(matches!(snapshot.state, State::Succeeded { .. }));
+#[ignore = "child process for isolated conversation status reads"]
+async fn scoped_status_read_child() {
+    let principal = principal();
+    let snapshots = active(&principal, "thread-working").await.unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].run_id, "run-working");
+    assert!(matches!(snapshots[0].state, State::Running { .. }));
+    assert!(
+        thread_active(&principal, "collaborator-thread")
+            .await
+            .unwrap()
+    );
+    assert!(
+        active(&principal, "collaborator-thread")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        active(&principal, "thread-with-no-claim")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for thread_id in ["thread-unavailable", ""] {
+        assert_eq!(
+            active(&principal, thread_id).await.unwrap_err().code(),
+            tonic::Code::NotFound,
+            "an unreadable claimed run must not become an empty active list"
+        );
+    }
 }
 
 #[tokio::test]
 async fn active_recovery_renews_expired_queries_and_retries_only_transient_failures() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let service = Arc::new(fixture());
     let active_calls = Arc::new(AtomicUsize::new(0));
     let status_calls = Arc::new(AtomicUsize::new(0));
     let router = axum::Router::new().route(
-        "/restate/call/{service}/{key}/{handler}",
+        "/{handler}",
         axum::routing::post({
             let active_calls = active_calls.clone();
             let status_calls = status_calls.clone();
-            move |axum::extract::Path((_, key, handler)): axum::extract::Path<(
-                String,
-                String,
-                String,
-            )>,
-                  axum::Json(envelope): axum::Json<Envelope>| {
-                let service = service.clone();
+            move |axum::extract::Path(handler): axum::extract::Path<String>,
+                  axum::Json(query): axum::Json<Query>| {
                 let active_calls = active_calls.clone();
                 let status_calls = status_calls.clone();
                 async move {
-                    let domain = if handler == "active" {
-                        "active-query"
-                    } else {
-                        "query"
-                    };
-                    let query: Query = open(&service, domain, &envelope).await.unwrap();
+                    let key = query.run_id.clone();
                     let now = crate::ofz::now_ms().unwrap();
                     assert!(query.expires_at_ms > now && query.expires_at_ms <= now + 2000);
                     let (status, body) = if handler == "active" {
@@ -284,7 +421,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
                 "--ignored",
                 "--nocapture",
             ])
-            .env("TENGRI_RESTATE_INGRESS", format!("http://{address}"))
+            .env("TENGRI_RUN_READER", format!("http://{address}"))
             .output(),
     )
     .await
@@ -304,21 +441,14 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
 #[tokio::test]
 #[ignore = "child process for isolated read recovery tests"]
 async fn recovering_status_read_child() {
-    let service = fixture();
-    let mut snapshots = active(&service, &principal()).await.unwrap();
+    let mut snapshots = active(&principal(), "").await.unwrap();
     assert_eq!(snapshots.len(), 1, "foreign runs must not poison recovery");
     let snapshot = snapshots.remove(0);
     assert!(
-        thread_active(&service, &principal(), "foreign-thread")
-            .await
-            .unwrap(),
+        thread_active(&principal(), "foreign-thread").await.unwrap(),
         "archiving still protects other principals' active conversations"
     );
-    assert!(
-        !thread_active(&service, &principal(), "missing-thread")
-            .await
-            .unwrap()
-    );
+    assert!(!thread_active(&principal(), "missing-thread").await.unwrap());
     assert_eq!(
         snapshot.state,
         State::Running {
@@ -333,13 +463,32 @@ async fn recovering_status_read_child() {
         (422, tonic::Code::FailedPrecondition),
     ] {
         assert_eq!(
-            read(&service, &principal(), &status.to_string(), None)
+            read(&principal(), &status.to_string(), None)
                 .await
                 .unwrap_err()
                 .code(),
             code
         );
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn read_recovery_keeps_a_pending_response_within_its_total_budget() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let attempts = AtomicUsize::new(0);
+    let started = tokio::time::Instant::now();
+    let result = recover_status("status", || {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        async {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            Ok("confirmed")
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(result, "confirmed");
+    assert_eq!(started.elapsed(), Duration::from_secs(6));
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -355,16 +504,9 @@ async fn read_recovery_stops_at_its_total_budget_and_does_not_retry_invalid_resp
     .unwrap_err();
     assert_eq!(error.code(), tonic::Code::Unavailable);
     assert_eq!(started.elapsed(), STATUS_RECOVERY_TIMEOUT);
-    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 
-    let response = http::Response::builder()
-        .status(200)
-        .body(hyper::body::Bytes::from_static(b"invalid JSON"))
-        .unwrap();
-    let error = read_error(restate_sdk::ingress::ClientError::PayloadDecode {
-        source: Box::new(std::io::Error::other("invalid JSON")),
-        response: Box::new(response),
-    });
+    let error = Status::internal("invalid run state response");
     assert_eq!(error.code(), tonic::Code::Internal);
     let attempts = AtomicUsize::new(0);
     let denied = recover_status::<(), _, _>("status", || {
@@ -380,15 +522,15 @@ async fn read_recovery_stops_at_its_total_budget_and_does_not_retry_invalid_resp
 #[tokio::test]
 async fn run_admission_is_bound_to_payload_and_domain() {
     let service = fixture();
-    let mut envelope = seal(&service, "query", &input()).await.unwrap();
+    let mut envelope = seal(&service, "control", &input()).await.unwrap();
     assert!(
         open::<Input>(&service, "admission", &envelope)
             .await
             .is_err()
     );
-    assert!(open::<Input>(&service, "query", &envelope).await.is_ok());
+    assert!(open::<Input>(&service, "control", &envelope).await.is_ok());
     envelope.payload.push(' ');
-    assert!(open::<Input>(&service, "query", &envelope).await.is_err());
+    assert!(open::<Input>(&service, "control", &envelope).await.is_err());
 }
 
 #[test]
@@ -470,6 +612,64 @@ async fn snapshot_sleep_keeps_stop_pending_until_the_preserved_turn_is_interrupt
             )
             .await
             .terminal()
+    );
+}
+
+#[tokio::test]
+async fn stop_keeps_denied_authority_visible_without_losing_the_accepted_turn() {
+    let service = fixture();
+    let input = input();
+    let mut denied = principal();
+    denied.context.workspace_uid = Uuid::new_v4().to_string();
+    let control = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: denied,
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    for known in [None, Some("preserved-turn".to_owned())] {
+        let result = service
+            .stop_durable_run(
+                &control,
+                &input,
+                &State::NeedsReconciliation {
+                    turn_id: known.clone(),
+                    reason: "outcome unknown".into(),
+                },
+            )
+            .await;
+        assert!(matches!(result, State::AuthorizationRequired { turn_id, .. } if turn_id == known));
+    }
+}
+
+#[tokio::test]
+async fn renewed_stop_rechecks_an_existing_authorization_wait() {
+    let service = fixture_with_agent(crate::grpc::tests::provisional_terminal_test_agent(
+        Utc::now(),
+    ));
+    let input = input();
+    let control = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: principal(),
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    let observed = service
+        .stop_durable_run(
+            &control,
+            &input,
+            &State::AuthorizationRequired {
+                turn_id: Some("preserved-turn".into()),
+                reason: "old session expired".into(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(observed, State::Cancelling { turn_id: Some(id), .. } if id == "preserved-turn")
     );
 }
 
@@ -667,31 +867,31 @@ async fn admission(service: &ControlPlane, input: Input) -> Envelope {
     .await
     .unwrap()
 }
-async fn status(
-    client: &TengriAgentRunIngressClient<reqwest::Client>,
-    service: &ControlPlane,
-    input: &Input,
-    owner: &str,
-) -> Result<Snapshot, restate_sdk::ingress::ClientError> {
-    let envelope = seal(
-        service,
-        "query",
-        &Query {
+async fn status(client: &reader::Client, input: &Input, owner: &str) -> Result<Snapshot, Status> {
+    client
+        .status(&Query {
             run_id: input.id.clone(),
             owner_hash: owner.into(),
             workspace_uid: principal().context.workspace_uid,
             digest: Some(input_digest(input).unwrap()),
             expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
-        },
-    )
-    .await
-    .unwrap();
-    client
-        .status(Json(envelope))
-        .call()
-        .await?
-        .into_body()
-        .map(Json::into_inner)
+        })
+        .await
+}
+
+#[tokio::test]
+#[ignore = "child process for the disposable Restate lost-acknowledgement test"]
+async fn lost_admission_ack_child() {
+    let key = env::var("TENGRI_FIXTURE_KEY_FILE").unwrap();
+    let mut service = fixture();
+    service.auth =
+        crate::auth::Authenticator::new(std::path::Path::new(&key), "https://proompteng.ai".into())
+            .unwrap();
+    let input: Input = serde_json::from_str(&env::var("TENGRI_FIXTURE_INPUT").unwrap()).unwrap();
+    let snapshot = submit(&service, principal(), input.clone()).await.unwrap();
+    assert_eq!(snapshot.run_id, input.id);
+    assert_eq!(snapshot.digest, input_digest(&input).unwrap());
+    assert!(matches!(snapshot.state, State::WaitingForGuest { .. }));
 }
 
 #[tokio::test]
@@ -728,12 +928,22 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     )
     .unwrap();
     let admin = format!("http://127.0.0.1:{}", engine_port(&engine, "9070/tcp"));
+    let reader_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let reader_url = format!("http://{}", reader_listener.local_addr().unwrap());
+    let read_client = reader::Client::new(&reader_url).unwrap();
+    let reader_backend = reader::Backend::new(&admin).unwrap();
+    let read_task = tokio::spawn(async move {
+        axum::serve(reader_listener, reader::router(reader_backend))
+            .await
+            .unwrap()
+    });
+
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port();
     drop(socket);
     let mut process = worker(port, &key_file);
     let http = reqwest::Client::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     let original_deployment = register(&http, &admin, port, deadline).await;
     let mut service = fixture();
     service.auth =
@@ -811,16 +1021,84 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         client.run(Json(typed)).send().await.is_err(),
         "the durable run can only be created through authenticated admission"
     );
-    workspace
-        .admit(Json(envelope))
-        .call()
-        .await
-        .unwrap()
-        .into_body()
-        .unwrap();
+    // Deliver the admission once, then withhold its acknowledgement beyond submit's deadline.
+    // The controller must observe that same durable run without another admission or dispatch.
+    let admissions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let captured = admissions.clone();
+    let ingress_url = format!("http://127.0.0.1:{}", engine_port(&engine, "8080/tcp"));
+    let proxy = axum::Router::new().route(
+        "/{*path}",
+        axum::routing::post(move |request: axum::extract::Request| {
+            let captured = captured.clone();
+            let url = format!("{ingress_url}{}", request.uri());
+            async move {
+                captured.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let bytes = axum::body::to_bytes(request.into_body(), 65536)
+                    .await
+                    .unwrap();
+                let response = reqwest::Client::new()
+                    .post(url)
+                    .header("content-type", "application/json")
+                    .body(bytes)
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body = response.bytes().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(11)).await;
+                (status, [("content-type", "application/json")], body)
+            }
+        }),
+    );
+    let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_url = format!("http://{}", proxy_listener.local_addr().unwrap());
+    let proxy_task = tokio::spawn(async move { axum::serve(proxy_listener, proxy).await.unwrap() });
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(env::current_exe().unwrap())
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "runs::tests::lost_admission_ack_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("TENGRI_FIXTURE_KEY_FILE", &key_file)
+            .env(
+                "TENGRI_FIXTURE_INPUT",
+                serde_json::to_string(&input).unwrap(),
+            )
+            .env("TENGRI_RESTATE_INGRESS", proxy_url)
+            .env("TENGRI_RUN_READER", reader_url)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    proxy_task.abort();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(admissions.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let journal = http
+        .post(format!("{admin}/query"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({"query":format!(
+            "SELECT entry_type FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') AND entry_type IN ('Command: SetState','Command: Call') ORDER BY index LIMIT 1", input.id
+        )}))
+        .send().await.unwrap();
+    assert!(journal.status().is_success());
+    let journal: serde_json::Value = journal.json().await.unwrap();
+    assert_eq!(
+        journal["rows"][0]["entry_type"], "Command: SetState",
+        "accepted state must be durable before waiting on the workspace claim"
+    );
     let owner = principal().owner_hash;
     loop {
-        if let Ok(snapshot) = status(&client, &service, &input, &owner).await
+        if let Ok(snapshot) = status(&read_client, &input, &owner).await
             && matches!(snapshot.state, State::WaitingForGuest { .. })
         {
             break;
@@ -836,8 +1114,6 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         thread_id: "parallel-thread".into(),
         ..input.clone()
     };
-    let parallel_client =
-        TengriAgentRunIngressClient::from_client(ingress.clone(), parallel.id.clone());
     workspace
         .admit(Json(admission(&service, parallel.clone()).await))
         .call()
@@ -846,7 +1122,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .into_body()
         .unwrap();
     loop {
-        if let Ok(snapshot) = status(&parallel_client, &service, &parallel, &owner).await
+        if let Ok(snapshot) = status(&read_client, &parallel, &owner).await
             && matches!(snapshot.state, State::WaitingForGuest { .. })
         {
             break;
@@ -857,32 +1133,44 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let stale_steer = Control {
-        id: Uuid::new_v4().to_string(),
-        run_id: input.id.clone(),
-        agent_id: input.agent_id.clone(),
-        principal: principal(),
-        method: "turn/steer".into(),
-        params: serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
-    };
-    let stale_client =
-        TengriRunControlIngressClient::from_client(ingress.clone(), stale_steer.id.clone());
-    let error = match control_receipt(
-        &workspace,
-        &stale_client,
-        seal(&service, "control", &stale_steer).await.unwrap(),
-    )
-    .await
-    {
-        Ok(_) => panic!("an unstarted run cannot receive native steering"),
-        Err(error) => error,
-    };
-    let rejected_status = client_error(error);
-    assert_eq!(rejected_status.code(), tonic::Code::FailedPrecondition);
-    assert_eq!(
-        rejected_status.message(),
-        "Codex control was not dispatched"
-    );
+    for (method, params) in [
+        (
+            "turn/steer",
+            serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
+        ),
+        ("tengri/recoverRun", serde_json::json!({})),
+    ] {
+        let control = Control {
+            id: Uuid::new_v4().to_string(),
+            run_id: input.id.clone(),
+            agent_id: input.agent_id.clone(),
+            principal: principal(),
+            method: method.into(),
+            params,
+        };
+        let control_client =
+            TengriRunControlIngressClient::from_client(ingress.clone(), control.id.clone());
+        let error = match control_receipt(
+            &workspace,
+            &control_client,
+            seal(&service, "control", &control).await.unwrap(),
+        )
+        .await
+        {
+            Ok(_) => panic!("an unready run cannot receive this control"),
+            Err(error) => error,
+        };
+        let rejected_status = client_error(error);
+        assert_eq!(
+            rejected_status.code(),
+            tonic::Code::FailedPrecondition,
+            "{method} must pass signed admission and reach the run handler"
+        );
+        assert_eq!(
+            rejected_status.message(),
+            "Codex control was not dispatched"
+        );
+    }
     let query = Query {
         run_id: String::new(),
         owner_hash: owner.clone(),
@@ -890,14 +1178,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         digest: None,
         expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
     };
-    let active = workspace
-        .active(Json(seal(&service, "active-query", &query).await.unwrap()))
-        .call()
-        .await
-        .unwrap()
-        .into_body()
-        .unwrap()
-        .into_inner();
+    let active = read_client.active(&query).await.unwrap();
     assert_eq!(
         active
             .into_iter()
@@ -907,40 +1188,18 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     );
     let expired = Query {
         run_id: input.id.clone(),
-        owner_hash: owner.clone(),
-        workspace_uid: query.workspace_uid.clone(),
-        digest: None,
         expires_at_ms: crate::ofz::now_ms().unwrap().saturating_sub(1),
+        owner_hash: query.owner_hash.clone(),
+        workspace_uid: query.workspace_uid.clone(),
+        digest: query.digest.clone(),
     };
     assert_eq!(
-        client
-            .status(Json(seal(&service, "query", &expired).await.unwrap()))
-            .call()
-            .await
-            .unwrap()
-            .into_body()
-            .err()
-            .expect("expired status query must fail")
-            .response()
-            .unwrap()
-            .status(),
-        408
+        read_client.status(&expired).await.err().unwrap().code(),
+        tonic::Code::DeadlineExceeded
     );
     assert_eq!(
-        workspace
-            .active(Json(
-                seal(&service, "active-query", &expired).await.unwrap()
-            ))
-            .call()
-            .await
-            .unwrap()
-            .into_body()
-            .err()
-            .expect("expired active query must fail")
-            .response()
-            .unwrap()
-            .status(),
-        408
+        read_client.active(&expired).await.err().unwrap().code(),
+        tonic::Code::DeadlineExceeded
     );
     let claim = Claim {
         workspace_uid: query.workspace_uid,
@@ -972,26 +1231,21 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let mut changed = input.clone();
     changed.text.push('!');
     assert_eq!(
-        status(&client, &service, &changed, &owner)
+        status(&read_client, &changed, &owner)
             .await
             .unwrap_err()
-            .response()
-            .unwrap()
-            .status(),
-        409
+            .code(),
+        tonic::Code::AlreadyExists
     );
     assert_eq!(
-        status(&client, &service, &input, &"b".repeat(64))
+        status(&read_client, &input, &"b".repeat(64))
             .await
             .unwrap_err()
-            .response()
-            .unwrap()
-            .status(),
-        403
+            .code(),
+        tonic::Code::PermissionDenied
     );
     let mut other = input.clone();
     other.id = Uuid::new_v4().to_string();
-    let other_client = TengriAgentRunIngressClient::from_client(ingress.clone(), other.id.clone());
     workspace
         .admit(Json(admission(&service, other.clone()).await))
         .call()
@@ -1000,7 +1254,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .into_body()
         .unwrap();
     loop {
-        if let Ok(snapshot) = status(&other_client, &service, &other, &owner).await
+        if let Ok(snapshot) = status(&read_client, &other, &owner).await
             && matches!(snapshot.state, State::Rejected { .. })
         {
             break;
@@ -1167,7 +1421,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         "changed control input cannot reuse a committed result"
     );
     loop {
-        if let Ok(snapshot) = status(&client, &service, &input, &owner).await
+        if let Ok(snapshot) = status(&read_client, &input, &owner).await
             && matches!(snapshot.state, State::Cancelled { .. })
         {
             break;
@@ -1180,10 +1434,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     }
     assert!(
         matches!(
-            status(&parallel_client, &service, &parallel, &owner)
-                .await
-                .unwrap()
-                .state,
+            status(&read_client, &parallel, &owner).await.unwrap().state,
             State::WaitingForGuest { .. }
         ),
         "Stop for one conversation cancelled its sibling"
@@ -1195,10 +1446,8 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .unwrap()
         .into_body()
         .unwrap();
-    let queued_client =
-        TengriAgentRunIngressClient::from_client(ingress.clone(), queued_input.id.clone());
     loop {
-        if let Ok(snapshot) = status(&queued_client, &service, &queued_input, &owner).await
+        if let Ok(snapshot) = status(&read_client, &queued_input, &owner).await
             && matches!(snapshot.state, State::WaitingForGuest { .. })
         {
             break;
@@ -1209,6 +1458,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    read_task.abort();
     drop(process);
     drop(next_version);
     std::fs::remove_file(key_file).unwrap();
@@ -1325,7 +1575,12 @@ async fn snapshot_resume_rechecks_authority_without_losing_the_accepted_turn() {
             )
             .await;
         if replaced_workspace {
-            assert!(matches!(observed, State::NeedsReconciliation { .. }));
+            assert!(matches!(observed, State::AuthorizationRequired { .. }));
+            assert_eq!(
+                turn_id(&observed),
+                Some("preserved-turn"),
+                "an authorization failure must not erase the accepted turn identity"
+            );
         } else {
             assert_eq!(
                 observed,
@@ -1374,4 +1629,25 @@ async fn refreshed_run_context_still_requires_current_ofz_authority() {
         access.require().await.unwrap_err().code(),
         tonic::Code::PermissionDenied
     );
+}
+
+#[test]
+fn identifying_an_old_turn_does_not_revive_its_dead_process() {
+    let history = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"inProgress"}]}});
+    for _ in 0..3 {
+        let recovered =
+            bind_native_generation(observed_turn(&history, "accepted"), false, "accepted");
+        assert!(matches!(recovered, State::NeedsReconciliation { .. }));
+        assert_eq!(turn_id(&recovered), Some("accepted"));
+        assert!(!recovered.terminal());
+    }
+    let completed = State::Succeeded {
+        turn_id: "accepted".into(),
+    };
+    assert_eq!(
+        bind_native_generation(completed.clone(), false, "accepted"),
+        completed
+    );
+    let live = observed_turn(&history, "accepted");
+    assert_eq!(bind_native_generation(live.clone(), true, "accepted"), live);
 }

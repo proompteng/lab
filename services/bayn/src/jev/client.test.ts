@@ -79,6 +79,23 @@ describe('Jev inference transport', () => {
     expect(Date.parse(result.completedAt)).toBeGreaterThanOrEqual(Date.parse(result.startedAt))
   })
 
+  test('opts into images only for a source-bound request carrying its chart asset', async () => {
+    const reference = `bayn_chart_image_${'a'.repeat(64)}`
+    const input = {
+      ...requestFixture,
+      state: { chart: reference },
+      assets: { [reference]: { type: 'image', format: 'png', data_base64: 'aGVsbG8=' } },
+    }
+    const http = HttpClient.make((request) => {
+      expect(request.headers['typesafe-danger-zone-images']).toBe('true')
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(responseFixture()))))
+    })
+    const result = await Effect.runPromise(
+      run(JevClient.pipe(Effect.flatMap((client) => client.evaluate(input, 1000))), http),
+    )
+    expect(result.requestHash).toBe(Result.getOrThrow(canonicalHashV1Result(input)))
+  })
+
   test.each([401, 422, 429, 529])('retains status %i without retry or alternate model', async (status) => {
     const result = await Effect.runPromise(
       run(Effect.result(evaluate), responseClient({ error: 'unavailable' }, status)),

@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { nativeReplayPolicyIdentity } from './native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
@@ -52,31 +53,9 @@ import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayInferenceTiming } from './inference-timing'
 import { makeReplayTimeline } from './session'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { withLatencyCliPhase } from './latency-cli-progress.test-support'
+import { writeCompiledReplayCommand } from './replay-cli.test-support'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
-
-const writeCompiledReplayCommand = (path: string, entrypoint = `${import.meta.dir}/../backtest-command.ts`) =>
-  Effect.gen(function* () {
-    const compiled = yield* Effect.promise(() =>
-      Bun.build({
-        entrypoints: [entrypoint],
-        target: 'node',
-        external: ['tigerbeetle-node', '@platformatic/kafka'],
-        define: {
-          __BAYN_BUILD_SOURCE_REVISION__: JSON.stringify(config.build.sourceRevision),
-          __BAYN_BUILD_IMAGE_REPOSITORY__: JSON.stringify(config.build.imageRepository),
-          __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__: JSON.stringify(config.build.strategyBehaviorHash),
-          __BAYN_BUILD_STRATEGY_PARAMETER_HASH__: JSON.stringify(config.build.strategyParameterHash),
-        },
-      }),
-    )
-    expect(compiled.success).toBe(true)
-    const output = compiled.outputs[0]
-    if (output === undefined || compiled.outputs.length !== 1) throw new Error('Missing compiled replay executable')
-    const fs = yield* FileSystem.FileSystem
-    yield* fs.writeFile(path, new Uint8Array(yield* Effect.promise(() => output.arrayBuffer())))
-  })
 
 durableTest(
   'measured cleanup consumes closing arrivals before valuing residual inventory',
@@ -201,8 +180,10 @@ durableTest(
         const timing = yield* makeReplayInferenceTiming({
           budget: makeReplayInferenceBudget(1000),
           providers: {
-            jev: { evaluate: () => Effect.die('Closing-cut regression does not infer') },
-            chart: chartProviderFixture,
+            jev: entryProviderFixture(
+              { evaluate: () => Effect.die('Closing-cut regression does not infer') },
+              chartProviderFixture,
+            ),
           },
           providerClock,
           advanceTo,
@@ -310,7 +291,7 @@ durableTest.each([
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v10',
+          schemaVersion: 'bayn.backtest.v11',
           policy,
           latencyStress: null,
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -324,8 +305,8 @@ durableTest.each([
                 }
               : { mode: 'measured-providers' }),
             maximumCalls: 1000,
-            models: { jev: jevModel, chart: 'gpt-6-luna' },
-            inputDefinition: 'bayn.jev-entry-state.v23',
+            models: { jev: jevModel },
+            inputDefinition: 'bayn.jev-entry-state.v24',
             costs: replayRateCardFixture({
               jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
               chart: {
@@ -421,8 +402,10 @@ durableTest.each([
           boundary === 'retained-responses' || policy === JevResearchPolicy.Momentum
             ? null
             : {
-                chart: chartProviderFixture,
-                jev: { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+                jev: entryProviderFixture(
+                  { evaluate: () => Effect.die('A quiet opening fixture must not infer') },
+                  chartProviderFixture,
+                ),
               },
         ).pipe(
           Effect.provide(TestClock.layer()),
@@ -541,7 +524,6 @@ durableTest.each([
               {
                 env: {
                   BAYN_PUBLIC_INFORMATION_PROXY: '',
-                  BAYN_OPENAI_API_KEY: '',
                   BAYN_JEV_API_KEY: '',
                   BAYN_BACKTEST_POSTGRES_URL: baynTestPostgresUrl,
                   BAYN_BACKTEST_TIGERBEETLE_ADDRESS: baynTestTigerBeetleAddress,
@@ -596,76 +578,4 @@ durableTest.each([
     )
   },
   120000,
-)
-
-durableTest.each([
-  { policy: JevResearchPolicy.Candidate, trading: false },
-  { policy: JevResearchPolicy.Ablation, trading: false },
-  { policy: JevResearchPolicy.Momentum, trading: false },
-  { policy: JevResearchPolicy.Momentum, trading: true },
-])(
-  'native $policy latency CLI retains twenty sessions with trading=$trading',
-  async ({ policy, trading }) => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
-        const directory = yield* fs.makeTempDirectoryScoped({
-          directory: `${import.meta.dir}/../../node_modules`,
-          prefix: '.latency-cli-test-',
-        })
-        const executablePath = `${directory}/backtest-command.js`
-        const workerPath = `${directory}/latency-cli.js`
-        yield* Effect.gen(function* () {
-          yield* writeCompiledReplayCommand(executablePath, `${import.meta.dir}/replay-phase-command.test-support.ts`)
-          yield* writeCompiledReplayCommand(workerPath, `${import.meta.dir}/latency-cli.test-support.ts`)
-        }).pipe(withLatencyCliPhase('compile'))
-        const node = Bun.which('node')
-        if (node === null) throw new Error('Compiled replay acceptance requires the pinned Node runtime')
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-        const child = yield* spawner.spawn(
-          ChildProcess.make(node, [workerPath, policy, trading ? 'trading' : 'missing', directory, executablePath], {
-            stdin: 'ignore',
-            stdout: 'inherit',
-            stderr: 'inherit',
-          }),
-        )
-        yield* child.exitCode.pipe(
-          Effect.tap((code) => Effect.sync(() => expect(Number(code)).toBe(0))),
-          withLatencyCliPhase('worker'),
-        )
-        const result = yield* fs.readFileString(`${directory}/acceptance.json`).pipe(
-          Effect.flatMap(
-            Schema.decodeUnknownEffect(
-              Schema.fromJsonString(
-                Schema.Struct({
-                  policy: Schema.String,
-                  trading: Schema.Boolean,
-                  sessionCount: Schema.Number,
-                  filledSessions: Schema.Number,
-                  executionProfitMicros: Schema.String,
-                  qualificationProfitMicros: Schema.String,
-                  complete: Schema.Boolean,
-                  providerDispatchCount: Schema.Number,
-                  receiptEconomicsComplete: Schema.Boolean,
-                  executableHash: Schema.String,
-                }),
-              ),
-            ),
-          ),
-        )
-        expect(result).toMatchObject({
-          policy,
-          trading,
-          sessionCount: 20,
-          filledSessions: trading ? 20 : 0,
-          complete: true,
-          providerDispatchCount: 0,
-          receiptEconomicsComplete: false,
-          executableHash: sha256(yield* fs.readFile(executablePath)),
-        })
-        expect(BigInt(result.qualificationProfitMicros)).toBe(BigInt(result.executionProfitMicros) - 20_000_000n)
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    )
-  },
-  600000,
 )

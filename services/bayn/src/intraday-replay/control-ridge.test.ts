@@ -555,7 +555,7 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v10',
+            schemaVersion: 'bayn.backtest.v11',
             policy: 'JEV' as const,
             latencyStress: null,
             jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -565,8 +565,8 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-providers',
               maximumCalls: 1000,
-              models: { jev: jevModel, chart: 'gpt-6-luna' },
-              inputDefinition: 'bayn.jev-entry-state.v23',
+              models: { jev: jevModel },
+              inputDefinition: 'bayn.jev-entry-state.v24',
               costs: replayRateCardFixture({
                 jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
                 chart: {

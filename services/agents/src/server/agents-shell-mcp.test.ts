@@ -308,6 +308,31 @@ describe('agents-shell MCP OAuth metadata', () => {
 })
 
 describe('agents-shell MCP tools', () => {
+  it('rejects BMC controls and target overrides before invoking a process', async () => {
+    const config = makeConfig()
+    const runner = new AgentsShellRunner(config)
+    const processCall = vi.spyOn(runner, 'runProcess')
+    const { client, server } = await connectServer(config, makeAuth(['agents-shell.read']), runner)
+    try {
+      for (const args of [
+        { node: 'altra', operation: 'power_cycle' },
+        { node: 'turin', operation: 'raw' },
+        { node: 'other-host', operation: 'identity' },
+        { node: 'turin', operation: 'module_sensors' },
+        { node: 'turin', operation: 'fan_state' },
+      ]) {
+        const result = await client.callTool({ name: 'bmc', arguments: args })
+        expect(result.isError).toBe(true)
+      }
+      expect(processCall).not.toHaveBeenCalled()
+    } finally {
+      processCall.mockRestore()
+      runner.shutdown()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('lists focused tools with annotations and OAuth metadata', async () => {
     const config = makeConfig()
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
@@ -331,6 +356,7 @@ describe('agents-shell MCP tools', () => {
         'kubectl',
         'kubectl_admin',
         'infrastructure',
+        'bmc',
         'create_agent_run',
         'cancel_agent_run',
         'get_agent_run',
@@ -388,7 +414,7 @@ describe('agents-shell MCP tools', () => {
       securitySchemes: linkedOauthScheme,
     })
 
-    for (const name of ['infrastructure']) {
+    for (const name of ['infrastructure', 'bmc']) {
       const tool = tools.tools.find((candidate) => candidate.name === name)
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: true })
       expect(tool?._meta).toMatchObject({ securitySchemes: linkedOauthScheme })
@@ -407,7 +433,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(24_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(25_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -1369,9 +1395,12 @@ process.exit(result.status ?? 1)
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
+    const runner = new AgentsShellRunner(config)
+    const runProcess = vi.spyOn(runner, 'runProcess')
     const { client, server, clientTransport, serverTransport } = await connectServer(
       config,
       makeAuth(['agents-shell.read', 'agents-shell.write']),
+      runner,
     )
 
     try {
@@ -1384,22 +1413,36 @@ process.exit(result.status ?? 1)
         'get\npods\n-n\nagents\n-o\nwide\n',
       )
 
+      const args = ['-n', 'rook-ceph', 'exec', 'deployment/rook-ceph-tools', '--', 'ceph', 'fsid']
       const blocked = await client.callTool({
         name: 'kubectl',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args },
       })
       expect(blocked.isError).toBe(true)
       const blockedContent = blocked.content as Array<{ type: string; text?: string }>
       expect(blockedContent[0]?.text ?? '').toContain('use kubectl_admin')
+      expect(blocked.structuredContent).toMatchObject({
+        code: 'KUBECTL_REQUIRES_ADMIN',
+        layer: 'tool-policy',
+        requiredTool: 'kubectl_admin',
+        executionStarted: false,
+      })
+      expect(runProcess).toHaveBeenCalledTimes(1)
+      expect(blocked._meta?.['mcp/www_authenticate']).toBeUndefined()
+
+      const catalog = await client.listTools()
+      expect(catalog.tools.find((tool) => tool.name === 'kubectl')?.description).toContain('kubectl_admin')
+      expect(catalog.tools.find((tool) => tool.name === 'kubectl_admin')?.description).toContain(
+        'read-only diagnostics',
+      )
 
       const admin = await client.callTool({
         name: 'kubectl_admin',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args },
       })
       expect(admin.isError).not.toBe(true)
-      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
-        'exec\npod/example\n--\necho\nok\n',
-      )
+      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(`${args.join('\n')}\n`)
+      expect(runProcess).toHaveBeenCalledTimes(2)
     } finally {
       await clientTransport.close()
       await serverTransport.close()

@@ -7,7 +7,6 @@ import type { AgentRunSubmission, AgentRunSubmitter } from '@/services/agents'
 import type { GithubService } from '@/services/github/service'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
 import type { KafkaProducer } from '@/services/kafka'
-import { CODEX_READY_COMMENT_MARKER } from './constants'
 
 export type WorkflowStage = 'implementation'
 
@@ -50,65 +49,40 @@ export const executeWorkflowCommands = async (
         }
         break
       }
-      case 'postReadyComment': {
-        logger.info(
-          {
-            deliveryId: context.deliveryId,
-            repository: command.data.repositoryFullName,
-            pullNumber: command.data.pullNumber,
-          },
-          'ensuring codex ready comment exists',
-        )
-        const lookup = await context.runGithub(() =>
-          context.githubService.findLatestPlanComment({
-            repositoryFullName: command.data.repositoryFullName,
-            issueNumber: command.data.issueNumber,
-            token: context.config.github.token,
-            apiBaseUrl: context.config.github.apiBaseUrl,
-            userAgent: context.config.github.userAgent,
-            marker: command.data.marker ?? CODEX_READY_COMMENT_MARKER,
-          }),
-        )
-
-        if (lookup.ok) {
-          break
-        }
-
-        if (lookup.reason && lookup.reason !== 'not-found') {
-          logger.warn(
-            {
-              deliveryId: context.deliveryId,
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              reason: lookup.reason,
-              status: lookup.status,
-            },
-            'failed to look up codex ready-to-merge comment',
-          )
-          break
-        }
-
-        const readyResult = await context.runGithub(() =>
-          context.githubService.createPullRequestComment({
+      case 'approveReadyPullRequest': {
+        const result = await context.runGithub(() =>
+          context.githubService.approvePullRequest({
             repositoryFullName: command.data.repositoryFullName,
             pullNumber: command.data.pullNumber,
+            headSha: command.data.headSha,
             body: command.data.body,
             token: context.config.github.token,
             apiBaseUrl: context.config.github.apiBaseUrl,
             userAgent: context.config.github.userAgent,
           }),
         )
-
-        if (!readyResult.ok) {
+        if (!result.ok) {
           logger.warn(
             {
-              deliveryId: context.deliveryId,
               repository: command.data.repositoryFullName,
               pullNumber: command.data.pullNumber,
-              reason: readyResult.reason,
-              status: readyResult.status,
+              reason: result.reason,
+              status: result.status,
             },
-            'failed to post codex ready-to-merge comment',
+            'ready approval was not submitted',
+          )
+          if (!['not-ready', 'head-changed', 'pending-review'].includes(result.reason)) {
+            throw new Error(`GitHub approval failed: ${result.reason} (${result.status ?? 'no status'})`)
+          }
+        } else {
+          logger.info(
+            {
+              repository: command.data.repositoryFullName,
+              pullNumber: command.data.pullNumber,
+              headSha: command.data.headSha,
+              reviewUrl: result.reviewUrl,
+            },
+            'ready approval confirmed',
           )
         }
         break

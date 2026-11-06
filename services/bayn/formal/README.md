@@ -1,24 +1,49 @@
 # Bayn formal model
 
-This directory contains the offline Lean model and executable used to check Bayn's production decisions. It is excluded
+This directory contains the offline Lean model and executable used to check Bayn's production decisions, plus
+[TLA+ models](tla/README.md) for controller, entry recovery and mutation/ledger interleavings. It is excluded
 from the trading image. `lean-toolchain` pins Lean 4.35.0; `lake-manifest.json` pins Mathlib and its dependencies.
 
 From the repository root, run the same proof and conformance command as CI:
 
 ```sh
 bun run --filter @proompteng/bayn verify:formal
+bun run --filter @proompteng/bayn verify:tla
 ```
 
-This requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
+The Lean command requires Linux, the pinned Lean toolchain, Bun, Git, installed workspace dependencies, and working `bubblewrap`
 sandboxing. On macOS, use a Linux VM or container. Missing tools, a different Lean version, build failures, checker
 rejections, and conformance failures return a nonzero exit code. The command builds the model and sets
 `BAYN_FORMAL_EXECUTABLE` itself, so a missing environment variable cannot skip conformance. Ordinary `bun test` skips
 this suite without that variable and is not a substitute for `verify:formal`.
 
+Formal TypeScript tests and the TLC runner live under `formal/`, outside the service's ordinary `src` and `tools`
+test discovery. The database tests share a small `src/system-assessment/formal-model.test-support.ts` process adapter;
+it runs only when formal CI supplies the built executable. The image source still excludes `formal/`. Run `bun run --filter @proompteng/bayn test` for service tests. Formal-only PRs run the formal jobs;
+service, migration and relevant dependency changes also run them. Deployment/config-only PRs retain their service
+checks without rebuilding the proof environment. Exact-revision runtime publication still requires both Lean and TLC.
+Changes confined to `formal/` do not publish an image or reactivate the controller. PostgreSQL's normal matrix owns
+its full suites; the formal job selects the tests that actually exercise the Lean/database boundary.
+
+The TLA+ command also runs on macOS with Java 21 and curl. It checks safety and conditional liveness with pinned,
+checksum-verified TLC, verifies deliberate faults are detected, and compares every checked state with production
+TypeScript. Both commands are mandatory in formal CI and before exact-revision image publication. Neither checker
+runs in the trading runtime. See the [TLA+ model boundaries and assumptions](tla/README.md#bounds-assumptions-and-limits).
+
 The command runs `lake -q build`, `bash check.sh`, and the production conformance suite. The formal CI workflow also
-runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` exports the
-built default targets in a sandbox and passes the retained export to pinned `lake check --from-export ... --paranoid`.
-This separates the
+runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` builds every
+tracked model module in a sandbox, including roots outside the default target graph, and passes the retained export
+to pinned `lake check --from-export ... --paranoid`.
+Every tracked model module is included. `Export.lean` selects every logical declaration by its defining module, including
+private declarations and namespaces outside `Bayn`. The pinned exporter includes their complete transitive dependencies.
+Compiler-generated unsafe or partial implementations are recorded separately; their total logical definitions remain
+roots. A non-internal unsafe or partial model declaration fails export. The checker inputs never substitute an executable
+implementation for the logical definition it implements.
+Selection affects roots only; the pinned exporter's dependency traversal is unchanged.
+Unreferenced theorems from imported libraries are not additional roots. The generated scope manifest records every
+selected declaration and module; regression fixtures exercise private roots, foreign namespaces, used dependencies,
+unrelated library axioms and rejection of an owned nonstandard axiom. All six checkers and the axiom allowlist remain
+mandatory. This separates the
 export from Lake's pipe transport, which stalled locally while the child was blocked writing stdout. Build/export
 and checker sandboxes retain read-only inputs, a writable build cache and no network. The exported environment is rechecked with the
 official kernel, its hardened allocator variant, Lean4Lean, Nanoda, con-leche and con-ron. All must accept. Con-leche
@@ -34,20 +59,38 @@ soundness or replace checks of Bayn's own proof export with the pinned toolchain
 
 ## Registered evaluation windows
 
-Assessment and replay use the nonempty calendar chosen before the first open. The model has no fixed session
-count. `Bootstrap.lean` proves exact sample length and in-range indices for any positive registered block length,
-including truncated final blocks. Conformance compares multiple block lengths and 1-, 3-, 7-, 19-, 20-, 21-, and
-25-session windows, including later attempts with an adequate preregistered replicate budget. Current absolute and
-paired bounds share the exact familywise-corrected percentile rank. A whole-window block is uninformative. `negative_expectancy_has_a_positive_bootstrap_sample` checks the concrete
-negative-expectancy counterexample. The bootstrap model proves execution arithmetic, not confidence coverage.
+`ControllerTiming.lean` models `kafkaHandoffReadiness` and the activation wait in
+`composition/native-execution-runtime.ts`. Its theorems require ready, nonfailed history before handoff, reject an
+expired original bootstrap clock and give failure precedence over a stale ready flag. Executable conformance covers
+the exact deadline, retry, missing-clock, failed and ready cases. HTTP/2 transport regressions independently exercise
+both physical workers' startup checks and continued broker delegation during warmup and subsequent source recovery.
 
-`Qualification.lean` requires positive actual profit, a positive absolute lower bound, a positive paired bound for
-every selected control, source-approved risk limits, complete evidence, 99.9% reliability, and zero safety violations.
-An empty recovery schedule is permitted; empty required operational classes are not. The reachable example uses
-small positive profit and no invented recovery event. Activity, turnover, control multiples, and stress scenarios do
-not enter the current predicate. The model does not supply market probabilities or prove statistical coverage or future returns. Current assessment
-evidence is incomplete because bootstrap coverage is unestablished, so its conjunction cannot qualify. Conformance
-checks that result and separately checks a retained v4 success under its original rules.
+Assessment and replay use the nonempty calendar chosen before the first open. There is no fixed session or activity
+quota. `Bootstrap.lean` and `Qualification.lean` retain earlier numerical and qualification semantics for immutable
+history, including the negative-expectancy counterexample that disproves a bootstrap coverage claim.
+
+`ConditionalConfidence.lean` independently validates registered supports, distinct policy identities, the complete
+matched session calendar, observed support membership and the attempt index before calculating candidate and paired
+bounds. Its economic evaluator computes profit and drawdown from reconciled session facts rather than receiving
+TypeScript's calculated bounds or final gate booleans. The former precomputed-qualification adapter and its tautological
+conjunction theorem are removed. Conformance feeds the same session facts to each implementation, including omitted
+sessions, substituted dates, inconsistent marks and unsupported returns. Financial source capture, settlement and cost
+normalization remain separate boundaries with their own tests; this is not a whole-service refinement proof.
+
+`Reliability.lean` now joins original scheduled obligations to completion witnesses and independently derives every
+class denominator, timely success, pending item and missed obligation. Conformance covers duplicate/orphan receipts,
+late and absent work, the 390/999/1000-event error-budget boundaries and both retained and current empty-recovery rules.
+`OperationalSafety.lean` also checks original admission and transmission times. Its conformance cases run the full
+native TypeScript auditor on modified admission receipts, checking kill state, generation identity and deadline failures;
+they do not supply previously computed PASS flags to Lean. Provider authenticity and complete source capture remain
+explicit evidence assumptions, checked against actual runtime records during the registered session assessment.
+
+`BaynProbability.lean` is a separate default proof-library target, outside `bayn-model` and the trading runtime. It uses
+the pinned Mathlib conditional sub-Gaussian theorem to prove the tail bound, connects the rounded radius to registered
+alpha using `executable_radius_covers_registered_expected_profit` with the actual integer radius, proves paired support without independence and telescopes the familywise allocation across attempts. The
+causal filtration, deterministic conditional session means, MGF/support and provider authenticity are explicit assessment assumptions. No theorem
+infers those market assumptions from the observed data or establishes future returns. `lake check` checks all default
+targets, including this proof library, through the existing pinned independent checkers.
 
 ## Repeated momentum and native-control commitments
 
@@ -116,8 +159,10 @@ TypeScript implementation of the model.
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Economics.lean`                                  | `src/operating-costs.ts` and `src/system-assessment/economics.ts`                                                                                   | `profit_conservation`, `qualification_conservative`, `invoice_replaces_tariff`, `account_paid_operating_cost_is_deducted_once`, `binary_edge_break_even`; executable comparison of signed economics and probability-weighted expectancy.                                                                                                                                                                                                                                                                                                            |
 | `Reliability.lean`                                | `src/system-assessment/reliability.ts`                                                                                                              | `reliability_error_budget`, `no_empty_perfect_reliability`, `small_populations_allow_no_failures`, `late_completion_is_failure`; executable comparison of the exact integer fraction. Schedule construction and source completeness are separate obligations.                                                                                                                                                                                                                                                                                       |
-| `Bootstrap.lean`                                  | `src/jev/acceptance.ts`                                                                                                                             | `sampled_indices_in_range`, `sample_has_registered_length`, `session_sample_indices_in_range`, `odd_window_has_exactly_registered_sessions`, `paired_samples_use_shared_indices`; executable comparison of registered seeds, block lengths and replicate budgets over the complete window, exact percentile bounds and claim/attempt-adjusted tails.                                                                                                                                                                                                |
-| `Qualification.lean`                              | `src/system-assessment/assessment.ts`                                                                                                               | `missing_evidence_cannot_qualify`, `safety_has_no_error_budget`, `losing_control_cannot_replace_absolute_profit`, `qualification_is_reachable`; complete synthetic success and rejected evidence, safety and reliability cases.                                                                                                                                                                                                                                                                                                                     |
+| `Bootstrap.lean` (retained)                       | `src/jev/acceptance.ts`                                                                                                                             | `sampled_indices_in_range`, `sample_has_registered_length`, `session_sample_indices_in_range`, `odd_window_has_exactly_registered_sessions`, `paired_samples_use_shared_indices`; executable comparison of registered seeds, block lengths and replicate budgets over the complete window, exact percentile bounds and claim/attempt-adjusted tails.                                                                                                                                                                                                |
+| `Qualification.lean` (retained)                   | `src/system-assessment/assessment.ts`                                                                                                               | `missing_evidence_cannot_qualify`, `safety_has_no_error_budget`, `losing_control_cannot_replace_absolute_profit`, `qualification_is_reachable`; complete synthetic success and rejected evidence, safety and reliability cases.                                                                                                                                                                                                                                                                                                                     |
+| `ConditionalConfidence.lean`                      | `src/system-assessment/conditional-confidence.ts` and `economic-qualification.ts`                                                                   | Exact integer logarithm, square root, radius and lower-bound conformance; current qualification, missing evidence, reliability and zero-safety gates, including a reachable one-session case.                                                                                                                                                                                                                                                                                                                                                       |
+| `BaynProbability.lean`                            | Registered statistical assumptions and exact confidence output                                                                                      | Conditional process and registered expected-profit tail bounds, paired support, outward rounding and familywise attempt allocation. Exact finite-sample enumeration and the common-shock counterexample exercise the stated assumptions.                                                                                                                                                                                                                                                                                                            |
 | `Execution.lean` numeric and controller functions | `src/strategy/execution-model/fixed-point.ts`, `src/broker/alpaca/cash-reporting.ts`, `src/execution/order-terms.ts`, `src/execution/controller.ts` | Quantity rounding and cash conservation; stale epoch and foreign worker rejection; executable comparison of actual sizing, signed cash rounding, order terms and controller tick decisions.                                                                                                                                                                                                                                                                                                                                                         |
 | `Execution.lean` timing                           | `src/system-assessment/realism.ts`                                                                                                                  | `supported_routing_follows_durable_decision`, `waiting_in_guard_cannot_hide_stale_quote`, `expired_admission_cannot_route`, `execution_timing_has_reachable_success`; executable comparison of persistence, guard, dispatch, quote, admission and fill boundaries.                                                                                                                                                                                                                                                                                  |
 | `Mutations.lean`                                  | `src/execution/mutations/decisions.ts`                                                                                                              | Every mutation transition is compared against `allowsOutcomeEvent`. `uncertain_submission_accepts_only_recovery` and `uncertain_cancellation_accepts_only_recovery` constrain uncertainty. `outcome_replay_preserves_all_evidence` and `outcome_replay_cannot_change_dispatch` correspond to `sameMutationOutcome`, including omitted routing and a null dispatch time.                                                                                                                                                                             |
@@ -142,6 +187,16 @@ cover initial close and replanned close documents. These checks do not prove Pos
 The causal conclusion assumes PostgreSQL visibility and that the coordinator routes only after independent admission
 returns. The assessment exposes these assumptions and retains original producer routing timestamps as upper bounds,
 rather than claiming an exact physical commit time.
+
+`intentRiskClockRejection` in `DecisionPersistence.lean` maps to the current-risk trigger in migration 177 and its
+strict decoder in `src/execution/risk-clock.ts`. `current_intent_risk_clock_matches_gate` proves the decision is
+current at both the requested update and the database check. `expired_intent_risk_clock_cannot_admit`,
+`future_intent_risk_clock_cannot_refresh`, the strict expiry boundary and a reachable success cover its rejection
+classes. The actual PostgreSQL trigger is compared with the executable at microsecond boundaries. Full entry tests
+use the production cycle store, intent store and writer fence to verify successful admission and complete rollback
+when the risk expires during persistence, preserving authority and retained inference evidence. Runner tests retain
+the original cycle deadline and propagate rollback failures, defects and interruption. The model assumes PostgreSQL
+reports its actual clock and rolls back a failed transaction; these integration tests exercise those assumptions.
 
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
@@ -200,12 +255,25 @@ The production constructor also supports a local generation without a persisted 
 that path rather than asserting persisted validation always occurs. Grant issuance, hash authenticity, persisted
 admission and risk limits remain separate boundaries.
 
+`Reliability.lean` also maps to `operational-assessment.ts` and the native branch of `schedule.ts`. Operational success
+requires `MEETS_TARGET`, complete evidence and safety audit, and zero safety violations. Native deadlines retain
+their full original window even when it crosses the reporting boundary. The executable conformance checks exercise
+all gate combinations and the actual generated schedule. Source completeness and receipt authenticity remain
+separate evidence requirements; the theorem does not establish measured production reliability.
+
 `ControllerTiming.lean` maps to `src/system-assessment/controller-latency.ts`. It proves nonnegative ordered durations,
 that later durable visibility cannot improve the reported latency, rejection of invalid clocks, a valid empirical
 p95 rank for every nonempty sample, and an unknown empty sample. Executable conformance covers clock boundaries and
 seeded samples against the production functions. These proofs do not establish full-batch timing coverage or a
 portfolio stress result. Native controller and PostgreSQL tests separately check original command retention, replay
 after ambiguous commit, and capture of work that completes after its original window.
+
+The model also maps `controllerBuildBound` to `controllerBuildMatchesRegistration` in
+`src/system-assessment/decision-work.ts`. A registered activation repository must match the worker repository,
+independently of source and digest equality. Retained registrations without a repository commitment keep their
+source/digest comparison. Executable conformance covers both registration forms, missing builds and foreign
+source, digest or repository claims. These checks do not prove receipt authenticity or grant capital authority.
+The frozen operational v1 receipt matcher remains source/digest-only and is not changed by this current-build model.
 
 The same model maps `fullBatchDuration` to `fullBatchClockDuration` in `src/system-assessment/full-batch-latency.ts`.
 Its theorems prove that completion bounds inference and every retained stage, duration is nonnegative, an additional
@@ -249,6 +317,61 @@ unused entry. Replaying activation preserves an active cycle; a new decision bin
 before the cutoff and bound to the exact account, strategy, protocol, qualification and selected snapshot identities.
 Completion requires a nondecreasing observation time, a bound decision and one matching durable document. Executed
 completion additionally requires a planned result, no risk block and financial completion evidence.
+
+`expired_inference_retry_requires_original_window` maps the expired-readiness branch of
+`decisionReadinessContinuationDelayMs` in `src/observe-composition/recovery-driver.ts`. A minimum-delay retry requires
+an active, unbound cycle inside its original unused-entry window; `expired_inference_cannot_retry_after_original_deadline`
+rejects a retry at or after that deadline. The reachable example admits a fresh retry and rejects the exact expiry.
+Another 1,680 executable comparisons cover waiting classification, cycle state, bindings, open time, and expiry.
+The native controller regression retains the captured late-commit work durations through scheduling and restart:
+the ordinary idle delay misses the entry deadline, while the prompt continuation fits it without changing that deadline.
+These proofs do not guarantee storage or provider latency; a retried response still has to pass the existing checks.
+
+`pending_inputs_retry_retains_original_admission` maps the query-bound `SNAPSHOT_UNAVAILABLE` continuation in the
+same function. It bounds each recheck by one second, the ordinary cadence and the remaining original admission;
+`pending_inputs_cannot_retry_after_original_deadline` excludes an expired lease. Another 3,360 executable comparisons
+cover the query marker, states, bindings, clocks and two ordinary cadences. A missing query does not accelerate an
+unclassified outage. The post-pass projection health check still replaces this hint with the source failure's backoff.
+Pending inputs remain operationally incomplete; neither waiting nor a timely recheck establishes a valid decision.
+The recovery driver publishes the absolute wake instant with the delay. Its composition regression exercises the
+real driver; native controller tests retain that instant across persistence work and projected replay, so durable
+publication cannot restart the source wait from a later clock.
+
+`entry_handoff_preserves_terminal_cutoff_and_counter_bounds` maps `nextIntradayEntryAttemptOrdinal`.
+A successor requires a completed/no-trade cycle or a verified recovered block, a real terminal time, the original
+session cutoff and the existing PostgreSQL integer bound. No extra cooldown starts at completion. Executable
+conformance covers terminal states, missing/future completion, cutoff equality and ordinal boundaries.
+
+`sharing_entry_requires_the_same_policy_and_market_scope` maps the actual indexed PostgreSQL entry-window query.
+Equity reads compare all eleven cycle-context fields. Continuous leases preserve the same policy, account and
+market identity while ignoring admission-specific lease hashes and UTC date labels. Management remains within
+one cycle. `equity_window_scope_preserves_its_exact_calendar` and
+`continuous_window_scope_ignores_only_the_rolling_lease` prove that distinction. The formal PostgreSQL gate
+runs the native query against matching equity cycles, a change to each context field, and three real continuous
+admissions in one signal minute across midnight, then compares every result with
+`latestCompatibleEntryWindow`. The same test calls `loadNativeEntryObservation` to reject the consumed window before
+any input read and allow the next window. Payloads remain unchanged. The entry index orders windows across cycles so the lookup stops at the newest compatible
+source instead of decompressing a maximum observation for every prior cycle. Management retains its per-cycle index.
+`ineligible_window_cannot_supply_a_source` excludes a foreign source from the model maximum.
+
+`unused_entry_handoff_requires_an_ended_unbound_attempt` maps `unusedEntryHandoffDelayMs`. Only an expired,
+unbound blocked attempt before the original submission cutoff gets an immediate continuation. All successor
+admission and authority checks run again; the ended lease is never extended.
+
+`source_wait_reuse_preserves_authority_and_original_freshness` maps
+`canReuseSourceWaitReconciliation` in the recovery driver. The executable comparison covers all 256 combinations
+of exactness, accounting, generation/version identity, positions, unresolved mutations, pending orders and unknown
+orders across original freshness boundaries. `source_wait_cannot_reuse_at_original_freshness_boundary` excludes
+reuse at expiry. This proves the read predicate; serialized-driver regressions separately verify periodic refresh
+and discard after mutation, bound cycles and failures. Reuse never changes final submission authority.
+
+`source_window_wake_preserves_original_admission` covers a committed, source-excluded window with a known next
+signal time. `evaluateJevObservationFromSnapshot` retains the source failure and supplies that time from the consumed
+window and protocol. The recovery driver can wake early only while the entry is active, unbound, and within its
+original lease. The wake equals the supplied future time and precedes both the original expiry and ordinary poll.
+`source_window_cannot_wake_at_original_expiry` rejects the exact expiry. The reachable example retains the observed
+4,471 ms wait with 26,136 ms left on the original lease; the ordinary 30-second delay would miss it. Source failures
+without a known next time keep their existing backoff, and a committed window cannot be reevaluated.
 
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
@@ -357,7 +480,10 @@ unpriced stage. Conformance invokes
 the actual quote constructors and coverage validator for completed, failed, abandoned, undispatched and late requests,
 retained gap quotes, duplicate coverage and multiple parent requests. The undispatched cases count as zero only with
 positive evidence that those stages were not dispatched; a missing charge remains unknown. Actual PostgreSQL/TigerBeetle tests separately verify late Jev
-posting after a committed chart charge and recovery from partial postings without duplicate transfers.
+posting after a committed chart charge and recovery from partial postings without duplicate transfers. Migration 173's pending-source
+queue is operational metadata: real PostgreSQL tests cover historical backfill, transactional rollback, re-enqueue,
+and a late receipt committing while covered-source deletion waits on its row lock. These transaction tests, rather
+than the pure coverage theorem, establish the queue's concurrency behavior.
 
 Candidate and ablation cases also retain claim-only crashes, terminal receipts before handoff, abandonment and late
 visual-stage usage, rejected responses with charges, and completed provider chains. An unresolved Jev stage has no frozen
@@ -484,3 +610,20 @@ matched controls or native prospective evidence collection are complete.
 Statistical bounds remain conditional on the registered sampling and market assumptions. Hashes establish content
 identity; source capture and provenance checks must establish which actual evidence the model receives. Neither a
 successful build nor independent kernel acceptance grants capital authority or establishes profitability.
+
+`TradingScope.lean` maps to `src/execution/trading-scope.ts`, enforced by the physical broker mutation guard.
+It proves crypto entries and crypto buys fail the current market scope while equity orders retain scope eligibility.
+Crypto sells still require every existing capital, ownership and risk check; scope eligibility is not execution authority.
+Executable conformance covers both markets and sides, and broker regressions verify zero crypto-buy transmissions.
+
+### Evidenced closed windows
+
+`Bayn/Reliability.lean` proves that closed-window timing requires causal calendar arrival and completion. Eligible entry work cannot be classified as a closed window. `decision-work.ts` reproduces the registered day's calendar, native execution policy, physical controller build and account/generation before using that timing predicate. `closed-entry-window.test.ts` verifies that omitted, late, future, foreign and substituted evidence cannot supply successful work. The actual discovery regression retains the original admission clock across a delayed calendar read.
+
+`reconciliation_batching_keeps_each_original_deadline` maps to `obligation-witnesses.ts`. Its conformance cases and native obligation regression retain fixed denominators and show that late observations leave expired checks missed.
+
+`OperationalSafety.lean` maps to `src/system-assessment/operational-safety.ts`. It checks complete coverage of all
+six safety classes, proves missing evidence and known violations cannot pass, and includes a reachable clean case.
+Executable conformance covers every omitted class and each check status. PostgreSQL integration exercises the
+journals in real admission transactions, including concurrent authority writes, rollback, append-only rejection and
+historical receipt replay. These proofs do not authenticate provider receipts; that assumption is recorded in each audit.

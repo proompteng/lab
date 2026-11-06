@@ -9,7 +9,6 @@ import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
-import { DecisionsClient, DecisionsClientLive, DecisionsError } from '../jev/decisions'
 import { JevClient, JevClientLive, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
 import { JevHttpClientLive } from '../jev/http'
@@ -38,12 +37,10 @@ import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data/intraday/model'
-import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
-import { makeNativeArrivalStore } from '../db/native-arrival-postgres'
-import { NativeArrivalArchiveLive } from '../db/native-arrival-archive'
+import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+import { makeThreadedKafkaProjection, projectionWorkerOptions } from '../market-data/streaming/worker'
+import { nativeArrivalArchiveConfig } from '../db/native-arrival-archive'
 import type { DatabaseError } from '../db/database-error'
-import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
-import { nativeArrivalCaptureId } from '../market-data/streaming/native-arrival'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { operationalError, type OperationalError } from '../errors'
 
@@ -94,6 +91,7 @@ const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
       ...(plan.config.kafka?.technicalFeaturesTopic === undefined
         ? {}
         : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+      ...(plan.config.kafka?.webullBarsTopic === undefined ? {} : { webullBars: plan.config.kafka.webullBarsTopic }),
     },
   },
   {
@@ -119,27 +117,24 @@ export const WorkerMarketProjectionLive = (
           }),
         ),
       )
-    : Layer.unwrap(
+    : Layer.effect(
+        KafkaMarketProjection,
         Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const store = makeNativeArrivalStore(sql)
-          return KafkaMarketProjectionLive(kafka, workerStreamingUniverse(plan), (bootstrap, sources) =>
-            Effect.gen(function* () {
-              const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(plan.config.build, bootstrap, sources))
-              return yield* makeNativeArrivalJournal(
-                {
-                  schemaVersion: 'bayn.native-arrival-epoch.v1',
-                  captureId,
-                  build: plan.config.build,
-                  bootstrap,
-                  sources,
-                },
-                store,
-              )
-            }),
+          const archive = yield* Effect.fromResult(nativeArrivalArchiveConfig(plan.config))
+          return yield* makeThreadedKafkaProjection(
+            projectionWorkerOptions(kafka, archive, workerStreamingUniverse(plan), plan.config.build),
+          ).pipe(
+            Effect.mapError((cause) =>
+              operationalError({
+                component: 'market-data',
+                operation: 'load',
+                message: 'Kafka projection thread could not start',
+                cause,
+              }),
+            ),
           )
         }),
-      ).pipe(Layer.provide(NativeArrivalArchiveLive(plan.config)), Layer.provide(NodeServices.layer))
+      )
 }
 
 const WorkerMarketDataLive = (
@@ -217,32 +212,6 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
-    plan.config.openAiKey === undefined
-      ? Layer.succeed(DecisionsClient, {
-          evaluate: () =>
-            Effect.fail(
-              new DecisionsError({
-                category: 'REQUEST',
-                message: 'Entry inference requires the configured OpenAI Decisions credential',
-              }),
-            ),
-        })
-      : DecisionsClientLive(plan.config.openAiKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
-          Layer.provide(JevHttpClientLive(plan.config.alpaca.proxyUrl)),
-          Layer.catch((cause) =>
-            Layer.effect(
-              DecisionsClient,
-              Effect.fail(
-                operationalError({
-                  component: 'config',
-                  operation: 'decisions-client',
-                  message: 'OpenAI inference configuration is invalid',
-                  cause,
-                }),
-              ),
-            ),
-          ),
-        ),
     plan.config.jevKey === undefined
       ? Layer.succeed(JevClient, {
           evaluate: () =>

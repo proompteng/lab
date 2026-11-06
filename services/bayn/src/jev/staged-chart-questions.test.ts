@@ -4,19 +4,13 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
+import { JevClient, JevClientLive } from './client'
+import { decodeJevResponse, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
 import { defaultJevProtocolDocument } from './protocol'
-import { jevEntryEconomics } from './entry-economics'
-import { makeEntrySourceCandidates } from './entry-proposals'
-import {
-  DecisionsClient,
-  DecisionsClientLive,
-  decodeDecisionsResponse,
-  type DecisionsRequest,
-  type DecisionsResponse,
-} from './decisions'
 import {
   decodeSelectedBaseStartStageResponse,
   makeInitialChartStageRequest,
+  makeFinancialChartStageReplay,
   makeSelectedBaseStartStageRequest,
   stagedChartAssessments,
 } from './staged-chart-questions'
@@ -38,374 +32,240 @@ const fundedSource = (chart: Result.Result.Success<ReturnType<typeof makeNativeC
   protocol: defaultJevProtocolDocument,
   funding: { bidMicros: '101000000', askMicros: '101010000', capitalMicros: '10000000000', cryptoFeeTier: null },
 })
-const candidatesFor = (chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>) => {
-  const { protocol, funding } = fundedSource(chart)
-  const economics = Result.getOrThrow(
-    jevEntryEconomics({
-      feeAt: '2026-09-04T14:15:00.000Z',
-      protocol,
-      symbol: chart.symbol,
-      ...funding,
-      bidMicros: BigInt(funding.bidMicros),
-      askMicros: BigInt(funding.askMicros),
-    }),
-  )
-  if (economics === null) throw new Error('Expected funded fixture economics')
-  return Result.getOrThrow(
-    makeEntrySourceCandidates({ chart, protocol, economics, bidMicros: BigInt(funding.bidMicros) }),
-  )
-}
-const responseFor = (request: DecisionsRequest, end?: string): DecisionsResponse => ({
+const responseFor = (request: JevRequest, end?: string): JevResponse => ({
   model: request.model,
-  answers: request.questions.map((question) => {
-    if (question.type === 'predicate')
-      return { type: 'predicate', name: question.name, probability: 0.12345678901234568 }
-    const choice =
-      question.name === 'base_last_bar' ? (end ?? question.choices.at(-2)?.value) : question.choices[0]?.value
-    if (choice === undefined) throw new Error('Expected choices')
-    return {
-      type: 'choice',
-      name: question.name,
-      choice,
-      confidence: 0.12345678901234568,
-      probabilities: question.choices.map((candidate) => ({
-        value: candidate.value,
-        probability: 1 / question.choices.length,
-      })),
-    }
-  }),
-  usage: {
-    input_tokens: 100,
-    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-    output_tokens: 10,
-    total_tokens: 110,
-  },
+  answers: Object.fromEntries(
+    Object.entries(request.questions).map(([name, question]) => {
+      if (question.type === 'noul') return [name, { type: 'noul', noul: 0.12345678901234568 }]
+      if (question.type !== 'choice') throw new Error('Unexpected chart question')
+      const choices = Object.keys(question.criteria)
+      const choice = name === 'base_last_bar' ? (end ?? choices.at(-2)) : choices[0]
+      if (choice === undefined) throw new Error('Expected a source choice')
+      return [
+        name,
+        {
+          type: 'choice',
+          choice,
+          confidence: 0.12345678901234568,
+          probabilities: Object.fromEntries(choices.map((value) => [value, 1 / choices.length])),
+        },
+      ]
+    }),
+  ),
+  usage: { input_tokens: 100, output_tokens: 10 },
 })
-const choicesCount = (request: DecisionsRequest) =>
-  request.questions.reduce((count, question) => count + (question.type === 'choice' ? question.choices.length : 0), 0)
 const receiptFor = (prepared: { readonly requestHash: string }, response: unknown) => ({
   requestHash: prepared.requestHash,
   responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
   response,
 })
+const choose = (response: JevResponse, name: string, value: string): JevResponse => {
+  const answer = response.answers[name]
+  if (answer?.type !== 'choice') throw new Error('Expected a choice answer')
+  return {
+    ...response,
+    answers: {
+      ...response.answers,
+      [name]: {
+        ...answer,
+        choice: value,
+        probabilities: Object.fromEntries(Object.keys(answer.probabilities).map((key) => [key, key === value ? 1 : 0])),
+      },
+    },
+  }
+}
 
-describe('funded staged chart transport', () => {
+describe('Jev-only staged chart transport', () => {
   for (const count of [1, 2, 6, 30, 120])
     for (const extreme of [false, true]) {
-      test(`${count} bars, extreme=${extreme}: complete source and full precision responses fit unchanged budgets`, () => {
+      test(`${count} bars, extreme=${extreme}: preserves complete source and finite probability precision`, () => {
         const chart = Result.getOrThrow(makeNativeChartEvidence(source(count, extreme)))
-        const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
+        const input = fundedSource(chart)
+        const first = Result.getOrThrow(makeInitialChartStageRequest(input))
         const raw = responseFor(first.request)
-        expect(Result.isSuccess(decodeDecisionsResponse(first.request, raw))).toBe(true)
-        expect(Buffer.byteLength(first.body)).toBeLessThan(1_048_576)
-        expect(Buffer.byteLength(JSON.stringify(raw))).toBeLessThan(262_144)
-        expect(choicesCount(first.request)).toBeLessThanOrEqual(361)
-        expect(first.request.input[0].content[1].image_url).toBe(chart.image)
-        expect(first.request.input[0].content[2].data).toMatchObject({
-          symbol: chart.symbol,
-          windowEndAt: chart.windowEndAt,
-          barsHash: chart.barsHash,
-          pngHash: chart.pngHash,
-          bars: chart.bars,
+        expect(Result.isSuccess(decodeJevResponse(first.request, raw))).toBe(true)
+        expect(Buffer.byteLength(first.body)).toBeLessThanOrEqual(128000)
+        expect(first.request.model).toBe('jev-1.13.0')
+        expect(first.request.assets?.[`bayn_chart_image_${chart.pngHash}`]?.data_base64).toBe(chart.image.split(',')[1])
+        expect(first.request.state).toMatchObject({
+          source: { symbol: chart.symbol, bars: chart.bars, barsHash: chart.barsHash, pngHash: chart.pngHash },
         })
-        const receipt = receiptFor(first, raw)
-        const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(fundedSource(chart), receipt))
-        if (count < 3 || extreme) {
-          expect(next.status).toBe('NOT_REQUESTED')
-          if (next.status === 'NOT_REQUESTED')
-            expect(next.reason).toBe(count < 3 ? 'INSUFFICIENT_BARS' : 'NO_ELIGIBLE_BASE')
-        } else {
-          if (next.status !== 'PREPARED') throw new Error('Expected selected base start')
-          expect(next.request.questions).toHaveLength(1)
-          expect(choicesCount(next.request)).toBe(count - 1)
-          expect(Buffer.byteLength(next.body)).toBeLessThan(1_048_576)
-          const second = responseFor(next.request)
-          expect(Buffer.byteLength(JSON.stringify(second))).toBeLessThan(262_144)
-          expect(
-            Result.isSuccess(
-              decodeSelectedBaseStartStageResponse(fundedSource(chart), receipt, receiptFor(next, second)),
-            ),
-          ).toBe(true)
-          expect(next.predecessor).toEqual({
-            requestHash: first.requestHash,
-            responseHash: Result.getOrThrow(canonicalHashV1Result(raw)),
-          })
+        const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(input, receiptFor(first, raw)))
+        let base = null
+        if (next.status === 'PREPARED') {
+          expect(Object.keys(next.request.questions)).toHaveLength(1)
+          expect(Buffer.byteLength(next.body)).toBeLessThanOrEqual(128000)
+          base = receiptFor(next, responseFor(next.request))
         }
-      })
-    }
-
-  describe('each funded 120-bar end retains exactly funded earlier full source IDs and no_base', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source(120)))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
-    const candidates = candidatesFor(chart)
-    const ends = chart.bars.filter((bar) => candidates.baseWindows.some((window) => window.lastBarId === bar.id))
-    expect(ends).toHaveLength(118)
-    for (const end of ends)
-      test(end.chartLabel, () => {
-        const next = Result.getOrThrow(
-          makeSelectedBaseStartStageRequest(fundedSource(chart), receiptFor(first, responseFor(first.request, end.id))),
+        const assessment = Result.getOrThrow(stagedChartAssessments(input, receiptFor(first, raw), base))
+        expect(assessment.base.presence).toEqual({ status: 'ASSESSED', probability: 0.12345678901234568 })
+        const replay = makeFinancialChartStageReplay()
+        expect(Result.getOrThrow(replay.makeInitialChartStageRequest(input))).toEqual(first)
+        expect(Result.getOrThrow(replay.makeSelectedBaseStartStageRequest(input, receiptFor(first, raw)))).toEqual(next)
+        expect(Result.getOrThrow(replay.stagedChartAssessments(input, receiptFor(first, raw), base))).toEqual(
+          assessment,
         )
-        if (next.status !== 'PREPARED') throw new Error('Expected selected base start')
-        const question = next.request.questions[0]
-        if (question?.type !== 'choice') throw new Error('Expected choice')
-        expect(question.name).toBe(`base_first_bar_ending_${end.chartLabel}`)
-        expect(question.instructions).toContain(end.timestamp)
-        expect(question.choices.map((choice) => choice.value)).toEqual([
-          ...chart.bars
-            .filter((bar) =>
-              candidates.baseWindows.some((window) => window.lastBarId === end.id && window.firstBarId === bar.id),
-            )
-            .map((bar) => bar.id),
-          'no_base',
-        ])
       })
-  })
-
-  test('funded support without any eligible base has an authenticated distinct skip', () => {
-    const raw = source(6)
-    const chart = Result.getOrThrow(
-      makeNativeChartEvidence({ ...raw, bars: raw.bars.map((bar) => ({ ...bar, high: 130 })) }),
-    )
-    const context = fundedSource(chart)
-    const first = Result.getOrThrow(makeInitialChartStageRequest(context))
-    expect(first.sourceFeasible).toBe(true)
-    expect(candidatesFor(chart).baseWindows).toHaveLength(0)
-    expect(first.request.questions.some((question) => question.name === 'support_anchor')).toBe(true)
-    expect(first.request.questions.some((question) => question.name === 'resistance_anchor')).toBe(true)
-    expect(first.request.questions.some((question) => question.name === 'base_last_bar')).toBe(false)
-    const receipt = receiptFor(first, responseFor(first.request))
-    const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(context, receipt))
-    expect(next).toEqual({
-      status: 'NOT_REQUESTED',
-      reason: 'NO_ELIGIBLE_BASE',
-      predecessor: { requestHash: receipt.requestHash, responseHash: receipt.responseHash },
-    })
-    expect(Result.isSuccess(stagedChartAssessments(context, receipt, null))).toBe(true)
-    expect(Result.isFailure(stagedChartAssessments(context, receipt, receipt))).toBe(true)
-    expect(
-      Result.isFailure(
-        makeSelectedBaseStartStageRequest(
-          { ...context, funding: { ...context.funding, bidMicros: '102000000', askMicros: '102010000' } },
-          receipt,
-        ),
-      ),
-    ).toBe(true)
-  })
-
-  test('selected end excludes earlier starts whose window crosses an unfundable high', () => {
-    const raw = source(6)
-    const chart = Result.getOrThrow(
-      makeNativeChartEvidence({
-        ...raw,
-        bars: raw.bars.map((bar, index) => (index === 2 ? { ...bar, high: 130 } : bar)),
-      }),
-    )
-    const context = fundedSource(chart)
-    const first = Result.getOrThrow(makeInitialChartStageRequest(context))
-    const end = chart.bars[4]
-    const start = chart.bars[3]
-    if (end === undefined || start === undefined) throw new Error('Expected fixture bars')
-    const initial = receiptFor(first, responseFor(first.request, end.id))
-    const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(context, initial))
-    if (next.status !== 'PREPARED') throw new Error('Expected selected stage')
-    const question = next.request.questions[0]
-    if (question?.type !== 'choice') throw new Error('Expected selected question')
-    expect(question.choices.map((choice) => choice.value)).toEqual([start.id, 'no_base'])
-    const valid = responseFor(next.request)
-    const forged = {
-      ...valid,
-      answers: valid.answers.map((answer) =>
-        answer.type === 'choice' ? { ...answer, choice: chart.bars[0]?.id } : answer,
-      ),
     }
-    expect(Result.isFailure(decodeSelectedBaseStartStageResponse(context, initial, receiptFor(next, forged)))).toBe(
-      true,
-    )
-  })
 
-  test('no_base and refusal remain explicit not-requested outcomes, not fabricated starts', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source(6)))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
-    const noBase = responseFor(first.request, 'no_base')
-    const refused = {
-      ...noBase,
-      answers: noBase.answers.map((answer) =>
-        answer.name === 'base_last_bar' ? { type: 'refusal' as const, name: answer.name } : answer,
-      ),
-    }
-    for (const [raw, reason] of [
-      [noBase, 'NO_BASE'],
-      [refused, 'END_REFUSED'],
-    ] as const) {
-      const receipt = receiptFor(first, raw)
-      const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(fundedSource(chart), receipt))
-      expect(next.status).toBe('NOT_REQUESTED')
-      if (next.status === 'NOT_REQUESTED') expect(next.reason).toBe(reason)
-      expect(Result.isSuccess(stagedChartAssessments(fundedSource(chart), receipt, null))).toBe(true)
-      expect(Result.isFailure(stagedChartAssessments(fundedSource(chart), receipt, receipt))).toBe(true)
-      expect(
-        Result.isFailure(decodeSelectedBaseStartStageResponse(fundedSource(chart), receipt, receiptFor(first, noBase))),
-      ).toBe(true)
-    }
-  })
-
-  test('rejects incomplete, reordered, extra and invalid end responses before constructing the next stage', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source(6)))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
-    const raw = responseFor(first.request)
-    for (const answers of [
-      raw.answers.slice(1),
-      raw.answers.toReversed(),
-      [...raw.answers, raw.answers[0]],
-      raw.answers.map((answer) =>
-        answer.type === 'choice' && answer.name === 'base_last_bar'
-          ? { ...answer, choice: chart.bars.at(-1)?.id }
-          : answer,
-      ),
-      raw.answers.map((answer) =>
-        answer.type === 'choice' ? { ...answer, probabilities: answer.probabilities.slice(1) } : answer,
-      ),
-      raw.answers.map((answer) =>
-        answer.type === 'choice'
-          ? { ...answer, probabilities: answer.probabilities.map((entry) => ({ ...entry, probability: 1 })) }
-          : answer,
-      ),
+  test('financial replay binds complete source and response material on every reuse', () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+    const response = responseFor(first.request)
+    const receipt = receiptFor(first, response)
+    const replay = makeFinancialChartStageReplay()
+    const next = Result.getOrThrow(replay.makeSelectedBaseStartStageRequest(input, receipt))
+    expect(next).toEqual(Result.getOrThrow(makeSelectedBaseStartStageRequest(input, receipt)))
+    for (const altered of [
+      { ...input, funding: { ...input.funding, capitalMicros: '9000000000' } },
+      { ...input, protocol: { ...input.protocol, inferenceValidityMs: input.protocol.inferenceValidityMs + 1 } },
+      { ...input, chart: { ...input.chart, image: input.chart.image + 'changed' } },
+      fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(7)))),
     ]) {
-      expect(
-        Result.isFailure(
-          makeSelectedBaseStartStageRequest(fundedSource(chart), receiptFor(first, { ...raw, answers })),
-        ),
-      ).toBe(true)
-      expect(
-        Result.isFailure(stagedChartAssessments(fundedSource(chart), receiptFor(first, { ...raw, answers }), null)),
-      ).toBe(true)
+      expect(replay.makeInitialChartStageRequest(altered)).toEqual(makeInitialChartStageRequest(altered))
+      expect(replay.makeSelectedBaseStartStageRequest(altered, receipt)).toEqual(
+        makeSelectedBaseStartStageRequest(altered, receipt),
+      )
     }
+    for (const altered of [
+      { ...receipt, requestHash: 'f'.repeat(64) },
+      { ...receipt, responseHash: 'f'.repeat(64) },
+      { ...receipt, response: { ...response, usage: { ...response.usage, input_tokens: 101 } } },
+      { ...receipt, extra: true },
+    ]) {
+      expect(Result.isFailure(replay.makeSelectedBaseStartStageRequest(input, altered))).toBe(true)
+      expect(Result.isFailure(replay.stagedChartAssessments(input, altered, null))).toBe(true)
+    }
+    const changedEnd = input.chart.bars[1]
+    if (changedEnd === undefined) throw new Error('Missing eligible end')
+    const changedReceipt = receiptFor(first, responseFor(first.request, changedEnd.id))
+    expect(replay.makeSelectedBaseStartStageRequest(input, changedReceipt)).toEqual(
+      makeSelectedBaseStartStageRequest(input, changedReceipt),
+    )
+    if (next.status !== 'PREPARED') throw new Error('Expected selected base')
+    const base = receiptFor(next, responseFor(next.request))
+    expect(replay.stagedChartAssessments(input, receipt, base)).toEqual(stagedChartAssessments(input, receipt, base))
+    expect(
+      Result.isFailure(replay.stagedChartAssessments(input, receipt, { ...base, responseHash: 'f'.repeat(64) })),
+    ).toBe(true)
   })
 
-  test('source and predecessor substitutions fail even when the response envelope is rehashed', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source(6)))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
+  test('offers every eligible earlier start and no-match for the selected end', () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(120))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+    const end = input.chart.bars[100]
+    if (end === undefined) throw new Error('Missing end')
+    const next = Result.getOrThrow(
+      makeSelectedBaseStartStageRequest(input, receiptFor(first, responseFor(first.request, end.id))),
+    )
+    if (next.status !== 'PREPARED') throw new Error('Expected base start')
+    const question = Object.values(next.request.questions)[0]
+    if (question?.type !== 'choice') throw new Error('Expected a choice')
+    expect(Object.keys(question.criteria)).toEqual([...input.chart.bars.slice(0, 100).map((bar) => bar.id), 'no_base'])
+  })
+
+  test('retains an authenticated no-base outcome without fabricating a start', () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+    const receipt = receiptFor(first, responseFor(first.request, 'no_base'))
+    expect(Result.getOrThrow(makeSelectedBaseStartStageRequest(input, receipt))).toMatchObject({
+      status: 'NOT_REQUESTED',
+      reason: 'NO_BASE',
+    })
+    const assessment = Result.getOrThrow(stagedChartAssessments(input, receipt, null))
+    expect(assessment.base.first).toEqual({ status: 'NOT_IDENTIFIED' })
+    expect(assessment.support.presence.status).toBe('ASSESSED')
+    expect(Result.isFailure(stagedChartAssessments(input, receipt, receipt))).toBe(true)
+  })
+
+  test('rejects missing, foreign, mistyped and nonmaximum answers before admitting the next stage', () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
     const raw = responseFor(first.request)
-    const initialReceipt = receiptFor(first, raw)
-    const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(fundedSource(chart), initialReceipt))
-    if (next.status !== 'PREPARED') throw new Error('Expected selected base start')
-    const start = responseFor(next.request)
-    const startReceipt = receiptFor(next, start)
-    expect(Result.isSuccess(stagedChartAssessments(fundedSource(chart), initialReceipt, startReceipt))).toBe(true)
-    const changedSource = source(6)
-    const changed = Result.getOrThrow(
-      makeNativeChartEvidence({
-        ...changedSource,
-        bars: changedSource.bars.map((bar) => ({ ...bar, volume: bar.volume + 1 })),
-      }),
-    )
-    const changedFirst = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(changed)))
-    expect(changedFirst.requestHash).not.toBe(first.requestHash)
-    expect(Result.isFailure(makeSelectedBaseStartStageRequest(fundedSource(changed), initialReceipt))).toBe(true)
-    expect(Result.isFailure(stagedChartAssessments(fundedSource(changed), initialReceipt, startReceipt))).toBe(true)
-    const changedInitialReceipt = receiptFor(changedFirst, raw)
-    const changedNext = Result.getOrThrow(
-      makeSelectedBaseStartStageRequest(fundedSource(changed), changedInitialReceipt),
-    )
-    if (changedNext.status !== 'PREPARED') throw new Error('Expected selected base start')
-    expect(changedNext.requestHash).not.toBe(next.requestHash)
-    expect(
-      Result.isFailure(
-        decodeSelectedBaseStartStageResponse(fundedSource(changed), changedInitialReceipt, startReceipt),
-      ),
-    ).toBe(true)
-    const changedRaw = { ...raw, usage: { ...raw.usage, input_tokens: 101, total_tokens: 111 } }
-    const changedPredecessor = receiptFor(first, changedRaw)
-    expect(
-      Result.isFailure(decodeSelectedBaseStartStageResponse(fundedSource(chart), changedPredecessor, startReceipt)),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        makeSelectedBaseStartStageRequest(fundedSource(chart), { ...initialReceipt, response: changedRaw }),
-      ),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        decodeSelectedBaseStartStageResponse(fundedSource(chart), initialReceipt, {
-          ...startReceipt,
-          responseHash: '0'.repeat(64),
-        }),
-      ),
-    ).toBe(true)
-    const invalidStart = {
-      ...start,
-      answers: start.answers.map((answer) =>
-        answer.type === 'choice' ? { ...answer, choice: next.selectedEnd } : answer,
-      ),
+    const { base_last_bar: removed, ...remaining } = raw.answers
+    if (removed?.type !== 'choice') throw new Error('Expected base choice')
+    const invalid = [
+      { ...raw, answers: remaining },
+      { ...raw, answers: { ...raw.answers, foreign: { type: 'noul', noul: 1 } } },
+      { ...raw, answers: { ...raw.answers, base_last_bar: { type: 'noul', noul: 1 } } },
+      { ...raw, answers: { ...raw.answers, base_last_bar: { ...removed, choice: 'not_a_source_bar' } } },
+      { ...raw, answers: { ...raw.answers, base_last_bar: { ...removed, type: 'refusal' } } },
+      { ...raw, model: 'gpt-6-luna' },
+    ]
+    for (const changed of invalid)
+      expect(Result.isFailure(makeSelectedBaseStartStageRequest(input, receiptFor(first, changed)))).toBe(true)
+    const other = Object.keys(removed.probabilities).find((value) => value !== removed.choice)
+    if (other === undefined) throw new Error('Expected competing choice')
+    const nonmaximum = {
+      ...raw,
+      answers: {
+        ...raw.answers,
+        base_last_bar: {
+          ...removed,
+          probabilities: Object.fromEntries(
+            Object.keys(removed.probabilities).map((value) => [value, value === other ? 1 : 0]),
+          ),
+        },
+      },
     }
-    expect(
-      Result.isFailure(
-        decodeSelectedBaseStartStageResponse(fundedSource(chart), initialReceipt, receiptFor(next, invalidStart)),
-      ),
-    ).toBe(true)
+    expect(Result.isFailure(makeSelectedBaseStartStageRequest(input, receiptFor(first, nonmaximum)))).toBe(true)
+    const reordered = { ...raw, answers: Object.fromEntries(Object.entries(raw.answers).toReversed()) }
+    expect(Result.isSuccess(makeSelectedBaseStartStageRequest(input, receiptFor(first, reordered)))).toBe(true)
   })
 
-  test('selected start retains tiny finite probabilities, no_base and independent refusal', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source(120)))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
+  test('rejects source, predecessor, request-hash and response-hash substitutions', () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
     const initial = receiptFor(first, responseFor(first.request))
-    const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(fundedSource(chart), initial))
-    if (next.status !== 'PREPARED') throw new Error('Expected selected base start')
-    const response = responseFor(next.request)
-    for (const choice of [chart.bars[0]?.id, 'no_base']) {
-      const raw = {
-        ...response,
-        answers: response.answers.map((answer) =>
-          answer.type === 'choice'
-            ? {
-                ...answer,
-                choice,
-                probabilities: answer.probabilities.map((entry) => ({
-                  ...entry,
-                  probability: entry.value === choice ? 1 : Number.MIN_VALUE,
-                })),
-              }
-            : answer,
-        ),
-      }
-      expect(Buffer.byteLength(JSON.stringify(raw))).toBeLessThan(262_144)
-      expect(
-        Result.isSuccess(decodeSelectedBaseStartStageResponse(fundedSource(chart), initial, receiptFor(next, raw))),
-      ).toBe(true)
-    }
-    const refused = {
-      ...response,
-      answers: response.answers.map((answer) => ({ type: 'refusal' as const, name: answer.name })),
-    }
-    expect(
-      Result.getOrThrow(decodeSelectedBaseStartStageResponse(fundedSource(chart), initial, receiptFor(next, refused)))
-        .response.answers,
-    ).toEqual(refused.answers)
+    const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(input, initial))
+    if (next.status !== 'PREPARED') throw new Error('Expected base start')
+    const base = receiptFor(next, responseFor(next.request))
+    for (const changed of [
+      { ...base, requestHash: 'a'.repeat(64) },
+      { ...base, responseHash: 'b'.repeat(64) },
+    ])
+      expect(Result.isFailure(decodeSelectedBaseStartStageResponse(input, initial, changed))).toBe(true)
+    const changedSource = fundedSource(
+      Result.getOrThrow(makeNativeChartEvidence({ ...source(6), windowEndAt: '2026-10-25T07:01:00.000Z' })),
+    )
+    expect(Result.isFailure(stagedChartAssessments(changedSource, initial, base))).toBe(true)
+    const changedInitial = receiptFor(
+      first,
+      choose(responseFor(first.request), 'base_last_bar', input.chart.bars[1]?.id ?? 'missing'),
+    )
+    expect(Result.isFailure(decodeSelectedBaseStartStageResponse(input, changedInitial, base))).toBe(true)
   })
 
-  test('both serialized 120-bar responses pass the real bounded transport using an offline HTTP layer', async () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source(120)))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(chart)))
-    const firstRaw = responseFor(first.request)
-    const second = Result.getOrThrow(
-      makeSelectedBaseStartStageRequest(fundedSource(chart), receiptFor(first, firstRaw)),
+  test('both 120-bar stages use only the pinned Jev endpoint and image opt-in', async () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(120))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+    const sent: string[] = []
+    const http = HttpClient.make((request, url) => {
+      sent.push(url.toString())
+      expect(request.headers['typesafe-danger-zone-images']).toBe('true')
+      const body = request.body
+      if (body._tag !== 'Uint8Array') throw new Error('Expected sealed JSON')
+      const parsed: unknown = JSON.parse(Buffer.from(body.body).toString('utf8'))
+      const prepared = Result.getOrThrow(prepareJevRequest(parsed))
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(JSON.stringify(responseFor(prepared.request)))),
+      )
+    })
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* JevClient
+        const initial = yield* client.evaluate(first.request, 10000)
+        const next = yield* Effect.fromResult(
+          makeSelectedBaseStartStageRequest(input, receiptFor(first, initial.response)),
+        )
+        if (next.status !== 'PREPARED') throw new Error('Expected base start')
+        return yield* client.evaluate(next.request, 10000)
+      }).pipe(
+        Effect.provide(JevClientLive(Redacted.make('fixture-key'), 10000)),
+        Effect.provide(Layer.succeed(HttpClient.HttpClient, http)),
+      ),
     )
-    if (second.status !== 'PREPARED') throw new Error('Expected selected base start')
-    for (const request of [first.request, second.request]) {
-      const raw = responseFor(request)
-      const http = HttpClient.make((httpRequest) =>
-        Effect.succeed(HttpClientResponse.fromWeb(httpRequest, new Response(JSON.stringify(raw), { status: 200 }))),
-      )
-      const layer = DecisionsClientLive(Redacted.make('offline-test-key'), 1000).pipe(
-        Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-      )
-      const result = await Effect.runPromise(
-        Effect.gen(function* () {
-          const client = yield* DecisionsClient
-          return yield* client.evaluate(request, 1000)
-        }).pipe(Effect.provide(layer)),
-      )
-      expect(result.response).toEqual(raw)
-    }
+    expect(result.response.model).toBe('jev-1.13.0')
+    expect(sent).toEqual(['https://api.typesafe.ai/v1/systemone', 'https://api.typesafe.ai/v1/systemone'])
   })
 })

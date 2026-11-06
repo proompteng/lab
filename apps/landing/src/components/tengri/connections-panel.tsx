@@ -35,6 +35,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
+import { connectionResourceDisplay } from '@/lib/platform/resource-display'
 import { startSignIn } from '@/lib/platform/auth-client'
 import { MemberAccessRequests } from '@/components/platform/member-access-requests'
 import { ProviderAccount } from '@/components/platform/provider-accounts'
@@ -289,7 +290,10 @@ export function ConnectionsPanel({
   const targetNames = new Map(
     catalog?.operations
       .flatMap((operation) => operation.targets)
-      .map((target) => [resourceKey(target.resource), target.name]) ?? [],
+      .map((target) => [
+        resourceKey(target.resource),
+        connectionResourceDisplay(target.name, target.resource.kind).name,
+      ]) ?? [],
   )
   const savedConnection = (id: string) =>
     snapshot?.connections.find((connection) => connection.clientReference === connectionReference(agent.uid, id))
@@ -487,10 +491,14 @@ export function ConnectionsPanel({
       .map((name) => ({ name, label: 'Unavailable tool. Remove it to continue.' })),
   ]
   const targetOptions = [
-    ...targets.map((target) => ({ key: resourceKey(target.resource), label: target.name })),
+    ...targets.map((target) => ({
+      key: resourceKey(target.resource),
+      label: connectionResourceDisplay(target.name, target.resource.kind).name,
+      detail: connectionResourceDisplay(target.name, target.resource.kind).detail,
+    })),
     ...selectedTargets
       .filter((key) => !targets.some((target) => resourceKey(target.resource) === key))
-      .map((key) => ({ key, label: 'Unavailable saved resource. Remove it to continue.' })),
+      .map((key) => ({ key, label: 'Unavailable saved resource. Remove it to continue.', detail: '' })),
   ]
   const selected = editor ? savedConnection(editor) : undefined
   const selectedConnected = editor ? isConnected(editor) : false
@@ -529,7 +537,7 @@ export function ConnectionsPanel({
               {selected?.enabled ? 'Manage ' : 'Connect '}
               {serviceName(editor)}
             </h2>
-            <FieldDescription>{editor} · Read access for this agent. You can disconnect at any time.</FieldDescription>
+            <FieldDescription>Read access for this agent. You can disconnect at any time.</FieldDescription>
           </div>
           {selectedProvider ? (
             selectedProvider.workspaceManaged ? (
@@ -593,6 +601,7 @@ export function ConnectionsPanel({
                             />
                             <div className="min-w-0">
                               <FieldLabel htmlFor={formId + '-target-' + index}>{target.label}</FieldLabel>
+                              {target.detail ? <FieldDescription>{target.detail}</FieldDescription> : null}
                               <FieldDescription>
                                 {
                                   snapshot.availableScopes.find(
@@ -755,7 +764,11 @@ export function ConnectionsPanel({
                         ...new Set(
                           available
                             .filter((operation) => operation.connectorId === id)
-                            .flatMap((operation) => operation.targets.map((target) => target.name)),
+                            .flatMap((operation) =>
+                              operation.targets.map(
+                                (target) => connectionResourceDisplay(target.name, target.resource.kind).name,
+                              ),
+                            ),
                         ),
                       ].join(' · ')}
                     </ItemDescription>
