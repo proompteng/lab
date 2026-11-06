@@ -1548,7 +1548,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v6`. Its hashed `scope` records the requested
+The forward-performance command emits `bayn.forward-performance-report.v7`. Its hashed `scope` records the requested
 `AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
 account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
 bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
@@ -1670,7 +1670,11 @@ not merely claimed hashes. Every checkpoint, handoff, receipt, original clock an
 Retained protocols keep their original readers. This reduces repeated source reconstruction without narrowing complete-session
 coverage or treating booked trading results or estimated model costs as fully loaded profit.
 
-The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` identifies the PostgreSQL capture;
+The `--ledger-session` command emits `bayn.inference-expense-ledger-report.v3`. Its `coverage` includes the exact
+`matchedQuoteHashes`, the current-source `knownEstimatedCostPicoUsd` subtotal, and provider stages on
+`requestsWithCoverageIssues`. The underlying ledger reader retains its v2 contract and verified transfer totals;
+the additional CLI fields remain metered diagnostics, with `invoiceReconciled: false`.
+`sourceAsOf` identifies the PostgreSQL capture;
 `ledgerTimestampMax`, `verifiedSessionTransferCount` and `exactLedgerPrefix` identify the verified native prefix. `transferCount` and
 `knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
 timestamps belong to different systems and are never compared to infer ordering. Pending quotes remain explicitly
@@ -1960,11 +1964,37 @@ The command always requires `--authority-generation`; omitting `--persist-receip
 read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
 Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
 history does not. A scope without completed executions remains unqualified.
-The command emits `bayn.forward-performance-report.v6`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v7`. Its `receipt` contains the unchanged v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
-attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
-`INCOMPLETE` while other operating charges are unknown. `reportHash` binds the requested scope and all report content. The report does not
-change the immutable per-generation receipt schema.
+attributes ledger-verified session estimates to the requested generation. Each session retains the exact current
+`matchedQuoteHashes` and `requestsWithCoverageIssues`, including the provider stage, receipt/resolution identities,
+and missing quote, unverified ledger, unknown usage, or unpriced usage reason. Earlier quote versions remain verified
+for integrity but do not enter the selected subtotal. The subtotal and coverage use the same complete source matcher.
+These private diagnostics contain no account ID or provider request/response payload.
+
+`receiptPersistence: NOT_CHECKED` means the read-only evidence is provisional: the command has not checked whether
+the generation is terminal or whether a receipt was previously saved. An active generation may legitimately have
+`NO_PERSISTED_RECEIPT` in status. Only a successful `--persist-receipt` transaction changes the output marker to
+`PERSISTED_TERMINAL`; failed admission emits no successful report. `reportHash` binds that marker and all diagnostics,
+while the immutable per-generation receipt and its hash retain their existing schema and meaning.
+
+`costDiagnostics` separates the generation receipt's operating-charge evidence, metered inference estimates, and
+the attached assessment's registered cost scope. `receiptOperatingCharges` follows the report's declared account or
+generation scope. Metered completeness applies only to `ATTACHED_SESSION_SNAPSHOTS`, with every evaluated session,
+generation, and source cut listed explicitly; a partial list cannot establish coverage for an entire receipt window.
+No inference sessions means `NO_SESSION_EVIDENCE`, not complete
+coverage. Frozen tariff estimates remain `invoiceReconciled: false`; inspect a session with
+`bayn-inference-cost --ledger-session YYYY-MM-DD`. They do not establish actual invoiced charges or fill a null
+`otherChargedCostsMicros` in the generation receipt.
+
+Without `--assessment <assessment-hash>`, assessment cost coverage is `NO_ASSESSMENT_ATTACHED`. The
+registration status is `NOT_INSPECTED`; this does not assert that a registration or invoices are absent from storage.
+With an attached assessment, its exact registration hash identifies the registered cost scope. The required
+`bayn.operating-cost-evidence.v1` sources cover inference, data, infrastructure, and research consumption with
+reviewed source artifacts and registered allocations. An attached assessment exposes incomplete candidate sessions,
+their cost-report hashes, and the exact category coverage/source hashes. `operatingCostCoverage` becomes `COMPLETE`
+only for a nonempty candidate session set whose costs are all complete, and applies only to `operatingCostScope`.
+That assessment does not finalize an active generation or replace unknown costs in the separate generation receipt.
 Position episode evidence uses `bayn.position-episode-evidence.v4`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
 provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
