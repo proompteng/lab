@@ -620,3 +620,80 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('Bayn separates formal checks from runtime validation and publication', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing Bayn change detection')
+  const inputs = property(
+    steps.find((step) => property(step, 'id') === 'filter'),
+    'with',
+  )
+  const targets = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  const lock = { ...before, workspaces: { ...before.workspaces, 'packages/scripts': { name: 'scripts' } } }
+  for (const path of [
+    'services/bayn/formal/Bayn/Reliability.lean',
+    'services/bayn/formal/tla/Controller.tla',
+    'services/bayn/formal/conformance/economics.test.ts',
+    '.github/workflows/bayn-formal.yml',
+  ])
+    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, image: false, formal: true })
+  expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
+    bayn: true,
+    image: true,
+    formal: true,
+  })
+  expect(selectAffectedInputs(['argocd/applications/bayn/configmap.yaml'], targets, lock, lock)).toEqual({
+    bayn: true,
+    image: false,
+    formal: false,
+  })
+  expect(selectAffectedInputs(['apps/landing/src/index.ts'], targets, lock, lock)).toEqual({
+    bayn: false,
+    image: false,
+    formal: false,
+  })
+  const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-build-push.yml', 'utf8'))
+  const paths = property(property(property(publication, 'on'), 'push'), 'paths')
+  if (!Array.isArray(paths) || !paths.every((path): path is string => typeof path === 'string'))
+    throw new Error('Missing publication paths')
+  for (const path of [
+    'services/bayn/formal/Bayn/Reliability.lean',
+    'services/bayn/formal/tla/Controller.tla',
+    'services/bayn/formal/conformance/economics.test.ts',
+  ])
+    expect(matchesPaths(path, paths)).toBe(false)
+  expect(matchesPaths('services/bayn/src/execution/controller.ts', paths)).toBe(true)
+})
+
+test('the Bayn aggregate rejects missing formal results even when runtime jobs are inapplicable', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'required'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing aggregate gate')
+  const step = steps[0]
+  const names = property(step, 'env')
+  if (typeof names !== 'object' || names === null) throw new Error('Missing gate inputs')
+  const good = Object.fromEntries(
+    Object.keys(names).map((name) => [name, name.endsWith('_RELEVANT') ? 'true' : 'success']),
+  )
+  const run = (overrides: Record<string, string>) =>
+    Bun.spawnSync(['bash', '-c', text(property(step, 'run'))], {
+      env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', ...good, ...overrides },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }).exitCode
+  expect(run({})).toBe(0)
+  expect(run({ BAYN_RELEVANT: 'false', IMAGE_RELEVANT: 'false' })).toBe(0)
+  for (const failure of ['failure', 'cancelled', 'skipped']) {
+    expect(run({ BAYN_RELEVANT: 'false', IMAGE_RELEVANT: 'false', FORMAL_RESULT: failure })).not.toBe(0)
+    expect(run({ FORMAL_RESULT: failure })).not.toBe(0)
+  }
+  expect(run({ FORMAL_RELEVANT: 'false', FORMAL_RESULT: 'skipped' })).toBe(0)
+  expect(run({ UNIT_RESULT: 'failure' })).not.toBe(0)
+  expect(run({ IMAGE_RESULT: 'failure' })).not.toBe(0)
+})
