@@ -6,6 +6,7 @@ let
       "services/relay/Cargo.toml" "services/relay/Cargo.lock" "services/relay/src" "services/relay/tests"
       "packages/platform-client" "proto/proompteng/authz" "proto/proompteng/relay"
       "argocd/applications/relay/config.json"
+      "services/relay/examples/google-project.json"
     ]);
   };
 in pkgs.rustPlatform.buildRustPackage {

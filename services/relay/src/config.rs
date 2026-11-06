@@ -18,6 +18,12 @@ mod tests {
         ))
         .expect("generated connector configuration must satisfy the runtime contract");
     }
+
+    #[test]
+    fn federation_probe_registration_passes_the_runtime_parser() {
+        super::Config::parse(include_bytes!("../examples/google-project.json"))
+            .expect("the federation probe must use the current operation contract");
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
