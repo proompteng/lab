@@ -1387,10 +1387,16 @@ func codexReplayMessage(raw json.RawMessage) json.RawMessage {
 		json.Unmarshal(params["item"], &item) != nil {
 		return raw
 	}
-	if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
+	changed := false
+	if string(item["type"]) == `"imageGeneration"` {
+		var result string
+		if json.Unmarshal(item["result"], &result) == nil && result != "" {
+			item["result"] = json.RawMessage(`"[Image output]"`)
+			changed = true
+		}
+	} else if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
 		return raw
 	}
-	changed := false
 	projectImages := func(container map[string]json.RawMessage, field string) {
 		var content []json.RawMessage
 		if json.Unmarshal(container[field], &content) != nil {
