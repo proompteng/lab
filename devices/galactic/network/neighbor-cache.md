@@ -25,38 +25,11 @@ or reset. A short sample does not establish long-term stability or application r
 
 ## Repeat the affected application lookup
 
-This uses the existing Stash application's resolver on Turin, including its configured search domains and A/AAAA
-behavior. It stops on the first failure or lookup slower than one second. Select the current running Stash pod:
-
-```bash
-set -euo pipefail
-pod=$(kubectl --context galactic-lan -n stash get pods -l app.kubernetes.io/name=stash \
-	--field-selector=spec.nodeName=turin,status.phase=Running -o json \
-	| jq -er '[.items[] | select(.metadata.deletionTimestamp == null)] | if length == 1 then .[0].metadata.name else error("Expected exactly one running Stash pod on Turin") end')
-kubectl --context galactic-lan -n stash exec -i "$pod" -c app -- python3 - <<'PY'
-import signal
-import socket
-import time
-
-def timeout(signum, frame):
-    raise TimeoutError("DNS lookup exceeded six seconds")
-
-signal.signal(signal.SIGALRM, timeout)
-for attempt in range(20):
-    for name in ("stash.stash.svc.cluster.local", "stash-exporter.media.svc.cluster.local"):
-        start = time.monotonic()
-        signal.alarm(6)
-        addresses = socket.getaddrinfo(name, 80, type=socket.SOCK_STREAM)
-        signal.alarm(0)
-        elapsed = time.monotonic() - start
-        assert addresses and elapsed < 1, (name, elapsed)
-    time.sleep(0.25)
-print("PASS: 40 application DNS lookups, each under one second")
-PY
-```
+Use the affected application's own recovery runbook to repeat DNS lookups from its running workload on Turin.
+Preserve its configured search domains and A/AAAA behavior. Require repeated successful lookups under one second.
 
 Also query both current CoreDNS pod endpoints and the DNS Service directly for A and AAAA records. Require the
-affected Stash importer to complete its actual work. Successful DNS probes alone do not establish import recovery.
+affected application to complete its actual work. Successful DNS probes alone do not establish application recovery.
 Check node readiness, Ceph monitor quorum and OSD availability, then repeat the Omni dry run and require zero changes.
 
 To recover from an incorrect setting, revert only the neighbor-cache patch through the same reviewed Omni workflow.
