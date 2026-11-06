@@ -161,7 +161,7 @@ export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt:
     const market: Pick<ControlMarket, 'advanceTo' | 'snapshot'> = {
       advanceTo: (atMs) =>
         source
-          .advanceTo(atMs)
+          .advanceTo(atMs, (work) => work)
           .pipe(
             Effect.mapError((cause) => new ControlStudyFailure({ message: 'Cannot advance preflight source', cause })),
           ),

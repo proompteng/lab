@@ -12,7 +12,7 @@ import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/e
 import { decideEntryAblation } from '../jev/entry-ablation'
 import { makeInferenceCostReport, InferenceStage } from '../inference-costs'
 import { inferenceExpenseRateCard } from '../inference-expense'
-import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive, makeEntryInferenceJournal } from './entry-inference-postgres'
@@ -430,7 +430,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(target.policy).toEqual(parameters)
         expect(yield* evaluateJevBatch(ablation, observation.payload)).toEqual(stored)
         expect(chartCalls).toBe(inferences.length * 2)
-        const snapshot = yield* readInferenceExpenseSnapshot(sql, r.accountId, fixture.snapshot.manifest.sessionDate)
+        const snapshot = yield* acquireInferenceExpenseSnapshot(
+          sql,
+          r.accountId,
+          fixture.snapshot.manifest.sessionDate,
+        ).pipe(Effect.flatMap(({ verify }) => verify))
         const costs = yield* Effect.fromResult(
           makeInferenceCostReport(snapshot.evidence, {
             ...inferenceExpenseRateCard,

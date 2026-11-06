@@ -129,12 +129,15 @@ export const postFeeAccruals = (
   journal: JournalService,
   accountId: string,
   identity: Identity,
+  mode: 'post' | 'verify-only' = 'post',
 ) =>
   Effect.gen(function* () {
     const rows = yield* readFeeAccruals(sql, accountId, identity)
     const acknowledged = yield* readAcknowledgedFeePostings(sql, accountId, FeePostingKind.Accrual)
     for (const row of rows) {
       if (row.posted && acknowledged.has(row.accrualId)) continue
+      if (mode === 'verify-only')
+        return yield* invariant('Fee accrual posting requires an independently committed preparation')
       if (row.plan.transfers.length > 0)
         yield* journal.post(row.plan).pipe(
           Effect.mapError(

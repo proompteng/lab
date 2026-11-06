@@ -35,6 +35,7 @@ import {
   riskContextFromRow,
   validateReconciliationReadback,
   verifyAccountingReceipts,
+  verifyAccountingHistory,
   type ReconciliationAlgebraFailure,
   type RiskContextRow,
 } from './algebra'
@@ -195,7 +196,7 @@ const intentRow = {
 
 const comparisonInput = (status: AccountStatus = AccountStatus.Active): Parameters<typeof compareOpeningCash>[0] => {
   const intentProjection = successOf(projectIntentExpectations([intentRow]))
-  const accounting = successOf(verifyAccountingReceipts([prepared.transaction], [receipt], { tigerBeetle }))
+  const accounting = successOf(verifyAccountingReceipts([prepared], [receipt], { tigerBeetle }))
   const durableFills = [
     {
       fillId: fill.fillId,
@@ -475,7 +476,7 @@ describe('PostgreSQL reconciliation algebra', () => {
   })
 
   test('verifies ledger plans, receipt material, and exact accounting bindings', () => {
-    const verification = successOf(verifyAccountingReceipts([prepared.transaction], [receipt], { tigerBeetle }))
+    const verification = successOf(verifyAccountingReceipts([prepared], [receipt], { tigerBeetle }))
 
     expect(verification.plans).toEqual([prepared.ledger])
     expect(verification.exactReceipts.get(prepared.transaction.brokerEventId)).toBe(true)
@@ -485,7 +486,7 @@ describe('PostgreSQL reconciliation algebra', () => {
     )
 
     const inexact = successOf(
-      verifyAccountingReceipts([prepared.transaction], [{ ...receipt, contentHash: hash('wrong-receipt-content') }], {
+      verifyAccountingReceipts([prepared], [{ ...receipt, contentHash: hash('wrong-receipt-content') }], {
         tigerBeetle,
       }),
     )
@@ -499,7 +500,7 @@ describe('PostgreSQL reconciliation algebra', () => {
       contentHash: hash('conflicting-receipt-content'),
     }
     const duplicateReceipts = [conflictingReceipt, receipt]
-    const failure = failureOf(verifyAccountingReceipts([prepared.transaction], duplicateReceipts, { tigerBeetle }))
+    const failure = failureOf(verifyAccountingReceipts([prepared], duplicateReceipts, { tigerBeetle }))
 
     expect(failure).toEqual({
       _tag: 'DuplicateReceiptBrokerEvent',
@@ -508,7 +509,7 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(
       failureOf(
         verifyAccountingReceipts(
-          [{ ...prepared.transaction, contentHash: hash('invalid-transaction-content') }],
+          [{ ...prepared, transaction: { ...prepared.transaction, contentHash: hash('invalid-transaction-content') } }],
           duplicateReceipts,
           { tigerBeetle },
         ),
@@ -521,31 +522,22 @@ describe('PostgreSQL reconciliation algebra', () => {
     })
   })
 
-  test('returns closed ledger-plan failures with their causes', () => {
-    const invalidContentHash = hash('invalid-transaction-content')
-    const failure = failureOf(
-      verifyAccountingReceipts([{ ...prepared.transaction, contentHash: invalidContentHash }], [receipt], {
-        tigerBeetle,
-      }),
-    )
-    expect(failure).toMatchObject({
-      _tag: 'AccountingPlanFailed',
-      transactionId: prepared.transaction.transactionId,
-      brokerEventId: prepared.transaction.brokerEventId,
-      cause: {
-        _tag: 'AccountingTransactionContentHashMismatch',
+  test('verifies fill economics and the stored transaction once before receipt verification', () => {
+    const source = { transaction: prepared.transaction, fill, prior: { quantityAtoms: '0', costMicros: '0' } }
+    expect(successOf(verifyAccountingHistory([source], tigerBeetle.ledger))).toEqual([prepared])
+    for (const changed of [
+      { ...source, transaction: { ...prepared.transaction, contentHash: hash('invalid-transaction-content') } },
+      { ...source, fill: { ...fill, quantityAtoms: '2000000000' } },
+      { ...source, transaction: { ...prepared.transaction, ledgerPlanHash: hash('changed-ledger') } },
+    ]) {
+      const failure = failureOf(verifyAccountingHistory([changed], tigerBeetle.ledger))
+      expect(failure).toEqual({
+        _tag: 'AccountingTransactionMismatch',
         transactionId: prepared.transaction.transactionId,
-        observedContentHash: invalidContentHash,
-        expectedContentHash: prepared.transaction.contentHash,
-      },
-    })
-    if (failure._tag !== 'AccountingPlanFailed') throw new Error('expected accounting plan failure')
-    const details = reconciliationAlgebraFailureDetails(failure)
-    expect(details).toMatchObject({
-      failure: 'invariant',
-      message: `accounting ledger plan verification failed for transaction ${prepared.transaction.transactionId}`,
-    })
-    expect(details.cause).toBe(failure.cause)
+        brokerEventId: prepared.transaction.brokerEventId,
+      })
+      expect(reconciliationAlgebraFailureDetails(failure).failure).toBe('invariant')
+    }
   })
 
   test('compares opening cash and binds the current fee accrual accounting identity', () => {

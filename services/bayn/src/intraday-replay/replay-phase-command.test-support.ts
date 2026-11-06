@@ -6,9 +6,15 @@ import { makeReplayPhaseTracer } from './replay-phase-tracer.test-support'
 // Only the disposable acceptance executable installs this diagnostic sink.
 export const tracedBacktestCommand = Effect.gen(function* () {
   const clock = yield* Clock.clockWith(Effect.succeed)
-  const tracer = makeReplayPhaseTracer(clock, (record) => {
-    process.stderr.write(`${JSON.stringify({ message: 'Replay child phase', ...record })}\n`)
-  })
+  const tracer = makeReplayPhaseTracer(
+    clock,
+    (record) => {
+      process.stderr.write(`${JSON.stringify({ message: 'Replay child phase', ...record })}\n`)
+    },
+    (record) => {
+      process.stderr.write(`${JSON.stringify({ message: 'Replay child stage timings', ...record })}\n`)
+    },
+  )
   return yield* backtestCommand.pipe(Effect.provideService(Tracer.Tracer, tracer))
 })
 

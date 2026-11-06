@@ -12,6 +12,7 @@ on:
       - 'services/bayn/**'
       # PR validation covers tests; test-only commits must not reactivate the production controller.
       - '!services/bayn/**/*.test.ts'
+      - '!services/bayn/formal/**'
       - 'packages/scripts/src/bayn/**'
       - 'nix/images/bayn.nix'
       - 'nix/images/opencode-cli.nix'

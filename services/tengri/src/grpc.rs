@@ -955,9 +955,7 @@ impl MicroVmControlPlane for ControlPlane {
         let guest = self
             .guest(&principal, &request.agent_id, &request.thread_id)
             .await?;
-        if request.archived
-            && crate::runs::thread_active(self, &principal, &request.thread_id).await?
-        {
+        if request.archived && crate::runs::thread_active(&principal, &request.thread_id).await? {
             return Err(Status::failed_precondition(
                 "Wait for the response to finish before archiving this chat",
             ));
@@ -1076,7 +1074,6 @@ impl MicroVmControlPlane for ControlPlane {
         };
         if !request.images.is_empty() {
             match crate::runs::read(
-                self,
                 &principal,
                 &input.id,
                 Some(crate::runs::input_digest(&input)?),
@@ -1108,7 +1105,7 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         self.agent_access(&principal, &request.id, "").await?;
         let mut runs = Vec::new();
-        for snapshot in crate::runs::active(self, &principal, &request.thread_id).await? {
+        for snapshot in crate::runs::active(&principal, &request.thread_id).await? {
             if snapshot.agent_id != request.id {
                 return Err(Status::permission_denied("run unavailable"));
             }
@@ -1126,7 +1123,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_operation(&request.run_id)?;
         self.agent_access(&principal, &request.agent_id, &request.run_id)
             .await?;
-        let snapshot = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        let snapshot = crate::runs::read(&principal, &request.run_id, None).await?;
         if snapshot.agent_id != request.agent_id {
             return Err(Status::permission_denied("run unavailable"));
         }
@@ -1171,6 +1168,31 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn recover_codex_run(
+        &self,
+        request: Request<InterruptCodexTurnRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RecoverCodexRun").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.run_id)?;
+        validate_codex_operation(&request.operation_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id,
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "tengri/recoverRun".into(),
+                params: serde_json::json!({}),
+            },
+        )
+        .await?;
+        Ok(Response::new(Empty {}))
+    }
+
     async fn interrupt_codex_turn(
         &self,
         request: Request<InterruptCodexTurnRequest>,
@@ -1207,7 +1229,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_operation(&request.operation_id)?;
         self.agent_access(&principal, &request.agent_id, &request.run_id)
             .await?;
-        let run = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        let run = crate::runs::read(&principal, &request.run_id, None).await?;
         let mut params = json!({"threadId":run.thread_id,"approvalId":request.approval_id,"clientUserMessageId":request.operation_id});
         if !request.response_json.is_empty() {
             if request.decision != CodexApprovalDecision::Unspecified as i32

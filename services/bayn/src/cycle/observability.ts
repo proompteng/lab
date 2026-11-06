@@ -129,19 +129,28 @@ export interface CycleExecutionFunnelObservation {
 }
 
 export interface AccountingEconomicsObservation {
+  /** Cumulative retained account history across authority generations, not a session or runtime cohort. */
+  readonly scope: 'ACCOUNT_HISTORY'
   readonly fillCount: number
   readonly transactionCount: number
   readonly receiptCount: number
+  /** SELL accounting transactions, including partial fills; not completed position episodes. */
   readonly realizedCloseCount: number
   readonly unaccountedFillCount: number
   readonly unreceiptedTransactionCount: number
   readonly grossRealizedPnlMicros: string
+  /** Fill fees and posted broker fee effects; unposted fees and operating expenses are excluded. */
   readonly executionFeesMicros: string
   readonly netRealizedPnlAfterExecutionFeesMicros: string
 }
 
 export interface ForwardPerformanceObservation {
   readonly createdAt: string
+  readonly authorityGenerationHash: string
+  /** The retained receipt's source binding, never the current runtime revision. */
+  readonly sourceRevision: string | null
+  readonly windowOpenedAt: string | null
+  readonly windowClosedAt: string | null
   readonly evidenceStatus: 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
   readonly profitability: 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
   readonly grossRealizedPnlMicros: string | null
@@ -155,9 +164,14 @@ export interface ForwardPerformanceObservation {
   readonly ledgerExact: boolean
 }
 
+export enum ForwardPerformanceUnavailableReason {
+  NoPersistedReceipt = 'NO_PERSISTED_RECEIPT',
+}
+
 export interface CycleEconomicsObservation {
   readonly accounting: AccountingEconomicsObservation
   readonly forwardPerformance: ForwardPerformanceObservation | null
+  readonly forwardPerformanceUnavailableReason: ForwardPerformanceUnavailableReason | null
 }
 
 export interface CycleOperationsProjection {

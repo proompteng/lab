@@ -132,6 +132,53 @@ class FakeCollection(collect.Collection):
 
 
 class CollectionTest(unittest.TestCase):
+    def test_restoration_uses_shared_hold_helper_and_write_restoration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "recovery.json"
+            plan.write_text(
+                '{"version":1,"operation":"restore","pvcUid":"claim","pv":"volume"}'
+            )
+            operation = FakeCollection()
+            with patch.object(
+                collect.subprocess,
+                "run",
+                return_value=SimpleNamespace(
+                    returncode=0, stdout='{"restoredBlobs":1}', stderr=""
+                ),
+            ) as run:
+                self.assertEqual(
+                    operation.run(plan, plan, restoring=True), {"restoredBlobs": 1}
+                )
+            self.assertIn("/dev/shm/recover.py", run.call_args.args[0])
+            self.assertNotIn("--references", run.call_args.args[0])
+            self.assertLess(
+                operation.actions.index("delete-helper"),
+                operation.actions.index("restore-writes"),
+            )
+            self.assertIn("release-hold", operation.actions)
+
+    def test_interrupted_restoration_restores_writes_without_inventing_purge_receipt(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "recovery.json"
+            plan.write_text(
+                '{"version":1,"operation":"restore","pvcUid":"claim","pv":"volume"}'
+            )
+            operation = FakeCollection()
+            with (
+                patch.object(
+                    collect.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired("restore", 240),
+                ),
+                self.assertRaisesRegex(TimeoutError, "resume the same plan"),
+            ):
+                operation.run(plan, plan, restoring=True)
+            self.assertIn("restore-writes", operation.actions)
+            self.assertIn("release-hold", operation.actions)
+            self.assertNotIn("read-receipt", operation.actions)
+
     def test_cooperative_collector_deadline_is_preserved_in_the_result(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / "plan.json"

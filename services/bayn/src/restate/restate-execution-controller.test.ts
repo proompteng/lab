@@ -129,6 +129,7 @@ test.each([
             return result
           },
           log: async () => undefined,
+          prepareActivation: () => Promise.resolve(),
           projectState: async () => undefined,
         },
         [],
@@ -236,6 +237,7 @@ describe('native Restate execution controller', () => {
         }
       },
       log: () => Promise.reject(new Error('telemetry unavailable')),
+      prepareActivation: () => Promise.resolve(),
       projectState: async (_key: string, next: ExecutionControllerState) => {
         projectedStates.push(next)
         events.push(next.active ? 'activation-projected' : 'deactivation-projected')
@@ -361,6 +363,7 @@ describe('native Restate execution controller', () => {
       makeBaynExecutionController(config, {
         advance: () => Promise.reject(new Error('activation must not advance inline')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -427,6 +430,7 @@ describe('native Restate execution controller', () => {
           logged.push(message)
           return Promise.resolve()
         },
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -461,6 +465,7 @@ describe('native Restate execution controller', () => {
       makeBaynExecutionController(config, {
         advance: () => Promise.reject(new Error('must not advance')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.reject(new Error('postgres unavailable')),
       }),
     )
@@ -493,6 +498,7 @@ describe('native Restate execution controller', () => {
       makeBaynExecutionController(config, {
         advance: () => Promise.reject(new Error('must not advance')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -534,6 +540,7 @@ describe('native Restate execution controller', () => {
       makeBaynExecutionController(config, {
         advance: () => Promise.reject(new Error('must not advance')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => {
           projections += 1
           return Promise.resolve()
@@ -589,6 +596,7 @@ describe('native Restate execution controller', () => {
           return Promise.reject(new Error('must not advance'))
         },
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -637,6 +645,7 @@ describe('native Restate execution controller', () => {
           return Promise.reject(new Error('must not advance'))
         },
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -675,6 +684,7 @@ describe('native Restate execution controller', () => {
           return Promise.reject(new Error('must not advance'))
         },
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -717,6 +727,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
@@ -771,6 +782,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     let activations = 0
@@ -839,6 +851,7 @@ describe('native Restate execution controller', () => {
           }
         },
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -938,6 +951,7 @@ describe('native Restate execution controller', () => {
         }
       },
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: async (_key, next) => {
         projectedStates.push(next)
         events.push(next.active ? 'activation-projected' : 'deactivation-projected')
@@ -1073,6 +1087,7 @@ describe('native Restate execution controller', () => {
     const runtime = {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     }
     const latest = handlers(makeBaynExecutionController(config, runtime))
@@ -1121,6 +1136,7 @@ describe('native Restate execution controller', () => {
       makeBaynExecutionController(config, {
         advance: () => Promise.reject(new Error('must not advance')),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -1154,6 +1170,114 @@ describe('native Restate execution controller', () => {
     expect(calls).toBe(0)
   })
 
+  test.each(['authority mismatch', 'authority read unavailable', 'authority preflight timed out'])(
+    'keeps the predecessor and broker owner untouched when successor preflight fails: %s',
+    async (message) => {
+      const failure = new Error(message)
+      const signal = new AbortController().signal
+      let reads = 0
+      let deactivations = 0
+      let brokerCalls = 0
+      let preflights = 0
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          prepareActivation: async (received) => {
+            expect(received).toBe(signal)
+            preflights += 1
+            throw failure
+          },
+          advance: async () => {
+            throw new Error('must not advance')
+          },
+          log: async () => undefined,
+          projectState: async () => {
+            throw new Error('must not project')
+          },
+        }),
+      )
+      const target = {
+        key: controllerKey,
+        get: async () => {
+          reads += 1
+          throw new Error('must not read predecessor')
+        },
+        run: async (_name: string, action: () => Promise<unknown>, options: unknown) => {
+          expect(options).toEqual({ maxRetryAttempts: 0 })
+          return action()
+        },
+        request: () => ({ attemptCompletedSignal: signal }),
+      } as unknown as ObjectSharedContext
+      const coordinator = {
+        key: controllerKey,
+        request: () => ({
+          headers: new Map([['authorization', `Bearer ${Buffer.alloc(32, 7).toString('base64url')}`]]),
+        }),
+        objectClient: () => ({
+          prepareActivation: (candidate: unknown) => object.prepareActivation(target, candidate),
+          deactivate: () => {
+            deactivations += 1
+            throw new Error('must not deactivate')
+          },
+        }),
+        genericCall: () => {
+          brokerCalls += 1
+          throw new Error('must not rotate broker owner')
+        },
+      } as unknown as ObjectSharedContext
+      const rejected = await object
+        .activateDeployment(coordinator, {
+          schemaVersion: 'bayn.execution-deployment-activation.v2',
+          controllerKey,
+          planHash,
+          sourceRevision,
+        })
+        .catch((cause: unknown) => cause)
+      expect(rejected).toBe(failure)
+      expect({ preflights, reads, deactivations, brokerCalls }).toEqual({
+        preflights: 1,
+        reads: 0,
+        deactivations: 0,
+        brokerCalls: 0,
+      })
+    },
+  )
+
+  test('successful successor preflight precedes reading the predecessor', async () => {
+    const events: string[] = []
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        prepareActivation: async () => {
+          events.push('preflight')
+        },
+        advance: async () => {
+          throw new Error('must not advance')
+        },
+        log: async () => undefined,
+        projectState: async () => {
+          throw new Error('must not project')
+        },
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => {
+        events.push('read predecessor')
+        return null
+      },
+      run: async (_name: string, action: () => Promise<unknown>) => action(),
+      request: () => ({ attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as ObjectSharedContext
+    expect(
+      await object.prepareActivation(context, {
+        schemaVersion: 'bayn.execution-deployment-activation.v2',
+        controllerKey,
+        planHash,
+        sourceRevision,
+      }),
+    ).toBeNull()
+    expect(events).toEqual(['preflight', 'read predecessor'])
+  })
+
   test('activates null native state without calling any legacy service', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const events: string[] = []
@@ -1179,6 +1303,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
@@ -1262,6 +1387,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
@@ -1316,6 +1442,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
@@ -1356,6 +1483,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     const start = handlers(controller).activateDeployment
@@ -1389,6 +1517,7 @@ describe('native Restate execution controller', () => {
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
+      prepareActivation: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
     const context = {
@@ -1475,6 +1604,7 @@ describe('native Restate execution controller', () => {
             loggedAnnotations.push(annotations)
             return Promise.reject(new Error('telemetry unavailable'))
           },
+          prepareActivation: () => Promise.resolve(),
           projectState: () => Promise.resolve(),
         },
       ),
@@ -1621,6 +1751,7 @@ describe('native Restate execution controller', () => {
             logged.push(annotations)
             return Promise.resolve()
           },
+          prepareActivation: () => Promise.resolve(),
           projectState: () => Promise.resolve(),
         }),
       )
@@ -1674,6 +1805,7 @@ describe('native Restate execution controller', () => {
             logged.push(annotations)
             return Promise.resolve()
           },
+          prepareActivation: () => Promise.resolve(),
           projectState: () => Promise.resolve(),
         }),
       )
@@ -1724,6 +1856,7 @@ describe('native Restate execution controller', () => {
       makeBaynExecutionController(config, {
         advance: () => Promise.reject(failure),
         log: () => Promise.resolve(),
+        prepareActivation: () => Promise.resolve(),
         projectState: () => Promise.resolve(),
       }),
     )
@@ -1804,6 +1937,7 @@ describe('native Restate execution controller', () => {
             return Promise.reject(new Error('foreign source must not advance'))
           },
           log: () => Promise.resolve(),
+          prepareActivation: () => Promise.resolve(),
           projectState: () => Promise.resolve(),
         },
       ),
@@ -1822,6 +1956,7 @@ describe('native Restate execution controller', () => {
               },
             }),
           log: () => Promise.resolve(),
+          prepareActivation: () => Promise.resolve(),
           projectState: () => Promise.resolve(),
         },
       ),
@@ -1906,6 +2041,7 @@ describe('native Restate execution controller', () => {
                 })
           },
           log: () => Promise.resolve(),
+          prepareActivation: () => Promise.resolve(),
           projectState: () => Promise.resolve(),
         },
       ),

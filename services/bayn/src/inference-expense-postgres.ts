@@ -27,8 +27,6 @@ const ReportRowSchema = Schema.Struct({
 export const decodeInferenceExpenseSessionRows = (input: unknown, sessionDate: string) =>
   Effect.gen(function* () {
     const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ReportRowSchema), strictParseOptions)(input)
-    if (rows.length > 10_000)
-      return yield* new InferenceCostError({ message: 'Inference expense session exceeds the complete-report limit' })
     return yield* Effect.forEach(rows, (row) =>
       Effect.gen(function* () {
         const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
@@ -179,7 +177,7 @@ export const makeInferenceExpenseStore = (
       SELECT quote_hash AS "quoteHash", payload,
         to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
       FROM inference_expense_quotes WHERE account_id = ${accountId} AND session_date = ${sessionDate}::date
-      ORDER BY quote_hash COLLATE "C" LIMIT 10001
+      ORDER BY quote_hash COLLATE "C"
     `
       return yield* decodeInferenceExpenseSessionRows(rows, sessionDate)
     })

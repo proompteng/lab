@@ -10,6 +10,7 @@ import { defaultJevProtocolDocument } from './protocol'
 import {
   decodeSelectedBaseStartStageResponse,
   makeInitialChartStageRequest,
+  makeFinancialChartStageReplay,
   makeSelectedBaseStartStageRequest,
   stagedChartAssessments,
 } from './staged-chart-questions'
@@ -98,8 +99,56 @@ describe('Jev-only staged chart transport', () => {
         }
         const assessment = Result.getOrThrow(stagedChartAssessments(input, receiptFor(first, raw), base))
         expect(assessment.base.presence).toEqual({ status: 'ASSESSED', probability: 0.12345678901234568 })
+        const replay = makeFinancialChartStageReplay()
+        expect(Result.getOrThrow(replay.makeInitialChartStageRequest(input))).toEqual(first)
+        expect(Result.getOrThrow(replay.makeSelectedBaseStartStageRequest(input, receiptFor(first, raw)))).toEqual(next)
+        expect(Result.getOrThrow(replay.stagedChartAssessments(input, receiptFor(first, raw), base))).toEqual(
+          assessment,
+        )
       })
     }
+
+  test('financial replay binds complete source and response material on every reuse', () => {
+    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+    const response = responseFor(first.request)
+    const receipt = receiptFor(first, response)
+    const replay = makeFinancialChartStageReplay()
+    const next = Result.getOrThrow(replay.makeSelectedBaseStartStageRequest(input, receipt))
+    expect(next).toEqual(Result.getOrThrow(makeSelectedBaseStartStageRequest(input, receipt)))
+    for (const altered of [
+      { ...input, funding: { ...input.funding, capitalMicros: '9000000000' } },
+      { ...input, protocol: { ...input.protocol, inferenceValidityMs: input.protocol.inferenceValidityMs + 1 } },
+      { ...input, chart: { ...input.chart, image: input.chart.image + 'changed' } },
+      fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(7)))),
+    ]) {
+      expect(replay.makeInitialChartStageRequest(altered)).toEqual(makeInitialChartStageRequest(altered))
+      expect(replay.makeSelectedBaseStartStageRequest(altered, receipt)).toEqual(
+        makeSelectedBaseStartStageRequest(altered, receipt),
+      )
+    }
+    for (const altered of [
+      { ...receipt, requestHash: 'f'.repeat(64) },
+      { ...receipt, responseHash: 'f'.repeat(64) },
+      { ...receipt, response: { ...response, usage: { ...response.usage, input_tokens: 101 } } },
+      { ...receipt, extra: true },
+    ]) {
+      expect(Result.isFailure(replay.makeSelectedBaseStartStageRequest(input, altered))).toBe(true)
+      expect(Result.isFailure(replay.stagedChartAssessments(input, altered, null))).toBe(true)
+    }
+    const changedEnd = input.chart.bars[1]
+    if (changedEnd === undefined) throw new Error('Missing eligible end')
+    const changedReceipt = receiptFor(first, responseFor(first.request, changedEnd.id))
+    expect(replay.makeSelectedBaseStartStageRequest(input, changedReceipt)).toEqual(
+      makeSelectedBaseStartStageRequest(input, changedReceipt),
+    )
+    if (next.status !== 'PREPARED') throw new Error('Expected selected base')
+    const base = receiptFor(next, responseFor(next.request))
+    expect(replay.stagedChartAssessments(input, receipt, base)).toEqual(stagedChartAssessments(input, receipt, base))
+    expect(
+      Result.isFailure(replay.stagedChartAssessments(input, receipt, { ...base, responseHash: 'f'.repeat(64) })),
+    ).toBe(true)
+  })
 
   test('offers every eligible earlier start and no-match for the selected end', () => {
     const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(120))))

@@ -532,6 +532,14 @@ beforeAll(async () => {
               ],
       })
     },
+    recoverCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -802,6 +810,15 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('recovers the exact accepted run through the current signed session without sending input', async () => {
+    const { recoverCodexRun } = await import('./grpc')
+    const runId = '11111111-1111-4111-8111-111111111111'
+    const operationId = '22222222-2222-4222-8222-222222222222'
+    await recoverCodexRun(identity, 'agent-test', runId, operationId)
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', runId, operationId })
+    expect(receivedMetadata?.get('x-tengri-signature')).toHaveLength(1)
+  })
+
   test('identifies a recorded control that was rejected before native dispatch', async () => {
     const { steerCodexTurn } = await import('./grpc')
     expect(
