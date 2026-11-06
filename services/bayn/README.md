@@ -148,6 +148,10 @@ Effect decoder wrappers have been removed; tests decode the shared schemas with
 the same strict parse options. Immutable historical documents and the decoders
 used to read them remain supported.
 
+Canonical JSON serialization writes finite numbers and strings without JSON escape characters directly. Strings
+that need escaping still use the runtime JSON encoder. Unicode validation, sorted keys, descriptors, dense arrays,
+cycle checks and failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
+
 New target planning accepts only quote-bound inputs with an explicit allocation, verified bid/ask prices and
 per-symbol liquidity limits. Retired `bayn.paper-target-planner-input.v1` and `v2` inputs cannot construct new plans;
 there is no full-equity or daily-reference-price fallback. Existing target-plan output decoding remains available
