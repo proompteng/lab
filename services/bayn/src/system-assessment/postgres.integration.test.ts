@@ -34,6 +34,7 @@ import {
   registrationFixture,
   testHash,
   withRegistrationCommitments,
+  knownPayoffAssessmentFixture,
 } from './fixtures.test-support'
 import {
   assessAndPersistSystem,
@@ -114,7 +115,15 @@ const databaseNow = Effect.gen(function* () {
   return row.now
 })
 const registerFixture = (value: ReturnType<typeof registrationFixture>) =>
-  registerSystemQualification(value, new Set(value.costAllocationPlans.map((plan) => plan.basisSourceHash)))
+  registerSystemQualification(
+    value,
+    new Set([
+      ...value.costAllocationPlans.map((plan) => plan.basisSourceHash),
+      ...(value.schemaVersion === 'bayn.system-registration.v4'
+        ? value.statisticalPlan.supports.map((s) => s.sourceHash)
+        : []),
+    ]),
+  )
 
 const makeRuntime = (url: string) =>
   ManagedRuntime.make(
@@ -791,6 +800,136 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(await runtime.runPromise(readPersistedSystemAssessment(historical.assessmentHash))).toEqual(historical)
   })
 
+  test('the PostgreSQL qualification predicate accepts the real current report shape and rejects incomplete or substituted claims', async () => {
+    const f = knownPayoffAssessmentFixture()
+    const report = Result.getOrThrow(evaluateSystemAssessment(f.input, f.verifiedSources))
+    expect(report.verdict).toBe(QualificationVerdict.Qualified)
+    const numerical = report.numerical
+    if (
+      numerical === null ||
+      !('confidence' in numerical) ||
+      numerical.confidence === undefined ||
+      !('profit' in numerical.confidence)
+    )
+      throw new Error('Missing conditional report')
+    const confidence = numerical.confidence
+    const cases = [
+      { evidence: report, valid: true },
+      {
+        evidence: {
+          ...report,
+          verdict: QualificationVerdict.Rejected,
+          numerical: {
+            ...numerical,
+            confidence: { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '-1' } },
+          },
+        },
+        valid: true,
+      },
+      ...[
+        { ...confidence, method: 'BOOTSTRAP' },
+        { ...confidence, alpha: { numerator: '1', denominator: '1' } },
+        { ...confidence, attemptIndex: 2 },
+        { ...confidence, meanModel: 'UNSPECIFIED' },
+        { ...confidence, meanModel: undefined },
+        { ...confidence, supports: [] },
+        { ...confidence, profit: { ...confidence.profit, count: '0' } },
+        { ...confidence, profit: { ...confidence.profit, lowerSumMicros: '0' } },
+        { ...confidence, paired: confidence.paired.slice(1) },
+        { ...confidence, paired: confidence.paired.map(() => confidence.paired[0]) },
+        { ...confidence, paired: confidence.paired.map((row) => ({ ...row, control: JevResearchPolicy.Candidate })) },
+      ].map((confidence) => ({ evidence: { ...report, numerical: { ...numerical, confidence } }, valid: false })),
+    ]
+    for (const c of cases) {
+      const rows = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ valid: Schema.Boolean })))(
+            yield* sql`SELECT system_conditional_qualification_evidence_valid(${sql.json(f.input.registration)},${sql.json(c.evidence)}) AS valid`,
+          )
+        }),
+      )
+      expect(rows).toEqual([{ valid: c.valid }])
+    }
+  })
+
+  test('conditional migration preserves v5 registration and receipt bytes, then continues the same attempt history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 181))),
+          table: 'schema_migrations',
+        })
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+      }),
+    )
+    const retained = registration(4, JevAcceptanceVersion.RetainedV5)
+    const hash = testHash(retained)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO system_qualification_registrations
+        (registration_hash,program,attempt_index,prior_attempt_hash,registered_at,first_open_at,last_close_at,payload_text)
+        VALUES (${hash},${retained.program},1,${retained.priorAttemptHash},${retained.registeredAt},
+          ${retained.calendar.sessions[0]?.openAt},${retained.calendar.sessions.at(-1)?.closeAt},${Result.getOrThrow(canonicalJsonV1Result(retained))})`
+      }),
+    )
+    const asOf = await runtime.runPromise(databaseNow)
+    const cut = await runtime.runPromise(
+      persistSystemSourceCut({
+        ...emptySourceCutFixture().cut,
+        registrationHash: hash,
+        asOf,
+        runtimeConfigurationHash: retained.obligations.runtimeConfigurationHash,
+      }),
+    )
+    const f = assessmentFixture(retained)
+    f.verifiedSources.add(cut.sourceCutHash)
+    const input = {
+      ...f.input,
+      asOf,
+      sourceCutHash: cut.sourceCutHash,
+      reliability: { ...f.input.reliability, asOf, completions: [] },
+      safety: { ...f.input.safety, asOf },
+    }
+    const original = Result.getOrThrow(
+      evaluateSystemAssessment(input, f.verifiedSources, JevAcceptanceVersion.RetainedV5),
+    )
+    expect(original.missing).toContain('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
+    expect(original.verdict).not.toBe(QualificationVerdict.Qualified)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const { assessmentHash, ...material } = original
+        yield* sql`INSERT INTO system_assessment_receipts
+        (assessment_hash,registration_hash,source_cut_hash,as_of,verdict,input_text,assessment_text)
+        VALUES (${assessmentHash},${hash},${cut.sourceCutHash},${asOf},${original.verdict},
+          ${Result.getOrThrow(canonicalJsonV1Result(input))},${Result.getOrThrow(canonicalJsonV1Result(material))})`
+      }),
+    )
+    const snapshot = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      return {
+        registrations: yield* sql`SELECT * FROM system_qualification_registrations ORDER BY attempt_index`,
+        receipts: yield* sql`SELECT * FROM system_assessment_receipts ORDER BY assessment_hash`,
+        authority: yield* sql`SELECT * FROM authority_generations ORDER BY authority_version`,
+      }
+    })
+    const before = await runtime.runPromise(snapshot)
+    await runtime.runPromise(postgresMigrations)
+    expect(await runtime.runPromise(snapshot)).toEqual(before)
+    expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
+    expect(Exit.isFailure(await runtime.runPromiseExit(registerFixture(retained)))).toBe(true)
+    const next = withRegistrationCommitments({ ...registration(1), attemptIndex: 2, priorAttemptHash: hash })
+    const saved = await runtime.runPromise(registerFixture(next))
+    expect(saved.registration.attemptIndex).toBe(2)
+    expect(saved.registration.priorAttemptHash).toBe(hash)
+    expect(await runtime.runPromise(readPersistedSystemAssessment(original.assessmentHash))).toEqual(original)
+  })
+
   test('current registration permits a selected control, approved PAPER limits and contracted discounts without issuing authority', async () => {
     const base = registration(4)
     const policies = base.policies
@@ -825,16 +964,37 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(rows).toEqual([{ count: 0 }])
   })
 
-  test('direct SQL cannot admit missing, fractional, substituted or underresolved bootstrap plans', async () => {
+  test('direct SQL rejects incomplete, substituted and unordered statistical support without accepting a bootstrap substitute', async () => {
     const input = registration(4)
-    if (input.schemaVersion !== 'bayn.system-registration.v3') throw new Error('Expected current registration')
+    if (input.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
     for (const changes of [
-      { bootstrap: null },
-      { bootstrap: { ...input.bootstrap, blockLengthSessions: 1.5 } },
-      { bootstrap: { ...input.bootstrap, blockLengthSessions: 5 } },
-      { bootstrap: { ...input.bootstrap, seed: 0 } },
-      { bootstrap: { ...input.bootstrap, replicates: 159 } },
-      { bootstrap: { ...input.bootstrap, replicates: null } },
+      { statisticalPlan: null },
+      { statisticalPlan: { ...input.statisticalPlan, supports: [] } },
+      {
+        statisticalPlan: {
+          ...input.statisticalPlan,
+          supports: input.statisticalPlan.supports.map((row) => ({ ...row, lowerMicros: '2', upperMicros: '1' })),
+        },
+      },
+      {
+        statisticalPlan: {
+          ...input.statisticalPlan,
+          supports: input.statisticalPlan.supports.map((row) => ({ ...row, lowerMicros: '1.5' })),
+        },
+      },
+      {
+        statisticalPlan: {
+          ...input.statisticalPlan,
+          supports: input.statisticalPlan.supports.map((row) => ({ ...row, sourceHash: null })),
+        },
+      },
+      {
+        statisticalPlan: {
+          ...input.statisticalPlan,
+          supports: input.statisticalPlan.supports.map(() => input.statisticalPlan.supports[0]),
+        },
+      },
+      { bootstrap: { blockLengthSessions: 1, replicates: 1, seed: 1 } },
       { policyHash: testHash('retired policy') },
       { allocationMicros: '100000000001' },
     ]) {
@@ -855,16 +1015,15 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(asApplication(registerFixture(input)))).registration.attemptIndex).toBe(1)
   })
 
-  test('prospective attempt order continues beyond twelve with adequate registered bootstrap work', async () => {
+  test('prospective attempt order continues beyond twelve without a bootstrap work quota', async () => {
     const base = registration(4)
-    if (base.schemaVersion !== 'bayn.system-registration.v3') throw new Error('Expected current registration')
+    if (base.schemaVersion !== 'bayn.system-registration.v4') throw new Error('Expected current registration')
     let priorAttemptHash = base.priorAttemptHash
     for (let attemptIndex = 1; attemptIndex <= 13; attemptIndex += 1) {
       const proposal = withRegistrationCommitments({
         ...base,
         attemptIndex,
         priorAttemptHash,
-        bootstrap: { ...base.bootstrap, replicates: Math.max(10000, 80 * attemptIndex * (attemptIndex + 1)) },
       })
       const saved = await runtime.runPromise(asApplication(registerFixture(proposal)))
       expect(saved.registration.attemptIndex).toBe(attemptIndex)
@@ -936,13 +1095,13 @@ postgres('PostgreSQL prospective system qualification', () => {
     const first = registration()
     const candidates = [
       first,
-      {
+      withRegistrationCommitments({
         ...first,
         policies: first.policies.map((policy) => ({
           ...policy,
           promptsHash: policy.policy === 'JEV' ? sha256('different candidate prompt') : policy.promptsHash,
         })),
-      },
+      }),
     ]
     for (const candidate of candidates) expect(Result.isSuccess(validateSystemRegistration(candidate))).toBe(true)
     const exits = await Promise.all(
@@ -954,7 +1113,12 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('cost allocation artifacts are required before admission and stored weights cannot be replaced', async () => {
     const first = registration()
-    const sources = new Set(first.costAllocationPlans.map((plan) => plan.basisSourceHash))
+    const sources = new Set([
+      ...first.costAllocationPlans.map((plan) => plan.basisSourceHash),
+      ...(first.schemaVersion === 'bayn.system-registration.v4'
+        ? first.statisticalPlan.supports.map((row) => row.sourceHash)
+        : []),
+    ])
     const plan = first.costAllocationPlans[0]
     if (plan === undefined) throw new Error('Missing cost plan')
     sources.delete(plan.basisSourceHash)
@@ -1139,18 +1303,20 @@ postgres('PostgreSQL prospective system qualification', () => {
     }
     expect(
       Result.isSuccess(
-        validateSystemRegistration({
-          ...input,
-          policies: input.policies.map((policy) => ({
-            ...policy,
-            inferenceRateCard: {
-              ...inferenceRateCard,
-              rates: inferenceRateCard.rates.map((rate) =>
-                rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '42000' } : rate,
-              ),
-            },
-          })),
-        }),
+        validateSystemRegistration(
+          withRegistrationCommitments({
+            ...input,
+            policies: input.policies.map((policy) => ({
+              ...policy,
+              inferenceRateCard: {
+                ...inferenceRateCard,
+                rates: inferenceRateCard.rates.map((rate) =>
+                  rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '42000' } : rate,
+                ),
+              },
+            })),
+          }),
+        ),
       ),
     ).toBe(true)
     expect(
