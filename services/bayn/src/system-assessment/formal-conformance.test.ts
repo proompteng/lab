@@ -1,3 +1,4 @@
+import { nativeSafetyCoverage, SafetyCheckStatus } from './operational-safety'
 import { nextIntradayEntryAttemptOrdinal } from '../cycle/runner/calendar-decisions'
 import { reconciliationCompletionSupported } from './obligation-witnesses'
 import { closedEntryWindowTimingSupported } from './decision-work'
@@ -426,6 +427,23 @@ formal('pinned Lean executable conformance', () => {
           side: c.side,
         }),
       })),
+    )
+  })
+
+  test('native safety coverage requires every class and never ignores incomplete evidence', () => {
+    const kinds = Object.values(SafetyViolationKind)
+    const cases = [
+      [],
+      kinds.map((kind) => ({ kind, status: SafetyCheckStatus.Pass })),
+      ...kinds.flatMap((kind) => [
+        kinds.filter((other) => other !== kind).map((kind) => ({ kind, status: SafetyCheckStatus.Pass })),
+        ...Object.values(SafetyCheckStatus).map((status) =>
+          kinds.map((other) => ({ kind: other, status: other === kind ? status : SafetyCheckStatus.Pass })),
+        ),
+      ]),
+    ]
+    expect(model(cases.map((checks) => ({ operation: 'nativeSafetyCoverage', checks })))).toEqual(
+      cases.map(nativeSafetyCoverage),
     )
   })
 
