@@ -58,6 +58,7 @@ export const makeForwardPerformanceReport = (
       authorityGenerationHash === undefined
         ? { kind: ForwardPerformanceScopeKind.Account }
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
+    const candidate = systemAssessment?.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
     const material = {
       schemaVersion: 'bayn.forward-performance-report.v6' as const,
       scope,
@@ -65,9 +66,9 @@ export const makeForwardPerformanceReport = (
       positionEpisodes,
       inferenceExpenses,
       operatingCostCoverage:
-        systemAssessment?.policies
-          .find((p) => p.policy === JevResearchPolicy.Candidate)
-          ?.sessions.every((session) => session.costs?.fullyCosted === true) === true
+        candidate !== undefined &&
+        candidate.sessions.length > 0 &&
+        candidate.sessions.every((session) => session.costs?.fullyCosted === true)
           ? ('COMPLETE' as const)
           : ('INCOMPLETE' as const),
       operatingCostScope:
