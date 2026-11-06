@@ -17,6 +17,7 @@ import {
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { WriterFence } from '../execution/writer-fence'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { withPassMarketCalendarRead } from '../broker/alpaca/calendar-cache'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { recover as recoverMutation } from '../execution/coordinator'
 import { BrokerAccess } from '../execution/authority'
@@ -1368,4 +1369,4 @@ export const runRecoveryFirstCyclePass = (
       completedProgress.add(continuation.progress)
       cycle = continuation.cycle
     }
-  })
+  }).pipe(withPassMarketCalendarRead)
