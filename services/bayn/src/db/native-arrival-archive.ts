@@ -98,15 +98,9 @@ export const nativeArrivalArchiveMigrations = Effect.gen(function* () {
   Effect.asVoid,
 )
 
-export const NativeArrivalArchiveLive = (config: ArchiveConfig) =>
-  Layer.unwrap(
-    Effect.fromResult(nativeArrivalArchiveConfig(config)).pipe(
-      Effect.map((archive) =>
-        Layer.effectDiscard(withMigrationDeadline(nativeArrivalArchiveMigrations, migrationTimeoutMs)).pipe(
-          Layer.provideMerge(
-            PostgresClientLive(archive, { maxConnections: 1, applicationName: 'bayn-native-arrival' }),
-          ),
-        ),
-      ),
-    ),
+export const NativeArrivalArchiveLive = (
+  archive: Result.Result.Success<ReturnType<typeof nativeArrivalArchiveConfig>>,
+) =>
+  Layer.effectDiscard(withMigrationDeadline(nativeArrivalArchiveMigrations, migrationTimeoutMs)).pipe(
+    Layer.provideMerge(PostgresClientLive(archive, { maxConnections: 1, applicationName: 'bayn-native-arrival' })),
   )

@@ -21,7 +21,7 @@ import {
   type MessagesStream,
   type Offsets,
 } from '@platformatic/kafka'
-import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
+import { Cause, Clock, Context, Data, Duration, Effect, Redacted, Result, Schedule, Stream } from 'effect'
 import { makeKafkaArrivalEnvelope } from './arrival-envelope'
 import type { NativeArrivalCaptureFactory } from './native-arrival-journal'
 import {
@@ -850,9 +850,3 @@ export const makeKafkaMarketProjection = (
       })),
     }
   })
-export const KafkaMarketProjectionLive = (
-  config: KafkaMarketConfig,
-  universe: MarketSources,
-  captureFactory: NativeArrivalCaptureFactory,
-) =>
-  Layer.effect(KafkaMarketProjection, makeKafkaMarketProjection(config, universe, undefined, undefined, captureFactory))
