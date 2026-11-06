@@ -14,6 +14,7 @@ import {
 } from '../market-data/streaming/native-arrival'
 import type { NativeArrivalStore } from '../market-data/streaming/native-arrival-journal'
 import { Sha256Schema, strictParseOptions } from '../schemas'
+import { withObservedStage } from '../telemetry'
 
 const PersistedChunk = Schema.Struct({
   content_hash: Sha256Schema,
@@ -129,6 +130,7 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
         while: retryableAppendFailure,
       }),
       Effect.mapError(error),
+      withObservedStage('bayn.native-arrival.append', { dependency: 'postgresql', slowAfterMs: 1_000 }),
     ),
   end: (end) =>
     sql
