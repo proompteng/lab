@@ -123,6 +123,11 @@ its enclosing writer transaction and deadline. Every session's frozen inference 
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
 
+Opening-capital, cash-yield and durable-execution reads reuse the first cycle already captured for the report's
+account, authority generation and terminal-state scope. Each rereads its timestamp by primary key inside the same
+snapshot, preserving PostgreSQL microsecond precision and the original timestamp/identifier ordering. Cycle,
+decision, accounting and ledger verification retain their existing checks.
+
 Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
 authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
 fees include recorded fill fees and posted broker fee effects; unposted charges and operating expenses remain outside
