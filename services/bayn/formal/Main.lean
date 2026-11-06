@@ -934,6 +934,14 @@ def evaluate (json : Json) : Except String Json := do
     let scheduled ← readNatural json "scheduled"
     return toJson (if scheduled = 0 ∨ good > scheduled then "UNDETERMINED"
       else if reliabilityPass good scheduled then "MEETS_TARGET" else "MISSES_TARGET")
+  | "marketHandoffReadiness" =>
+    let deadline ← readOptionalField json "deadline" (fun value => do
+      let text ← value.getStr?
+      match text.toInt? with
+      | some n => return n
+      | none => throw "deadline must be an integer string or null")
+    return toJson (marketHandoffReadiness (← json.getObjValAs? Bool "ready")
+      (← json.getObjValAs? Bool "failed") deadline (← readInteger json "now"))
   | "currentTradingScope" =>
     let market ← json.getObjValAs? String "market"
     let sell ← json.getObjValAs? Bool "sell"

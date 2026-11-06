@@ -32,6 +32,7 @@ test('reuses an exact captured cut without reconstructing it again and still rej
                 status: Effect.succeed({
                   epoch: 'fixture-epoch',
                   ready: true,
+                  bootstrapDeadlineAtMs: null,
                   sequence: fixture.cut.projection.sequence,
                 }),
               }),
