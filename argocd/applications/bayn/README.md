@@ -584,7 +584,12 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
 The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
-validates the target against the latest worker before reading durable controller state. Before an OBSERVE successor
+validates the target against the latest worker before reading durable controller state. Each current replica must
+first pass its HTTP/2 `/startup-ready` probe after completing its original Kafka history rebuild. TCP liveness stays
+independent. Startup readiness latches after the first successful rebuild, preserving the endpoint for broker
+observations and liquidation during later source recovery. Entry reads retain their current-history checks.
+The shared `prepareActivation` handler waits for current history without blocking predecessor ticks, using the
+consumer's original bootstrap deadline. It then performs the existing authority preflight. Before an OBSERVE successor
 can retire its predecessor, a bounded read-only preflight rejects untransitioned PAPER authority and unrelated holds.
 Absent or existing OBSERVE authority and recognized restricted-generation recovery remain admissible; the existing
 native settlement, reconciliation, identity and capital checks still apply afterward. The preflight does not rotate
