@@ -17,6 +17,14 @@ rejections, and conformance failures return a nonzero exit code. The command bui
 `BAYN_FORMAL_EXECUTABLE` itself, so a missing environment variable cannot skip conformance. Ordinary `bun test` skips
 this suite without that variable and is not a substitute for `verify:formal`.
 
+Formal TypeScript tests and the TLC runner live under `formal/`, outside the service's ordinary `src` and `tools`
+test discovery. The database tests share a small `src/system-assessment/formal-model.test-support.ts` process adapter;
+it runs only when formal CI supplies the built executable. The image source still excludes `formal/`. Run `bun run --filter @proompteng/bayn test` for service tests. Formal-only PRs run the formal jobs;
+service, migration and relevant dependency changes also run them. Deployment/config-only PRs retain their service
+checks without rebuilding the proof environment. Exact-revision runtime publication still requires both Lean and TLC.
+Changes confined to `formal/` do not publish an image or reactivate the controller. PostgreSQL's normal matrix owns
+its full suites; the formal job selects the tests that actually exercise the Lean/database boundary.
+
 The TLA+ command also runs on macOS with Java 21 and curl. It checks safety and conditional liveness with pinned,
 checksum-verified TLC, verifies deliberate faults are detected, and compares every checked state with production
 TypeScript. Both commands are mandatory in formal CI and before exact-revision image publication. Neither checker
@@ -61,15 +69,25 @@ Assessment and replay use the nonempty calendar chosen before the first open. Th
 quota. `Bootstrap.lean` and `Qualification.lean` retain earlier numerical and qualification semantics for immutable
 history, including the negative-expectancy counterexample that disproves a bootstrap coverage claim.
 
-`ConditionalConfidence.lean` maps to `conditional-confidence.ts` and `economic-qualification.ts`. It proves outward
-integer square-root and logarithm rounding, zero-width behavior, current qualification's economic and operational
-requirements, zero safety error budget and a reachable one-session case. Current conformance uses exact lower-bound
-numerators, with no bootstrap work budget. Empty required operational classes remain undetermined; complete empty
-recovery coverage is inapplicable.
+`ConditionalConfidence.lean` independently validates registered supports, distinct policy identities, the complete
+matched session calendar, observed support membership and the attempt index before calculating candidate and paired
+bounds. Its economic evaluator computes profit and drawdown from reconciled session facts rather than receiving
+TypeScript's calculated bounds or final gate booleans. The former precomputed-qualification adapter and its tautological
+conjunction theorem are removed. Conformance feeds the same session facts to each implementation, including omitted
+sessions, substituted dates, inconsistent marks and unsupported returns. Financial source capture, settlement and cost
+normalization remain separate boundaries with their own tests; this is not a whole-service refinement proof.
+
+`Reliability.lean` now joins original scheduled obligations to completion witnesses and independently derives every
+class denominator, timely success, pending item and missed obligation. Conformance covers duplicate/orphan receipts,
+late and absent work, the 390/999/1000-event error-budget boundaries and both retained and current empty-recovery rules.
+`OperationalSafety.lean` also checks original admission and transmission times. Its conformance cases run the full
+native TypeScript auditor on modified admission receipts, checking kill state, generation identity and deadline failures;
+they do not supply previously computed PASS flags to Lean. Provider authenticity and complete source capture remain
+explicit evidence assumptions, checked against actual runtime records during the registered session assessment.
 
 `BaynProbability.lean` is a separate default proof-library target, outside `bayn-model` and the trading runtime. It uses
 the pinned Mathlib conditional sub-Gaussian theorem to prove the tail bound, connects the rounded radius to registered
-alpha, proves paired support without independence and telescopes the familywise allocation across attempts. The
+alpha using `executable_radius_covers_registered_expected_profit` with the actual integer radius, proves paired support without independence and telescopes the familywise allocation across attempts. The
 causal filtration, deterministic conditional session means, MGF/support and provider authenticity are explicit assessment assumptions. No theorem
 infers those market assumptions from the observed data or establishes future returns. `lake check` checks all default
 targets, including this proof library, through the existing pinned independent checkers.

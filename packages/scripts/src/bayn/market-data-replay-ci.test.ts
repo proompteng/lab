@@ -32,6 +32,7 @@ const successful = {
   BAYN_RELEVANT: 'true',
   IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
+  FORMAL_RELEVANT: 'true',
   FORMAL_RESULT: 'success',
   GEPA_RESULT: 'success',
   UNIT_RESULT: 'success',
@@ -185,4 +186,14 @@ test('irrelevant changes retain the existing skip policy but detection and requi
   expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)
   expect((await run({ BAYN_RELEVANT: 'false', CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
   expect((await run({ IMAGE_RELEVANT: 'true', IMAGE_RESULT: 'failure' })).exit).not.toBe(0)
+})
+
+test('formal-only changes require a successful proof result independently of service jobs', async () => {
+  expect((await run({ BAYN_RELEVANT: 'false', FORMAL_RESULT: 'success' })).exit).toBe(0)
+  for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
+    const result = await run({ BAYN_RELEVANT: 'false', FORMAL_RESULT: outcome })
+    expect(result.exit).not.toBe(0)
+    expect(result.stderr).toContain('FORMAL_RESULT must be success')
+  }
+  expect((await run({ FORMAL_RELEVANT: 'false', FORMAL_RESULT: 'skipped' })).exit).toBe(0)
 })

@@ -112,4 +112,79 @@ example : closedEntryWindowTimingSupported 0 0 4 5 6 7 8 false = true ∧
 example : operationalAssessmentVerdict "MEETS_TARGET" 0 true 0 = "OPERATIONALLY_RELIABLE_PAPER" ∧
     operationalAssessmentVerdict "UNDETERMINED" 0 true 0 = "INCONCLUSIVE" := by decide
 
+
+structure ScheduledWork where
+  id : String
+  kind : String
+  due : Int
+  deadline : Int
+  deriving Repr
+
+structure CompletedWork where
+  id : String
+  completedAt : Int
+  correct : Bool
+  deriving Repr
+
+def reliabilityKinds : List String := ["DECISION", "RECONCILIATION", "MUTATION", "RECOVERY"]
+
+def workGood (work : ScheduledWork) (completions : List CompletedWork) : Bool :=
+  match completions.find? (fun completion => completion.id == work.id) with
+  | none => false
+  | some completion => completion.correct && decide (work.due ≤ completion.completedAt ∧ completion.completedAt ≤ work.deadline)
+
+def workPending (asOf : Int) (work : ScheduledWork) (completions : List CompletedWork) : Bool :=
+  decide (asOf < work.deadline) && !(completions.any (fun completion => completion.id == work.id))
+
+structure ReliabilityClassResult where
+  kind : String
+  status : String
+  scheduled : Nat
+  good : Nat
+  pending : Nat
+  missed : List String
+  deriving Repr, DecidableEq
+
+def measureWorkClass (asOf : Int) (retained recoveryComplete : Bool)
+    (schedule : List ScheduledWork) (completions : List CompletedWork) (kind : String) : ReliabilityClassResult :=
+  let work := schedule.filter (fun obligation => obligation.kind == kind)
+  let good := (work.filter (fun obligation => workGood obligation completions)).length
+  let pending := (work.filter (fun obligation => workPending asOf obligation completions)).length
+  let missed := (work.filter (fun obligation => !workGood obligation completions &&
+    !workPending asOf obligation completions)).map (·.id)
+  let status := if !retained && recoveryComplete && kind == "RECOVERY" && work.isEmpty then "NOT_APPLICABLE"
+    else if 0 < pending || work.isEmpty then "UNDETERMINED"
+    else if 999 * work.length ≤ 1000 * good then "MEETS_TARGET" else "MISSES_TARGET"
+  ⟨kind, status, work.length, good, pending, missed⟩
+
+def measureWork (asOf : Int) (retained recoveryComplete : Bool)
+    (schedule : List ScheduledWork) (completions : List CompletedWork) : Option (List ReliabilityClassResult) :=
+  if !(schedule.map (·.id)).Nodup || !(completions.map (·.id)).Nodup ||
+      !schedule.all (fun work => reliabilityKinds.contains work.kind && decide (work.due ≤ work.deadline)) ||
+      !completions.all (fun completion => decide (completion.completedAt ≤ asOf) && schedule.any
+        (fun work => completion.id == work.id && decide (work.due ≤ completion.completedAt))) then none
+  else some (reliabilityKinds.map (measureWorkClass asOf retained recoveryComplete schedule completions))
+
+def measuredWorkStatus (classes : List ReliabilityClassResult) : String :=
+  if classes.any (fun result => result.status == "MISSES_TARGET") then "MISSES_TARGET"
+  else if classes.all (fun result => result.status == "MEETS_TARGET" || result.status == "NOT_APPLICABLE")
+    then "MEETS_TARGET" else "UNDETERMINED"
+
+theorem absent_completion_cannot_be_good (work : ScheduledWork) : workGood work [] = false := by
+  simp [workGood]
+
+theorem late_original_completion_cannot_be_good (work : ScheduledWork) (completion : CompletedWork)
+    (same : completion.id = work.id) (late : work.deadline < completion.completedAt) : workGood work [completion] = false := by
+  simp [workGood, same, show ¬completion.completedAt ≤ work.deadline by omega]
+
+theorem counted_successes_cannot_exceed_registered_work (work : List ScheduledWork) (completions : List CompletedWork) :
+    (work.filter (fun obligation => workGood obligation completions)).length ≤ work.length :=
+  List.length_filter_le _ _
+
+example : measureWork 10 false true [⟨"missing", "DECISION", 0, 5⟩] [] =
+    some [⟨"DECISION","MISSES_TARGET",1,0,0,["missing"]⟩,
+      ⟨"RECONCILIATION","UNDETERMINED",0,0,0,[]⟩,
+      ⟨"MUTATION","UNDETERMINED",0,0,0,[]⟩,
+      ⟨"RECOVERY","NOT_APPLICABLE",0,0,0,[]⟩] := by decide
+
 end Bayn
