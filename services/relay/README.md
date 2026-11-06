@@ -135,6 +135,24 @@ For the Google test project `lab-wif-test-20261105`, the intended proof is a cus
 exchange; [Resource Manager calls are free](https://cloud.google.com/resource-manager/pricing).
 Creating a Google project alone does not configure its pool, provider, permission binding or Relay operation.
 
+Operators can run `relay-federation-probe` inside the deployed Relay container to verify the Workload API,
+token exchange and destination permission before enrolling a connector. It reads a Relay configuration from stdin,
+requires exactly one HTTP connector with workload identity authentication and one GET operation accepting `{}`,
+and prints the bounded resource response. It uses the same JWT, token exchange and HTTP implementation as Relay.
+Tokens remain in memory. Errors produce a nonzero exit status without printing credentials.
+
+```sh
+kubectl --context galactic-tailscale -n relay exec -i deployment/relay -c relay -- \
+  /bin/relay-federation-probe < services/relay/examples/google-project.json
+```
+
+This is an operator diagnostic under Kubernetes exec authority, not a Relay API operation. It does not create Ofz
+relationships or expose the probe to application clients. The checked example reads only the test project's metadata.
+Relay permits public IPv4 HTTPS egress for provider endpoints, using the same private-address exclusions as OpenCode.
+Applications still use fixed reviewed HTTPS destinations, verified certificates and no redirects or environment proxies.
+Roll out the reviewed image and network policy through Kargo before probing. Recovery is a Git revert and normal
+promotion; no identity, signing key, datastore or existing connector changes are required.
+
 The connector owns its fixed destination, federation registration, operation paths and Ofz resource/action mappings.
 Callers cannot supply any of these in tool arguments. Federation runs only after the existing Ofz authorization and
 durable execution start. It represents Relay's machine identity; it does not replace per-user OAuth accounts or grant
