@@ -1,10 +1,5 @@
 # Bayn deployment
 
-The append-only native arrival archive has two expandable 500 GiB data volumes. At the November 5 measurement,
-the retained chunks occupied 85 GiB and grew by roughly 41 GiB per day; WAL archiving and the synchronous standby
-were current. Capacity expansion preserves the arrival evidence and replica placement. Verify both filesystem sizes,
-replication and new arrival commits after CNPG resizes them; PVC requests alone do not prove usable capacity.
-
 ## Current trading scope
 
 Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before
@@ -391,8 +386,16 @@ volumes. PostgreSQL's required `ANY 1` synchronous durability replaces the depre
 commits require the other host's durable acknowledgement even when a replica is unavailable. Keep two instances,
 hard host anti-affinity, the 100G placement, `synchronous_commit=on`, fsync and full-page writes. Do not reduce Ceph
 scrubbing, disable synchronous commit or extend application deadlines to hide slow storage.
-The independent native-arrival archive adopts the same required synchronous durability while retaining its existing
-Ceph PGDATA/WAL layout, identities and backup configuration.
+The independent native-arrival archive uses the same separate 32Gi local NVMe WAL layout and required synchronous
+durability. Its Ceph PGDATA volumes, cluster identity and backup configuration remain in place. During the November 6
+investigation, 58 archive client WAL flushes averaged 623 ms over 44 seconds; active sessions waited on `WalSync` and
+`SyncRep`. This is a measured storage bottleneck, independent of decision CPU. Both verified local filesystems had
+more than 200 GiB free before allocating the archive WAL claims. Apply the same rollout and recovery procedure below
+to the archive, after its current backup completes and both peers are caught up. Compare native append spans,
+PostgreSQL WAL timings, synchronous replication and retained archive prefixes after the managed migration.
+The existing archive PGDATA claims expand from 100Gi to 200Gi: they were 88% occupied, with about 12Gi available.
+The Ceph pool reported more than 12TiB available. Expansion preserves retained evidence and is capacity protection;
+it is not evidence of a latency improvement.
 
 Rollout order:
 
@@ -430,10 +433,12 @@ See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime
 
 Bayn sets `monitoring.metricsQueriesTTL: 1s` so the existing five-second metrics scrape obtains fresh catalog
 observations. CNPG otherwise caches query results for thirty seconds, even when the exporter is scraped more often.
-The one-second cache still coalesces closely spaced scrapes; this setting applies only to `bayn-db` and changes no
+The one-second cache still coalesces closely spaced scrapes; both Bayn clusters use it, and it changes no
 database durability or application deadline. Verify the live Cluster field, both exporters' collection errors and
 scrape durations, and changes in the retained replication reply-age or active walsender query-age samples after
 GitOps reconciliation. A five-second scrape timestamp alone does not prove a fresh database observation.
+Both clusters share the catalog I/O, wait, replication and timing queries. They run against each cluster's configured
+application database; the generation-index query remains attached only to the financial database.
 See [CNPG output caching](https://cloudnative-pg.io/docs/1.28/monitoring/#output-caching).
 
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
