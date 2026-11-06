@@ -4,6 +4,7 @@ const files = [
   'src/db/candidate-cutover-diagnostics.integration.test.ts',
   'src/db/candidate-observation-window.integration.test.ts',
   'src/db/current-authority-migration.integration.test.ts',
+  'src/db/effective-entry-observe-cutover.integration.test.ts',
   'src/db/remove-unused-schema.integration.test.ts',
   'src/db/current-jev-cycle-migration.integration.test.ts',
   'src/db/explicit-limit-migration.integration.test.ts',
