@@ -7,8 +7,6 @@ on:
     paths:
       - 'apps/froussard/**'
       - 'packages/agent-contracts/**'
-      - 'packages/codex/**'
-      - 'packages/discord/**'
       - 'packages/otel/**'
       - 'nix/images/froussard.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -67,7 +65,7 @@ jobs:
     if: needs.changes.outputs.changed == 'true'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard --filter @proompteng/codex --filter @proompteng/discord --filter @proompteng/otel && bun run --filter @proompteng/agent-contracts build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard --filter @proompteng/otel && bun run --filter @proompteng/agent-contracts build && bun run --filter @proompteng/otel build
       lint-command: bunx oxfmt --check apps/froussard
       oxlint-command: bun run --cwd apps/froussard lint:oxlint
       oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type
