@@ -8,15 +8,14 @@ export const ImplementationCommandSchema = Schema.Struct({
 
 export type ImplementationCommand = Schema.Schema.Type<typeof ImplementationCommandSchema>
 
-export const ReadyCommentCommandSchema = Schema.Struct({
+export const ReadyApprovalCommandSchema = Schema.Struct({
   repositoryFullName: Schema.String,
   pullNumber: Schema.Number,
-  issueNumber: Schema.Number,
+  headSha: Schema.String,
   body: Schema.String,
-  marker: Schema.String,
 })
 
-export type ReadyCommentCommand = Schema.Schema.Type<typeof ReadyCommentCommandSchema>
+export type ReadyApprovalCommand = Schema.Schema.Type<typeof ReadyApprovalCommandSchema>
 
 export const WorkflowCommandSchema = Schema.Union(
   Schema.Struct({
@@ -24,8 +23,8 @@ export const WorkflowCommandSchema = Schema.Union(
     data: ImplementationCommandSchema,
   }),
   Schema.Struct({
-    type: Schema.Literal('postReadyComment'),
-    data: ReadyCommentCommandSchema,
+    type: Schema.Literal('approveReadyPullRequest'),
+    data: ReadyApprovalCommandSchema,
   }),
 )
 

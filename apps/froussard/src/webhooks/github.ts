@@ -16,7 +16,7 @@ import { GithubService } from '@/services/github/service'
 import type { KafkaProducer } from '@/services/kafka'
 
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
-import { handlePullRequestEvent } from './github/events/pull-request'
+import { handlePullRequestEvent, handleReadinessEvent } from './github/events/pull-request'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
 import type { IdempotencyStore } from './idempotency-store'
 import type { WebhookConfig } from './types'
@@ -463,6 +463,17 @@ export const createGithubWebhookHandler = ({
         }
       }
 
+      await handleReadinessEvent({
+        parsedPayload,
+        headers,
+        config,
+        executionContext,
+        deliveryId,
+        actionValue,
+        senderLogin,
+        eventName,
+      })
+
       if (eventName === 'push') {
         void triggerAtlasEnrichment({
           config: config.atlas,
@@ -510,6 +521,7 @@ export const createGithubWebhookHandler = ({
         },
       )
     } catch (error) {
+      idempotencyStore.release(`github:${deliveryId}`)
       logger.error(
         { err: error, deliveryId, eventName, action: actionValue ?? null, identifiers },
         'failed to enqueue github webhook event',

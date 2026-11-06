@@ -1,4 +1,6 @@
+import type { ApprovePullRequestOptions, ApprovePullRequestResult } from './types'
 import { Effect, Schema } from 'effect'
+import { fetchPullRequest } from './pull-requests'
 
 import {
   DEFAULT_API_BASE_URL,
@@ -13,11 +15,12 @@ import type {
   FetchInit,
   FetchLike,
   FetchResponse,
-  ListCheckFailuresOptions,
-  ListCheckFailuresResult,
+  ListBlockingChecksOptions,
+  ListCommitPullRequestsResult,
+  ListBlockingChecksResult,
   ListReviewThreadsOptions,
   ListReviewThreadsResult,
-  PullRequestCheckFailure,
+  PullRequestBlockingCheck,
   PullRequestReviewThread,
 } from './types'
 
@@ -212,7 +215,7 @@ const mapThreadError = (error: ReviewApiError): ListReviewThreadsResult => {
   }
 }
 
-const mapCheckError = (error: ReviewApiError): ListCheckFailuresResult => {
+const mapCheckError = (error: ReviewApiError): ListBlockingChecksResult => {
   switch (error.type) {
     case 'invalid-repository':
       return { ok: false, reason: 'invalid-repository', detail: error.detail }
@@ -311,122 +314,72 @@ const collectReviewThreads = (
     return accumulator
   })
 
-const recordCheckRunFailures = (runs: unknown[], record: (failure: PullRequestCheckFailure) => void) => {
-  for (const run of runs) {
-    if (!run || typeof run !== 'object') {
-      continue
-    }
-    const name = (run as { name?: unknown }).name
-    const conclusion = (run as { conclusion?: unknown }).conclusion
-    const status = (run as { status?: unknown }).status
+const CheckRunsSchema = Schema.Struct({
+  check_runs: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      status: Schema.String,
+      conclusion: Schema.NullOr(Schema.String),
+      details_url: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+  ),
+})
+const CommitStatusesSchema = Schema.Struct({
+  statuses: Schema.Array(
+    Schema.Struct({
+      context: Schema.String,
+      state: Schema.String,
+      target_url: Schema.optionalWith(Schema.String, { nullable: true }),
+      description: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+  ),
+})
 
-    if (typeof name !== 'string' || typeof status !== 'string') {
-      continue
-    }
-
-    const normalizedConclusion = typeof conclusion === 'string' ? conclusion : undefined
-    const detailsUrlValue = (run as { details_url?: unknown }).details_url
-    const htmlUrlValue = (run as { html_url?: unknown }).html_url
-    const detailsUrl =
-      typeof detailsUrlValue === 'string'
-        ? detailsUrlValue
-        : typeof htmlUrlValue === 'string'
-          ? htmlUrlValue
-          : undefined
-    const outputValue = (run as { output?: unknown }).output
-    let details: string | undefined
-    if (outputValue && typeof outputValue === 'object') {
-      const summary = summarizeText((outputValue as { summary?: unknown }).summary, 240)
-      const title = summarizeText((outputValue as { title?: unknown }).title, 240)
-      details = summary ?? title ?? undefined
-    }
-
-    const failureConclusions = new Set(['failure', 'timed_out', 'action_required', 'cancelled', 'stale'])
-
-    const isFailure =
-      (status === 'completed' && normalizedConclusion && failureConclusions.has(normalizedConclusion)) ||
-      (status === 'completed' && !normalizedConclusion) ||
-      (status !== 'completed' && failureConclusions.has(normalizedConclusion ?? ''))
-
-    if (isFailure) {
-      record({
-        name,
-        conclusion: normalizedConclusion ?? status,
-        url: detailsUrl,
-        details,
-      })
-    }
-  }
-}
-
-const collectCheckFailures = (
+const collectBlockingChecks = (
   fetchFn: FetchLike,
   checkRunsUrl: string,
   commitStatusUrl: string,
   headers: Record<string, string>,
-): Effect.Effect<PullRequestCheckFailure[], ReviewApiError> =>
-  Effect.gen(function* (_) {
-    const failureMap = new Map<string, PullRequestCheckFailure>()
-    const recordFailure = (failure: PullRequestCheckFailure) => {
-      failureMap.set(failure.name, failure)
-    }
-
-    const fetchCheckRunsPage = (page: number): Effect.Effect<boolean, ReviewApiError> =>
-      requestJson(fetchFn, `${checkRunsUrl}${page}`, { method: 'GET', headers }).pipe(
-        Effect.map((parsed) =>
-          Array.isArray((parsed as { check_runs?: unknown }).check_runs)
-            ? ((parsed as { check_runs: unknown[] }).check_runs as unknown[])
-            : [],
-        ),
-        Effect.map((runs) => {
-          recordCheckRunFailures(runs, recordFailure)
-          return runs.length === 100
-        }),
+): Effect.Effect<PullRequestBlockingCheck[], ReviewApiError> =>
+  Effect.gen(function* () {
+    const blocked: PullRequestBlockingCheck[] = []
+    let observed = 0
+    for (let page = 1; ; page++) {
+      const { check_runs: runs } = yield* requestJson(fetchFn, `${checkRunsUrl}${page}`, { headers }).pipe(
+        Effect.flatMap((value) => Schema.decodeUnknown(CheckRunsSchema)(value).pipe(Effect.mapError(toInvalidJson))),
       )
-
-    let page = 1
-    while (true) {
-      const hasMore = yield* fetchCheckRunsPage(page)
-      if (!hasMore) {
-        break
+      observed += runs.length
+      for (const run of runs) {
+        if (run.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(run.conclusion ?? '')) {
+          blocked.push({ name: run.name, conclusion: run.conclusion ?? run.status, url: run.details_url })
+        }
       }
-      page += 1
+      if (runs.length < 100) break
     }
-
-    const statusesResponse = yield* requestJson(fetchFn, commitStatusUrl, { method: 'GET', headers }).pipe(
-      Effect.map((parsed) =>
-        Array.isArray((parsed as { statuses?: unknown }).statuses)
-          ? ((parsed as { statuses: unknown[] }).statuses as unknown[])
-          : [],
-      ),
-    )
-
-    const failureStates = new Set(['failure', 'error'])
-    for (const statusEntry of statusesResponse) {
-      if (!statusEntry || typeof statusEntry !== 'object') {
-        continue
+    for (let page = 1; ; page++) {
+      const { statuses } = yield* requestJson(fetchFn, `${commitStatusUrl}?per_page=100&page=${page}`, {
+        headers,
+      }).pipe(
+        Effect.flatMap((value) =>
+          Schema.decodeUnknown(CommitStatusesSchema)(value).pipe(Effect.mapError(toInvalidJson)),
+        ),
+      )
+      observed += statuses.length
+      for (const status of statuses) {
+        if (status.state !== 'success') {
+          blocked.push({
+            name: status.context,
+            conclusion: status.state,
+            url: status.target_url,
+            details: summarizeText(status.description, 240) ?? undefined,
+          })
+        }
       }
-      const state = (statusEntry as { state?: unknown }).state
-      const context = (statusEntry as { context?: unknown }).context
-      if (typeof state !== 'string' || typeof context !== 'string') {
-        continue
-      }
-      if (!failureStates.has(state)) {
-        continue
-      }
-
-      const targetUrlValue = (statusEntry as { target_url?: unknown }).target_url
-      const descriptionValue = (statusEntry as { description?: unknown }).description
-
-      recordFailure({
-        name: context,
-        conclusion: state,
-        url: typeof targetUrlValue === 'string' ? targetUrlValue : undefined,
-        details: summarizeText(descriptionValue, 240) ?? undefined,
-      })
+      if (statuses.length < 100) break
     }
-
-    return Array.from(failureMap.values())
+    if (observed === 0)
+      blocked.push({ name: 'CI', conclusion: 'pending', details: 'No checks have been reported for this commit' })
+    return blocked
   })
 
 export const listPullRequestReviewThreads = (
@@ -463,9 +416,9 @@ export const listPullRequestReviewThreads = (
   )
 }
 
-export const listPullRequestCheckFailures = (
-  options: ListCheckFailuresOptions,
-): Effect.Effect<ListCheckFailuresResult> => {
+export const listPullRequestBlockingChecks = (
+  options: ListBlockingChecksOptions,
+): Effect.Effect<ListBlockingChecksResult> => {
   const {
     repositoryFullName,
     headSha,
@@ -488,13 +441,254 @@ export const listPullRequestCheckFailures = (
       ...(token && token.trim().length > 0 ? { Authorization: `Bearer ${token}` } : {}),
     }
 
-    const checkRunsUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/commits/${headSha}/check-runs?per_page=100&page=`
+    const checkRunsUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/commits/${headSha}/check-runs?filter=latest&per_page=100&page=`
     const commitStatusUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/commits/${headSha}/status`
 
-    const failures = yield* collectCheckFailures(fetchFn, checkRunsUrl, commitStatusUrl, headers)
+    const failures = yield* collectBlockingChecks(fetchFn, checkRunsUrl, commitStatusUrl, headers)
     return failures
   }).pipe(
     Effect.map((checks) => ({ ok: true as const, checks })),
     Effect.catchAll((error) => Effect.succeed(mapCheckError(error))),
   )
 }
+
+const AutomationReviewSchema = Schema.Struct({
+  id: Schema.Number,
+  user: Schema.Struct({ login: Schema.String }),
+  state: Schema.String,
+  commit_id: Schema.String,
+  body: Schema.NullOr(Schema.String),
+  html_url: Schema.String,
+})
+const AutomationCommentSchema = Schema.Struct({
+  user: Schema.Struct({ login: Schema.String }),
+  body: Schema.String,
+})
+const CodexReviewStateSchema = Schema.Struct({
+  code_review: Schema.Struct({
+    commit_sha: Schema.String,
+    status: Schema.String,
+    has_unresolved_findings: Schema.NullOr(Schema.Boolean),
+  }),
+})
+type ApprovalError =
+  | ReviewApiError
+  | {
+      type: 'missing-token' | 'identity-mismatch' | 'not-ready' | 'head-changed' | 'pending-review'
+      detail: string
+    }
+
+/** A submitted review is the durable receipt for this actor and checked commit. */
+export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.Effect<ApprovePullRequestResult> =>
+  Effect.gen(function* () {
+    if (!options.token?.trim())
+      return yield* Effect.fail<ApprovalError>({
+        type: 'missing-token',
+        detail: 'Approval requires the tuslagch token',
+      })
+    const { owner, repo } = yield* parseRepository(options.repositoryFullName)
+    const fetchFn = yield* ensureFetch(options.fetchImplementation ?? globalFetch)
+    const base = trimTrailingSlash(options.apiBaseUrl ?? DEFAULT_API_BASE_URL)
+    const headers = {
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': options.userAgent ?? DEFAULT_USER_AGENT,
+      Authorization: `Bearer ${options.token}`,
+    }
+    const identity = yield* requestJson(fetchFn, `${base}/user`, { headers }).pipe(
+      Effect.flatMap((value) =>
+        Schema.decodeUnknown(Schema.Struct({ login: Schema.String }))(value).pipe(Effect.mapError(toInvalidJson)),
+      ),
+    )
+    if (identity.login.toLowerCase() !== 'tuslagch')
+      return yield* Effect.fail<ApprovalError>({
+        type: 'identity-mismatch',
+        detail: 'Froussard approval requires the tuslagch identity',
+      })
+    const pull = yield* fetchPullRequest({ ...options, fetchImplementation: fetchFn })
+    if (
+      !pull.ok ||
+      pull.pullRequest.state !== 'open' ||
+      pull.pullRequest.merged ||
+      pull.pullRequest.draft ||
+      pull.pullRequest.authorLogin?.toLowerCase() === 'tuslagch'
+    )
+      return yield* Effect.fail<ApprovalError>({
+        type: 'not-ready',
+        detail: 'Pull request is unavailable, closed, a draft, or owned by tuslagch',
+      })
+    if (pull.pullRequest.headSha !== options.headSha)
+      return yield* Effect.fail<ApprovalError>({
+        type: 'head-changed',
+        detail: 'Pull request head changed after readiness checks',
+      })
+    const prefix = `${base}/repos/${owner}/${repo}`
+    let verifiedReview = false
+    for (let page = 1; ; page++) {
+      const comments = yield* requestJson(
+        fetchFn,
+        `${prefix}/issues/${options.pullNumber}/comments?per_page=100&page=${page}`,
+        { headers },
+      ).pipe(
+        Effect.flatMap((value) =>
+          Schema.decodeUnknown(Schema.Array(AutomationCommentSchema))(value).pipe(Effect.mapError(toInvalidJson)),
+        ),
+      )
+      for (const comment of comments) {
+        if (comment.user.login !== 'chatgpt-codex-connector[bot]') continue
+        const state = /<!-- codex-review-state:v1 ([\s\S]*?) -->/.exec(comment.body)?.[1]
+        if (state === undefined) continue
+        const decoded = yield* Schema.decodeUnknown(Schema.parseJson(CodexReviewStateSchema))(state).pipe(
+          Effect.mapError(toInvalidJson),
+        )
+        verifiedReview =
+          decoded.code_review.commit_sha === options.headSha &&
+          decoded.code_review.status === 'completed' &&
+          decoded.code_review.has_unresolved_findings === false
+      }
+      if (comments.length < 100) break
+    }
+    if (!verifiedReview)
+      return yield* Effect.fail<ApprovalError>({
+        type: 'not-ready',
+        detail: 'Current commit has no completed Codex review without unresolved findings',
+      })
+
+    const reviewsUrl = `${prefix}/pulls/${options.pullNumber}/reviews`
+    const readReviews = Effect.gen(function* () {
+      const reviews: Array<typeof AutomationReviewSchema.Type> = []
+      for (let page = 1; ; page++) {
+        const rows = yield* requestJson(fetchFn, `${reviewsUrl}?per_page=100&page=${page}`, { headers }).pipe(
+          Effect.flatMap((value) =>
+            Schema.decodeUnknown(Schema.Array(AutomationReviewSchema))(value).pipe(Effect.mapError(toInvalidJson)),
+          ),
+        )
+        reviews.push(...rows.filter((review) => review.user.login.toLowerCase() === 'tuslagch'))
+        if (rows.length < 100) return reviews
+      }
+    })
+    const approved = (reviews: readonly (typeof AutomationReviewSchema.Type)[]) => {
+      const latest = reviews.findLast((review) => ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state))
+      return latest?.state === 'APPROVED' && latest.commit_id === options.headSha ? latest : undefined
+    }
+    let reviews = yield* readReviews
+    const existing = approved(reviews)
+    if (existing !== undefined) return { ok: true as const, reviewUrl: existing.html_url }
+    let pending = reviews.find((review) => review.state === 'PENDING')
+    if (pending && pending.commit_id !== options.headSha && pending.body === options.body) {
+      // Only discard this automation's obsolete draft, never another review's work.
+      yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}`, { method: 'DELETE', headers })
+      pending = undefined
+    }
+    if (pending === undefined) {
+      // GitHub permits one pending review per actor/PR, arbitrating concurrent deliveries.
+      const created = yield* requestJson(fetchFn, reviewsUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ commit_id: options.headSha, body: options.body }),
+      }).pipe(Effect.either)
+      if (created._tag === 'Right') {
+        pending = yield* Schema.decodeUnknown(AutomationReviewSchema)(created.right).pipe(
+          Effect.mapError(toInvalidJson),
+        )
+      } else {
+        reviews = yield* readReviews
+        const reconciled = approved(reviews)
+        if (reconciled !== undefined) return { ok: true as const, reviewUrl: reconciled.html_url }
+        pending = reviews.find((review) => review.state === 'PENDING')
+        if (pending === undefined) return yield* Effect.fail(created.left)
+      }
+    }
+    if (pending.commit_id !== options.headSha || pending.body !== options.body)
+      return yield* Effect.fail<ApprovalError>({
+        type: 'pending-review',
+        detail: 'An unrelated pending review must not be submitted by readiness automation',
+      })
+    const reconciled = approved(yield* readReviews)
+    if (reconciled !== undefined) {
+      yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}`, { method: 'DELETE', headers }).pipe(Effect.ignore)
+      return { ok: true as const, reviewUrl: reconciled.html_url }
+    }
+    const latestPull = yield* fetchPullRequest({ ...options, fetchImplementation: fetchFn })
+    if (
+      !latestPull.ok ||
+      latestPull.pullRequest.headSha !== options.headSha ||
+      latestPull.pullRequest.state !== 'open' ||
+      latestPull.pullRequest.draft
+    ) {
+      yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}`, { method: 'DELETE', headers })
+      return yield* Effect.fail<ApprovalError>({
+        type: 'head-changed',
+        detail: 'Pull request changed before approval submission',
+      })
+    }
+    const submitted = yield* requestJson(fetchFn, `${reviewsUrl}/${pending.id}/events`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ event: 'APPROVE', body: options.body }),
+    }).pipe(Effect.either)
+    if (submitted._tag === 'Left') {
+      const reconciled = approved(yield* readReviews)
+      if (reconciled !== undefined) return { ok: true as const, reviewUrl: reconciled.html_url }
+      return yield* Effect.fail(submitted.left)
+    }
+    const review = yield* Schema.decodeUnknown(AutomationReviewSchema)(submitted.right).pipe(
+      Effect.mapError(toInvalidJson),
+    )
+    if (
+      review.state !== 'APPROVED' ||
+      review.commit_id !== options.headSha ||
+      review.user.login.toLowerCase() !== 'tuslagch'
+    )
+      return yield* Effect.fail<ApprovalError>({
+        type: 'not-ready',
+        detail: 'GitHub did not return the requested approval identity and commit',
+      })
+    return { ok: true as const, reviewUrl: review.html_url }
+  }).pipe(
+    Effect.catchAll(
+      (error): Effect.Effect<ApprovePullRequestResult> =>
+        Effect.succeed({
+          ok: false,
+          reason: error.type,
+          ...('status' in error ? { status: error.status } : {}),
+          ...('detail' in error ? { detail: error.detail } : {}),
+        }),
+    ),
+  )
+
+export const listCommitPullRequests = (
+  options: ListBlockingChecksOptions,
+): Effect.Effect<ListCommitPullRequestsResult> =>
+  Effect.gen(function* () {
+    const { owner, repo } = yield* parseRepository(options.repositoryFullName)
+    const fetchFn = yield* ensureFetch(options.fetchImplementation ?? globalFetch)
+    const pullNumbers: number[] = []
+    const schema = Schema.Array(Schema.Struct({ number: Schema.Number, state: Schema.String }))
+    for (let page = 1; ; page++) {
+      const pulls = yield* requestJson(
+        fetchFn,
+        `${trimTrailingSlash(options.apiBaseUrl ?? DEFAULT_API_BASE_URL)}/repos/${owner}/${repo}/commits/${options.headSha}/pulls?per_page=100&page=${page}`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': options.userAgent ?? DEFAULT_USER_AGENT,
+            ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+          },
+        },
+      ).pipe(Effect.flatMap((value) => Schema.decodeUnknown(schema)(value).pipe(Effect.mapError(toInvalidJson))))
+      pullNumbers.push(...pulls.filter((pull) => pull.state === 'open').map((pull) => pull.number))
+      if (pulls.length < 100) break
+    }
+    return { ok: true as const, pullNumbers }
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.succeed({
+        ok: false as const,
+        reason: error.type,
+        ...('status' in error ? { status: error.status } : {}),
+        ...('detail' in error ? { detail: error.detail } : {}),
+      }),
+    ),
+  )

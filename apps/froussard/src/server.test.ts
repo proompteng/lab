@@ -124,12 +124,12 @@ vi.mock('@/services/github/service', () => {
       postIssueReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       postIssueCommentReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       issueHasReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
-      findLatestPlanComment: (options: unknown) => ReturnType<typeof Effect.succeed>
       fetchPullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       markPullRequestReadyForReview: (options: unknown) => ReturnType<typeof Effect.succeed>
-      createPullRequestComment: (options: unknown) => ReturnType<typeof Effect.succeed>
+      listCommitPullRequests: (options: unknown) => ReturnType<typeof Effect.succeed>
+      approvePullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestReviewThreads: (options: unknown) => ReturnType<typeof Effect.succeed>
-      listPullRequestCheckFailures: (options: unknown) => ReturnType<typeof Effect.succeed>
+      listPullRequestBlockingChecks: (options: unknown) => ReturnType<typeof Effect.succeed>
     }
   >() {}
 
@@ -137,12 +137,12 @@ vi.mock('@/services/github/service', () => {
     postIssueReaction: () => Effect.succeed({ ok: true }),
     postIssueCommentReaction: () => Effect.succeed({ ok: true }),
     issueHasReaction: () => Effect.succeed({ ok: true, hasReaction: true }),
-    findLatestPlanComment: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     fetchPullRequest: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     markPullRequestReadyForReview: () => Effect.succeed({ ok: true }),
-    createPullRequestComment: () => Effect.succeed({ ok: true }),
+    listCommitPullRequests: () => Effect.succeed({ ok: true, pullNumbers: [] }),
+    approvePullRequest: () => Effect.succeed({ ok: true }),
     listPullRequestReviewThreads: () => Effect.succeed({ ok: true, threads: [] }),
-    listPullRequestCheckFailures: () => Effect.succeed({ ok: true, checks: [] }),
+    listPullRequestBlockingChecks: () => Effect.succeed({ ok: true, checks: [] }),
   })
 
   return {

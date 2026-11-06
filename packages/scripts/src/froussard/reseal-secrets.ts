@@ -128,7 +128,9 @@ export const main = async () => {
 
   const githubWebhookSecretPath =
     process.env.FROUSSARD_GITHUB_WEBHOOK_SECRET_OP_PATH ?? 'op://infra/github/webhook-secret'
-  const githubTokenPath = process.env.FROUSSARD_GITHUB_TOKEN_OP_PATH ?? 'op://infra/github/personal-access-token'
+  const githubTokenPath = process.env.FROUSSARD_GITHUB_TOKEN_OP_PATH ?? 'op://infra/tuslagch-github/token'
+  const workflowGithubTokenPath =
+    process.env.ARGO_WORKFLOWS_GITHUB_TOKEN_OP_PATH ?? 'op://infra/github/personal-access-token'
 
   const discordPublicKeyPath = process.env.FROUSSARD_DISCORD_PUBLIC_KEY_OP_PATH ?? 'op://infra/discord/public-key'
   const discordBotTokenPath = process.env.FROUSSARD_CODEX_DISCORD_BOT_TOKEN_OP_PATH ?? 'op://infra/discord/bot-token'
@@ -140,6 +142,7 @@ export const main = async () => {
 
   const githubWebhookSecret = await readOpSecret(githubWebhookSecretPath)
   const githubToken = await readOpSecret(githubTokenPath)
+  const workflowGithubToken = await readOpSecret(workflowGithubTokenPath)
 
   const discordPublicKey = await readOpSecret(discordPublicKeyPath)
   const discordBotToken = await readOpSecret(discordBotTokenPath)
@@ -179,7 +182,7 @@ export const main = async () => {
     sealSecret({
       name: 'github-token',
       namespace: 'argo-workflows',
-      literals: [['token', githubToken]],
+      literals: [['token', workflowGithubToken]],
       controllerName,
       controllerNamespace,
     }),

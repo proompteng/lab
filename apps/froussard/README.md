@@ -1,5 +1,13 @@
 # Froussard Webhook Bridge
 
+Froussard submits `<!-- codex:ready -->` / `:shipit:` as an `APPROVED` GitHub review
+using `tuslagch`. It requires the PR's thumbs-up reaction, a completed Codex review
+for the current head without unresolved findings, no unresolved review threads,
+and completed passing CI. It skips drafts, conflicts, and PRs authored by
+`tuslagch`. Completion webhooks recheck readiness without requiring a PR edit;
+existing approvals are reconciled per commit. See the
+[GitOps credential configuration](../../argocd/applications/froussard/README.md#github-identity).
+
 Froussard is a TypeScript service running on Bun (Elysia HTTP runtime) that receives webhook
 deliveries (GitHub, Linear issues, and Discord slash commands), verifies signatures, and forwards
 trusted events to the owning downstream system. Froussard is the only public webhook ingress for

@@ -75,35 +75,6 @@ export type IssueReactionPresenceResult =
   | { ok: true; hasReaction: boolean }
   | { ok: false; reason: IssueReactionPresenceFailureReason; status?: number; detail?: string }
 
-export interface PlanComment {
-  id: number
-  body: string
-  htmlUrl: string | null
-}
-
-export interface FindPlanCommentOptions {
-  repositoryFullName: string
-  issueNumber: number
-  token?: string | null
-  marker?: string
-  apiBaseUrl?: string
-  userAgent?: string
-  fetchImplementation?: FetchLike | null
-}
-
-export type FindPlanCommentFailureReason =
-  | 'invalid-repository'
-  | 'no-fetch'
-  | 'http-error'
-  | 'network-error'
-  | 'invalid-json'
-  | 'not-found'
-  | 'invalid-comment'
-
-export type FindPlanCommentResult =
-  | { ok: true; comment: PlanComment }
-  | { ok: false; reason: FindPlanCommentFailureReason; status?: number; detail?: string }
-
 export interface CreateIssueCommentOptions {
   repositoryFullName: string
   issueNumber: number
@@ -186,28 +157,6 @@ export type ReadyForReviewResult =
   | { ok: true }
   | { ok: false; reason: ReadyForReviewFailureReason; status?: number; detail?: string }
 
-export interface CreatePullRequestCommentOptions {
-  repositoryFullName: string
-  pullNumber: number
-  body: string
-  token?: string | null
-  apiBaseUrl?: string
-  userAgent?: string
-  fetchImplementation?: FetchLike | null
-}
-
-export type CreatePullRequestCommentFailureReason =
-  | 'missing-token'
-  | 'invalid-repository'
-  | 'no-fetch'
-  | 'network-error'
-  | 'http-error'
-  | 'invalid-json'
-
-export type CreatePullRequestCommentResult =
-  | { ok: true; commentUrl?: string }
-  | { ok: false; reason: CreatePullRequestCommentFailureReason; status?: number; detail?: string }
-
 export interface PullRequestReviewThread {
   summary: string
   url?: string
@@ -234,14 +183,14 @@ export type ListReviewThreadsResult =
   | { ok: true; threads: PullRequestReviewThread[] }
   | { ok: false; reason: ListReviewThreadsFailureReason; status?: number; detail?: string }
 
-export interface PullRequestCheckFailure {
+export interface PullRequestBlockingCheck {
   name: string
   conclusion?: string
   url?: string
   details?: string
 }
 
-export interface ListCheckFailuresOptions {
+export interface ListBlockingChecksOptions {
   repositoryFullName: string
   headSha: string
   token?: string | null
@@ -250,13 +199,37 @@ export interface ListCheckFailuresOptions {
   fetchImplementation?: FetchLike | null
 }
 
-export type ListCheckFailuresFailureReason =
+export type ListBlockingChecksFailureReason =
   | 'invalid-repository'
   | 'no-fetch'
   | 'network-error'
   | 'http-error'
   | 'invalid-json'
 
-export type ListCheckFailuresResult =
-  | { ok: true; checks: PullRequestCheckFailure[] }
-  | { ok: false; reason: ListCheckFailuresFailureReason; status?: number; detail?: string }
+export type ListBlockingChecksResult =
+  | { ok: true; checks: PullRequestBlockingCheck[] }
+  | { ok: false; reason: ListBlockingChecksFailureReason; status?: number; detail?: string }
+
+export interface ApprovePullRequestOptions extends FetchPullRequestOptions {
+  headSha: string
+  body: string
+}
+
+export type ApprovePullRequestResult =
+  | { ok: true; reviewUrl: string }
+  | {
+      ok: false
+      reason:
+        | ListBlockingChecksFailureReason
+        | 'missing-token'
+        | 'identity-mismatch'
+        | 'not-ready'
+        | 'head-changed'
+        | 'pending-review'
+      status?: number
+      detail?: string
+    }
+
+export type ListCommitPullRequestsResult =
+  | { ok: true; pullNumbers: number[] }
+  | { ok: false; reason: ListBlockingChecksFailureReason; status?: number; detail?: string }

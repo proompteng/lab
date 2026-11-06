@@ -2,8 +2,6 @@ import { Effect, Schema } from 'effect'
 
 import { DEFAULT_API_BASE_URL, DEFAULT_USER_AGENT, readResponseText, toError, trimTrailingSlash } from './common'
 import type {
-  CreatePullRequestCommentOptions,
-  CreatePullRequestCommentResult,
   FetchLike,
   FetchPullRequestOptions,
   FetchPullRequestResult,
@@ -322,100 +320,4 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
       detail,
     }
   })
-}
-
-export const createPullRequestComment = (
-  options: CreatePullRequestCommentOptions,
-): Effect.Effect<CreatePullRequestCommentResult> => {
-  const {
-    repositoryFullName,
-    pullNumber,
-    body,
-    token,
-    apiBaseUrl = DEFAULT_API_BASE_URL,
-    userAgent = DEFAULT_USER_AGENT,
-    fetchImplementation = globalFetch,
-  } = options
-
-  if (!token || token.trim().length === 0) {
-    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
-  }
-
-  const [owner, repo] = repositoryFullName.split('/')
-  if (!owner || !repo) {
-    return Effect.succeed({
-      ok: false,
-      reason: 'invalid-repository' as const,
-      detail: repositoryFullName,
-    })
-  }
-
-  const fetchFn = fetchImplementation
-  if (!fetchFn) {
-    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
-  }
-
-  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${pullNumber}/comments`
-  const payload = JSON.stringify({ body })
-
-  return Effect.tryPromise({
-    try: () =>
-      fetchFn(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': userAgent,
-          Authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: payload,
-      }),
-    catch: toError,
-  }).pipe(
-    Effect.flatMap((response) => {
-      if (response.ok) {
-        return readResponseText(response).pipe(
-          Effect.map((text): CreatePullRequestCommentResult => {
-            if (!text) {
-              return { ok: true } as const
-            }
-            try {
-              const parsed = JSON.parse(text) as { html_url?: unknown }
-              const commentUrl =
-                parsed && typeof parsed === 'object' && typeof parsed.html_url === 'string'
-                  ? parsed.html_url
-                  : undefined
-              return { ok: true, commentUrl } as const
-            } catch (error) {
-              return {
-                ok: false as const,
-                reason: 'invalid-json',
-                detail: error instanceof Error ? error.message : String(error),
-              } as const
-            }
-          }),
-        )
-      }
-
-      return readResponseText(response).pipe(
-        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
-        Effect.map(
-          (detail): CreatePullRequestCommentResult => ({
-            ok: false,
-            reason: 'http-error',
-            status: response.status,
-            detail,
-          }),
-        ),
-      )
-    }),
-    Effect.catchAll((error) =>
-      Effect.succeed<CreatePullRequestCommentResult>({
-        ok: false,
-        reason: 'network-error',
-        detail: error instanceof Error ? error.message : String(error),
-      }),
-    ),
-  )
 }

@@ -1,8 +1,9 @@
-import type { ReadyCommentCommand } from '@/codex/workflow-machine'
+import { Schema } from 'effect'
+import type { ReadyApprovalCommand } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
 import { logger } from '@/logger'
 import type { WebhookConfig } from '../../types'
-import { CODEX_READY_COMMENT_MARKER, CODEX_READY_TO_MERGE_COMMENT } from '../constants'
+import { CODEX_READY_TO_MERGE_COMMENT } from '../constants'
 import { shouldHandlePullRequestAction } from '../helpers'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
@@ -98,7 +99,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     }
 
     const checksResult = await executionContext.runGithub(() =>
-      executionContext.githubService.listPullRequestCheckFailures({
+      executionContext.githubService.listPullRequestBlockingChecks({
         repositoryFullName: repoFullName,
         headSha: pull.headSha,
         token: config.github.token,
@@ -131,44 +132,95 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
           reason: reactionsResult.reason,
           status: reactionsResult.status,
         },
-        'failed to read pull request reactions; ready comment will not be posted',
+        'failed to read pull request reactions; ready approval will not be posted',
       )
     }
 
     const unresolvedThreads = threadsResult.threads
-    const failingChecks = checksResult.checks
+    const blockingChecks = checksResult.checks
     const mergeableState = pull.mergeableState ? pull.mergeableState.toLowerCase() : null
+    // GitHub also reports 'blocked' when this approval is the missing requirement.
     const mergeStateRequiresAttention = mergeableState
-      ? !['clean', 'unstable', 'unknown'].includes(mergeableState)
+      ? !['clean', 'unstable', 'blocked', 'unknown'].includes(mergeableState)
       : false
     const hasMergeConflicts = mergeableState === 'dirty'
-    const outstandingWork = unresolvedThreads.length > 0 || failingChecks.length > 0 || hasMergeConflicts
+    const outstandingWork = unresolvedThreads.length > 0 || blockingChecks.length > 0 || hasMergeConflicts
 
-    const readyCommentCandidate: ReadyCommentCommand | undefined =
+    const readyApproval: ReadyApprovalCommand | undefined =
       hasThumbsUpReaction && !mergeStateRequiresAttention && !outstandingWork && !pull.draft
         ? {
             repositoryFullName: repoFullName,
             pullNumber,
-            issueNumber: pull.number,
-            body:
-              executionContext.agentRunIdentifier && executionContext.agentRunIdentifier.length > 0
-                ? `${CODEX_READY_TO_MERGE_COMMENT}\n_AgentRun: ${executionContext.agentRunIdentifier}_`
-                : CODEX_READY_TO_MERGE_COMMENT,
-            marker: CODEX_READY_COMMENT_MARKER,
+            headSha: pull.headSha,
+            body: CODEX_READY_TO_MERGE_COMMENT,
           }
         : undefined
 
-    if (!readyCommentCandidate) {
+    if (!readyApproval) {
       return null
     }
 
-    logger.info({ repository: repoFullName, pullNumber }, 'prepared codex ready comment')
+    logger.info({ repository: repoFullName, pullNumber }, 'prepared codex ready approval')
     const { stage } = await executeWorkflowCommands(
-      [{ type: 'postReadyComment', data: readyCommentCandidate }],
+      [{ type: 'approveReadyPullRequest', data: readyApproval }],
       executionContext,
     )
     return stage ?? null
   }
 
   return processPullRequest()
+}
+
+const ReadinessEventSchema = Schema.Struct({
+  repository: Schema.Struct({ full_name: Schema.String }),
+  issue: Schema.optional(Schema.Struct({ number: Schema.Number, pull_request: Schema.optional(Schema.Unknown) })),
+  pull_request: Schema.optional(Schema.Struct({ number: Schema.Number })),
+  comment: Schema.optional(Schema.Struct({ user: Schema.Struct({ login: Schema.String }) })),
+  check_run: Schema.optional(Schema.Struct({ head_sha: Schema.String })),
+  check_suite: Schema.optional(Schema.Struct({ head_sha: Schema.String })),
+  sha: Schema.optional(Schema.String),
+})
+
+export const handleReadinessEvent = async (params: PullRequestBaseParams & { eventName: string }): Promise<void> => {
+  const { eventName, actionValue } = params
+  const isCheck = (eventName === 'check_run' || eventName === 'check_suite') && actionValue === 'completed'
+  const isStatus = eventName === 'status'
+  const isComment = eventName === 'issue_comment' && (actionValue === 'created' || actionValue === 'edited')
+  const isReview = eventName === 'pull_request_review' && ['submitted', 'dismissed'].includes(actionValue ?? '')
+  const isThread = eventName === 'pull_request_review_thread' && actionValue === 'resolved'
+  if (!isCheck && !isStatus && !isComment && !isReview && !isThread) return
+  const decoded = Schema.decodeUnknownEither(ReadinessEventSchema)(params.parsedPayload)
+  if (decoded._tag === 'Left') return
+  const payload = decoded.right
+  if (
+    isComment &&
+    (payload.issue?.pull_request === undefined || payload.comment?.user.login !== 'chatgpt-codex-connector[bot]')
+  )
+    return
+  let pullNumbers: readonly number[]
+  if (isCheck || isStatus) {
+    const headSha = payload.check_run?.head_sha ?? payload.check_suite?.head_sha ?? payload.sha
+    if (!headSha) return
+    const result = await params.executionContext.runGithub(() =>
+      params.executionContext.githubService.listCommitPullRequests({
+        repositoryFullName: payload.repository.full_name,
+        headSha,
+        token: params.config.github.token,
+        apiBaseUrl: params.config.github.apiBaseUrl,
+        userAgent: params.config.github.userAgent,
+      }),
+    )
+    if (!result.ok) throw new Error(`Could not resolve pull requests for completed checks: ${result.reason}`)
+    pullNumbers = result.pullNumbers
+  } else {
+    const number = isComment ? payload.issue?.number : payload.pull_request?.number
+    pullNumbers = number === undefined ? [] : [number]
+  }
+  for (const number of new Set(pullNumbers)) {
+    await handlePullRequestEvent({
+      ...params,
+      skipActionCheck: true,
+      parsedPayload: { repository: payload.repository, pull_request: { number } },
+    })
+  }
 }
