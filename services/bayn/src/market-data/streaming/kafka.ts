@@ -330,6 +330,7 @@ export class KafkaMarketProjection extends Context.Service<
       readonly epoch: string
       readonly ready: boolean
       readonly sequence: number
+      readonly bootstrapDeadlineAtMs: number | null
       readonly failure?: string
     }>
   }
@@ -355,6 +356,7 @@ export const makeKafkaMarketProjection = (
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
+    let bootstrapDeadlineAtMs: number | null = null
     let lastFailure: KafkaMarketFailure | undefined
     let closeFailure: KafkaMarketFailure | undefined
     let recovery:
@@ -423,6 +425,7 @@ export const makeKafkaMarketProjection = (
             }),
           )
         const observedAtMs = yield* Clock.currentTimeMillis
+        bootstrapDeadlineAtMs = observedAtMs + config.bootstrapTimeoutMs
         const timestampForSource = (source: MarketSources[number]) =>
           diagnosticStartMs ??
           Math.floor((observedAtMs - 2000) / 60_000) * 60_000 -
@@ -677,13 +680,14 @@ export const makeKafkaMarketProjection = (
                 })
             }
             positions = canonicalPositions([...incorporated.values()])
-            ready = kafkaBootstrapComplete(evidence, positions)
-            if (!ready && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
+            const caughtUp = kafkaBootstrapComplete(evidence, positions)
+            if (!announced && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
               return yield* failure(
                 'bootstrap',
                 'Kafka bootstrap deadline exceeded',
                 new KafkaBootstrapDeadlineExceeded(),
               )
+            ready = caughtUp
             if (ready && !announced) {
               announced = true
 
@@ -841,6 +845,7 @@ export const makeKafkaMarketProjection = (
         epoch: projection.epoch,
         ready: ready && lastFailure === undefined,
         sequence: projection.sequence,
+        bootstrapDeadlineAtMs,
         ...(lastFailure === undefined ? {} : { failure: lastFailure.message }),
       })),
     }

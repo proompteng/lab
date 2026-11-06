@@ -540,18 +540,25 @@ endpoint separately from elected controller reconciliation. There is no direct p
 `TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
 execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
 and release handlers are
-private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
-control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
+private to Restate service calls. Admission and control signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
 before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
 a newly signed attempt can use the same operation UUID. Accepted workflows use private Restate calls and the workspace
 records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
-Status reads share one pooled ingress client and retain their pending response within the existing fifteen-second recovery budget. A response still
-pending after five seconds emits a warning and continues under the same deadline; it does not start another durable
-query. Only returned transient errors trigger bounded retries with a freshly signed query. The two-second admission
-expiry and authorization checks remain unchanged.
+Status reads use the private `run-reader` role in the Restate namespace. It exposes only `/status` and `/active`,
+reading fixed state keys through Restate's query API without invoking or journaling a workflow. There is no cache or
+second state store. Canonical UUIDs constrain the fixed SQL; responses are bounded to 16 MiB. Snapshots must match the
+owner, immutable workspace UID, run ID and optional input digest. The controller still obtains fresh Ofz authority
+before each public read. Workspace claims preserve collaborator activity for the archive guard; public active-run
+results remain owner-filtered. Strict mesh authentication and NetworkPolicy admit only controller Pods; controllers cannot
+reach Restate's admin API. The reader has its own proxy identity, no Kubernetes token, RBAC or application secrets.
+
+Reads share a pooled HTTP client and one fifteen-second recovery budget. The private reader admits each query within
+two seconds; an admitted response may finish later. Pending responses continue under that deadline. Only returned
+transient failures trigger bounded retries. An uncertain admission acknowledgement is reconciled through this reader
+using the original operation UUID and input digest. It never submits another admission or native turn.
 
 Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
 RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
@@ -604,19 +611,16 @@ using MicroVM UID and resource-version preconditions.
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
 terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
-Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
-the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
-Each response has a five-second budget. Read recovery has a total fifteen-second budget, shared by the active claim
-and its snapshot. Transport failures, HTTP 5xx, response timeouts and explicit HTTP 408 admission expiry can issue a
-fresh signed read with exponential backoff capped at one second. Each request retains its two-second admission
-window. Signature and authority denials, missing or conflicting runs and invalid responses fail immediately.
-Run submissions and controls are not replayed by this read recovery.
+Read-only queries do not enter the durable journal. Read recovery has a total fifteen-second budget, shared by the
+active claim and its snapshots. Transport failures, HTTP 5xx and explicit HTTP 408 admission expiry can issue a fresh
+read with exponential backoff capped at one second. Authority denials, missing or conflicting runs and malformed
+responses fail closed. Run submissions and controls are not replayed by this read recovery.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
 Stop after preparation and immediately before dispatch. The conversation-concurrency migration changes workspace state
 from a single claim to a map and changes the sleep pin to a JSON set. Drain active run and control invocations before
 registering this worker version, verify that the old sleep pin has cleared, and retain earlier versions for pinned history.
 The controller and BFF must use the plural active-run RPC together; the singular RPC is removed.
-Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
+Unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
 before another effect. These rules do not make arbitrary shell, browser, or external service effects transactional.

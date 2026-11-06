@@ -685,9 +685,9 @@ export const makeBaynExecutionController = (
         },
       ),
 
-      prepareActivation: restate.handlers.object.exclusive(
+      prepareActivation: restate.handlers.object.shared(
         { ingressPrivate: true, retryPolicy: executionControllerCommandRetryPolicy },
-        async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown) => {
+        async (ctx: restate.ObjectSharedContext<ControllerObjectState>, candidate: unknown) => {
           const request = decodeOrTerminal(
             decodeExecutionDeploymentActivation(candidate),
             'execution controller deployment activation failed validation',

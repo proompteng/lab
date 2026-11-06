@@ -97,6 +97,7 @@ test('the live rejection warning carries cut reasons while healthy snapshots emi
                 status: Effect.succeed({
                   epoch: cut.projection.epoch,
                   ready: true,
+                  bootstrapDeadlineAtMs: null,
                   sequence: cut.projection.sequence,
                 }),
               }),

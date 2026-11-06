@@ -92,6 +92,7 @@ import { registrationFixture } from './fixtures.test-support'
 import { ObligationClass } from './reliability'
 import { ReliabilityStatus } from './reliability'
 import { operationalAssessmentVerdict } from './operational-assessment'
+import { kafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import { jevSignalWindowEndMs } from '../jev/observation-query'
 import { controllerClockDurations, nearestRank95 } from './controller-latency'
@@ -425,6 +426,38 @@ formal('pinned Lean executable conformance', () => {
           side: c.side,
         }),
       })),
+    )
+  })
+
+  test('market handoff requires ready history and retains the original bootstrap clock across retries', () => {
+    const cases = [false, true].flatMap((ready) =>
+      [false, true].flatMap((failed) =>
+        [null, 0, 5000].flatMap((bootstrapDeadlineAtMs) =>
+          [0, 4999, 5000, 5001, 300000].map((now) => ({ ready, failed, bootstrapDeadlineAtMs, now })),
+        ),
+      ),
+    )
+    expect(
+      model(
+        cases.map((c) => ({
+          operation: 'marketHandoffReadiness',
+          ready: c.ready,
+          failed: c.failed,
+          deadline: c.bootstrapDeadlineAtMs === null ? null : String(c.bootstrapDeadlineAtMs),
+          now: String(c.now),
+        })),
+      ),
+    ).toEqual(
+      cases.map((c) =>
+        kafkaHandoffReadiness(
+          {
+            ready: c.ready,
+            bootstrapDeadlineAtMs: c.bootstrapDeadlineAtMs,
+            ...(c.failed ? { failure: 'unavailable' } : {}),
+          },
+          c.now,
+        ),
+      ),
     )
   })
 

@@ -273,6 +273,21 @@ spire-server:
             - k8s:container-name:istio-proxy
           ttl: 2m
           fallback: false
+        tengri-run-reader-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/restate/sa/tengri-run-reader
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-run-reader
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:tengri-run-reader
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
         istio-external-gateway:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/istio-ingress/sa/gateway
