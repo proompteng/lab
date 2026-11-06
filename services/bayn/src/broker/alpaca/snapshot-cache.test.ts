@@ -868,20 +868,27 @@ test('a durable invalidation starts a fresh bracket instead of comparing across 
   )
 })
 
-test('a clock regression discards the completed history from the future', async () => {
-  const source = fixture()
-  await run(
-    Effect.gen(function* () {
-      const capture = yield* makeBrokerObservationCapture
-      yield* TestClock.setTime(1_000)
-      yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
-      yield* TestClock.setTime(500)
-      const refreshed = yield* capture(source.read, { generation: 2, startedAt: yield* currentUtcInstant }, 15_000)
-      expect(refreshed.observedAt).toBe('1970-01-01T00:00:00.500Z')
-      expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
-    }),
-  )
-})
+test.each([500, 1_500])(
+  'a clock regression discards future history with a durable ticket at %sms',
+  async (ticketAt) => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const capture = yield* makeBrokerObservationCapture
+        yield* TestClock.setTime(1_000)
+        yield* capture(source.read, { generation: 1, startedAt: yield* currentUtcInstant }, 15_000)
+        yield* TestClock.setTime(500)
+        const refreshed = yield* capture(
+          source.read,
+          { generation: 2, startedAt: new Date(ticketAt).toISOString() },
+          15_000,
+        )
+        expect(refreshed.observedAt).toBe('1970-01-01T00:00:00.500Z')
+        expect(source.calls.filter((call) => call === 'fees')).toHaveLength(4)
+      }),
+    )
+  },
+)
 
 test('the unchanged capture deadline cancels an endlessly advancing history cursor', async () => {
   const source = fixture()

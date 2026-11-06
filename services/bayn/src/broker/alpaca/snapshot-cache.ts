@@ -53,9 +53,12 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
       .withPermit(
         Effect.gen(function* () {
           const { startedAt } = ticket
+          const now = yield* currentUtcInstant
           if (
             previous !== undefined &&
-            (previous.completedAt > startedAt || ticket.generation !== previous.generation + 1)
+            (previous.completedAt > startedAt ||
+              previous.completedAt > now ||
+              ticket.generation !== previous.generation + 1)
           )
             previous = undefined
           yield* Effect.annotateCurrentSpan('broker.history.reused', previous !== undefined)
