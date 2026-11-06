@@ -23,9 +23,15 @@ TypeScript. Both commands are mandatory in formal CI and before exact-revision i
 runs in the trading runtime. See the [TLA+ model boundaries and assumptions](tla/README.md#bounds-assumptions-and-limits).
 
 The command runs `lake -q build`, `bash check.sh`, and the production conformance suite. The formal CI workflow also
-runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` exports the
-built default targets in a sandbox and passes the retained export to pinned `lake check --from-export ... --paranoid`.
-This separates the
+runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` builds every
+tracked model module in a sandbox, including roots outside the default target graph, and passes the retained export
+to pinned `lake check --from-export ... --paranoid`.
+Every tracked model module is included. `Export.lean` selects all declarations by their defining module, including
+private declarations and namespaces outside `Bayn`. The pinned exporter includes their complete transitive dependencies.
+Unreferenced theorems from imported libraries are not additional roots. The generated scope manifest records every
+selected declaration and module; regression fixtures exercise private roots, foreign namespaces, used dependencies,
+unrelated library axioms and rejection of an owned nonstandard axiom. All six checkers and the axiom allowlist remain
+mandatory. This separates the
 export from Lake's pipe transport, which stalled locally while the child was blocked writing stdout. Build/export
 and checker sandboxes retain read-only inputs, a writable build cache and no network. The exported environment is rechecked with the
 official kernel, its hardened allocator variant, Lean4Lean, Nanoda, con-leche and con-ron. All must accept. Con-leche

@@ -134,7 +134,7 @@ claimed deterministic process; it is not a mechanism for estimating support from
 
 `Bayn.ConditionalConfidence` proves integer outward rounding and current qualification gates.
 `BaynProbability` proves the conditional tail bound, paired support without independence, the rounding-to-alpha
-connection and the program-wide allocation using pinned Mathlib. Both libraries are mandatory `lake check` targets.
+connection and the program-wide allocation using pinned Mathlib. Both libraries are mandatory proof-export roots.
 The probability proof library stays outside the executable conformance model and the trading runtime. Reachable
 synthetic success, missing evidence, the negative-expectancy counterexample, exact finite-sample enumeration and
 PostgreSQL admission/history tests exercise the production path.
