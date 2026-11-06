@@ -228,7 +228,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true, at = observ
       control.writes += 1
       return receipt
     }),
-  verifyCompleted: () => Effect.void,
+
   value: () =>
     Effect.sync(() => {
       control.writes += 1
@@ -1184,9 +1184,11 @@ describe('execution reconciliation loop', () => {
     expect(control.writes - firstPassWrites).toBe(4)
     expect(control.reconciliations).toHaveLength(2)
     expect(control.reconciliations[1].fills).toEqual(control.reconciliations[0].fills)
+    expect(control.reconciliations[0]).toHaveProperty('ledgerPostingRequired', true)
+    expect(control.reconciliations[1]).toHaveProperty('ledgerPostingRequired', false)
   })
 
-  test('does not reconcile or reuse a completed fill when its accounting verification fails', async () => {
+  test('does not report a completed reconciliation when accounting verification fails', async () => {
     const brokerOrder = order(0)
     const read: BrokerReadShape = {
       ...emptyRead(),
@@ -1201,7 +1203,7 @@ describe('execution reconciliation loop', () => {
     })
     const store: TestStore = {
       ...makeStore(control),
-      verifyCompleted: (inputs) => (inputs.length > 0 ? Effect.fail(failure) : Effect.void),
+      reconcile: (_, snapshot) => snapshot.pipe(Effect.andThen(Effect.fail(failure))),
     }
 
     const exit = await Effect.runPromiseExit(provide(read, store))
@@ -1591,7 +1593,6 @@ describe('execution reconciliation loop', () => {
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
       completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
-      verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
       hasAccountBaseline: (id) =>
         Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),

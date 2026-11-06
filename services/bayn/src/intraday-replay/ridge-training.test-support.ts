@@ -135,7 +135,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
         mode: 'measured-providers',
         maximumCalls: 1000,
         models: { jev: jevModel },
-        inputDefinition: 'bayn.jev-entry-state.v23',
+        inputDefinition: 'bayn.jev-entry-state.v24',
         costs: replayRateCardFixture({
           jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           chart: {

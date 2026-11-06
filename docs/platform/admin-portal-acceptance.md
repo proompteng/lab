@@ -99,15 +99,48 @@ The BFF carries that explicit outcome, so definitively rejected changes no longe
 unmarked authority/session/network failures retain the original intent. Real service assertions cover inadmissible
 membership and last-admin rejection; RPC/BFF/client and Chromium tests cover the marker and subsequent edits.
 
-
 ## Delivery and live acceptance gate
 
-Implementation and local browser/BFF proof are recorded above. PR/required CI/review/merge and release evidence are
-not yet established by this document. Do not treat this as a completed rollout certificate.
+The console merged in [PR #15597](https://github.com/proompteng/lab/pull/15597) at
+`140091e929f60e8db59054d52aba7e37bc2608ec`. Changed-area and Ofz validation passed for its final head
+`cb61bd152d1e5f48f1cce978ed78c5bdd5a086db`; all three automatic review findings were resolved.
+
+Verified on 2026-11-03, the deployed coordinated source is `ea8ec94a1011526929ae15bb6566bd6f2f2a71f6`, which includes that
+merge. [Ofz release validation](https://github.com/proompteng/lab/actions/runs/41618688758) passed real PostgreSQL/SpiceDB
+platform execution, native policy qualification, Keycloak/passkey SSO, gateway/session isolation, cookie replacement,
+revocation and failover checks. The [published shared web/admin image](https://github.com/proompteng/lab/actions/runs/41618688832/job/125865971689) is
+`sha256:4e3ed5e897c1274a7dd5ba3151510c92052c672727b4967b1f33cb64a97f657a`; both admin replicas reported that digest and
+were ready. Argo `proompteng` was synced and healthy on Kargo commit `171fa2ba727fc8bb58c45c65c6c046a1f334252b`, with
+the matching Ofz/Tengri stages verified. A fresh local `test:admin` run passed 4 admin BFF, 12 provider BFF and 21
+Chromium tests.
+
+Authenticated production acceptance also passed on 2026-11-03:
+
+- All eight portal pages loaded real workspace data. Client enrollment, resources, pending/history requests,
+  inspectable audit receipts and read-only registry settings stayed in the portal. Initial portal sign-in reused
+  verified SSO without another passkey challenge.
+- Tengri's existing conversation executed pod status, bounded logs and namespace events through Relay. Ofz recorded
+  successful authorization and execution receipts. The member connection remained Connected with its existing
+  namespace/read scope. A native standalone OpenCode plan-agent session independently invoked the Relay MCP tools
+  and completed the same reads in its approved namespace without shell or file access. A separate OpenCode bridge
+  check attempted another namespace and produced denied Ofz receipt `a9f5fb1d-5a77-4852-a4fe-d801b535c65b`, also
+  inspectable in Activity.
+- Deliberate portal passkey verification during Tengri run `b2663f84-3e0e-463e-a51c-0cfb9625e953` returned to the same
+  request-history URL. The admin session authority survived credential rotation, the prior credential was revoked,
+  and the separate Tengri session remained active. The original run, runtime epoch and unsent draft survived.
+  Restate recorded one `dispatch_codex_turn`; the original native command completed with `RELAY_SESSION_CONTINUITY_OK`
+  and released its run pin. Same-gateway replacement, explicit logout/revocation and different-user denial remain
+  covered by the native identity/control fixtures above.
+- At 390px, the portal sidebar navigated and closed correctly. Tengri inputs measured 16px with no horizontal
+  overflow; after the viewport shrank from 844px to 600px, the focused composer settled inside the viewport with
+  scale 1 and document scroll unchanged. Keyboard layout was checked by resizing the browser viewport.
+
+Existing memberships, resource permissions and connection consent were preserved. No external provider account was
+onboarded; provider lifecycle and HTTP/CLI/upstream MCP execution retain the controlled-service qualification.
 
 Normal delivery must remain the coordinated Ofz → web immutable image publication, Kargo promotion and Argo
 reconciliation path. Record the merged commit, immutable image digest, Kargo promotion commit and deployed revision
 at delivery. No production grants, memberships, provider connections, identities or credential permissions were
-changed during development. Live authenticated portal acceptance requires an authorized session and any human
-passkey step-up; Pod health alone cannot satisfy it. If that identity is unavailable, report the exact outstanding
-live acceptance rather than manufacturing a login or mutating real accounts.
+changed during development. Repeat authenticated product checks when changing the corresponding contracts;
+infrastructure health alone does not establish product behavior. Temporary browser viewport overrides and the phone
+test tab were removed after acceptance.

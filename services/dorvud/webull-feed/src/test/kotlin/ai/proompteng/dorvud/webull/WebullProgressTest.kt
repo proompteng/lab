@@ -12,14 +12,18 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 
 class WebullProgressTest {
-  private val request = """{"timespan":"M1","real_time_required":true,"start_time":1793386800000,"end_time":1793386919999}"""
+  private val request =
+    """{"timespan":"M1","real_time_required":true,"trading_sessions":"PRE,RTH,ATH",
+      "start_time":1793386800000,"end_time":1793386919999}"""
 
   private fun capture(times: List<String>) =
     webullCapture(
       WebullSource.Http(WEBULL_BARS_PATH, listOf("AAPL"), requestBody = request),
       (
         """{"result":[{"symbol":"AAPL","delay_minutes":0,"result":[""" +
-          times.joinToString(",") { """{"time":"$it","open":"1.000000001","high":"1.1","low":"1","close":"1.01","volume":"10"}""" } +
+          times.joinToString(",") {
+            """{"time":"$it","open":"1.000000001","high":"1.1","low":"1","close":"1.01","volume":"10","trading_session":"RTH"}"""
+          } +
           "]}]}"
       ).toByteArray(),
       Instant.parse("2026-10-30T19:02:01.000000001Z"),

@@ -106,6 +106,106 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
     expect(rows).toEqual([{ id: 1 }, { id: 3 }])
   })
 
+  for (const failure of ['typed', 'defect', 'sql', 'interruption'] as const) {
+    test(`prepared finalization retains committed preparation after ${failure} failure`, async () => {
+      const exit = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const fence = yield* WriterFence
+          return yield* Effect.exit(
+            fence.transaction(sql`INSERT INTO writer_fence_test VALUES (1)`.pipe(Effect.as('prepared')), () =>
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO writer_fence_test VALUES (2)`
+                if (failure === 'typed') return yield* Effect.fail('final verification failed')
+                if (failure === 'defect') return yield* Effect.die('final verification defect')
+                if (failure === 'sql') yield* sql`SELECT 1 / 0`
+                return yield* Effect.interrupt
+              }),
+            ),
+          )
+        }),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        if (failure === 'typed') expect(Cause.pretty(exit.cause)).toContain('final verification failed')
+        if (failure === 'defect') expect(Cause.pretty(exit.cause)).toContain('final verification defect')
+        if (failure === 'interruption') expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+      }
+      if (failure === 'sql' && Exit.isFailure(exit))
+        expect(exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && isSqlError(reason.error))).toBe(true)
+      const rows = await contender.runPromise(
+        Effect.flatMap(PgClient.PgClient, (sql) => sql`SELECT id FROM writer_fence_test ORDER BY id`),
+      )
+      expect(rows).toEqual([{ id: 1 }])
+      await contender.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* (yield* WriterFence).transaction(sql`INSERT INTO writer_fence_test VALUES (3)`)
+        }),
+      )
+    })
+  }
+
+  test('external interruption of in-flight PostgreSQL finalization commits preparation and releases the writer fence', async () => {
+    const exit = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const started = yield* Deferred.make<number>()
+        const running = yield* fence
+          .transaction(sql`INSERT INTO writer_fence_test VALUES (1)`.pipe(Effect.as('prepared')), () =>
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO writer_fence_test VALUES (2)`
+              const [{ pid }] = yield* sql`SELECT pg_backend_pid() AS pid`.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(BackendRows)),
+              )
+              yield* Deferred.succeed(started, pid)
+              yield* sql`SELECT pg_sleep(30)`
+              return 'finalized'
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        const pid = yield* Deferred.await(started).pipe(Effect.raceFirst(Fiber.join(running)))
+        yield* Effect.promise(() =>
+          contender.runPromise(
+            Effect.gen(function* () {
+              const observer = yield* PgClient.PgClient
+              let executing = false
+              for (let attempt = 0; attempt < 100; attempt += 1) {
+                const [activity] = yield* observer<{
+                  active: boolean
+                }>`SELECT state='active' AND query LIKE '%pg_sleep%' AS active
+            FROM pg_stat_activity WHERE pid=${pid}`
+                if (activity?.active === true) {
+                  executing = true
+                  break
+                }
+                yield* Effect.sleep('10 millis')
+              }
+              expect(executing).toBe(true)
+              expect(yield* observer`SELECT id FROM writer_fence_test`).toEqual([])
+              expect(yield* Effect.result((yield* WriterFence).check)).toMatchObject({
+                _tag: 'Failure',
+                failure: { failure: 'busy' },
+              })
+            }),
+          ),
+        )
+        yield* Fiber.interrupt(running)
+        return yield* Fiber.await(running)
+      }),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+    const rows = await contender.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* WriterFence).check
+        return yield* (yield* PgClient.PgClient)`SELECT id FROM writer_fence_test ORDER BY id`
+      }),
+    )
+    expect(rows).toEqual([{ id: 1 }])
+  })
+
   test('the server cancels stalled SQL before the pass deadline and rolls back its writer transaction', async () => {
     const exit = await runtime.runPromise(
       Effect.gen(function* () {

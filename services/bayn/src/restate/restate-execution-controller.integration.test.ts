@@ -41,6 +41,8 @@ describeRestate('Real Restate execution deployment activation', () => {
     let brokerReady = false
     let failedPollNotBeforeMs = 0
     let controllerActivations = 0
+    let warmupGate: Promise<void> | undefined
+    let warmupEntered = () => {}
     const advanced: number[] = []
     const controller = makeBaynExecutionController(config, {
       advance: async (command) => {
@@ -50,6 +52,10 @@ describeRestate('Real Restate execution deployment activation', () => {
           observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
           outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 500 },
         }
+      },
+      prepareActivation: async () => {
+        warmupEntered()
+        await warmupGate
       },
       projectState: async () => {
         controllerActivations += 1
@@ -273,6 +279,36 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
 
+          let releaseWarmup = () => {}
+          warmupGate = new Promise<void>((resolve) => {
+            releaseWarmup = resolve
+          })
+          const warmingEntered = new Promise<void>((resolve) => {
+            warmupEntered = resolve
+          })
+          yield* Effect.addFinalizer(() => Effect.sync(releaseWarmup))
+          const warmingRequest = restateExecutionActivationRequest(
+            { ...config, ...(yield* loadAttempt(randomUUID())) },
+            token,
+          )
+          const warmingReceipt = yield* sendRestateInvocation(url, warmingRequest.body, {
+            timeoutMs: 5000,
+            headers: warmingRequest.headers,
+          })
+          yield* Effect.promise(() => warmingEntered)
+          const beforeWarm = advanced.length
+          yield* Effect.sleep(1200)
+          expect(advanced.length).toBeGreaterThan(beforeWarm)
+          expect(controllerActivations).toBe(1)
+          expect(brokerActivations).toBe(1)
+          releaseWarmup()
+          yield* awaitRestateInvocation(ingress, warmingReceipt.invocationId, {
+            maximumAttempts: 100,
+            pollIntervalMs: 100,
+            requestTimeoutMs: 5000,
+          })
+          warmupGate = undefined
+
           let previousSource = config.sourceRevision
           let previousNextSequence = state.nextSequence
           const allReplacementAdvances: Array<Array<{ sequence: number }>> = []
@@ -300,6 +336,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                   outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'f'.repeat(64), nextDelayMs: 500 },
                 }
               },
+              prepareActivation: () => Promise.resolve(),
               projectState: async (_key, next) => {
                 projected.push(next)
               },

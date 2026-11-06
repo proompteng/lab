@@ -9,6 +9,10 @@ interface WorkflowJob {
   readonly if?: string
   readonly needs?: readonly string[] | string
   readonly 'timeout-minutes'?: number
+  readonly strategy?: {
+    readonly 'fail-fast'?: boolean
+    readonly matrix?: { readonly group?: readonly string[] }
+  }
   readonly steps: readonly { readonly name?: string; readonly run?: string; readonly env?: Record<string, string> }[]
 }
 const workflow = YAML.parse(
@@ -28,6 +32,7 @@ const successful = {
   BAYN_RELEVANT: 'true',
   IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
+  FORMAL_RELEVANT: 'true',
   FORMAL_RESULT: 'success',
   GEPA_RESULT: 'success',
   UNIT_RESULT: 'success',
@@ -52,6 +57,28 @@ const run = async (overrides: Record<string, string>) => {
   ])
   return { exit, stdout, stderr }
 }
+
+test('native replay cases run in isolated required groups without extending their job budget', () => {
+  const ledger = workflow.jobs['ledger-integration']
+  expect(ledger?.strategy?.matrix?.group).toEqual([
+    'runtime',
+    'backtest',
+    'latency-jev',
+    'latency-ablation',
+    'latency-momentum',
+    'latency-momentum-trading',
+    'frozen-control',
+    'restart',
+    'inference',
+  ])
+  expect(ledger?.strategy?.['fail-fast']).toBe(false)
+  expect(ledger?.['timeout-minutes']).toBe(15)
+  expect(
+    ledger?.steps.find((step) => step.name === 'Verify replay accounting with PostgreSQL and TigerBeetle')?.run,
+  ).toBe('bun run --cwd services/bayn test:ledger ${{ matrix.group }}')
+  expect(required.needs).toContain('ledger-integration')
+  expect(gate.env?.LEDGER_RESULT).toBe('${{ needs.ledger-integration.result }}')
+})
 
 test.each(['kafka', 'restate', 'foreign'] as const)(
   'created-but-failed %s fixture removes only verified job-owned container IDs',
@@ -159,4 +186,14 @@ test('irrelevant changes retain the existing skip policy but detection and requi
   expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)
   expect((await run({ BAYN_RELEVANT: 'false', CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
   expect((await run({ IMAGE_RELEVANT: 'true', IMAGE_RESULT: 'failure' })).exit).not.toBe(0)
+})
+
+test('formal-only changes require a successful proof result independently of service jobs', async () => {
+  expect((await run({ BAYN_RELEVANT: 'false', FORMAL_RESULT: 'success' })).exit).toBe(0)
+  for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
+    const result = await run({ BAYN_RELEVANT: 'false', FORMAL_RESULT: outcome })
+    expect(result.exit).not.toBe(0)
+    expect(result.stderr).toContain('FORMAL_RESULT must be success')
+  }
+  expect((await run({ FORMAL_RELEVANT: 'false', FORMAL_RESULT: 'skipped' })).exit).toBe(0)
 })

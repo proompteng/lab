@@ -83,9 +83,14 @@ test('compiled instruction edits change actual atomic judgments and protocol ide
     expect(edited.parameterHash).not.toBe(baseline.parameterHash)
     for (const [name, question] of Object.entries(edited.request.questions)) {
       expect(question.type).toBe('noul')
-      expect(question.instructions).toMatchObject({ evidence: candidate.entry })
+      const Instructions = Schema.Struct({ evidence: Schema.String })
+      const actualInstructions = Schema.decodeUnknownSync(Instructions)(question.instructions)
+      expect(actualInstructions.evidence.startsWith(candidate.entry + ' ')).toBe(true)
+      expect(actualInstructions.evidence).toContain('Use available webullContext')
       const original = baseline.request.questions[name]
-      expect(original?.instructions).toMatchObject({ evidence: jevInstructions.entry })
+      const originalInstructions = Schema.decodeUnknownSync(Instructions)(original?.instructions)
+      expect(originalInstructions.evidence.startsWith(jevInstructions.entry + ' ')).toBe(true)
+      expect(originalInstructions.evidence).toContain('Use available webullContext')
       expect({ ...question, instructions: null }).toEqual({ ...original, instructions: null })
     }
   } finally {

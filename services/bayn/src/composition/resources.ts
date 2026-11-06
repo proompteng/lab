@@ -37,12 +37,10 @@ import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data/intraday/model'
-import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
-import { makeNativeArrivalStore } from '../db/native-arrival-postgres'
-import { NativeArrivalArchiveLive } from '../db/native-arrival-archive'
+import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+import { makeThreadedKafkaProjection, projectionWorkerOptions } from '../market-data/streaming/worker'
+import { nativeArrivalArchiveConfig } from '../db/native-arrival-archive'
 import type { DatabaseError } from '../db/database-error'
-import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
-import { nativeArrivalCaptureId } from '../market-data/streaming/native-arrival'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { operationalError, type OperationalError } from '../errors'
 
@@ -93,6 +91,7 @@ const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
       ...(plan.config.kafka?.technicalFeaturesTopic === undefined
         ? {}
         : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+      ...(plan.config.kafka?.webullBarsTopic === undefined ? {} : { webullBars: plan.config.kafka.webullBarsTopic }),
     },
   },
   {
@@ -118,27 +117,24 @@ export const WorkerMarketProjectionLive = (
           }),
         ),
       )
-    : Layer.unwrap(
+    : Layer.effect(
+        KafkaMarketProjection,
         Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const store = makeNativeArrivalStore(sql)
-          return KafkaMarketProjectionLive(kafka, workerStreamingUniverse(plan), (bootstrap, sources) =>
-            Effect.gen(function* () {
-              const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(plan.config.build, bootstrap, sources))
-              return yield* makeNativeArrivalJournal(
-                {
-                  schemaVersion: 'bayn.native-arrival-epoch.v1',
-                  captureId,
-                  build: plan.config.build,
-                  bootstrap,
-                  sources,
-                },
-                store,
-              )
-            }),
+          const archive = yield* Effect.fromResult(nativeArrivalArchiveConfig(plan.config))
+          return yield* makeThreadedKafkaProjection(
+            projectionWorkerOptions(kafka, archive, workerStreamingUniverse(plan), plan.config.build),
+          ).pipe(
+            Effect.mapError((cause) =>
+              operationalError({
+                component: 'market-data',
+                operation: 'load',
+                message: 'Kafka projection thread could not start',
+                cause,
+              }),
+            ),
           )
         }),
-      ).pipe(Layer.provide(NativeArrivalArchiveLive(plan.config)), Layer.provide(NodeServices.layer))
+      )
 }
 
 const WorkerMarketDataLive = (

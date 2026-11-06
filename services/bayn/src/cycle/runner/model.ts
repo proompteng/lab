@@ -5,7 +5,7 @@ import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
 import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store/model'
 import type { CycleWaitingDetails, DecisionReadiness, DecisionReadinessReason } from './readiness'
-import type { AdmissionProtectionEvidence } from './pass-observation'
+import type { AdmissionProtectionEvidence, ClosedEntryWindow } from './pass-observation'
 
 export type { CycleWaitReason } from './readiness'
 
@@ -46,6 +46,7 @@ export type CycleRunResult =
   | {
       readonly outcome: 'WINDOW_CLOSED'
       readonly observedAt: string
+      readonly closedEntryWindow?: ClosedEntryWindow
     }
   | {
       readonly outcome: 'ALREADY_ACQUIRED' | 'ALREADY_TERMINAL'

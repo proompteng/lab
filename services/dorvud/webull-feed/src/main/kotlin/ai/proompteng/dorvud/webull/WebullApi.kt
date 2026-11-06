@@ -129,84 +129,106 @@ class WebullApi(
     query: Map<String, String> = emptyMap(),
     body: JsonObject? = null,
     symbols: List<String> = emptyList(),
-  ): JsonObject =
-    requestLocks.computeIfAbsent(path) { Mutex() }.withLock {
-      require(
-        path in
-          setOf(
-            WEBULL_INSTRUMENTS_PATH,
-            WEBULL_BARS_PATH,
-            WEBULL_QUOTES_PATH,
-            "/market-data/streaming/subscribe",
-            "/market-data/streaming/unsubscribe",
-          ),
-      ) { "unsupported Webull endpoint" }
-      val interval = if (path == WEBULL_INSTRUMENTS_PATH) Duration.ofMillis(1_100) else Duration.ofMillis(250)
-      repeat(4) { attempt ->
-        nextRequests[path]?.let { due ->
-          val wait = Duration.between(clock.instant(), due)
-          if (!wait.isNegative && !wait.isZero) delay(wait.toMillis() + 1)
-        }
-        nextRequests[path] = clock.instant().plus(interval)
-        val encodedBody = body?.toString()
-        val suffix =
-          if (query.isEmpty()) {
-            ""
-          } else {
-            "?" +
-              query.toSortedMap().entries.joinToString("&") { "${webullPercentEncode(it.key)}=${webullPercentEncode(it.value)}" }
-          }
-        val builder = HttpRequest.newBuilder(origin.resolve(path + suffix)).timeout(Duration.ofSeconds(20))
-        webullSignedHeaders(
-          credentials,
-          origin.authority,
-          path,
-          query,
-          encodedBody,
-          DateTimeFormatter.ISO_INSTANT.format(clock.instant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)),
-          UUID.randomUUID().toString(),
-        ).forEach(builder::header)
-        builder.header("Accept", "application/json")
-        if (encodedBody ==
-          null
-        ) {
-          builder.GET()
+  ): JsonObject {
+    require(
+      path in
+        setOf(
+          WEBULL_INSTRUMENTS_PATH,
+          WEBULL_BARS_PATH,
+          WEBULL_QUOTES_PATH,
+          "/market-data/streaming/subscribe",
+          "/market-data/streaming/unsubscribe",
+        ),
+    ) { "unsupported Webull endpoint" }
+    val interval = if (path == WEBULL_INSTRUMENTS_PATH) Duration.ofMillis(1_100) else Duration.ofMillis(250)
+    repeat(4) { attempt ->
+      awaitRequest(path, interval)
+      val encodedBody = body?.toString()
+      val suffix =
+        if (query.isEmpty()) {
+          ""
         } else {
-          builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(encodedBody))
+          "?" +
+            query.toSortedMap().entries.joinToString("&") { "${webullPercentEncode(it.key)}=${webullPercentEncode(it.value)}" }
         }
-        val response = client.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofInputStream()).await()
-        val bytes =
-          withTimeout(20_000) { runInterruptible(Dispatchers.IO) { response.body().use { it.readNBytes(MAX_WEBULL_PAYLOAD_BYTES + 1) } } }
-        require(bytes.size <= MAX_WEBULL_PAYLOAD_BYTES) { "Webull HTTP response exceeds capture bound" }
-        val receivedAt = clock.instant()
-        if (response.statusCode() in 200..299) {
-          if (path in setOf(WEBULL_INSTRUMENTS_PATH, WEBULL_BARS_PATH, WEBULL_QUOTES_PATH)) {
-            capture(WebullSource.Http(path, symbols, query, encodedBody), bytes, receivedAt)
-          }
-          val result =
-            if (bytes.isEmpty()) {
-              buildJsonObject {}
-            } else {
-              Json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as? JsonObject
-                ?: error("Webull response must be an object")
-            }
-          return@withLock result
-        }
-        val code =
-          runCatching {
-            ((Json.parseToJsonElement(bytes.toString(UTF_8)) as? JsonObject)?.get("error_code") as? JsonPrimitive)?.content
-          }.getOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_.-]{1,100}")) }
-            ?: "HTTP_${response.statusCode()}"
-        val retry = webullRetryAfter(response.headers().firstValue("Retry-After").orElse(null), receivedAt)
-        val failure = WebullApiFailure(response.statusCode(), code, retry)
-        val readOnly = path in setOf(WEBULL_INSTRUMENTS_PATH, WEBULL_BARS_PATH, WEBULL_QUOTES_PATH)
-        val retryable = failure.status == 429 || (readOnly && failure.status in 500..599)
-        if (retryable) {
-          val wait = retry ?: if (failure.status == 429) Duration.ofSeconds(60) else Duration.ofSeconds(1L shl attempt)
-          nextRequests[path] = receivedAt.plus(wait)
-        }
-        if (!retryable || attempt == 3) throw failure
+      val builder = HttpRequest.newBuilder(origin.resolve(path + suffix)).timeout(Duration.ofSeconds(20))
+      webullSignedHeaders(
+        credentials,
+        origin.authority,
+        path,
+        query,
+        encodedBody,
+        DateTimeFormatter.ISO_INSTANT.format(clock.instant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)),
+        UUID.randomUUID().toString(),
+      ).forEach(builder::header)
+      builder.header("Accept", "application/json")
+      if (encodedBody ==
+        null
+      ) {
+        builder.GET()
+      } else {
+        builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(encodedBody))
       }
-      error("Webull request exhausted its retry budget")
+      val response = client.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofInputStream()).await()
+      val responseAt = clock.instant()
+      val retry = webullRetryAfter(response.headers().firstValue("Retry-After").orElse(null), responseAt)
+      val readOnly = path in setOf(WEBULL_INSTRUMENTS_PATH, WEBULL_BARS_PATH, WEBULL_QUOTES_PATH)
+      val retryable = response.statusCode() == 429 || (readOnly && response.statusCode() in 500..599)
+      val bytes =
+        response.body().use { responseBody ->
+          if (retryable) {
+            val wait = retry ?: if (response.statusCode() == 429) Duration.ofSeconds(60) else Duration.ofSeconds(1L shl attempt)
+            requestLocks.getValue(path).withLock {
+              nextRequests[path] = maxOf(nextRequests.getValue(path), responseAt.plus(wait))
+            }
+          }
+          withTimeout(20_000) { runInterruptible(Dispatchers.IO) { responseBody.readNBytes(MAX_WEBULL_PAYLOAD_BYTES + 1) } }
+        }
+      require(bytes.size <= MAX_WEBULL_PAYLOAD_BYTES) { "Webull HTTP response exceeds capture bound" }
+      val receivedAt = clock.instant()
+      if (response.statusCode() in 200..299) {
+        if (path in setOf(WEBULL_INSTRUMENTS_PATH, WEBULL_BARS_PATH, WEBULL_QUOTES_PATH)) {
+          capture(WebullSource.Http(path, symbols, query, encodedBody), bytes, receivedAt)
+        }
+        val result =
+          if (bytes.isEmpty()) {
+            buildJsonObject {}
+          } else {
+            Json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as? JsonObject
+              ?: error("Webull response must be an object")
+          }
+        return result
+      }
+      val code =
+        runCatching {
+          ((Json.parseToJsonElement(bytes.toString(UTF_8)) as? JsonObject)?.get("error_code") as? JsonPrimitive)?.content
+        }.getOrNull()?.takeIf { it.matches(Regex("[A-Za-z0-9_.-]{1,100}")) }
+          ?: "HTTP_${response.statusCode()}"
+      val failure = WebullApiFailure(response.statusCode(), code, retry)
+      if (!retryable || attempt == 3) throw failure
     }
+    error("Webull request exhausted its retry budget")
+  }
+
+  private suspend fun awaitRequest(
+    path: String,
+    interval: Duration,
+  ) {
+    val lock = requestLocks.computeIfAbsent(path) { Mutex() }
+    while (true) {
+      val wait =
+        lock.withLock {
+          val now = clock.instant()
+          val due = nextRequests[path] ?: now
+          if (due.isAfter(now)) {
+            Duration.between(now, due)
+          } else {
+            nextRequests[path] = now.plus(interval)
+            Duration.ZERO
+          }
+        }
+      if (wait.isZero) return
+      delay(wait.toMillis() + 1)
+    }
+  }
 }

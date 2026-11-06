@@ -372,11 +372,12 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
           Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
           Layer.provide(
             Layer.succeed(KafkaMarketProjection, {
-              read: Effect.succeed(withdrawn.cut),
-              readForLiquidation: Effect.succeed(withdrawn.cut),
+              check: Effect.void,
+              read: () => Effect.succeed(withdrawn.cut),
               status: Effect.succeed({
                 epoch: 'fixture-epoch',
                 ready: true,
+                bootstrapDeadlineAtMs: null,
                 sequence: withdrawn.cut.projection.sequence,
               }),
             }),
@@ -410,11 +411,12 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
           Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
           Layer.provide(
             Layer.succeed(KafkaMarketProjection, {
-              read: Effect.succeed(fixture.cut),
-              readForLiquidation: Effect.succeed(fixture.cut),
+              check: Effect.void,
+              read: () => Effect.succeed(fixture.cut),
               status: Effect.succeed({
                 epoch: 'fixture-epoch',
                 ready: true,
+                bootstrapDeadlineAtMs: null,
                 sequence: fixture.cut.projection.sequence,
               }),
             }),

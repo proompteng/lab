@@ -26,9 +26,13 @@ import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
 import { EntryInferenceJournal } from './jev/entry-inference'
-import { buildObserveCycleDecision } from './observe-composition/decision-builder'
+import {
+  buildObserveCycleDecision,
+  prepareObserveDecisionReads,
+  readObserveDecisionFacts,
+} from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy } from './execution/risk-policy'
-import { JevPositionStore } from './jev/portfolio'
+import { JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
@@ -38,13 +42,14 @@ import { runAutonomousCyclePass } from './cycle/runner/program'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
 import {
   makeRecoveryFirstCycleDriver,
+  canReuseSourceWaitReconciliation,
   mutationDecisionBuilder,
   reconciliationForPreparation,
   runRestateAdvanceWithinTimeout,
 } from './observe-composition/recovery-driver'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { boundedReconciliationPass, decisionBuildError } from './observe-composition/decision-builder'
-import { runRecoveryFirstCyclePass } from './observe-composition/execution-cycle'
+import { mutationDecisionInput, runRecoveryFirstCyclePass } from './observe-composition/execution-cycle'
 import { protectedAccountAdmission } from './observe-composition/account-admission'
 import {
   AccountStatus as BrokerAccountStatus,
@@ -748,6 +753,74 @@ const reconciliationResult = (
   }
 }
 
+test('short source retries require exact flat facts, unchanged authority and original freshness', () => {
+  const exact = reconciliationResult()
+  const authority = exact.riskContext.authority
+  if (authority === null) throw new Error('fixture requires authority')
+  const position: Position = {
+    schemaVersion: 'bayn.position.v2',
+    accountId,
+    symbol: 'NVDA',
+    quantityAtoms: '1000000000',
+    averageEntryPriceMicros: '100000000',
+    costBasisMicros: '100000000',
+    marketPriceMicros: '100000000',
+    marketValueMicros: '100000000',
+    unrealizedPnlMicros: '0',
+    observedAt: reconciledAt,
+  }
+  const order: Order = {
+    schemaVersion: 'bayn.order.v3',
+    accountId,
+    brokerOrderId: 'source-retry-order',
+    clientOrderId: 'source-retry-client',
+    symbol: 'NVDA',
+    side: OrderSide.Buy,
+    orderType: OrderType.Limit,
+    timeInForce: TimeInForce.Day,
+    quantityAtoms: '1000000000',
+    filledQuantityAtoms: '0',
+    limitPriceMicros: '100000000',
+    status: OrderStatus.New,
+    observedAt: reconciledAt,
+  }
+  const now = Date.parse(reconciledAt)
+  const supported = (facts: ReconciliationPassResult, at = now, current = authority, age = 30_000) =>
+    canReuseSourceWaitReconciliation(facts, current, at, age)
+  expect(supported(exact)).toBe(true)
+  expect(supported(exact, now + 29_999)).toBe(true)
+  expect(supported(exact, now + 30_000)).toBe(false)
+  expect(supported(exact, now - 1)).toBe(false)
+  expect(supported(exact, now, authority, 0)).toBe(false)
+  expect(supported(exact, now, { ...authority, version: authority.version + 1 })).toBe(false)
+  expect(supported(exact, now, { ...authority, generationHash: 'f'.repeat(64) })).toBe(false)
+  expect(supported({ ...exact, riskContext: { ...exact.riskContext, unknownMutationCount: 1 } })).toBe(false)
+  expect(
+    supported({
+      ...exact,
+      riskContext: { ...exact.riskContext, authorityObservedAt: new Date(now + 1).toISOString() },
+    }),
+  ).toBe(false)
+  expect(
+    supported({ ...exact, report: { ...exact.report, metrics: { ...exact.report.metrics, accountingExact: false } } }),
+  ).toBe(false)
+  expect(
+    supported({
+      ...exact,
+      report: {
+        ...exact.report,
+        reconciliation: { ...exact.report.reconciliation, status: ReconciliationStatus.Discrepancy },
+      },
+    }),
+  ).toBe(false)
+  expect(supported({ ...exact, brokerState: { ...exact.brokerState, unknownOrderCount: 1 } })).toBe(false)
+  expect(supported({ ...exact, brokerState: { ...exact.brokerState, positions: [position] } })).toBe(false)
+  for (const status of [OrderStatus.New, OrderStatus.Pending, OrderStatus.PartiallyFilled])
+    expect(supported({ ...exact, brokerState: { ...exact.brokerState, orders: [{ ...order, status }] } })).toBe(false)
+  for (const status of [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected])
+    expect(supported({ ...exact, brokerState: { ...exact.brokerState, orders: [{ ...order, status }] } })).toBe(true)
+})
+
 test('one preparation pass reuses fresh reconciliation and refreshes on age or authority change', async () => {
   let reads = 0
   await Effect.runPromise(
@@ -1065,7 +1138,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
     ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
     ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
     account: () => unusedAccounting,
-    verifyCompleted: () => Effect.void,
+
     value: () =>
       Effect.succeed({
         schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -4664,6 +4737,7 @@ describe('OBSERVE runtime composition', () => {
       readonly initialAgeMs?: number
       readonly pricingAskIncrease?: number
       readonly pricingReadDelayMs?: number
+      readonly pricingSnapshotDelayMs?: number
       readonly brokerMaximumAgeMs?: number
       readonly admissionRemainingMs?: number
       readonly cycleCreatedAt?: string
@@ -4749,6 +4823,8 @@ describe('OBSERVE runtime composition', () => {
                 events.push(query.purpose === IntradaySnapshotPurpose.EntryPricing ? 'pricing' : 'signal')
                 snapshotRequests.push({ ...query, archiveWatermarks: [] })
                 const snapshot = yield* fixture.input.intradayMarketData.loadSnapshot(query)
+                if (query.purpose === IntradaySnapshotPurpose.EntryPricing)
+                  yield* TestClock.adjust(options.pricingSnapshotDelayMs ?? 0)
                 if (query.purpose !== IntradaySnapshotPurpose.EntryPricing || options.pricingAskIncrease === undefined)
                   return snapshot
                 const increase = options.pricingAskIncrease
@@ -4949,12 +5025,46 @@ describe('OBSERVE runtime composition', () => {
       inferenceMs: 7_000,
       refreshMs: 3_000,
       brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'refresh passes the existing model deadline',
+      inferenceMs: 7_000,
+      refreshMs: 3_001,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'refresh exhausts the original admission with still-current inference',
+      inferenceMs: 1_000,
+      refreshMs: 4_000,
+      admissionRemainingMs: 5_000,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'refresh exhausts both source and admission deadlines',
+      inferenceMs: 7_000,
+      refreshMs: 3_000,
+      admissionRemainingMs: 10_000,
+      brokerMaximumAgeMs: 40_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'refresh exhausts both source and broker-risk headroom',
+      inferenceMs: 7_000,
+      refreshMs: 1_000,
+      refreshedAgeMs: 18_999,
+      pricingReadDelayMs: 2_000,
+      brokerMaximumAgeMs: 30_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
     },
     {
       name: 'refresh commit consumes the remaining broker-risk headroom',
       refreshedAgeMs: 19_000,
       refreshMs: 1_000,
       brokerMaximumAgeMs: 30_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
     },
   ])('Jev waits before selecting a quote when $name', async (options) => {
     const result = await buildEntryWithHeadroom(options)
@@ -4962,11 +5072,69 @@ describe('OBSERVE runtime composition', () => {
     if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
     expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
       _tag: 'ObserveDecisionAwaitingSignal',
-      readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+      readiness: { reason: options.readiness },
     })
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests).toHaveLength(1)
     expect(result.events).not.toContain('pricing')
+  })
+
+  test.each([
+    {
+      name: 'source expiry',
+      pricingSnapshotDelayMs: 9_000,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'past source expiry',
+      pricingSnapshotDelayMs: 9_001,
+      readiness: DecisionReadinessReason.InferenceExpired,
+    },
+    {
+      name: 'admission expiry with still-current inference',
+      pricingSnapshotDelayMs: 4_000,
+      admissionRemainingMs: 5_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+    {
+      name: 'source and admission expiry',
+      pricingSnapshotDelayMs: 9_000,
+      admissionRemainingMs: 10_000,
+      readiness: DecisionReadinessReason.InferenceUnavailable,
+    },
+  ])('Jev preserves the retry classification after pricing reaches $name', async (options) => {
+    const result = await buildEntryWithHeadroom({
+      ...options,
+      initialAgeMs: 0,
+      inferenceMs: 1_000,
+      brokerMaximumAgeMs: 300_000,
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: options.readiness },
+    })
+    expect(result.refreshes).toBe(0)
+    expect(result.snapshotRequests).toHaveLength(2)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+  })
+
+  test('Jev retains broker backoff when source expiry and broker headroom coincide after pricing', async () => {
+    const result = await buildEntryWithHeadroom({
+      initialAgeMs: 10_000,
+      inferenceMs: 1_000,
+      pricingSnapshotDelayMs: 9_000,
+      brokerMaximumAgeMs: 30_000,
+    })
+    expect(Exit.isFailure(result.exit)).toBe(true)
+    if (Exit.isSuccess(result.exit)) throw new Error('expired evidence must not produce a bindable decision')
+    expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+    })
+    expect(result.refreshes).toBe(0)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
   })
 
   test('Jev rechecks cached headroom at the pricing clock before selecting a quote', async () => {
@@ -5035,6 +5203,18 @@ describe('OBSERVE runtime composition', () => {
       const builder = mutationDecisionBuilder(input, fixture.preparation, fixture.policy)
       let document: CycleDecisionDocument | undefined
       let pricingReads = 0
+      let reconciliationWrites = 0
+      const executionStore = {
+        ...services.executionStore,
+        reconcile: (accountId, snapshot) =>
+          services.executionStore.reconcile(accountId, snapshot).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                reconciliationWrites += 1
+              }),
+            ),
+          ),
+      } satisfies ReconciliationStoreShape & AuthorityGenerationStoreShape
       const forbidden = () => Effect.die('pricing preparation test must not bind or submit')
       const cycleStore: CycleStoreShape = {
         readOldestUnfinished: () => Effect.succeed(Option.some(cycle)),
@@ -5061,32 +5241,58 @@ describe('OBSERVE runtime composition', () => {
                 Effect.gen(function* () {
                   if (reconcileForPricing === undefined)
                     return yield* Effect.die('driver omitted pricing reconciliation')
-                  document = yield* builder(currentCycle, reconcile, (minimumRemainingMs) =>
-                    Effect.gen(function* () {
-                      pricingReads += 1
-                      expect(minimumRemainingMs).toBe(fixtureProtocol.maximumQuoteAgeMs)
-                      return yield* reconcileForPricing(minimumRemainingMs)
-                    }),
-                  )
+                  if (document === undefined)
+                    document = yield* builder(currentCycle, reconcile, (minimumRemainingMs) =>
+                      Effect.gen(function* () {
+                        pricingReads += 1
+                        expect(minimumRemainingMs).toBe(fixtureProtocol.maximumQuoteAgeMs)
+                        return yield* reconcileForPricing(minimumRemainingMs)
+                      }),
+                    )
+                  else
+                    yield* reconcile.pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new CycleDecisionBuildError({ failure: 'operational', message: cause.message, cause }),
+                      ),
+                    )
                   // Stop at the tested preparation boundary; no durable decision or broker mutation belongs in this test.
                   return yield* new CycleDecisionBuildError({
                     failure: 'not-ready',
                     message: 'prepared entry verified',
+                    readiness: {
+                      reason: DecisionReadinessReason.SignalWindowObserved,
+                      message: 'Awaiting the next source window',
+                      availableAt: new Date(Date.parse(evaluatedAt) + 7_000).toISOString(),
+                    },
                   })
                 }),
               'mutation autonomous cycle loop',
             ),
           ).pipe(Effect.flatten)
-          return yield* driver.advance
+          const first = yield* driver.advance
+          if (cadenceMs === 30_000) {
+            expect(reconciliationWrites).toBe(1)
+            for (let second = 1; second <= 5; second++) {
+              yield* TestClock.adjust(1_000)
+              const retry = yield* driver.advance
+              expect(retry.observation.result).toBe('SUCCESS')
+              expect(reconciliationWrites).toBe(1)
+            }
+            yield* TestClock.adjust(25_000)
+            yield* driver.advance
+            expect(reconciliationWrites).toBe(2)
+          }
+          return first
         }).pipe(
           Effect.provideService(BrokerRead, { ...services.brokerRead, marketCalendar: calendarRead([]) }),
           Effect.provideService(CycleStore, cycleStore),
-          Effect.provideService(BrokerEventStore, services.executionStore),
-          Effect.provideService(FillAccountingStore, services.executionStore),
-          Effect.provideService(ValuationStore, services.executionStore),
-          Effect.provideService(ReconciliationStore, services.executionStore),
-          Effect.provideService(AuthorityGenerationStore, services.executionStore),
-          Effect.provideService(AuthorityRestrictionStore, services.executionStore),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
@@ -5107,6 +5313,10 @@ describe('OBSERVE runtime composition', () => {
       expect(document?.dispatchable).toBe(true)
       expect(document?.targetPlan.status).toBe(TargetPlanStatus.Planned)
       expect(pricingReads).toBe(1)
+      if (cadenceMs === 30_000) {
+        expect(result.nextDelayMs).toBe(7_000)
+        expect(result.nextWakeAt).toBe(new Date(Date.parse(evaluatedAt) + 7_000).toISOString())
+      }
     },
   )
 
@@ -5255,80 +5465,100 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
-  test('waits without inference when every native Jev candidate lacks usable evidence', async () => {
-    const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
-    let inferenceBatches = 0
-    const exit = await Effect.runPromiseExit(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt))
-        return yield* buildMutationShadowCycleDecision({
-          authorityGenerationHash: generationHash,
-          cycle,
-          executionModel: fixtureProtocol.executionModel,
-          policy,
-          strategy: fixtureRuntime,
-          reconcile: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-          intradayMarketData: {
-            check: Effect.void,
-            verifyReference: fixtureStreamingReference,
-            loadSnapshot: (query) =>
-              Effect.suspend(() => {
-                const raw = makeIntradayMomentumTestSnapshot(
-                  fixtureProtocol,
-                  { ...query, archiveWatermarks: [] },
-                  {},
-                  10,
-                )
-                const { cut } = streamingFixtureFromRaw(raw, query)
-                return Effect.fromResult(
-                  constructStreamingSnapshot(
-                    {
-                      ...cut,
-                      projection: {
-                        ...cut.projection,
-                        quoteHistory: new Map([...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY')),
-                        tradeHistory: new Map([...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY')),
+  test.each([undefined, '2026-09-04T16:44:00.000Z'])(
+    'missing native inputs retain the earlier observed window (%s) without inference',
+    async (previousWindowEndAt) => {
+      const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, fixtureRuntime))
+      let inferenceBatches = 0
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            strategy: fixtureRuntime,
+            reconcile: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            intradayMarketData: {
+              check: Effect.void,
+              verifyReference: fixtureStreamingReference,
+              loadSnapshot: (query) =>
+                Effect.suspend(() => {
+                  const raw = makeIntradayMomentumTestSnapshot(
+                    fixtureProtocol,
+                    { ...query, archiveWatermarks: [] },
+                    {},
+                    10,
+                  )
+                  const { cut } = streamingFixtureFromRaw(raw, query)
+                  return Effect.fromResult(
+                    constructStreamingSnapshot(
+                      {
+                        ...cut,
+                        projection: {
+                          ...cut.projection,
+                          quoteHistory: new Map(
+                            [...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY'),
+                          ),
+                          tradeHistory: new Map(
+                            [...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY'),
+                          ),
+                        },
                       },
-                    },
-                    query,
-                  ),
-                ).pipe(
-                  Effect.mapError((cause) =>
-                    operationalError({
-                      component: 'market-data',
-                      operation: 'snapshot',
-                      message: 'Streaming snapshot is unavailable',
-                      cause,
-                    }),
-                  ),
-                )
-              }),
-          },
-        })
-      }).pipe(
-        (program) =>
-          provideDecisionServices(
-            program.pipe(
-              Effect.provideService(JevBatchStore, {
-                read: () => Effect.die('no batch should be read'),
-                pending: () => Effect.succeed([]),
-                begin: () =>
-                  Effect.sync(() => {
-                    inferenceBatches += 1
-                  }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
-                complete: () => Effect.die('no batch should be finished'),
-                finish: () => Effect.die('no batch should be finished'),
-              }),
+                      query,
+                    ),
+                  ).pipe(
+                    Effect.mapError((cause) =>
+                      operationalError({
+                        component: 'market-data',
+                        operation: 'snapshot',
+                        message: 'Streaming snapshot is unavailable',
+                        cause,
+                      }),
+                    ),
+                  )
+                }),
+            },
+          }).pipe(Effect.result)
+        }).pipe(
+          (program) =>
+            provideDecisionServices(
+              program.pipe(
+                Effect.provideService(CandidateObservationStore, {
+                  latestJevWindowEnd: (input) => {
+                    expect(input).toEqual({ cycleId: cycle.identity.cycleId, purpose: JevPurpose.Entry })
+                    return Effect.succeed(Option.fromUndefinedOr(previousWindowEndAt))
+                  },
+                  record: () => Effect.die('Missing data cannot create an observation'),
+                }),
+                Effect.provideService(JevBatchStore, {
+                  read: () => Effect.die('no batch should be read'),
+                  pending: () => Effect.succeed([]),
+                  begin: () =>
+                    Effect.sync(() => {
+                      inferenceBatches += 1
+                    }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
+                  complete: () => Effect.die('no batch should be finished'),
+                  finish: () => Effect.die('no batch should be finished'),
+                }),
+              ),
+              calendarRead([]),
             ),
-            calendarRead([]),
-          ),
-        Effect.provide(TestClock.layer()),
-      ),
-    )
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('ObserveDecisionAwaitingSignal')
-    expect(inferenceBatches).toBe(0)
-  })
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe('ObserveDecisionAwaitingSignal')
+        if (result.failure._tag === 'ObserveDecisionAwaitingSignal') {
+          expect(result.failure.readiness?.reason).toBe(DecisionReadinessReason.SnapshotUnavailable)
+          expect(result.failure.readiness?.snapshotQuery?.previousWindowEndAt).toBe(previousWindowEndAt)
+        }
+      }
+      expect(inferenceBatches).toBe(0)
+    },
+  )
 
   test('a previously observed Jev entry window reports when fresh evidence becomes eligible', async () => {
     const fixture = await executionLifecycleFixture()
@@ -5391,7 +5621,7 @@ describe('OBSERVE runtime composition', () => {
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
-      verifyCompleted: () => unused,
+
       value: () => unused,
       hasAccountBaseline: () => unused,
       retainCashReporting: () => Effect.void,
@@ -5596,7 +5826,7 @@ describe('OBSERVE runtime composition', () => {
             ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
             ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
             account: () => unusedAccounting,
-            verifyCompleted: () => Effect.void,
+
             value: () =>
               Effect.succeed({
                 schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -5745,13 +5975,13 @@ describe('OBSERVE runtime composition', () => {
   })
 })
 
-test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled'] as const)(
+test.each(['discovery', 'calendar-reuse', 'pending', 'not-ready', 'activation-expired', 'stalled'] as const)(
   'advances %s cycle admission in one bounded recovery pass',
   async (kind) => {
     const fixture = await executionLifecycleFixture()
     const services = makeExactReconciliationServices(Authority.Execution)
     let stored =
-      kind === 'discovery'
+      kind === 'discovery' || kind === 'calendar-reuse'
         ? undefined
         : Effect.runSync(
             Schema.decodeUnknownEffect(
@@ -5761,6 +5991,7 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
           )
     let bound: CycleDecisionDocument | undefined
     let unfinishedReads = 0
+    const calendarQueries: unknown[] = []
     const operations: string[] = []
     const forbidden = () => Effect.die(new Error('admission must not perform a broker mutation'))
     const store: CycleStoreShape = {
@@ -5848,51 +6079,88 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
     }
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt) + (kind === 'discovery' ? 60_000 : 0))
-        return yield* Effect.exit(
-          runRecoveryFirstCyclePass(
-            fixture.input,
-            fixture.policy,
-            {
-              cycleBindingId: cycle.identity.qualificationRunId,
-              accountId,
-              strategyName: 'jev',
-              strategyProtocolHash: fixture.preparation.strategyProtocolHash,
-              executionPolicy: fixture.preparation.executionPolicy,
-              buildDecision: () =>
-                Effect.suspend(() => {
-                  operations.push('build')
-                  return kind === 'not-ready'
-                    ? Effect.fail(
-                        new CycleDecisionBuildError({
-                          failure: 'not-ready',
-                          message: 'incomplete market window',
-                          readiness: {
-                            reason: DecisionReadinessReason.SnapshotCoverage,
-                            message: 'incomplete market window',
-                          },
-                        }),
-                      )
-                    : Effect.succeed(fixture.document)
-                }),
-              buildDecisionEvidence: () =>
-                Effect.sync(() => {
-                  operations.push('verify')
-                  return {}
-                }),
-            },
-            {
-              read: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-              refresh: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-            },
-            { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
-          ),
+        yield* TestClock.setTime(
+          Date.parse(evaluatedAt) + (kind === 'discovery' || kind === 'calendar-reuse' ? 60_000 : 0),
         )
+        const pass = runRecoveryFirstCyclePass(
+          fixture.input,
+          fixture.policy,
+          {
+            cycleBindingId: cycle.identity.qualificationRunId,
+            accountId,
+            strategyName: 'jev',
+            strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+            executionPolicy: fixture.preparation.executionPolicy,
+            buildDecision: (currentCycle) =>
+              Effect.gen(function* () {
+                operations.push('build')
+                if (kind === 'calendar-reuse') {
+                  const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+                  const input = mutationDecisionInput(
+                    fixture.input,
+                    fixture.preparation,
+                    fixture.policy,
+                    currentCycle,
+                    Effect.succeed(reconciliationResultAt(observedAt)),
+                  )
+                  const prepared = yield* Effect.fromResult(prepareObserveDecisionReads(input)).pipe(Effect.orDie)
+                  yield* readObserveDecisionFacts(input, prepared, Authority.Execution).pipe(Effect.orDie)
+                }
+                return yield* kind === 'not-ready' || kind === 'calendar-reuse'
+                  ? Effect.fail(
+                      new CycleDecisionBuildError({
+                        failure: 'not-ready',
+                        message: 'incomplete market window',
+                        readiness: {
+                          reason: DecisionReadinessReason.SnapshotCoverage,
+                          message: 'incomplete market window',
+                        },
+                      }),
+                    )
+                  : Effect.succeed(fixture.document)
+              }),
+            buildDecisionEvidence: () =>
+              Effect.sync(() => {
+                operations.push('verify')
+                return {}
+              }),
+          },
+          {
+            read: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            refresh: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+          },
+          { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+        )
+        const result = yield* Effect.exit(pass)
+        if (kind === 'calendar-reuse') {
+          expect(calendarQueries).toHaveLength(1)
+          expect(yield* Effect.exit(pass)).toMatchObject({ _tag: 'Success' })
+          expect(calendarQueries).toHaveLength(2)
+        }
+        return result
       }).pipe(
         Effect.provideService(CycleStore, store),
         Effect.provideService(BrokerRead, {
           ...services.brokerRead,
-          marketCalendar: calendarRead([...calendar.sessions]),
+          marketCalendar: (query) =>
+            calendarRead(calendarQueries)(query).pipe(
+              Effect.map((read) => {
+                const material = {
+                  ...calendarMaterial,
+                  requestedRange: { ...query },
+                  sessions: calendar.sessions.filter(
+                    (session) => query.start <= session.date && session.date <= query.end,
+                  ),
+                  providerSessions: calendar.providerSessions.filter(
+                    (session) => query.start <= session.date && session.date <= query.end,
+                  ),
+                }
+                return {
+                  ...read,
+                  value: { ...material, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(material)) },
+                }
+              }),
+            ),
         }),
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
@@ -5928,7 +6196,7 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(unfinishedReads).toBe(1)
+    expect(unfinishedReads).toBe(kind === 'calendar-reuse' ? 2 : 1)
     if (kind === 'stalled') {
       expect(Exit.isFailure(result)).toBe(true)
       expect(operations).toEqual(['activate', 'activate'])
@@ -5939,11 +6207,13 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         action: kind === 'activation-expired' ? 'BLOCKED' : 'WAITING',
       })
       expect(operations).toEqual(
-        kind === 'not-ready'
-          ? ['activate', 'build']
-          : kind === 'activation-expired'
-            ? ['activate', 'block']
-            : [...(kind === 'discovery' ? ['acquire'] : []), 'activate', 'build', 'verify', 'bind', 'read-bound'],
+        kind === 'calendar-reuse'
+          ? ['acquire', 'activate', 'build', 'build']
+          : kind === 'not-ready'
+            ? ['activate', 'build']
+            : kind === 'activation-expired'
+              ? ['activate', 'block']
+              : [...(kind === 'discovery' ? ['acquire'] : []), 'activate', 'build', 'verify', 'bind', 'read-bound'],
       )
     }
   },
@@ -7059,6 +7329,7 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
 test.each([
   [false, DecisionReadinessReason.SnapshotCoverage, undefined, undefined],
   [true, DecisionReadinessReason.SnapshotCoverage, undefined, undefined],
+  [false, DecisionReadinessReason.InferenceUnavailable, undefined, undefined],
   [false, DecisionReadinessReason.SignalWindowObserved, 7_000, 7_000],
   [false, DecisionReadinessReason.LookbackWarmup, 7_000, 7_000],
   [false, DecisionReadinessReason.SignalWindowObserved, -1_000, undefined],
@@ -7187,7 +7458,7 @@ test.each([
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(counts).toEqual([1, 2, 3])
+    expect(counts).toEqual(bound || reason === DecisionReadinessReason.InferenceUnavailable ? [1, 2, 3] : [1, 1, 2])
   },
 )
 

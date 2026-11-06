@@ -1,15 +1,14 @@
-#!/usr/bin/env python3
 """Run daily registry retention through the existing prepare/collect/purge protocol."""
 
 import json
 import os
-from pathlib import Path
 import signal
+from pathlib import Path
 
-from collect import Collection, HOLD, OWNER, READONLY
 import prepare
-from protected_references import references
 import purge
+from collect import HOLD, OWNER, READONLY, Collection
+from protected_references import references
 
 
 def emit(phase, **fields):
@@ -43,9 +42,11 @@ def run(context, directory):
                 "--",
                 "python3",
                 "-c",
-                "import json,pathlib;print(json.dumps(sorted(p.name for p in "
-                "pathlib.Path('/quarantine').iterdir() if p.is_dir() and "
-                "p.name.startswith('registry-collect-') and (p/'receipt.json').is_file())))",
+                (
+                    "import json,pathlib;print(json.dumps(sorted({p.name.removeprefix('.purged-') for p in "
+                    "pathlib.Path('/quarantine').iterdir() if "
+                    "p.name.startswith(('registry-collect-', '.purged-registry-collect-'))})))"
+                ),
             ]
         )
     )
