@@ -27,7 +27,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Deferred, Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
+import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -49,6 +49,15 @@ import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
+import {
+  ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+} from '../execution/controller-status'
+import type { AdvanceExecutionCommand } from '../execution/advance'
+import { executionControllerPlanHash } from '../execution/controller'
+import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
@@ -1333,6 +1342,7 @@ durableTest.each(
             Context.add(IntentStore, intents),
             Context.add(MutationStore, mutations),
             Context.add(JevClient, yield* JevClient),
+            Context.add(CandidateObservationStore, yield* CandidateObservationStore),
 
             Context.add(EntryInferenceJournal, yield* EntryInferenceJournal),
             Context.add(JevEvaluationStore, yield* JevEvaluationStore),
@@ -1636,16 +1646,116 @@ durableTest.each(
             Effect.forkChild({ startImmediately: true }),
           )
           const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation', true)
+          const controllerStatuses = yield* ExecutionControllerStatusStore.pipe(
+            Effect.provide(ExecutionControllerStatusStoreLive),
+          )
+          const controllerKey = Result.getOrThrow(canonicalHashV1Result({ accountId }))
+          let sequence = 0
+          let abandoned: ExecutionControllerStatus | undefined
+          let crashedCommand: AdvanceExecutionCommand | undefined
+          const interruptedStatusStore = {
+            ...controllerStatuses,
+            project: (candidate: ExecutionControllerStatus) => {
+              if (lostResponses === 0) return controllerStatuses.project(candidate)
+              abandoned = candidate
+              return Effect.die('simulated worker loss before controller completion projection')
+            },
+          }
           const recoveryAdvances = []
           for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
             yield* advanceBy(1000)
-            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
-            recoveryAdvances.push(advance.observation)
+            const command: AdvanceExecutionCommand = {
+              controllerKey,
+              epoch: 1,
+              sequence,
+              issuedAt: yield* currentUtcInstant,
+              sourceRevision: config.build.sourceRevision,
+            }
+            const advance = yield* Effect.exit(
+              executeNativeExecutionAdvance(
+                command,
+                { advance: healthy.advance, nextDelayMs: 1000 },
+                interruptedStatusStore,
+                executionControllerPlanHash,
+              ).pipe(Effect.provideService(OperationDeadlineClock, deadlineClock)),
+            )
+            if (Exit.isFailure(advance)) {
+              expect(Cause.pretty(advance.cause)).toContain(
+                'simulated worker loss before controller completion projection',
+              )
+              crashedCommand = command
+            } else {
+              recoveryAdvances.push(advance.value.observation)
+              sequence += 1
+            }
           }
           expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
+          if (
+            crashedCommand === undefined ||
+            abandoned === undefined ||
+            !executionControllerStatusHasCompletion(abandoned)
+          )
+            throw new Error('Missing pre-projection crash')
+          const beforeProjection = yield* controllerStatuses.read(controllerKey)
+          expect(beforeProjection?.nextSequence ?? 0).toBe(crashedCommand.sequence)
+          const readCompletionObservations = sql<{ id: string; status: unknown }>`
+            SELECT observation_id::text AS id, status FROM execution_controller_observations
+            WHERE controller_key=${controllerKey} AND (status->>'epoch')::bigint=${crashedCommand.epoch}
+              AND (status->>'last_sequence')::bigint=${crashedCommand.sequence}
+            ORDER BY observation_id`
+          expect(yield* readCompletionObservations).toEqual([])
+          const originalMutations = yield* sql`SELECT intent_id, request_hash FROM mutation_events
+            WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`
+          expect(originalMutations).toHaveLength(1)
+          const originalOrderIds = (yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)
           yield* advanceBy(1000)
-          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
-          expect(yield* healthy.needsRebind).toBe(true)
+          const restarted = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation')
+          const replayCommand = { ...crashedCommand, issuedAt: yield* currentUtcInstant }
+          expect(replayCommand.issuedAt).not.toBe(crashedCommand.issuedAt)
+          const committed = yield* executeNativeExecutionAdvance(
+            replayCommand,
+            { advance: restarted.advance, nextDelayMs: 1000 },
+            controllerStatuses,
+            executionControllerPlanHash,
+          ).pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
+          expect(yield* restarted.needsRebind).toBe(true)
+          expect(
+            yield* sql`SELECT intent_id, request_hash FROM mutation_events
+            WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`,
+          ).toEqual(originalMutations)
+          expect((yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)).toEqual(originalOrderIds)
+          expect(committed.observation?.executionIssuedAt).toBe(replayCommand.issuedAt)
+          expect(committed.outcome.receiptHash).not.toBe(abandoned.lastReceiptHash)
+          const committedObservations = yield* readCompletionObservations
+          // The status trigger retains the completion; a fresh statement separately witnesses its commit.
+          expect(committedObservations).toHaveLength(2)
+          expect(committedObservations[0]?.status).toEqual(committedObservations[1]?.status)
+          expect(committedObservations[0]?.status).toEqual(
+            expect.objectContaining({
+              controller_key: controllerKey,
+              plan_hash: executionControllerPlanHash,
+              active: true,
+              epoch: crashedCommand.epoch,
+              next_sequence: crashedCommand.sequence + 1,
+              last_sequence: crashedCommand.sequence,
+              last_outcome: committed.outcome._tag,
+              last_receipt_hash: committed.outcome.receiptHash,
+              last_pass: committed.observation,
+            }),
+          )
+          expect(yield* controllerStatuses.project(abandoned).pipe(Effect.flip)).toMatchObject({ failure: 'conflict' })
+          expect(
+            yield* executeNativeExecutionAdvance(
+              { ...crashedCommand, issuedAt: utcInstantFromEpochMillis(Date.parse(replayCommand.issuedAt) + 60_000) },
+              {
+                advance: Effect.die('A committed receipt must replay without advancing the broker'),
+                nextDelayMs: 1000,
+              },
+              controllerStatuses,
+              executionControllerPlanHash,
+            ),
+          ).toEqual(committed)
+          expect(yield* readCompletionObservations).toEqual(committedObservations)
           const restricted = yield* readAuthority
           expect(restricted).toMatchObject({
             maximum: Authority.Execution,
