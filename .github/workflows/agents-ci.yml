@@ -582,7 +582,7 @@ jobs:
 
       - name: Preload published Agents runner
         if: ${{ !contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           set -euo pipefail
           test -n "${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"

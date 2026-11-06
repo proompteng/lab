@@ -95,6 +95,21 @@
           "subjects": ["workspace"]
         }
       ]
+    },
+    {
+      "kind": "google.project",
+      "nativeType": "google_project",
+      "workspaceScoped": true,
+      "relations": [
+        {
+          "name": "reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "reader_workspace",
+          "subjects": ["workspace"]
+        }
+      ]
     }
   ],
   "actions": [
@@ -151,6 +166,13 @@
       "grantRelation": "event_reader",
       "workspaceGrantRelation": "event_workspace",
       "resourceKind": "kubernetes.namespace"
+    },
+    {
+      "id": "google.project.read",
+      "permission": "read",
+      "grantRelation": "reader",
+      "workspaceGrantRelation": "reader_workspace",
+      "resourceKind": "google.project"
     }
   ]
 }

@@ -4,8 +4,6 @@ import { pipe, Result } from 'effect'
 
 export const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
 
-const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
-
 type CanonicalJsonValidationReason =
   | 'cycle'
   | 'invalid-unicode-key'
@@ -67,178 +65,119 @@ export const renderCanonicalJsonFailure = (failure: CanonicalJsonFailure): strin
   }
 }
 
-const validationFailure = (
-  path: string,
-  reason: CanonicalJsonValidationReason,
-  actualType: string,
-): Result.Result<never, CanonicalJsonFailure> => Result.fail({ _tag: 'CanonicalJsonFailure', path, reason, actualType })
+class CanonicalJsonError extends Error {
+  constructor(readonly failure: CanonicalJsonFailure) {
+    super(renderCanonicalJsonFailure(failure))
+  }
+}
+
+const validationFailure = (path: string, reason: CanonicalJsonValidationReason, actualType: string): never => {
+  throw new CanonicalJsonError({ _tag: 'CanonicalJsonFailure', path, reason, actualType })
+}
 
 const inspect = <A>(
   path: string,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
   operation: CanonicalJsonIntrospectionOperation,
   evaluate: () => A,
-): Result.Result<A, CanonicalJsonFailure> =>
-  Result.try({
-    try: evaluate,
-    catch: (cause): CanonicalJsonIntrospectionFailure => ({
+): A => {
+  try {
+    return evaluate()
+  } catch (cause) {
+    throw new CanonicalJsonError({
       _tag: 'CanonicalJsonFailure',
       path,
       reason: 'introspection-failed',
       actualType,
       operation,
       cause,
-    }),
-  })
-
-const hasInvalidUnicodeSurrogate = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1)
-      if (index + 1 >= value.length || next < 0xdc00 || next > 0xdfff) return true
-      index += 1
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true
-    }
+    })
   }
-  return false
 }
-
-const arrayLength = (value: readonly unknown[], path: string): Result.Result<number, CanonicalJsonFailure> =>
-  inspect(path, 'array', 'array-length', () => value.length)
-
-const enumerableArrayKeys = (
-  value: readonly unknown[],
-  path: string,
-): Result.Result<readonly string[], CanonicalJsonFailure> =>
-  inspect(path, 'array', 'enumerable-own-keys', () => Object.keys(value))
-
-const arrayOwnKeys = (
-  value: readonly unknown[],
-  path: string,
-): Result.Result<readonly PropertyKey[], CanonicalJsonFailure> =>
-  inspect(path, 'array', 'own-keys', () => Reflect.ownKeys(value))
 
 const dataProperty = (
   value: object,
   key: PropertyKey,
   path: string,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
-): Result.Result<unknown, CanonicalJsonFailure> => {
-  const inspected = inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key))
-  if (Result.isFailure(inspected)) return inspected
-  const descriptor = inspected.success
+): unknown => {
+  const descriptor = inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key))
   return descriptor?.enumerable === true && 'value' in descriptor
-    ? Result.succeed(descriptor.value)
+    ? descriptor.value
     : validationFailure(path, 'non-data-property', `${actualType}-property`)
 }
 
-const serializeArrayResult = (
-  value: readonly unknown[],
-  ancestors: readonly object[],
-  path: string,
-): Result.Result<string, CanonicalJsonFailure> => {
-  if (ancestors.includes(value)) return validationFailure(path, 'cycle', 'array')
+const serializeArray = (value: readonly unknown[], ancestors: Set<object>, path: string): string => {
+  if (ancestors.has(value)) return validationFailure(path, 'cycle', 'array')
 
-  const length = arrayLength(value, path)
-  if (Result.isFailure(length)) return Result.fail(length.failure)
-  const enumerableKeys = enumerableArrayKeys(value, path)
-  if (Result.isFailure(enumerableKeys)) return Result.fail(enumerableKeys.failure)
-  const ownKeys = arrayOwnKeys(value, path)
-  if (Result.isFailure(ownKeys)) return Result.fail(ownKeys.failure)
+  const length = inspect(path, 'array', 'array-length', () => value.length)
+  const enumerableKeys = inspect(path, 'array', 'enumerable-own-keys', () => Object.keys(value))
+  const ownKeys = inspect(path, 'array', 'own-keys', () => Reflect.ownKeys(value))
   if (
-    !Number.isSafeInteger(length.success) ||
-    length.success < 0 ||
-    enumerableKeys.success.length !== length.success ||
-    enumerableKeys.success.some((key, index) => key !== String(index)) ||
-    ownKeys.success.some(
-      (key) =>
-        key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length.success),
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    enumerableKeys.length !== length ||
+    enumerableKeys.some((key, index) => key !== String(index)) ||
+    ownKeys.some(
+      (key) => key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length),
     )
   )
     return validationFailure(path, 'non-dense-array', 'array')
 
-  const nextAncestors = [...ancestors, value]
+  ancestors.add(value)
   const entries: string[] = []
-  for (const key of enumerableKeys.success) {
+  for (const key of enumerableKeys) {
     const nestedPath = `${path}[${key}]`
-    const property = dataProperty(value, key, nestedPath, 'array')
-    if (Result.isFailure(property)) return Result.fail(property.failure)
-    const nested = serializeCanonicalValueResult(property.success, nextAncestors, nestedPath)
-    if (Result.isFailure(nested)) return nested
-    entries.push(nested.success)
+    entries.push(serializeCanonicalValue(dataProperty(value, key, nestedPath, 'array'), ancestors, nestedPath))
   }
-  return Result.succeed(`[${entries.join(',')}]`)
+  ancestors.delete(value)
+  return `[${entries.join(',')}]`
 }
 
-const objectPrototype = (value: object, path: string): Result.Result<object | null, CanonicalJsonFailure> =>
-  inspect(path, 'object', 'prototype', () => Object.getPrototypeOf(value))
+const serializeObject = (value: object, ancestors: Set<object>, path: string): string => {
+  if (ancestors.has(value)) return validationFailure(path, 'cycle', 'object')
 
-const objectOwnKeys = (value: object, path: string): Result.Result<readonly PropertyKey[], CanonicalJsonFailure> =>
-  inspect(path, 'object', 'own-keys', () => Reflect.ownKeys(value))
-
-const serializeObjectResult = (
-  value: object,
-  ancestors: readonly object[],
-  path: string,
-): Result.Result<string, CanonicalJsonFailure> => {
-  if (ancestors.includes(value)) return validationFailure(path, 'cycle', 'object')
-
-  const prototype = objectPrototype(value, path)
-  if (Result.isFailure(prototype)) return Result.fail(prototype.failure)
-  if (prototype.success !== Object.prototype && prototype.success !== null)
-    return validationFailure(path, 'non-plain-object', 'object')
-  const ownKeys = objectOwnKeys(value, path)
-  if (Result.isFailure(ownKeys)) return Result.fail(ownKeys.failure)
-  const keys = ownKeys.success
+  const prototype = inspect(path, 'object', 'prototype', () => Object.getPrototypeOf(value))
+  if (prototype !== Object.prototype && prototype !== null) return validationFailure(path, 'non-plain-object', 'object')
+  const keys = inspect(path, 'object', 'own-keys', () => Reflect.ownKeys(value))
   if (!keys.every((key) => typeof key === 'string')) return validationFailure(path, 'symbol-key', 'object')
 
-  const nextAncestors = [...ancestors, value]
+  ancestors.add(value)
   const entries: string[] = []
-  for (const key of keys.toSorted(compareUtf16)) {
-    if (hasInvalidUnicodeSurrogate(key)) return validationFailure(path, 'invalid-unicode-key', 'string')
+  for (const key of keys.sort()) {
+    if (!key.isWellFormed()) return validationFailure(path, 'invalid-unicode-key', 'string')
     const nestedPath = `${path}.${key}`
-    const property = dataProperty(value, key, nestedPath, 'object')
-    if (Result.isFailure(property)) return Result.fail(property.failure)
-    const nested = serializeCanonicalValueResult(property.success, nextAncestors, nestedPath)
-    if (Result.isFailure(nested)) return nested
-    entries.push(`${JSON.stringify(key)}:${nested.success}`)
+    const nested = serializeCanonicalValue(dataProperty(value, key, nestedPath, 'object'), ancestors, nestedPath)
+    entries.push(`${JSON.stringify(key)}:${nested}`)
   }
-  return Result.succeed(`{${entries.join(',')}}`)
+  ancestors.delete(value)
+  return `{${entries.join(',')}}`
 }
 
-const classifyArray = (value: object, path: string): Result.Result<boolean, CanonicalJsonFailure> =>
-  inspect(path, 'object', 'array-classification', () => Array.isArray(value))
-
-const serializeCanonicalValueResult = (
-  value: unknown,
-  ancestors: readonly object[],
-  path: string,
-): Result.Result<string, CanonicalJsonFailure> => {
-  if (value === null) return Result.succeed('null')
-  if (typeof value === 'boolean') return Result.succeed(value ? 'true' : 'false')
+const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: string): string => {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') {
-    return hasInvalidUnicodeSurrogate(value)
-      ? validationFailure(path, 'invalid-unicode-surrogate', 'string')
-      : Result.succeed(JSON.stringify(value))
+    return value.isWellFormed() ? JSON.stringify(value) : validationFailure(path, 'invalid-unicode-surrogate', 'string')
   }
   if (typeof value === 'number') {
-    return Number.isFinite(value)
-      ? Result.succeed(JSON.stringify(Object.is(value, -0) ? 0 : value))
-      : validationFailure(path, 'non-finite-number', 'number')
+    return Number.isFinite(value) ? JSON.stringify(value) : validationFailure(path, 'non-finite-number', 'number')
   }
   if (typeof value !== 'object') return validationFailure(path, 'non-json-type', typeof value)
 
-  const classified = classifyArray(value, path)
-  if (Result.isFailure(classified)) return Result.fail(classified.failure)
-  return classified.success
-    ? serializeArrayResult(value as readonly unknown[], ancestors, path)
-    : serializeObjectResult(value, ancestors, path)
+  return inspect(path, 'object', 'array-classification', () => Array.isArray(value))
+    ? serializeArray(value as readonly unknown[], ancestors, path)
+    : serializeObject(value, ancestors, path)
 }
 
-export const canonicalJsonV1Result = (value: unknown): Result.Result<string, CanonicalJsonFailure> =>
-  serializeCanonicalValueResult(value, [], '$')
+export const canonicalJsonV1Result = (value: unknown): Result.Result<string, CanonicalJsonFailure> => {
+  try {
+    return Result.succeed(serializeCanonicalValue(value, new Set(), '$'))
+  } catch (cause) {
+    if (cause instanceof CanonicalJsonError) return Result.fail(cause.failure)
+    throw cause
+  }
+}
 
 const hashCanonicalJsonResult = (canonicalJson: string): Result.Result<string, CanonicalJsonFailure> =>
   Result.try({

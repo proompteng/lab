@@ -164,6 +164,12 @@ For the Google test project `lab-wif-test-20261105`, the intended proof is a cus
 exchange; [Resource Manager calls are free](https://cloud.google.com/resource-manager/pricing).
 Creating a Google project alone does not configure its pool, provider, permission binding or Relay operation.
 
+The production registration in [`config.json`](../../argocd/applications/relay/config.json) exposes
+`google-project__read` through normal Relay discovery and execution. Ofz owns its `google.project.read` permission
+and resource enrollment in the Proompteng workspace. Assign its `reader` relationship through workspace administration
+before use. The [deployment acceptance steps](../../argocd/applications/relay/README.md#google-project-metadata)
+exercise the deployed MCP client, Ofz authorization, Google API response and durable execution receipts.
+
 Operators can run `relay-federation-probe` inside the deployed Relay container to verify the Workload API,
 token exchange and destination permission before enrolling a connector. It reads a Relay configuration from stdin,
 requires exactly one HTTP connector with workload identity authentication and one GET operation accepting `{}`,

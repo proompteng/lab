@@ -2098,8 +2098,7 @@ export type CycleDecisionDocument = typeof CycleDecisionDocumentSchema.Type
 // Only owned, deeply frozen graphs receive this receipt. Copies and stored JSON
 // still cross the full schema boundary; a claimed contentHash never earns reuse.
 const verifiedCycleDocuments = new WeakMap<object, CycleDecisionDocument>()
-const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(document: A): A => {
-  const owned = structuredClone(document)
+const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(owned: A): A => {
   const freeze = (value: unknown): void => {
     if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return
     for (const child of Object.values(value)) freeze(child)
@@ -2113,9 +2112,8 @@ const retainVerifiedCycleDocument = <A extends CycleDecisionDocument>(document: 
 export const decodeCycleDecisionDocument = (input: unknown) => {
   const verified = typeof input === 'object' && input !== null ? verifiedCycleDocuments.get(input) : undefined
   return verified === undefined
-    ? Result.map(
-        Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(input),
-        retainVerifiedCycleDocument,
+    ? Result.map(Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(input), (decoded) =>
+        retainVerifiedCycleDocument(structuredClone(decoded)),
       )
     : Result.succeed(verified)
 }

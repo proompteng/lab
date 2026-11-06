@@ -43,3 +43,10 @@ definition kubernetes_namespace {
     permission read_logs = log_reader + log_workspace->human_member
     permission read_events = event_reader + event_workspace->human_member
 }
+
+definition google_project {
+    relation reader: human | workload
+    relation reader_workspace: platform_workspace
+
+    permission read = reader + reader_workspace->human_member
+}
