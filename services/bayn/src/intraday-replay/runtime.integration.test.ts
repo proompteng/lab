@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
+import { Clock, Context, Deferred, Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -101,10 +101,9 @@ import { Authority, KillState, ReconciliationStatus } from '../execution/contrac
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { makeTradingEngine } from '../composition/trading-engine'
-import { ownGenerationCycleDriver } from '../composition/generation-cycle'
+import { makeGenerationCycleDriver } from '../composition/generation-cycle'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { operationalError } from '../errors'
-import type { RecoveryFirstCycleDriver, RecoveryFirstRuntime } from '../observe-composition/model'
 import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
@@ -1438,7 +1437,7 @@ durableTest.each(
           }
           let lostResponses = 0
           const submitResponseLost = yield* Deferred.make<void>()
-          const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
+          const openGeneration = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {
               const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
               if (generation === undefined || config.execution.brokerIdentity === undefined)
@@ -1511,24 +1510,24 @@ durableTest.each(
                 recordPass: runtimeInput.recordPass,
               })
               const driver = yield* startup.pipe(Effect.provideContext(resources))
-              const published = yield* Deferred.make<RecoveryFirstCycleDriver>()
-              const owner = yield* ownGenerationCycleDriver<RecoveryFirstRuntime>({
-                generationHash,
-                mode,
-                readAuthority: readAuthority.pipe(Effect.mapError(asOperational)),
-                reconcileWhenHeld: reconcile,
-                settle,
-                owner: (value) => Deferred.succeed(published, value).pipe(Effect.andThen(Effect.never)),
-              })(driver).pipe(Effect.provideContext(resources), Effect.forkChild({ startImmediately: true }))
-              const owned = yield* Deferred.await(published)
+              const owned = yield* makeGenerationCycleDriver(
+                {
+                  generationHash,
+                  mode,
+                  readAuthority: readAuthority.pipe(Effect.mapError(asOperational)),
+                  reconcileWhenHeld: reconcile,
+                  settle,
+                },
+                driver,
+              )
               return {
-                owner,
+                needsRebind: owned.needsRebind,
                 program: engine.executionProgram,
-                advance: owned.advance.pipe(Effect.provideContext(resources)),
+                advance: owned.driver.advance.pipe(Effect.provideContext(resources)),
               }
             })
           if (acceptedCancel) {
-            const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation')
+            const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation')
             for (let pass = 0; pass < 20 && cancelRecoveryCalls.submit === 0; pass++) {
               yield* advanceBy(1000)
               yield* healthy.advance
@@ -1569,9 +1568,9 @@ durableTest.each(
             })
             expect(yield* settle).toEqual({ _tag: 'NotRequired' })
             expect(yield* readAuthority).toEqual(restricted)
-            yield* Fiber.join(healthy.owner)
+            expect(yield* healthy.needsRebind).toBe(true)
 
-            const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+            const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
             const lookupBeforeRecovery = cancelRecoveryCalls.lookup
             // A lookup may resolve the intent, but it must not clear the restriction or grant a new generation.
             expect(yield* readAuthority).toEqual(restricted)
@@ -1591,7 +1590,7 @@ durableTest.each(
                 expect((yield* runtime.reconcile).riskContext.unknownMutationCount).toBe(1)
                 expect(yield* settle).toEqual({ _tag: 'NotRequired' })
               }
-              yield* Fiber.interrupt(recovery.owner)
+              expect(yield* recovery.needsRebind).toBe(false)
             } else {
               expect(
                 yield* sql`SELECT state, terminal_outcome FROM intents WHERE intent_id=${entry.intent_id}`,
@@ -1604,12 +1603,11 @@ durableTest.each(
               expect(exact.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
               expect(exact.riskContext.unknownMutationCount).toBe(0)
               expect(yield* readAuthority).toEqual(restricted)
-              for (let pass = 0; pass < 20 && recovery.owner.pollUnsafe() === undefined; pass++) {
+              for (let pass = 0; pass < 20 && !(yield* recovery.needsRebind); pass++) {
                 yield* advanceBy(1000)
                 yield* recovery.advance
               }
-              expect(recovery.owner.pollUnsafe()).toBeDefined()
-              yield* Fiber.join(recovery.owner)
+              expect(yield* recovery.needsRebind).toBe(true)
               expect(yield* readAuthority).toMatchObject({
                 maximum: Authority.Observe,
                 effective: Authority.Observe,
@@ -1636,7 +1634,7 @@ durableTest.each(
             Effect.andThen(deadlineClock.adjust(3000)),
             Effect.forkChild({ startImmediately: true }),
           )
-          const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation', true)
+          const healthy = yield* openGeneration(runtime.authorityGenerationHash, 'Mutation', true)
           const recoveryAdvances = []
           for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
             yield* advanceBy(1000)
@@ -1646,8 +1644,7 @@ durableTest.each(
           expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
           yield* advanceBy(1000)
           yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
-          expect(healthy.owner.pollUnsafe()).toBeDefined()
-          yield* Fiber.join(healthy.owner)
+          expect(yield* healthy.needsRebind).toBe(true)
           const restricted = yield* readAuthority
           expect(restricted).toMatchObject({
             maximum: Authority.Execution,
@@ -1656,10 +1653,10 @@ durableTest.each(
           })
           expect((yield* broker.snapshot).fills).toHaveLength(scenario === 'recovery-filled' ? 1 : 0)
           const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
-          const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
-          const concurrentRecovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+          const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
+          const concurrentRecovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
           let lastRecovery
-          for (let attempt = 0; attempt < 20 && recovery.owner.pollUnsafe() === undefined; attempt++) {
+          for (let attempt = 0; attempt < 20 && !(yield* recovery.needsRebind); attempt++) {
             yield* advanceBy(attempt === 3 ? closeAtMs - (yield* Clock.currentTimeMillis) : 1000)
             if (attempt === 3)
               for (const arrival of closeArrivals)
@@ -1668,10 +1665,9 @@ durableTest.each(
               Effect.provideService(OperationDeadlineClock, liveClock),
             )
           }
-          expect(recovery.owner.pollUnsafe(), JSON.stringify(lastRecovery)).toBeDefined()
-          yield* Fiber.join(recovery.owner)
+          expect(yield* recovery.needsRebind, JSON.stringify(lastRecovery)).toBe(true)
           yield* concurrentRecovery.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
-          yield* Fiber.join(concurrentRecovery.owner)
+          expect(yield* concurrentRecovery.needsRebind).toBe(true)
           const observed = yield* readAuthority
           expect(observed).toMatchObject({
             maximum: Authority.Observe,
@@ -1719,11 +1715,11 @@ durableTest.each(
             utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
           )
           const heldBefore = yield* readAuthority
-          const held = yield* openOwner(activated.generationHash, 'Mutation')
+          const held = yield* openGeneration(activated.generationHash, 'Mutation')
           const holds = yield* Effect.all([held.advance, held.advance], { concurrency: 2 })
           expect(holds.every((item) => item.observation.result === 'FAILURE')).toBe(true)
           expect(yield* readAuthority).toEqual(heldBefore)
-          yield* Fiber.interrupt(held.owner)
+          expect(yield* held.needsRebind).toBe(false)
           const final = yield* runtime.reconcile
           expect(final.report.metrics.accountingExact).toBe(true)
           expect(final.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
