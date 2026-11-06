@@ -1013,9 +1013,13 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
-the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. Equities use up to 30 minutes and crypto uses up to 120 minutes of actual
-completed history and evaluates the source-controlled candidates independently until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
+The submission window follows the entitled equity market calendar. Bayn can evaluate after the first completed minute
+and the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Equity entries
+use up to 30 minutes of actual completed history and evaluate the source-controlled candidates independently until
+five minutes before the close. The retained protocol also defines 120-minute crypto context for historical evidence
+and position recovery; the current discovery and submission guards do not permit new crypto entries. The sequential
+chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required
+judgment, then modeled loss and stable proposal identity. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
@@ -1074,9 +1078,11 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the initial trigger deadline.
-New entries and quote-backed instrument-quantized closes use
-native LIMIT/DAY equity or LIMIT/IOC crypto orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
-verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
+New equity entries use native LIMIT/DAY orders capped at the original inference ask, rounded up to the broker price
+tick. Current protocol entry funding and submission do not spend the retained ten-basis-point policy allowance.
+Quote-backed instrument-quantized closes use LIMIT/DAY equity or LIMIT/IOC crypto orders with an allowance bounded
+by the existing risk policy, currently ten basis points from the verified bid. Close prices round toward the quote
+to stay within that allowance. The durable
 decision retains the original quote, phase-specific allowance, exact limit notional, and risk evidence; historical decisions without
 an allowance retain their original exact quote limit. Quote freshness and submission deadlines still apply.
 Bayn starts flattening five minutes before the close and
@@ -1105,22 +1111,24 @@ authority, quantity, and quote-freshness gates. This reduces avoidable idle time
 maximum-hold exit when fresh executable evidence is unavailable.
 
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
-`bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
+`bayn.candidate-evidence.market-quotes.v2`. An equity candidate needs a quote no older than 10 seconds, a real trade
 at or after the context start and available by observation, and at least one real finalized minute bar with a matching
 observed-price feature. The latest completed minute must be present; older missing minutes remain explicit gaps.
 The quote may precede the completed bar boundary. Neither a post-range trade nor a trade within the quote-age limit
 is required. Jev receives the trade's actual age as context, not as an executable price. Quote and trade ingestion
 delays still obey the feed bound. Missing current input or a stale quote excludes that candidate. Real historical backfills are usable after their
 actual arrival and never supply a current executable quote.
-SPY retains the mandatory benchmark evidence contract. Source identity, canonical ordering, watermarks, finality,
-and premature data still fail the whole observation. Raw candidate rows, exclusions, and all observed matching
+Live Jev entry queries contain candidates only and do not require SPY or another benchmark. Independent momentum
+research uses its own query with the actual reference series. Source identity, canonical ordering, watermarks,
+finality, and premature data still fail the whole observation. Raw candidate rows, exclusions, and all observed matching
 feature receipts remain in the hashed snapshot, including features for rejected candidates.
 
 Missing historical minutes are reported with their timestamps and do not impose another warmup. A missing latest
 completed minute or matching observed feature still blocks that symbol. The IEX feed can omit a minute when its
 trades do not qualify for a bar; see Alpaca's [minute-bar rules](https://alpaca.markets/learn/stock-minute-bars). Bayn
 never creates substitute bars. Return horizons without their actual reference bar and incomplete volume comparisons
-remain unknown. Candidate and benchmark momentum use the earliest actual minute present in both histories.
+remain unknown. Independent momentum research compares the earliest actual minute present in both candidate and
+benchmark histories.
 The active runtime accepts only the current observed-history contracts; retired snapshots are not converted.
 
 Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
