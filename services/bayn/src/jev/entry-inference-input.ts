@@ -7,6 +7,7 @@ import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
 import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
+import { WebullEntryContextSchema, verifyWebullEntryContext } from './webull-entry-context'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const CandidateEntryInferenceInputSchema = Schema.Struct({
@@ -81,6 +82,21 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Chart and numerical evidence must contain the same source bars' }),
       )
+    if (value.protocol.inputDefinition === 'bayn.jev-entry-state.v24') {
+      const context = yield* Schema.decodeUnknownResult(
+        WebullEntryContextSchema,
+        strictParseOptions,
+      )(value.numericalState['webullContext'])
+      const timing = yield* Schema.decodeUnknownResult(
+        Schema.Struct({ observedAt: Schema.optionalKey(UtcInstantSchema) }),
+      )(value.numericalState['session'])
+      if (!verifyWebullEntryContext(context, candidate.symbol, source.windowEndAt, timing.observedAt))
+        return yield* Result.fail(
+          new JevContractError({
+            message: 'Supplemental Webull context differs from the candidate or point-in-time source cut',
+          }),
+        )
+    }
     const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(value)
     if (Buffer.byteLength(body) > 128_000)
       return yield* Result.fail(

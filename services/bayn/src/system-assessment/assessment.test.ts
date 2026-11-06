@@ -152,8 +152,11 @@ describe('complete system qualification', () => {
   test('complete synthetic observations retain profit and diagnostics without establishing edge', () => {
     const { input, verifiedSources } = supportedAssessmentFixture()
     const result = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
-    expect(result.verdict).toBe(QualificationVerdict.Inconclusive)
-    expect(result.edge.status).toBe(EdgeStatus.Undetermined)
+    expect(result.verdict).toBe(QualificationVerdict.Rejected)
+    expect(result.edge.status).toBe(EdgeStatus.NotEstablished)
+    expect(
+      result.numerical !== null && 'checks' in result.numerical && result.numerical.checks?.positiveProfitLowerBound,
+    ).toBe(false)
     const incomplete = new Set(verifiedSources)
     incomplete.delete(input.obligationCoverageHash)
     const missing = Result.getOrThrow(evaluateSystemAssessment(input, incomplete))
@@ -179,7 +182,7 @@ describe('complete system qualification', () => {
       },
     }
     const result = Result.getOrThrow(evaluateSystemAssessment(changed, verifiedSources))
-    expect(result.verdict).toBe(QualificationVerdict.Inconclusive)
+    expect(result.verdict).toBe(QualificationVerdict.Rejected)
     expect(result.reliability.status).toBe(ReliabilityStatus.MeetsTarget)
     expect(result.reliability.classes.find((item) => item.class === ObligationClass.Recovery)?.status).toBe(
       ReliabilityStatus.NotApplicable,
@@ -202,7 +205,7 @@ describe('complete system qualification', () => {
     expect(result.verdict).toBe(QualificationVerdict.Rejected)
     expect(result.violations).toContain('FILL_REALISM_COVERAGE_MISMATCH')
     expect(result.edge.status).toBe(EdgeStatus.Undetermined)
-    expect(result.numerical?.verdict).toBe(JevNumericalVerdict.Passed)
+    expect(result.numerical?.verdict).toBe(JevNumericalVerdict.Missed)
   })
 
   test('unknown expenses remain unknown, while imported complete invoices determine actual economics', () => {
@@ -301,9 +304,13 @@ describe('complete system qualification', () => {
       }
   })
 
-  test('an inadequate bootstrap budget is rejected before prospective admission', () => {
+  test('current attempts have no bootstrap quota while retained research keeps its original resolution rule', () => {
     const { input } = assessmentFixture()
-    expect(Result.isFailure(validateSystemRegistration({ ...input.registration, attemptIndex: 13 }))).toBe(true)
+    expect(Result.isSuccess(validateSystemRegistration({ ...input.registration, attemptIndex: 13 }))).toBe(true)
+    const retained = registrationFixture(undefined, 4, JevAcceptanceVersion.RetainedV5)
+    expect(
+      Result.isFailure(validateSystemRegistration({ ...retained, attemptIndex: 13 }, JevAcceptanceVersion.RetainedV5)),
+    ).toBe(true)
   })
 
   test('mark and cash reconciliation disagreement cannot produce a passing result', () => {

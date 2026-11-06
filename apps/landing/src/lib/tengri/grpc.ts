@@ -747,6 +747,10 @@ export async function steerCodexTurn(
   )
 }
 
+export async function recoverCodexRun(identity: PlatformIdentity, agentId: string, runId: string, operationId: string) {
+  await unary('recoverCodexRun', { agentId, runId, operationId }, identity)
+}
+
 export async function interruptCodexTurn(
   identity: PlatformIdentity,
   agentId: string,

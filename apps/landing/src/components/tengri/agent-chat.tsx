@@ -7,6 +7,7 @@ import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
 import { TENGRI_UNARY_TIMEOUT_MS } from '@/lib/tengri/limits'
 
 import {
+  Button,
   Select,
   SelectContent,
   SelectGroup,
@@ -143,6 +144,8 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
       return 'Reconnecting'
     case 'cancelling':
       return 'Stopping'
+    case 'authorization_required':
+      return 'Recovery needs your current session.'
     case 'needs_reconciliation':
       return "The agent's last action could not be confirmed. Check the conversation before continuing."
     case 'accepted':
@@ -289,6 +292,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     !codexRunIsTerminal(run) &&
     (run.state.phase === 'cancelling' ||
       run.state.phase === 'needs_reconciliation' ||
+      run.state.phase === 'authorization_required' ||
       !(runTurnId && completedTurns.current.has(runTurnId))),
   )
   const showStopAction = Boolean(activeTurnId || canStopRun) && !prompt.trim() && images.length === 0
@@ -1640,6 +1644,29 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     }
   }
 
+  async function recoverRun() {
+    if (!runMatchesThread || interrupting) return
+    const recoveredThread = threadId
+    setInterrupting(true)
+    setError('')
+    const key = `tengri-recover:${runId}`
+    let operationId: string | undefined
+    try {
+      const op = await prepareCodexOperation(key, { runId }, '')
+      operationId = op.id
+      await runTengriAction({ action: 'recover-run', agentId, runId, operationId: op.id })
+      completeCodexOperation(key, op.id)
+      setRunRecoveryRevision((current) => current + 1)
+    } catch (cause) {
+      if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId)
+        completeCodexOperation(key, operationId)
+      if (threadIdRef.current === recoveredThread)
+        setError(cause instanceof Error ? cause.message : 'Run recovery could not be requested')
+    } finally {
+      setInterrupting(false)
+    }
+  }
+
   async function interruptTurn() {
     if (!canStopRun || interrupting) return
     const interruptedThread = threadId
@@ -2001,9 +2028,24 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                   ),
                 )}
                 {runActivity ? (
-                  <p role="status" aria-label="Agent activity" className="text-copy-14 text-zinc-400">
-                    {runActivity}
-                  </p>
+                  <div
+                    role="status"
+                    aria-label="Agent activity"
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400"
+                  >
+                    <span>{runActivity}</span>
+                    {run?.state.phase === 'authorization_required' || run?.state.phase === 'needs_reconciliation' ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={interrupting}
+                        onClick={() => void recoverRun()}
+                      >
+                        {run.state.phase === 'authorization_required' ? 'Resume recovery' : 'Check again'}
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {responsePending && !approvalPending && !runActivity ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">

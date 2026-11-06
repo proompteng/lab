@@ -1,7 +1,20 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Redacted,
+  Result,
+  Schedule,
+  Schema,
+  Stream,
+} from 'effect'
 import { ConnectionError, SqlError, StatementTimeoutError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, canonicalHashV1Result, sha256 } from '../hash'
@@ -18,11 +31,24 @@ import {
 } from '../market-data/streaming/native-arrival.test-support'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
-import { makeNativeArrivalStore, readNativeArrivalChunks, readNativeArrivalEpoch } from './native-arrival-postgres'
+import { makeNativeArrivalStore, streamNativeArrivalChunkPage, readNativeArrivalEpoch } from './native-arrival-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { migrationLoader } from './migrations'
 import { postgresMigrations } from './postgres-migrations'
-import { NativeArrivalArchiveLive, nativeArrivalArchiveMigrations } from './native-arrival-archive'
+import {
+  NativeArrivalArchiveLive,
+  nativeArrivalArchiveConfig,
+  nativeArrivalArchiveMigrations,
+} from './native-arrival-archive'
+
+const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: string, afterOrdinal: number) =>
+  Effect.gen(function* () {
+    const epoch = yield* readNativeArrivalEpoch(sql, captureId)
+    return yield* streamNativeArrivalChunkPage(sql, epoch, afterOrdinal).pipe(
+      Stream.map(({ records: _, ...chunk }) => chunk),
+      Stream.runCollect,
+    )
+  })
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_native_arrival_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -283,6 +309,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
   })
 
   test('concurrent cold archive startup installs only its recorder schema and releases both clients', async () => {
+    const operationTimeoutMs = 5000
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -292,11 +319,19 @@ describePostgres('PostgreSQL native arrival retention', () => {
     )
     const archiveRuntimes = Array.from({ length: 2 }, () =>
       ManagedRuntime.make(
-        NativeArrivalArchiveLive({
-          operationTimeoutMs: 5000,
-          postgres: { url: Redacted.make('postgresql://unused@127.0.0.1:1/financial'), tls: false, caPath: '/unused' },
-          nativeArrivalPostgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-        }).pipe(Layer.provideMerge(NodeServices.layer)),
+        NativeArrivalArchiveLive(
+          Result.getOrThrow(
+            nativeArrivalArchiveConfig({
+              operationTimeoutMs,
+              postgres: {
+                url: Redacted.make('postgresql://unused@127.0.0.1:1/financial'),
+                tls: false,
+                caPath: '/unused',
+              },
+              nativeArrivalPostgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+            }),
+          ),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     )
     try {
@@ -327,9 +362,13 @@ describePostgres('PostgreSQL native arrival retention', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        // Terminate has no server acknowledgement; scope closure can precede backend removal.
         expect(
           yield* sql`SELECT count(*)::int AS count FROM pg_stat_activity
-            WHERE application_name='bayn-native-arrival' AND datname=current_database()`,
+            WHERE application_name='bayn-native-arrival' AND datname=current_database()`.pipe(
+            Effect.repeat({ while: (rows) => rows[0]?.['count'] !== 0, schedule: Schedule.spaced('10 millis') }),
+            Effect.timeout(operationTimeoutMs),
+          ),
         ).toEqual([{ count: 0 }])
       }),
     )

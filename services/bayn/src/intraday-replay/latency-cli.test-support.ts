@@ -1,11 +1,11 @@
-import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture'
-import { decisionAdmissionWitnesses } from '../system-assessment/decision-admissions'
+import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture-queries'
+import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from '../system-assessment/decision-admissions'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, FileSystem, Redacted, Result, Schema } from 'effect'
+import { Effect, FileSystem, Redacted, Result, Schema, Stream } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { PostgresClientLive } from '../db/postgres-client'
 import { OrderSide as BrokerOrderSide } from '../broker/alpaca/model'
@@ -135,6 +135,8 @@ const main = Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     yield* sql`DROP SCHEMA public CASCADE`
     yield* sql`CREATE SCHEMA public`
+    const logDirectory = `${directory}/../.cache/bayn-latency`
+    yield* fs.makeDirectory(logDirectory, { recursive: true })
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const child = yield* spawner.spawn(
       ChildProcess.make(
@@ -163,12 +165,16 @@ const main = Effect.gen(function* () {
           },
           stdin: 'ignore',
           stdout: 'ignore',
-          stderr: 'inherit',
+          stderr: 'pipe',
         },
       ),
     )
-    yield* child.exitCode.pipe(
-      Effect.tap((code) => Effect.sync(() => assert.equal(Number(code), 0))),
+    // Drain diagnostics alongside exit; waiting for exit alone can fill the pipe and stall the replay.
+    yield* Effect.all(
+      [child.exitCode, Stream.run(child.stderr, fs.sink(`${logDirectory}/${policy}-${mode}-${randomUUID()}.log`))],
+      { concurrency: 'unbounded' },
+    ).pipe(
+      Effect.tap(([code]) => Effect.sync(() => assert.equal(Number(code), 0))),
       withLatencyCliPhase('replay-child'),
     )
     const reportBytes = yield* fs.readFile(`${outputPath}/report.json`)
@@ -309,7 +315,11 @@ const main = Effect.gen(function* () {
             )
             assert.deepEqual(bound.missing, [])
             const admissions = yield* Effect.fromResult(
-              decisionAdmissionWitnesses(executionCut, identity.generationHash),
+              decisionAdmissionWitnesses(
+                executionCut,
+                identity.generationHash,
+                indexDecisionAdmissionMutations(executionCut.mutations),
+              ),
             )
             for (const evidence of protection)
               assert.ok(

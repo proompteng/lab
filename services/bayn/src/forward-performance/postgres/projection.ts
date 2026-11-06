@@ -53,12 +53,11 @@ export const intentExecutionKey = (input: {
     input.createdAt,
   ])
 
-export const executionEvidenceFromRows = (
-  decisionRows: readonly VerifiedCycleDecisionRow[],
+export const indexExecutionEvidence = (
   intentRows: readonly (typeof IntentExecutionRow.Type)[],
   orderRows: readonly (typeof OrderExecutionRow.Type)[],
   fillRows: readonly (typeof FillExecutionRow.Type)[],
-): readonly ForwardPerformanceExecutionEvidence[] => {
+) => {
   const intents = uniqueRows(intentRows, (row) =>
     intentExecutionKey({
       cycleId: row.cycle_id,
@@ -79,6 +78,13 @@ export const executionEvidenceFromRows = (
     else found.push(row)
   }
 
+  return { intents, orders, fills }
+}
+
+export const executionEvidenceFromRows = (
+  decisionRows: readonly VerifiedCycleDecisionRow[],
+  { intents, orders, fills }: ReturnType<typeof indexExecutionEvidence>,
+): readonly ForwardPerformanceExecutionEvidence[] => {
   const evidence: ForwardPerformanceExecutionEvidence[] = []
   for (const row of decisionRows) {
     const document = row.document

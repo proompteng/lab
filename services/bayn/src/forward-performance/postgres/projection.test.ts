@@ -1,10 +1,103 @@
 import { expect, test } from 'bun:test'
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 
 import { completedIntradayCycles } from '../intraday-cycle.test-support'
-import { CycleDecisionRow, MarketVolumeBindingRow } from './model'
-import { marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
+import {
+  CycleDecisionRow,
+  FillExecutionRow,
+  IntentExecutionRow,
+  MarketVolumeBindingRow,
+  OrderExecutionRow,
+} from './model'
+import {
+  executionEvidenceFromRows,
+  indexExecutionEvidence,
+  marketVolumeRequestsFromRows,
+  verifyPerformanceDecisions,
+} from './projection'
+import { persistenceDocumentFixture } from '../../system-assessment/decision-persistence.test-support'
+
+const countedRows = <T>(values: readonly T[]) => {
+  let traversals = 0
+  const rows = new Proxy(values, {
+    get(target, key, receiver) {
+      if (key === Symbol.iterator)
+        return function* () {
+          traversals++
+          yield* target
+        }
+      return Reflect.get(target, key, receiver)
+    },
+  })
+  return { rows, traversals: () => traversals }
+}
+
+test('streams planned decisions without rebuilding history indexes or changing ambiguous ownership', async () => {
+  const document = await Effect.runPromise(persistenceDocumentFixture)
+  const target = document.targetPlan.intentTargets[0]
+  const intentId = document.orderedIntentIds[0]
+  if (target === undefined || intentId === undefined) throw new Error('Expected a planned native entry')
+  const at = new Date(document.createdAt)
+  const common = {
+    account_id: document.bindings.accountId,
+    intent_id: intentId,
+    client_order_id: 'synthetic-projection-order',
+    symbol: target.symbol,
+    side: target.side,
+    quantity_atoms: target.quantityAtoms,
+  }
+  const intent = Schema.decodeUnknownSync(IntentExecutionRow)({
+    ...common,
+    cycle_id: document.bindings.cycleId,
+    decision_hash: document.bindings.strategyDecisionHash,
+    notional_limit_micros: '1',
+    replan_generation_hash: null,
+    terminal_outcome: 'FILLED',
+    created_at: at,
+    updated_at: at,
+  })
+  const order = Schema.decodeUnknownSync(OrderExecutionRow)({
+    ...common,
+    event_id: '1'.repeat(64),
+    broker_order_id: 'synthetic-projection-broker-order',
+    notional_micros: null,
+    filled_quantity_atoms: target.quantityAtoms,
+    status: 'FILLED',
+    occurred_at: at,
+    observed_at: at,
+  })
+  const fill = Schema.decodeUnknownSync(FillExecutionRow)({
+    ...order,
+    event_id: '2'.repeat(64),
+    fill_id: 'synthetic-projection-fill',
+    price_atoms: '100000000000',
+    fee_micros: '0',
+    source_timestamp: document.createdAt,
+  })
+  const row = verifyPerformanceDecisions([
+    { cycle_id: document.bindings.cycleId, decision_hash: document.contentHash, created_at: at, document },
+  ]).verifiedRows[0]
+  if (row === undefined) throw new Error('Expected a verified native document')
+  const intents = countedRows([intent])
+  const orders = countedRows([order])
+  const fills = countedRows([fill])
+  const index = indexExecutionEvidence(intents.rows, orders.rows, fills.rows)
+  for (let i = 0; i < 100; i++) {
+    const projected = executionEvidenceFromRows([row], index)
+    expect(projected[0]).toMatchObject({
+      intentId,
+      decisionDocumentHash: document.contentHash,
+      plannedQuantityAtoms: target.quantityAtoms,
+      terminalOrder: { brokerOrderId: order.broker_order_id, filledQuantityAtoms: target.quantityAtoms },
+      fills: [{ fillId: fill.fill_id, quantityAtoms: target.quantityAtoms }],
+    })
+    expect(executionEvidenceFromRows([], index)).toEqual([])
+  }
+  expect([intents.traversals(), orders.traversals(), fills.traversals()]).toEqual([1, 1, 1])
+  const ambiguous = indexExecutionEvidence([intent, intent], [order, order], [fill])
+  expect(executionEvidenceFromRows([row], ambiguous)[0]).toMatchObject({ intentId: '', fills: [] })
+})
 
 test('retains the native streaming cut when projecting a completed cycle market-volume request', () => {
   const { snapshot } = streamingFixture()
