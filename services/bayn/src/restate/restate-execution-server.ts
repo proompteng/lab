@@ -2,7 +2,7 @@ import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
 import { ValkeyCacheLive } from '../valkey-cache'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
-import { createServer } from 'node:http2'
+import { createServer, type Http2ServerRequest, type Http2ServerResponse } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
@@ -36,6 +36,33 @@ export const restateExecutionServerConfig = Config.all({
   port: Config.Port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
 })
+
+export const withNativeStartupReadiness = (
+  handler: (request: Http2ServerRequest, response: Http2ServerResponse) => void,
+  readMarketReadiness: () => Promise<boolean>,
+) => {
+  let historyWarmed = false
+  return (request: Http2ServerRequest, response: Http2ServerResponse): void => {
+    if (request.method !== 'GET' || request.url !== '/startup-ready') return handler(request, response)
+    const respond = (status: number): void => {
+      if (!response.destroyed && !response.writableEnded) response.writeHead(status).end()
+    }
+    // Subsequent source recovery must not remove broker observations or liquidation from this endpoint.
+    if (historyWarmed) {
+      respond(200)
+      return
+    }
+    void Promise.resolve()
+      .then(readMarketReadiness)
+      .then(
+        (ready) => {
+          historyWarmed ||= ready
+          respond(historyWarmed ? 200 : 503)
+        },
+        () => respond(503),
+      )
+  }
+}
 
 export const makeRestateExecutionEndpointHandler = (
   config: ExecutionControllerConfig,
@@ -82,7 +109,7 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const { config, runtime } = yield* acquireNativeExecutionRuntime(plan)
+  const { config, runtime, readMarketReadiness } = yield* acquireNativeExecutionRuntime(plan)
   yield* startInferenceExpenseProjection(plan.config)
   const brokerObservations = yield* acquireBrokerObservationRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
@@ -90,13 +117,16 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     serviceVersion: config.sourceRevision,
   })
   const server = createServer(
-    makeRestateExecutionEndpointHandler(
-      config,
-      runtime,
-      activationAuthorizationHash,
-      identityKeys,
-      brokerObservations,
-      telemetry.hooks,
+    withNativeStartupReadiness(
+      makeRestateExecutionEndpointHandler(
+        config,
+        runtime,
+        activationAuthorizationHash,
+        identityKeys,
+        brokerObservations,
+        telemetry.hooks,
+      ),
+      readMarketReadiness,
     ),
   )
   yield* acquireRestateHttp2Server(server, port)

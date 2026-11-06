@@ -527,6 +527,8 @@ impl TengriAgentRun {
             digest: admission.digest.clone(),
             state: State::Accepted,
         };
+        // A slow cross-partition claim must not hide an already admitted run from its caller.
+        ctx.set("snapshot", Json(snapshot.clone()));
         let workspace =
             ctx.object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid);
         let mut stop = match workspace.claim(Json(admission.claim.clone())).call().await {
@@ -542,7 +544,6 @@ impl TengriAgentRun {
                 return Ok(Json(snapshot.state));
             }
         };
-        ctx.set("snapshot", Json(snapshot.clone()));
         snapshot.state = if stop.is_some() {
             State::Cancelled {
                 turn_id: String::new(),

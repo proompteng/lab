@@ -212,8 +212,20 @@ spec:
             periodSeconds: 2
             failureThreshold: 600
           readinessProbe:
-            tcpSocket:
-              port: restate
+            exec:
+              command:
+                - node
+                - -e
+                - |
+                  const session = require('node:http2').connect('http://127.0.0.1:9080');
+                  const fail = () => { session.destroy(); process.exitCode = 1; };
+                  session.on('error', fail);
+                  const request = session.request({ ':method': 'GET', ':path': '/startup-ready' });
+                  request.on('response', headers => { process.exitCode = headers[':status'] === 200 ? 0 : 1; });
+                  request.on('error', fail);
+                  request.on('end', () => session.close());
+                  request.resume(); request.end();
+                  session.setTimeout(1000, fail);
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 2
