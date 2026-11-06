@@ -24,6 +24,7 @@ import {
 import { OperationalRegistrationSchema, validateOperationalRegistration } from './system-assessment/operational-period'
 import { OperationalAssessmentInputSchema } from './system-assessment/operational-assessment'
 import { captureSystemSourceCut } from './system-assessment/capture'
+import { ValkeyCacheLive } from './valkey-cache'
 import { qualificationRuntime } from './system-assessment/configuration'
 import { validateSystemRegistration } from './system-assessment/policy'
 import { SystemAssessmentError } from './system-assessment/economics'
@@ -149,7 +150,11 @@ const runSystem = (command: Exclude<ForwardPerformanceCommand, { readonly _tag: 
     Effect.gen(function* () {
       const config = yield* loadForwardPerformanceConfig()
       const result = yield* Effect.gen(function* () {
-        if (command._tag === 'SystemCapture') return yield* captureSystemSourceCut(config, command.registrationHash)
+        if (command._tag === 'SystemCapture')
+          return yield* captureSystemSourceCut(config, command.registrationHash).pipe(
+            // @effect-diagnostics-next-line strictEffectProvide:off -- private capture owns its scoped cache reader
+            Effect.provide(ValkeyCacheLive),
+          )
         const packet = yield* readSystemEvidencePacket(command.path)
         if (command._tag === 'SystemCaptureReplay') {
           const request = yield* Schema.decodeUnknownEffect(

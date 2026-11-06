@@ -1083,6 +1083,19 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(admissions.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let journal = http
+        .post(format!("{admin}/query"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({"query":format!(
+            "SELECT entry_type FROM sys_journal WHERE id=(SELECT id FROM sys_invocation WHERE target_service_name='TengriAgentRun' AND target_service_key='{}') AND entry_type IN ('Command: SetState','Command: Call') ORDER BY index LIMIT 1", input.id
+        )}))
+        .send().await.unwrap();
+    assert!(journal.status().is_success());
+    let journal: serde_json::Value = journal.json().await.unwrap();
+    assert_eq!(
+        journal["rows"][0]["entry_type"], "Command: SetState",
+        "accepted state must be durable before waiting on the workspace claim"
+    );
     let owner = principal().owner_hash;
     loop {
         if let Ok(snapshot) = status(&read_client, &input, &owner).await

@@ -942,6 +942,12 @@ def evaluate (json : Json) : Except String Json := do
       | none => throw "deadline must be an integer string or null")
     return toJson (marketHandoffReadiness (← json.getObjValAs? Bool "ready")
       (← json.getObjValAs? Bool "failed") deadline (← readInteger json "now"))
+  | "nativeSafetyJournalInsert" =>
+    return toJson (nativeSafetyJournalInsertAllowed (← readNatural json "triggerDepth"))
+  | "nativeSafetyCoverage" =>
+    let checks ← (← json.getObjValAs? (Array Json) "checks").toList.mapM fun check => do
+      return { kind := ← check.getObjValAs? String "kind", status := ← check.getObjValAs? String "status" : SafetyCheck }
+    return toJson (if nativeSafetyComplete checks then "COMPLETE" else "INCOMPLETE")
   | "currentTradingScope" =>
     let market ← json.getObjValAs? String "market"
     let sell ← json.getObjValAs? Bool "sell"

@@ -12,6 +12,10 @@ probe is not another boot. Lifecycle identity is recorded with the running-inten
 a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
 The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
 or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The signed `GetActiveCodexRuns` and `GetCodexRun` methods reuse an exact committed observation receipt while
+calling Ofz for a fresh, fully consistent decision on every read. Their permission remains `control_codex`, including
+its MFA and session checks. This classification is never serialized into workflow authority; input, recovery and
+other control submissions still obtain distinct durable audits.
 The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
 Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
 
@@ -534,7 +538,8 @@ retained home.
 `SendCodexInput` returns a
 durable run, and `GetActiveCodexRuns` recovers the workspace's active runs without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
-after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
+after Restate accepts the signed admission under its stable workflow key. The accepted snapshot is persisted before waiting for the workspace claim, so a slow claim remains observable
+without sending the input again. A conflicting claim still produces a rejected run. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
 
 `TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations

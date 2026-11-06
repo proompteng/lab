@@ -22,6 +22,8 @@ import { BrokerIdentitySchema } from '../broker/identity'
 import { AccountingTransactionSchema } from '../accounting/schema'
 import { StoredCashSettlementSchema } from '../accounting/cash-settlement'
 import { cashSettlementMatches } from './cash-settlements'
+import { makeOperationalSafetyScan, type NativeOperationalSafetyAudit } from './operational-safety'
+import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
 
 const MutationCoverageSchema = Schema.Struct({
   mutations: SystemSourceCutSchema.fields.mutations,
@@ -71,17 +73,25 @@ export const makeOperationalSafetyAudit = (input: unknown) =>
 const operationalAssessmentInputFields = {
   registration: OperationalRegistrationSchema,
   sourceCutHash: Sha256Schema,
-  safety: Schema.Struct({ ...OperationalSafetyMaterialSchema.fields, sourceHash: Sha256Schema }),
 }
 export const OperationalAssessmentInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.operational-assessment-input.v2'),
+  schemaVersion: Schema.Literal('bayn.operational-assessment-input.v3'),
   ...operationalAssessmentInputFields,
 })
+const retainedSafetyField = {
+  safety: Schema.Struct({ ...OperationalSafetyMaterialSchema.fields, sourceHash: Sha256Schema }),
+}
 export const StoredOperationalAssessmentInputSchema = Schema.Union([
   OperationalAssessmentInputSchema,
   Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.operational-assessment-input.v2'),
+    ...operationalAssessmentInputFields,
+    ...retainedSafetyField,
+  }),
+  Schema.Struct({
     schemaVersion: Schema.Literal('bayn.operational-assessment-input.v1'),
     ...operationalAssessmentInputFields,
+    ...retainedSafetyField,
   }),
 ])
 
@@ -131,7 +141,8 @@ const evaluateDecodedOperationalAssessment = (
   verifiedSources: ReadonlySet<string>,
 ) =>
   Result.gen(function* () {
-    const current = data.schemaVersion === 'bayn.operational-assessment-input.v2'
+    const current = data.schemaVersion !== 'bayn.operational-assessment-input.v1'
+    const native = data.schemaVersion === 'bayn.operational-assessment-input.v3'
     const cut = isVerifiedOperationalSourceCut(evidence) ? evidence.cut : evidence
     if (
       isVerifiedOperationalSourceCut(evidence) &&
@@ -139,6 +150,39 @@ const evaluateDecodedOperationalAssessment = (
     )
       return yield* Result.fail(new SystemAssessmentError({ message: 'Operational source replay policy differs' }))
     const { registration, registrationHash } = yield* validateOperationalRegistration(data.registration)
+    const nativeAudit = native
+      ? isVerifiedOperationalSourceCut(evidence)
+        ? evidence.nativeSafetyAudit
+        : yield* Result.gen(function* () {
+            const scan = yield* makeOperationalSafetyScan(evidence, registration)
+            const protections = protectionIntentsByDecision(evidence.protectionIntents)
+            for (const decision of evidence.decisions)
+              yield* scan.consume(
+                yield* executionOrderPlans([decision], protections.get(decision.document.contentHash) ?? []),
+              )
+            return yield* scan.finish()
+          })
+      : undefined
+    const safety =
+      nativeAudit === undefined && 'safety' in data
+        ? data.safety
+        : nativeAudit === undefined
+          ? undefined
+          : yield* makeOperationalSafetyAudit({
+              schemaVersion: 'bayn.operational-safety-audit.v1',
+              registrationHash,
+              asOf: cut.asOf,
+              coverage: nativeAudit.coverage,
+              violations: nativeAudit.violations,
+              auditEvidenceHash: nativeAudit.evidenceHash,
+            })
+    if (safety === undefined)
+      return yield* Result.fail(new SystemAssessmentError({ message: 'Native safety audit is unavailable' }))
+    const auditedSources = new Set(verifiedSources)
+    if (nativeAudit !== undefined) {
+      auditedSources.add(nativeAudit.evidenceHash)
+      auditedSources.add(safety.sourceHash)
+    }
     if (
       cut.registrationHash !== registrationHash ||
       (yield* canonicalHashV1Result(cut)) !== data.sourceCutHash ||
@@ -151,12 +195,8 @@ const evaluateDecodedOperationalAssessment = (
     const missing: string[] = []
     if (current && registration.obligations.configuration.controllerPlanHash === null)
       missing.push('UNBOUND_CONTROLLER_PLAN')
-    for (const source of [
-      registration.calendar.sourceHash,
-      ...registration.retainedIncidentSources,
-      data.safety.sourceHash,
-    ])
-      if (!verifiedSources.has(source)) missing.push(`UNVERIFIED_SOURCE:${source}`)
+    for (const source of [registration.calendar.sourceHash, ...registration.retainedIncidentSources, safety.sourceHash])
+      if (!auditedSources.has(source)) missing.push(`UNVERIFIED_SOURCE:${source}`)
     const lastClose = registration.calendar.sessions.at(-1)?.closeAt
     if (lastClose === undefined || cut.asOf < lastClose) missing.push('OPEN_REPORTING_PERIOD')
     const accounts = yield* registeredFinancialAccounts(registration, cut.financial)
@@ -250,21 +290,30 @@ const evaluateDecodedOperationalAssessment = (
     if (coverageAccount !== undefined && coverageAccount.forward.unresolvedMutationCount > 0)
       missing.push('UNRESOLVED_ACCOUNT_MUTATION')
     const reliability = yield* measureReliability(bound.reliability, false, recoveryEvidenceComplete)
-    const { sourceHash, ...auditMaterial } = data.safety
+    const { sourceHash, ...auditMaterial } = safety
     const auditBound =
-      sourceHash === (yield* canonicalHashV1Result(auditMaterial)) && verifiedSources.has(data.safety.auditEvidenceHash)
+      sourceHash === (yield* canonicalHashV1Result(auditMaterial)) && auditedSources.has(safety.auditEvidenceHash)
     if (!auditBound) missing.push('UNBOUND_SAFETY_AUDIT')
-    const safetyPass = auditBound && completeSafetyAudit(data.safety, registrationHash, cut.asOf, verifiedSources)
-    if (!safetyPass && data.safety.violations.length === 0) missing.push('INCOMPLETE_SAFETY_AUDIT')
+    const safetyPass = auditBound && completeSafetyAudit(safety, registrationHash, cut.asOf, auditedSources)
+    if (!safetyPass && safety.violations.length === 0) missing.push('INCOMPLETE_SAFETY_AUDIT')
     const verdict = operationalAssessmentVerdict(
       reliability.status,
       missing.length,
       safetyPass,
-      data.safety.violations.length,
+      safety.violations.length,
     )
+    const provenance: {
+      readonly evaluationPolicy?: 'bayn.operational-native-safety.v1' | 'bayn.operational-build-binding.v1'
+      readonly nativeSafetyAudit?: NativeOperationalSafetyAudit
+    } =
+      nativeAudit !== undefined
+        ? { evaluationPolicy: 'bayn.operational-native-safety.v1', nativeSafetyAudit: nativeAudit }
+        : current
+          ? { evaluationPolicy: 'bayn.operational-build-binding.v1' }
+          : {}
     return {
       schemaVersion: 'bayn.operational-assessment.v1' as const,
-      ...(current ? { evaluationPolicy: 'bayn.operational-build-binding.v1' as const } : {}),
+      ...provenance,
       registrationHash,
       sourceCutHash: data.sourceCutHash,
       asOf: cut.asOf,
@@ -272,7 +321,7 @@ const evaluateDecodedOperationalAssessment = (
       environment: registration.environment,
       scope: { calendar: registration.calendar, policy: registration.policies[0] },
       reliability,
-      safety: { ...data.safety, pass: safetyPass },
+      safety: { ...safety, pass: safetyPass },
       obligationCoverageHash: bound.obligationCoverageHash,
       retainedIncidentSources: registration.retainedIncidentSources,
       missing: [...new Set(missing)],
