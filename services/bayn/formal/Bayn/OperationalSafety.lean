@@ -57,4 +57,20 @@ theorem native_safety_known_violation_cannot_pass (checks : List SafetyCheck) (c
 example : nativeSafetyPass [] = false ∧
     nativeSafetyPass (safetyKinds.map (fun kind => ⟨kind, "PASS"⟩)) = true := by decide
 
+def nativeAuditSubmitTiming (approved : Bool) (decided started expires cutoff : Int) : Bool :=
+  approved && decide (decided ≤ started ∧ started < expires ∧ started < cutoff)
+
+def nativeAuditRouteTiming (started routeStarted dispatched cutoff : Int) : Bool :=
+  decide (started ≤ routeStarted ∧ routeStarted ≤ dispatched ∧ dispatched < cutoff)
+
+theorem native_audit_detects_expired_admission (approved : Bool) (d s e c : Int)
+    (expired : e ≤ s ∨ c ≤ s) : nativeAuditSubmitTiming approved d s e c = false := by
+  simp [nativeAuditSubmitTiming]
+  omega
+
+theorem native_audit_detects_late_transmission (s r d c : Int) (late : c ≤ d) :
+    nativeAuditRouteTiming s r d c = false := by
+  simp [nativeAuditRouteTiming]
+  omega
+
 end Bayn

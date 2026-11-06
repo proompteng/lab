@@ -1,35 +1,42 @@
-import { conditionalBound } from './conditional-confidence'
-import { nativeSafetyCoverage, SafetyCheckStatus } from './operational-safety'
-import { nextIntradayEntryAttemptOrdinal } from '../cycle/runner/calendar-decisions'
-import { reconciliationCompletionSupported } from './obligation-witnesses'
-import { closedEntryWindowTimingSupported } from './decision-work'
-import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../execution/trading-scope'
-import { JevAcceptanceVersion } from '../jev/acceptance'
-import { OrderStatus, OrderSchema } from '../execution/contracts'
-import type { SystemSourceCut } from './source-cut'
-import { bracketEvidenceFixture } from './bracket-evidence.test-support'
-import { resolveExecutionOrderTerms } from './execution-order-terms'
-import { orderedExecutionPlan, executionOrderPlans, type ExecutionOrderPlan } from './execution-plans'
-import type { ProtectionIntentEvidence } from './execution-plans'
-import { replacementProtectionFixture } from './protection-evidence.test-support'
-import { cryptoPersistenceDocumentFixture } from './decision-persistence.test-support'
-import { executionIntentIdForDecodedPlan, clientOrderIdForIntentId } from '../execution/intents/domain'
-import { bindExecutionEvidence } from './execution-evidence'
-import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
-import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
-import { momentumRequiredTargetNet, MomentumFundedExitPlanSchema } from '../strategy/repeated-momentum/exit-plan'
-import { decideRepeatedMomentumEntry, RepeatedMomentumTargetSchema } from '../strategy/repeated-momentum/decision'
-import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
-import { nativeJevFixture } from '../jev/native.test-support'
-import { defaultJevProtocolDocument } from '../jev/protocol'
-import { JevPurpose } from '../jev/portfolio'
+import { conditionalBound } from '../../src/system-assessment/conditional-confidence'
+import { nativeSafetyCoverage, SafetyCheckStatus } from '../../src/system-assessment/operational-safety'
+import { nextIntradayEntryAttemptOrdinal } from '../../src/cycle/runner/calendar-decisions'
+import { reconciliationCompletionSupported } from '../../src/system-assessment/obligation-witnesses'
+import { closedEntryWindowTimingSupported } from '../../src/system-assessment/decision-work'
+import { currentEntryMarketEnabled, currentSubmissionMarketAllowed } from '../../src/execution/trading-scope'
+import { JevAcceptanceVersion } from '../../src/jev/acceptance'
+import { OrderStatus, OrderSchema } from '../../src/execution/contracts'
+import type { SystemSourceCut } from '../../src/system-assessment/source-cut'
+import { bracketEvidenceFixture } from '../../src/system-assessment/bracket-evidence.test-support'
+import { resolveExecutionOrderTerms } from '../../src/system-assessment/execution-order-terms'
+import {
+  orderedExecutionPlan,
+  executionOrderPlans,
+  type ExecutionOrderPlan,
+} from '../../src/system-assessment/execution-plans'
+import type { ProtectionIntentEvidence } from '../../src/system-assessment/execution-plans'
+import { replacementProtectionFixture } from '../../src/system-assessment/protection-evidence.test-support'
+import { cryptoPersistenceDocumentFixture } from '../../src/system-assessment/decision-persistence.test-support'
+import { executionIntentIdForDecodedPlan, clientOrderIdForIntentId } from '../../src/execution/intents/domain'
+import { bindExecutionEvidence } from '../../src/system-assessment/execution-evidence'
+import { momentumControlCandidates } from '../../src/strategy/repeated-momentum/signals'
+import { makeRepeatedMomentumPolicy } from '../../src/strategy/repeated-momentum/policy'
+import { momentumRequiredTargetNet, MomentumFundedExitPlanSchema } from '../../src/strategy/repeated-momentum/exit-plan'
+import {
+  decideRepeatedMomentumEntry,
+  RepeatedMomentumTargetSchema,
+} from '../../src/strategy/repeated-momentum/decision'
+import { deriveIntradayMomentumSignalMetrics } from '../../src/strategy/intraday-momentum/decision-core'
+import { nativeJevFixture } from '../../src/jev/native.test-support'
+import { defaultJevProtocolDocument } from '../../src/jev/protocol'
+import { JevPurpose } from '../../src/jev/portfolio'
 import {
   jevSignalFor,
   jevBenchmarkSignalFor,
   commonMomentumPrices,
   jevEntryQuoteExclusion,
-} from '../jev/trading-signals'
-import { jevBenchmarkSymbol } from '../jev/markets'
+} from '../../src/jev/trading-signals'
+import { jevBenchmarkSymbol } from '../../src/jev/markets'
 import { describe, expect, test } from 'bun:test'
 import fc from 'fast-check'
 import { Effect, Result, Schema } from 'effect'
@@ -40,30 +47,42 @@ import {
   JevResearchPolicy,
   evaluateRetainedJevAcceptance,
   jevAcceptanceInferenceRateFloor,
-} from '../jev/acceptance'
-import { advanceQualificationEquity, binaryTradeEdge, cashInventoryTradingPnl, netTradingPnl } from './economics'
-import { reliabilityFraction } from './reliability'
+} from '../../src/jev/acceptance'
+import {
+  advanceQualificationEquity,
+  binaryTradeEdge,
+  cashInventoryTradingPnl,
+  netTradingPnl,
+} from '../../src/system-assessment/economics'
+import { reliabilityFraction } from '../../src/system-assessment/reliability'
 import {
   assessmentFixture,
   supportedAssessmentFixture,
-  knownPayoffAssessmentFixture,
   testHash,
-} from './fixtures.test-support'
-import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
-import { validateSystemRegistration } from './policy'
-import { frozenQuantityAtoms } from './frozen-control-report'
-import { makeExecutionRiskPolicy } from '../execution/risk-policy'
-import { evaluateSystemAssessment, SafetyViolationKind } from './assessment'
-import { indexCashHistory, projectSessionCash } from './cash-history'
-import { CashAdjustmentKind, cashFlowTotals } from './cash-flows'
-import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
-import { decideExecutionControllerTick } from '../execution/controller'
-import { ceilDiv, desiredQuantityAtoms, notionalMicros } from '../strategy/execution-model/fixed-point'
-import { cashSpotLimitTimeInForce } from '../execution/order-terms'
-import { MarketKind } from '../instruments'
-import { ExecutionEvidenceKind, measureRealism } from './realism'
-import { allowsOutcomeEvent, sameMutationOutcome, decideMutationAuthority } from '../execution/mutations/decisions'
-import { MutationEventSchema, MutationEventType, type MutationAuthoritySnapshot } from '../execution/mutations/model'
+} from '../../src/system-assessment/fixtures.test-support'
+import { replayRateCardFixture } from '../../src/testing/inference-rate-card.test-support'
+import { validateSystemRegistration } from '../../src/system-assessment/policy'
+import { frozenQuantityAtoms } from '../../src/system-assessment/frozen-control-report'
+import { makeExecutionRiskPolicy } from '../../src/execution/risk-policy'
+import { SafetyViolationKind } from '../../src/system-assessment/assessment'
+import { indexCashHistory, projectSessionCash } from '../../src/system-assessment/cash-history'
+import { CashAdjustmentKind, cashFlowTotals } from '../../src/system-assessment/cash-flows'
+import { reportedCashMicros } from '../../src/broker/alpaca/cash-reporting'
+import { decideExecutionControllerTick } from '../../src/execution/controller'
+import { ceilDiv, desiredQuantityAtoms, notionalMicros } from '../../src/strategy/execution-model/fixed-point'
+import { cashSpotLimitTimeInForce } from '../../src/execution/order-terms'
+import { MarketKind } from '../../src/instruments'
+import { ExecutionEvidenceKind, measureRealism } from '../../src/system-assessment/realism'
+import {
+  allowsOutcomeEvent,
+  sameMutationOutcome,
+  decideMutationAuthority,
+} from '../../src/execution/mutations/decisions'
+import {
+  MutationEventSchema,
+  MutationEventType,
+  type MutationAuthoritySnapshot,
+} from '../../src/execution/mutations/model'
 import {
   Authority,
   KillState,
@@ -73,8 +92,8 @@ import {
   TimeInForce,
   ReconciliationStatus,
   type Intent,
-} from '../execution/contracts'
-import { validateIntentAuthorityBinding } from '../execution/mutation-authority'
+} from '../../src/execution/contracts'
+import { validateIntentAuthorityBinding } from '../../src/execution/mutation-authority'
 import {
   BrokerAccess,
   CapitalAuthorityKind,
@@ -83,111 +102,114 @@ import {
   makeExecutionAuthority,
   noCapitalAuthority,
   type ExecutionAuthorityInput,
-} from '../execution/authority'
-import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { MutationOperation } from '../broker/alpaca-mutations/model'
-import { SubmissionDenialReason } from '../execution/submission-denial'
+} from '../../src/execution/authority'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../src/broker/identity'
+import { MutationOperation } from '../../src/broker/alpaca-mutations/model'
+import { SubmissionDenialReason } from '../../src/execution/submission-denial'
 import {
   controllerBuildMatchesRegistration,
   holdCompletionSupported,
   sourceFitsRegisteredSession,
-} from './decision-work'
-import { calendarFixture } from './fixtures.test-support'
-import { continuousMarketHours } from '../market-hours'
-import { registeredSchedule } from './schedule'
-import { registrationFixture } from './fixtures.test-support'
-import { ObligationClass } from './reliability'
-import { ReliabilityStatus } from './reliability'
-import { operationalAssessmentVerdict } from './operational-assessment'
-import { kafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
-import { operationalRegistrationFixture } from './operational-period.test-support'
-import { jevSignalWindowEndMs } from '../jev/observation-query'
-import { controllerClockDurations, nearestRank95 } from './controller-latency'
-import { fullBatchClockDuration } from './full-batch-latency'
-import { accountEntryProtectionReasons } from '../risk'
-import { replayDecisionReleaseAt } from '../intraday-replay/decision-latency'
-import { assessBacktestSession } from '../intraday-replay/backtest'
-import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } from '../ledger-plan'
-import { CycleState, CycleTerminalReason, AutonomousCycleSchema, type AutonomousCycle } from '../cycle/model'
-import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
-import { DecisionReadinessReason } from '../cycle/runner/readiness'
+} from '../../src/system-assessment/decision-work'
+import { calendarFixture } from '../../src/system-assessment/fixtures.test-support'
+import { continuousMarketHours } from '../../src/market-hours'
+import { registeredSchedule } from '../../src/system-assessment/schedule'
+import { registrationFixture } from '../../src/system-assessment/fixtures.test-support'
+import { ObligationClass } from '../../src/system-assessment/reliability'
+import { ReliabilityStatus } from '../../src/system-assessment/reliability'
+import { operationalAssessmentVerdict } from '../../src/system-assessment/operational-assessment'
+import { kafkaHandoffReadiness } from '../../src/market-data/streaming/bootstrap'
+import { operationalRegistrationFixture } from '../../src/system-assessment/operational-period.test-support'
+import { jevSignalWindowEndMs } from '../../src/jev/observation-query'
+import { controllerClockDurations, nearestRank95 } from '../../src/system-assessment/controller-latency'
+import { fullBatchClockDuration } from '../../src/system-assessment/full-batch-latency'
+import { accountEntryProtectionReasons } from '../../src/risk'
+import { replayDecisionReleaseAt } from '../../src/intraday-replay/decision-latency'
+import { assessBacktestSession } from '../../src/intraday-replay/backtest'
+import { preflightTransfers, verifyExactTransfers, type LedgerTransferRecord } from '../../src/ledger-plan'
+import { CycleState, CycleTerminalReason, AutonomousCycleSchema, type AutonomousCycle } from '../../src/cycle/model'
+import { unusedEntryExpiresAt, hasExpiredUnusedEntryAdmission } from '../../src/cycle/entry-admission'
+import { DecisionReadinessReason } from '../../src/cycle/runner/readiness'
 import {
   decisionReadinessContinuationDelayMs,
   unusedEntryHandoffDelayMs,
   canReuseSourceWaitReconciliation,
-} from '../observe-composition/recovery-driver'
-import { cachedBrokerStateFixture, nativeBrokerStateFixture } from '../execution/broker-state-cache.fixture'
-import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
-import { isCycleStateTransitionAllowed } from '../cycle/transitions'
+} from '../../src/observe-composition/recovery-driver'
+import { cachedBrokerStateFixture, nativeBrokerStateFixture } from '../../src/execution/broker-state-cache.fixture'
+import { AccountStatus as BrokerAccountStatus } from '../../src/broker/alpaca/model'
+import { isCycleStateTransitionAllowed } from '../../src/cycle/transitions'
 import {
   decideActivation,
   decideCompletion,
   decideDecisionBinding,
   makeInitialCycle,
   validateCompletionDocument,
-} from '../cycle/store/decisions'
-import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
+} from '../../src/cycle/store/decisions'
+import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from '../../src/cycle/store/decision-contract'
 import {
   CycleDecisionDocumentSchema,
   type CycleDecisionDocument,
   type ExecutionDecisionDocument,
   type ObserveShadowDecisionDocument,
-} from '../shadow-decision-contract'
-import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from '../execution/legacy-wire'
-import { TargetPlanReason, TargetPlanStatus, type TargetPlanResult } from '../target-planner'
-import { latencyCalibrationDecisionFixture } from './latency.test-support'
-import { capturedAccountsFixture } from './source-cut.test-support'
-import { bindSystemSourceCut } from './bind-source'
-import { assessSession } from './session'
-import { makeOperatingCostReport, OperatingCostCategory } from '../operating-costs'
-import { operatingCostFixture } from '../operating-costs.test-support'
-import { proportionalCost, indexOperatingCosts } from './cost-attribution'
+} from '../../src/shadow-decision-contract'
+import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from '../../src/execution/legacy-wire'
+import { TargetPlanReason, TargetPlanStatus, type TargetPlanResult } from '../../src/target-planner'
+import { latencyCalibrationDecisionFixture } from '../../src/system-assessment/latency.test-support'
+import { capturedAccountsFixture } from '../../src/system-assessment/source-cut.test-support'
+import { bindSystemSourceCut } from '../../src/system-assessment/bind-source'
+import { assessSession } from '../../src/system-assessment/session'
+import { makeOperatingCostReport, OperatingCostCategory } from '../../src/operating-costs'
+import { operatingCostFixture } from '../../src/operating-costs.test-support'
+import { proportionalCost, indexOperatingCosts } from '../../src/system-assessment/cost-attribution'
 import {
   expenseRateFixture,
   expenseSourceFixture,
   costReportFromEvidence,
   expenseCoverageFromEvidence,
-} from '../inference-expense.test-support'
-import { inferenceStageKey, InferenceStage, type InferenceCostLine } from '../inference-costs'
+} from '../../src/inference-expense.test-support'
+import { inferenceStageKey, InferenceStage, type InferenceCostLine } from '../../src/inference-costs'
 import {
   inferenceExpenseRateCard,
   makeInferenceExpenseQuotes,
   type InferenceExpenseRecord,
   type InferenceExpenseSource,
-} from '../inference-expense'
-import { entryCompletionFixture, entryEvaluationRequestFixture } from '../jev/entry-inference.test-support'
-import { makeStagedTerminalReceipt } from '../jev/staged-checkpoint'
-import { stagedExpenseSourceFixture } from './formal-inference.test-support'
-import { EntryAblationSelection } from '../jev/entry-inference-input'
-import { verifyEntryCompletion } from '../jev/entry-inference-evidence'
-import type { EntryInferenceCompletion } from '../jev/entry-inference'
-import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
-import { JevFailure } from '../jev/contract'
-import { costWindowConsistent } from '../operating-cost-window'
-import { retainedFinancialMarks } from './forward-evidence'
-import { accountMarkValue } from './valuation'
-import { allocateCostByWeights } from './cost-allocation'
+} from '../../src/inference-expense'
+import { entryCompletionFixture, entryEvaluationRequestFixture } from '../../src/jev/entry-inference.test-support'
+import { makeStagedTerminalReceipt } from '../../src/jev/staged-checkpoint'
+import { stagedExpenseSourceFixture } from '../../src/system-assessment/formal-inference.test-support'
+import { EntryAblationSelection } from '../../src/jev/entry-inference-input'
+import { verifyEntryCompletion } from '../../src/jev/entry-inference-evidence'
+import type { EntryInferenceCompletion } from '../../src/jev/entry-inference'
+import { JevOutcome, makeJevEvaluationReceipt } from '../../src/jev/evidence'
+import { JevFailure } from '../../src/jev/contract'
+import { costWindowConsistent } from '../../src/operating-cost-window'
+import { retainedFinancialMarks } from '../../src/system-assessment/forward-evidence'
+import { accountMarkValue } from '../../src/system-assessment/valuation'
+import { allocateCostByWeights } from '../../src/system-assessment/cost-allocation'
 import {
   advanceHistoricalMarketCursor,
   createHistoricalMarketCursor,
   type HistoricalMarketCursor,
-} from '../market-data/streaming/historical'
-import { nativeArrival } from '../market-data/streaming/native-arrival'
+} from '../../src/market-data/streaming/historical'
+import { nativeArrival } from '../../src/market-data/streaming/native-arrival'
 import {
   nativeArrivalEpochFixture,
   nativeArrivalObservationFixture,
-} from '../market-data/streaming/native-arrival.test-support'
-import { CaptureDisposition } from '../market-data/streaming/transport-evidence'
-import { topicPartitionKey } from '../market-data/streaming/projection'
-import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
+} from '../../src/market-data/streaming/native-arrival.test-support'
+import { CaptureDisposition } from '../../src/market-data/streaming/transport-evidence'
+import { topicPartitionKey } from '../../src/market-data/streaming/projection'
+import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../../src/jev/resolution'
 
-import { formalModelExecutable, runFormalModel as model } from './formal-model.test-support'
-import { persistenceDocumentFixture } from './decision-persistence.test-support'
-import { emptySourceCutFixture } from './source-cut.test-support'
-import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
-import { equityTafRate } from '../strategy/execution-model/fees'
-import { intradayExecutionModel, retainedIntradayExecutionModel } from '../strategy/intraday-market'
-import { registrationBuildFixture } from './registration-build.test-support'
+import { formalModelExecutable, runFormalModel as model } from '../../src/system-assessment/formal-model.test-support'
+import { persistenceDocumentFixture } from '../../src/system-assessment/decision-persistence.test-support'
+import { emptySourceCutFixture } from '../../src/system-assessment/source-cut.test-support'
+import {
+  decisionAdmissionWitnesses,
+  indexDecisionAdmissionMutations,
+} from '../../src/system-assessment/decision-admissions'
+import { equityTafRate } from '../../src/strategy/execution-model/fees'
+import { intradayExecutionModel, retainedIntradayExecutionModel } from '../../src/strategy/intraday-market'
+import { registrationBuildFixture } from '../../src/system-assessment/registration-build.test-support'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
@@ -2253,7 +2275,7 @@ formal('pinned Lean executable conformance', () => {
       ),
     )
     const sourceWindowExpected = [
-      ...Schema.decodeUnknownSync(Schema.Array(Schema.NullOr(Schema.Number)))(
+      ...Schema.decodeUnknownSync(Schema.Array(Schema.NullOr(Schema.Finite)))(
         model(
           sourceWindowCases.map((c) => ({
             operation: 'sourceWindowContinuation',
@@ -2737,10 +2759,10 @@ formal('pinned Lean executable conformance', () => {
                   brokerIdentity: grantIdentity,
                   authorityGenerationHash: generation,
                   strategy: {
-                    name: mask & 1 ? 'foreign-strategy' : strategy.name,
-                    behaviorHash: mask & 2 ? testHash('foreign behavior') : strategy.behaviorHash,
-                    parameterHash: mask & 4 ? testHash('foreign parameters') : strategy.parameterHash,
-                    parameterSchemaVersion: mask & 8 ? 'foreign-version' : strategy.parameterSchemaVersion,
+                    name: (mask & 1) !== 0 ? 'foreign-strategy' : strategy.name,
+                    behaviorHash: (mask & 2) !== 0 ? testHash('foreign behavior') : strategy.behaviorHash,
+                    parameterHash: (mask & 4) !== 0 ? testHash('foreign parameters') : strategy.parameterHash,
+                    parameterSchemaVersion: (mask & 8) !== 0 ? 'foreign-version' : strategy.parameterSchemaVersion,
                   },
                   limits: {
                     maxGrossNotionalMicros: '100000000000',
@@ -3532,98 +3554,6 @@ formal('pinned Lean executable conformance', () => {
     )
   })
 
-  test('complete qualification and failed evidence, safety and reliability gates agree with Lean', () => {
-    const { input, verifiedSources } = knownPayoffAssessmentFixture()
-    const unsafe = {
-      ...input,
-      safety: {
-        ...input.safety,
-        violations: [
-          {
-            kind: SafetyViolationKind.Unauthorized,
-            sourceHash: input.safety.sourceHash,
-            occurredAt: input.registration.calendar.sessions[0]?.openAt ?? '',
-          },
-        ],
-      },
-    }
-    const failed = { ...input, reliability: { ...input.reliability, completions: [] } }
-    const incompleteSources = new Set(verifiedSources)
-    incompleteSources.delete(input.obligationCoverageHash)
-    const shorter = supportedAssessmentFixture(7)
-    const longer = supportedAssessmentFixture(21)
-    const retained = supportedAssessmentFixture(4, registrationFixture(undefined, 4, JevAcceptanceVersion.RetainedV4))
-    const reports = [
-      [input, verifiedSources],
-      [unsafe, verifiedSources],
-      [failed, verifiedSources],
-      [input, incompleteSources],
-      [shorter.input, shorter.verifiedSources],
-      [longer.input, longer.verifiedSources],
-    ].map(([data, sources]) => {
-      if (!(sources instanceof Set)) throw new Error('Expected verified source set')
-      return Result.getOrThrow(evaluateSystemAssessment(data, sources))
-    })
-    reports.push(
-      Result.getOrThrow(
-        evaluateSystemAssessment(retained.input, retained.verifiedSources, JevAcceptanceVersion.RetainedV4),
-      ),
-    )
-    const micros = (usd: number) => String(Math.round(usd * 1_000_000))
-    const lean = model(
-      reports.map((report) => {
-        const numerical = report.numerical
-        if (
-          numerical === null ||
-          !('metrics' in numerical) ||
-          numerical.confidence === undefined ||
-          numerical.metrics === undefined
-        )
-          throw new Error('Expected complete numerical fixture')
-        const terms = numerical.registration.analysis
-        if (terms === undefined) throw new Error('Missing registered analysis terms')
-        const confidence = numerical.confidence
-        const statistical =
-          'profit' in confidence
-            ? {
-                operation: 'conditionalQualification',
-                profitLowerBoundTotal: confidence.profit.lowerSumMicros,
-                pairedLowerBoundTotals: confidence.paired.map((bound) => bound.lowerSumMicros),
-              }
-            : (() => {
-                if (!('bootstrap' in terms)) throw new Error('Missing retained bootstrap terms')
-                return {
-                  operation: 'qualification',
-                  blockLengthSessions: String(terms.bootstrap.blockLengthSessions),
-                  replicates: String(terms.bootstrap.replicates),
-                  attemptIndex: String(numerical.registration.attemptIndex),
-                  profitLowerBoundTotal: micros(
-                    confidence.meanNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length),
-                  ),
-                  pairedLowerBoundTotals: confidence.paired.map((p) =>
-                    micros(p.meanIncrementalNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length)),
-                  ),
-                }
-              })()
-        return {
-          ...statistical,
-          controlCount: String(confidence.paired.length),
-          sessionCount: String(report.policies[0]?.sessions.length),
-          netProfit: micros(numerical.metrics.netPnlUsd),
-          maximumSessionLoss: micros(numerical.metrics.maximumSessionLossUsd),
-          maximumDrawdown: micros(numerical.metrics.maximumDrawdownUsd),
-          maximumSessionLossLimit: micros(terms.maximumSessionLossUsd),
-          maximumDrawdownLimit: micros(terms.maximumDrawdownUsd),
-          reliability: report.reliability.classes.map((c) => ({ good: c.correctOnTime, scheduled: c.scheduled })),
-          safetyViolations: String(report.safety.violations.length),
-          completeEvidence: report.evidenceComplete,
-          supportedRealism: report.realism.status === 'SUPPORTED',
-        }
-      }),
-    )
-    expect(lean).toEqual(reports.map((report) => report.verdict === 'QUALIFIED_PAPER'))
-    expect(lean).toEqual([true, false, false, false, false, false, true])
-  })
   test('integer economics, reliability error budgets, and negative expectancy agree across languages', () => {
     const cash = fc
       .sample(

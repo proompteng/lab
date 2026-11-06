@@ -48,71 +48,156 @@ theorem zero_width_has_no_uncertainty_penalty (values : List Int) (denominator :
     conditionalLowerSum values 0 denominator = values.sum := by
   simp [conditionalLowerSum, conditionalRadius, ceilSquareRoot]
 
-structure ConditionalQualificationEvidence where
-  sessionCount : Nat
-  controlCount : Nat
-  netProfit : Int
-  profitLowerBoundTotal : Int
-  pairedLowerBoundTotals : List Int
-  maximumSessionLoss : Nat
-  maximumDrawdown : Nat
-  maximumSessionLossLimit : Nat
-  maximumDrawdownLimit : Nat
-  reliability : List (Nat × Nat)
-  safetyViolations : Nat
-  completeEvidence : Bool
-  supportedRealism : Bool
+structure ConditionalSupport where
+  policy : String
+  lower : Int
+  upper : Int
   deriving Repr
 
-def conditionalEconomicTargets (e : ConditionalQualificationEvidence) : Prop :=
-  0 < e.sessionCount ∧ 0 < e.controlCount ∧ 0 < e.netProfit ∧ 0 < e.profitLowerBoundTotal ∧
-  e.pairedLowerBoundTotals.length = e.controlCount ∧ (∀ bound ∈ e.pairedLowerBoundTotals, 0 < bound) ∧
-  e.maximumSessionLoss ≤ e.maximumSessionLossLimit ∧ e.maximumDrawdown ≤ e.maximumDrawdownLimit
+structure ConditionalSeries where
+  policy : String
+  values : List Int
+  deriving Repr
 
-def conditionalQualificationPass (e : ConditionalQualificationEvidence) : Prop :=
-  conditionalEconomicTargets e ∧ operationalReliability e.reliability ∧
-  e.safetyViolations = 0 ∧ e.completeEvidence = true ∧ e.supportedRealism = true
+structure ConditionalBounds where
+  denominator : Nat
+  profit : Int
+  paired : List (String × Int)
+  deriving Repr, DecidableEq
 
-instance (e : ConditionalQualificationEvidence) : Decidable (conditionalEconomicTargets e) := by
-  unfold conditionalEconomicTargets; infer_instance
-instance (e : ConditionalQualificationEvidence) : Decidable (conditionalQualificationPass e) := by
-  unfold conditionalQualificationPass; infer_instance
+def supportedSeries (support : ConditionalSupport) (series : ConditionalSeries) : Bool :=
+  support.policy == series.policy && decide (support.lower ≤ support.upper) &&
+  series.values.all (fun value => decide (support.lower ≤ value ∧ value ≤ support.upper))
 
-theorem conditional_qualification_preserves_every_requirement (e : ConditionalQualificationEvidence)
-    (passes : conditionalQualificationPass e) :
-    conditionalEconomicTargets e ∧ operationalReliability e.reliability ∧
-      e.safetyViolations = 0 ∧ e.completeEvidence = true ∧ e.supportedRealism = true := passes
+def conditionalSeriesBounds (supports : List ConditionalSupport) (series : List ConditionalSeries)
+    (attempt : Nat) : Option ConditionalBounds := do
+  let candidate ← series.head?
+  if attempt = 0 || candidate.values.isEmpty || series.length < 2 ||
+      supports.length != series.length || !(supports.map (·.policy)).Nodup ||
+      !(series.map (·.policy)).Nodup then none else do
+    if !series.all (fun row => row.values.length == candidate.values.length &&
+        supports.any (fun support => supportedSeries support row)) then none else do
+      let support ← supports.find? (fun support => support.policy == candidate.policy)
+      let denominator := conditionalAlphaDenominator attempt series.length
+      let paired ← series.tail.mapM fun control => do
+        let bound ← supports.find? (fun bound => bound.policy == control.policy)
+        let values := List.zipWith (· - ·) candidate.values control.values
+        pure (control.policy, conditionalLowerSum values
+          ((support.upper - support.lower) + (bound.upper - bound.lower)).toNat denominator)
+      pure { denominator, profit := conditionalLowerSum candidate.values (support.upper-support.lower).toNat denominator, paired }
 
-theorem conditional_qualification_cannot_use_losing_controls_instead_of_profit (e : ConditionalQualificationEvidence)
-    (noProfit : e.netProfit ≤ 0) : ¬ conditionalQualificationPass e := by
-  unfold conditionalQualificationPass conditionalEconomicTargets
+theorem supported_series_contains_every_observation (support : ConditionalSupport) (series : ConditionalSeries)
+    (accepted : supportedSeries support series = true) (value : Int) (member : value ∈ series.values) :
+    support.lower ≤ value ∧ value ≤ support.upper := by
+  have all := (Bool.and_eq_true_iff.mp accepted).2
+  exact of_decide_eq_true (List.all_eq_true.mp all value member)
+
+theorem conditional_lower_bound_cannot_exceed_observed_profit (values : List Int) (width denominator : Nat) :
+    conditionalLowerSum values width denominator ≤ values.sum := by
+  unfold conditionalLowerSum
   omega
 
-theorem conditional_qualification_cannot_ignore_missing_evidence (e : ConditionalQualificationEvidence)
-    (missing : e.completeEvidence = false) : ¬ conditionalQualificationPass e := by
-  simp [conditionalQualificationPass, missing]
+structure EconomicSession where
+  date : String
+  profit : Int
+  opening : Int
+  closing : Int
+  minimum : Int
+  maximum : Int
+  drawdown : Int
+  deriving Repr
 
-theorem conditional_qualification_preserves_zero_safety_budget (e : ConditionalQualificationEvidence)
-    (violation : 0 < e.safetyViolations) : ¬ conditionalQualificationPass e := by
-  unfold conditionalQualificationPass
-  omega
+structure EconomicPolicy where
+  policy : String
+  sessions : List EconomicSession
+  deriving Repr
 
-def singleSessionQualification : ConditionalQualificationEvidence := {
-  sessionCount := 1, controlCount := 1, netProfit := 1000000, profitLowerBoundTotal := 1000000,
-  pairedLowerBoundTotals := [500000], maximumSessionLoss := 0, maximumDrawdown := 0,
-  maximumSessionLossLimit := 1000000000, maximumDrawdownLimit := 2500000000,
-  reliability := [(390,390),(780,780),(1,1),(0,0)], safetyViolations := 0,
-  completeEvidence := true, supportedRealism := true
-}
+def economicSessionsReconcile : Int → List String → List EconomicSession → Bool
+  | _, [], [] => true
+  | prior, date :: dates, session :: sessions =>
+    session.date == date && decide (session.opening = prior ∧ session.closing - session.opening = session.profit ∧
+      session.minimum ≤ session.opening ∧ session.minimum ≤ session.closing ∧
+      session.opening ≤ session.maximum ∧ session.closing ≤ session.maximum ∧
+      session.opening - session.minimum ≤ session.drawdown ∧ session.maximum - session.closing ≤ session.drawdown) &&
+      economicSessionsReconcile session.closing dates sessions
+  | _, _, _ => false
 
-theorem single_session_without_arbitrary_activity_quota_is_reachable :
-    conditionalQualificationPass singleSessionQualification := by decide
+def economicDrawdown (peak : Int) : List EconomicSession → Int
+  | [] => 0
+  | session :: rest => max (max (peak - session.minimum) session.drawdown)
+      (economicDrawdown (max peak session.maximum) rest)
 
-theorem one_missed_equity_decision_cannot_meet_999 :
-    ¬ conditionalQualificationPass {singleSessionQualification with reliability := [(389,390),(780,780),(1,1),(0,0)]} := by decide
+structure EconomicChecks where
+  netProfit : Bool
+  positiveProfitLowerBound : Bool
+  pairedIncrementalLowerBounds : Bool
+  drawdown : Bool
+  sessionLoss : Bool
+  deriving Repr
 
-example : conditionalAlphaDenominator 1 2 = 80 ∧
-    conditionalLowerSum [1, 1] 4 80 ≤ 0 ∧
-    conditionalLowerSum [1000] 0 80 = 1000 := by decide +kernel
+def EconomicChecks.pass (checks : EconomicChecks) : Bool :=
+  checks.netProfit && checks.positiveProfitLowerBound && checks.pairedIncrementalLowerBounds &&
+    checks.drawdown && checks.sessionLoss
+
+def evaluateEconomicEvidence (dates : List String) (allocation lossLimit drawdownLimit : Int)
+    (attempt : Nat) (supports : List ConditionalSupport) (policies : List EconomicPolicy) : Option EconomicChecks := do
+  if !(policies.map (·.policy)).Nodup then none else pure ()
+  let candidate ← policies.find? (fun policy => policy.policy == "JEV")
+  if !policies.all (fun policy => economicSessionsReconcile allocation dates policy.sessions) then none else do
+    let series := candidate :: policies.filter (fun policy => policy.policy != "JEV")
+    let bounds ← conditionalSeriesBounds supports
+      (series.map (fun policy => ⟨policy.policy, policy.sessions.map (·.profit)⟩)) attempt
+    pure {
+      netProfit := decide (0 < (candidate.sessions.map (·.profit)).sum),
+      positiveProfitLowerBound := decide (0 < bounds.profit),
+      pairedIncrementalLowerBounds := bounds.paired.all (fun bound => decide (0 < bound.2)),
+      drawdown := decide (max 0 (economicDrawdown allocation candidate.sessions) ≤ drawdownLimit),
+      sessionLoss := candidate.sessions.all (fun session => decide (max 0 (session.opening-session.minimum) ≤ lossLimit))
+    }
+
+theorem evaluated_economics_requires_positive_observed_profit
+    (dates : List String) (allocation lossLimit drawdownLimit : Int) (attempt : Nat)
+    (supports : List ConditionalSupport) (policies : List EconomicPolicy) (checks : EconomicChecks)
+    (evaluated : evaluateEconomicEvidence dates allocation lossLimit drawdownLimit attempt supports policies = some checks)
+    (passed : checks.pass = true) :
+    ∃ candidate, policies.find? (fun policy => policy.policy == "JEV") = some candidate ∧
+      0 < (candidate.sessions.map (·.profit)).sum := by
+  by_cases distinct : (policies.map (·.policy)).Nodup
+  ·
+    cases found : policies.find? (fun policy => policy.policy == "JEV") with
+    | none => simp [evaluateEconomicEvidence, distinct, found] at evaluated
+    | some candidate =>
+      refine ⟨candidate, rfl, ?_⟩
+      by_cases reconcile : policies.all (fun policy => economicSessionsReconcile allocation dates policy.sessions) = true
+      · cases bounds : conditionalSeriesBounds supports
+            ((candidate :: policies.filter (fun policy => policy.policy != "JEV")).map
+              (fun policy => ⟨policy.policy, policy.sessions.map (·.profit)⟩)) attempt with
+        | none =>
+          simp only [List.map_cons] at bounds
+          simp [evaluateEconomicEvidence, distinct, found, reconcile, bounds] at evaluated
+        | some value =>
+          simp only [List.map_cons] at bounds
+          simp [evaluateEconomicEvidence, distinct, found, reconcile, bounds] at evaluated
+          subst checks
+          simp only [EconomicChecks.pass, Bool.and_eq_true_iff, decide_eq_true_eq] at passed
+          exact passed.1.1.1.1
+      · simp [evaluateEconomicEvidence, distinct, found, reconcile] at evaluated
+  · simp [evaluateEconomicEvidence, distinct] at evaluated
+
+theorem mismatched_calendar_cannot_reconcile (allocation : Int) (dates : List String) (sessions : List EconomicSession)
+    (accepted : economicSessionsReconcile allocation dates sessions = true) : dates.length = sessions.length := by
+  induction dates generalizing allocation sessions with
+  | nil => cases sessions <;> simp_all [economicSessionsReconcile]
+  | cons date dates ih =>
+    cases sessions with
+    | nil => simp [economicSessionsReconcile] at accepted
+    | cons session sessions =>
+      have tail := (Bool.and_eq_true_iff.mp accepted).2
+      simpa using ih session.closing sessions tail
+
+example : conditionalSeriesBounds [⟨"JEV",1,1⟩,⟨"CONTROL",0,0⟩]
+    [⟨"JEV",[1]⟩,⟨"CONTROL",[0]⟩] 1 = some ⟨80,1,[("CONTROL",1)]⟩ := by decide +kernel
+example : conditionalSeriesBounds [⟨"JEV",-3,1⟩,⟨"CONTROL",-4,-4⟩]
+    [⟨"JEV",[2]⟩,⟨"CONTROL",[-4]⟩] 1 = none := by decide +kernel
 
 end Bayn
