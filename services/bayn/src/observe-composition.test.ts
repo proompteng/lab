@@ -26,7 +26,11 @@ import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
 import { EntryInferenceJournal } from './jev/entry-inference'
-import { buildObserveCycleDecision } from './observe-composition/decision-builder'
+import {
+  buildObserveCycleDecision,
+  prepareObserveDecisionReads,
+  readObserveDecisionFacts,
+} from './observe-composition/decision-builder'
 import { makeExecutionRiskPolicy } from './execution/risk-policy'
 import { JevPositionStore, JevPurpose } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
@@ -45,7 +49,7 @@ import {
 } from './observe-composition/recovery-driver'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { boundedReconciliationPass, decisionBuildError } from './observe-composition/decision-builder'
-import { runRecoveryFirstCyclePass } from './observe-composition/execution-cycle'
+import { mutationDecisionInput, runRecoveryFirstCyclePass } from './observe-composition/execution-cycle'
 import { protectedAccountAdmission } from './observe-composition/account-admission'
 import {
   AccountStatus as BrokerAccountStatus,
@@ -1134,7 +1138,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
     ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
     ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
     account: () => unusedAccounting,
-    verifyCompleted: () => Effect.void,
+
     value: () =>
       Effect.succeed({
         schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -5617,7 +5621,7 @@ describe('OBSERVE runtime composition', () => {
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
-      verifyCompleted: () => unused,
+
       value: () => unused,
       hasAccountBaseline: () => unused,
       retainCashReporting: () => Effect.void,
@@ -5822,7 +5826,7 @@ describe('OBSERVE runtime composition', () => {
             ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
             ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
             account: () => unusedAccounting,
-            verifyCompleted: () => Effect.void,
+
             value: () =>
               Effect.succeed({
                 schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -5971,13 +5975,13 @@ describe('OBSERVE runtime composition', () => {
   })
 })
 
-test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled'] as const)(
+test.each(['discovery', 'calendar-reuse', 'pending', 'not-ready', 'activation-expired', 'stalled'] as const)(
   'advances %s cycle admission in one bounded recovery pass',
   async (kind) => {
     const fixture = await executionLifecycleFixture()
     const services = makeExactReconciliationServices(Authority.Execution)
     let stored =
-      kind === 'discovery'
+      kind === 'discovery' || kind === 'calendar-reuse'
         ? undefined
         : Effect.runSync(
             Schema.decodeUnknownEffect(
@@ -5987,6 +5991,7 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
           )
     let bound: CycleDecisionDocument | undefined
     let unfinishedReads = 0
+    const calendarQueries: unknown[] = []
     const operations: string[] = []
     const forbidden = () => Effect.die(new Error('admission must not perform a broker mutation'))
     const store: CycleStoreShape = {
@@ -6074,51 +6079,88 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
     }
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt) + (kind === 'discovery' ? 60_000 : 0))
-        return yield* Effect.exit(
-          runRecoveryFirstCyclePass(
-            fixture.input,
-            fixture.policy,
-            {
-              cycleBindingId: cycle.identity.qualificationRunId,
-              accountId,
-              strategyName: 'jev',
-              strategyProtocolHash: fixture.preparation.strategyProtocolHash,
-              executionPolicy: fixture.preparation.executionPolicy,
-              buildDecision: () =>
-                Effect.suspend(() => {
-                  operations.push('build')
-                  return kind === 'not-ready'
-                    ? Effect.fail(
-                        new CycleDecisionBuildError({
-                          failure: 'not-ready',
-                          message: 'incomplete market window',
-                          readiness: {
-                            reason: DecisionReadinessReason.SnapshotCoverage,
-                            message: 'incomplete market window',
-                          },
-                        }),
-                      )
-                    : Effect.succeed(fixture.document)
-                }),
-              buildDecisionEvidence: () =>
-                Effect.sync(() => {
-                  operations.push('verify')
-                  return {}
-                }),
-            },
-            {
-              read: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-              refresh: Effect.succeed(reconciliationResultAt(evaluatedAt)),
-            },
-            { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
-          ),
+        yield* TestClock.setTime(
+          Date.parse(evaluatedAt) + (kind === 'discovery' || kind === 'calendar-reuse' ? 60_000 : 0),
         )
+        const pass = runRecoveryFirstCyclePass(
+          fixture.input,
+          fixture.policy,
+          {
+            cycleBindingId: cycle.identity.qualificationRunId,
+            accountId,
+            strategyName: 'jev',
+            strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+            executionPolicy: fixture.preparation.executionPolicy,
+            buildDecision: (currentCycle) =>
+              Effect.gen(function* () {
+                operations.push('build')
+                if (kind === 'calendar-reuse') {
+                  const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+                  const input = mutationDecisionInput(
+                    fixture.input,
+                    fixture.preparation,
+                    fixture.policy,
+                    currentCycle,
+                    Effect.succeed(reconciliationResultAt(observedAt)),
+                  )
+                  const prepared = yield* Effect.fromResult(prepareObserveDecisionReads(input)).pipe(Effect.orDie)
+                  yield* readObserveDecisionFacts(input, prepared, Authority.Execution).pipe(Effect.orDie)
+                }
+                return yield* kind === 'not-ready' || kind === 'calendar-reuse'
+                  ? Effect.fail(
+                      new CycleDecisionBuildError({
+                        failure: 'not-ready',
+                        message: 'incomplete market window',
+                        readiness: {
+                          reason: DecisionReadinessReason.SnapshotCoverage,
+                          message: 'incomplete market window',
+                        },
+                      }),
+                    )
+                  : Effect.succeed(fixture.document)
+              }),
+            buildDecisionEvidence: () =>
+              Effect.sync(() => {
+                operations.push('verify')
+                return {}
+              }),
+          },
+          {
+            read: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            refresh: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+          },
+          { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+        )
+        const result = yield* Effect.exit(pass)
+        if (kind === 'calendar-reuse') {
+          expect(calendarQueries).toHaveLength(1)
+          expect(yield* Effect.exit(pass)).toMatchObject({ _tag: 'Success' })
+          expect(calendarQueries).toHaveLength(2)
+        }
+        return result
       }).pipe(
         Effect.provideService(CycleStore, store),
         Effect.provideService(BrokerRead, {
           ...services.brokerRead,
-          marketCalendar: calendarRead([...calendar.sessions]),
+          marketCalendar: (query) =>
+            calendarRead(calendarQueries)(query).pipe(
+              Effect.map((read) => {
+                const material = {
+                  ...calendarMaterial,
+                  requestedRange: { ...query },
+                  sessions: calendar.sessions.filter(
+                    (session) => query.start <= session.date && session.date <= query.end,
+                  ),
+                  providerSessions: calendar.providerSessions.filter(
+                    (session) => query.start <= session.date && session.date <= query.end,
+                  ),
+                }
+                return {
+                  ...read,
+                  value: { ...material, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(material)) },
+                }
+              }),
+            ),
         }),
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
@@ -6154,7 +6196,7 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(unfinishedReads).toBe(1)
+    expect(unfinishedReads).toBe(kind === 'calendar-reuse' ? 2 : 1)
     if (kind === 'stalled') {
       expect(Exit.isFailure(result)).toBe(true)
       expect(operations).toEqual(['activate', 'activate'])
@@ -6165,11 +6207,13 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         action: kind === 'activation-expired' ? 'BLOCKED' : 'WAITING',
       })
       expect(operations).toEqual(
-        kind === 'not-ready'
-          ? ['activate', 'build']
-          : kind === 'activation-expired'
-            ? ['activate', 'block']
-            : [...(kind === 'discovery' ? ['acquire'] : []), 'activate', 'build', 'verify', 'bind', 'read-bound'],
+        kind === 'calendar-reuse'
+          ? ['acquire', 'activate', 'build', 'build']
+          : kind === 'not-ready'
+            ? ['activate', 'build']
+            : kind === 'activation-expired'
+              ? ['activate', 'block']
+              : [...(kind === 'discovery' ? ['acquire'] : []), 'activate', 'build', 'verify', 'bind', 'read-bound'],
       )
     }
   },

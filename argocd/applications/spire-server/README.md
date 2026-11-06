@@ -55,7 +55,7 @@ workload private keys enter that ConfigMap. Namespace creation remains owned by 
 ## Workload identity federation
 
 Registered workloads can request audience-bound JWT-SVIDs through their existing Workload API socket.
-The issuer is `https://oidc-discovery.proompteng.ai`, and the default JWT-SVID lifetime is five minutes.
+The issuer is `https://oidc.proompteng.ai`, and the default JWT-SVID lifetime is five minutes.
 Existing SPIFFE subjects and registration selectors apply; federation does not enroll additional workloads.
 
 The `spire-system` Application runs two OIDC discovery replicas from the pinned SPIRE chart. They read the
@@ -63,8 +63,8 @@ existing `spire-bundle` ConfigMap, which Kubernetes updates as SPIRE rotates its
 no Workload API socket, workload registration, signing keys, or Kubernetes API token.
 The public endpoints are:
 
-- `https://oidc-discovery.proompteng.ai/.well-known/openid-configuration`
-- `https://oidc-discovery.proompteng.ai/keys`
+- `https://oidc.proompteng.ai/.well-known/openid-configuration`
+- `https://oidc.proompteng.ai/keys`
 
 Only GET requests to these paths pass through Traefik. Cert-manager supplies the public certificate;
 Cloudflare verifies the Traefik origin certificate, and Traefik verifies the discovery backend certificate.
@@ -105,12 +105,12 @@ the agents through a reviewed GitOps pod-template change so they load the replac
 ## Persistence and availability
 
 Three SPIRE servers share the dedicated `spire-db` PostgreSQL datastore through its primary Service. The CloudNativePG
-cluster has three PostgreSQL 18.6 instances on distinct hosts, one synchronous standby, generated application
+cluster has three PostgreSQL 18.6 instances with preferred host separation, one synchronous standby, generated application
 credentials, automatic primary failover, and daily Ceph volume-snapshot backups. The connection validates the server
 certificate and hostname with the CNPG CA; no password is stored in Git or the server ConfigMap. No Prometheus server
 is introduced.
 
-SPIRE Pods also require distinct hosts and have a disruption budget keeping two servers available. Each server retains
+SPIRE Pods also prefer separate hosts and have a disruption budget keeping two servers available. Each server retains
 its own signing keys on a 1 GiB `rook-ceph-block` PVC in the existing `proompteng.ai` subdirectory. The StatefulSet retains
 PVCs when removed or scaled down. Namespace, datastore, and CRD pruning remain disabled. PostgreSQL stores the shared
 registrations, attested agents, and trust bundles; it does not replace the signing-key volumes.
@@ -148,7 +148,7 @@ python3 argocd/applications/spire-server/verify.py --context galactic-tailscale
 ```
 
 The verifier requires ready server, agent, and CSI workloads, the shared PostgreSQL datastore with verified TLS,
-three distinct hosts for each HA replica set, AMD64 and ARM64 nodes, and denial for an unregistered workload.
+three ready SPIRE server and PostgreSQL replicas, AMD64 and ARM64 nodes, and denial for an unregistered workload.
 It prints no certificates, keys, or tokens. Verify identity issuance and renewal through the registered
 applications when accepting an identity or datastore change.
 

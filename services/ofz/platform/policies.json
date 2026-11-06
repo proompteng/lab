@@ -56,6 +56,21 @@
           "subjects": ["workload"]
         }
       ]
+    },
+    {
+      "kind": "google.project",
+      "nativeType": "google_project",
+      "relations": [
+        {
+          "name": "reader",
+          "subjects": ["human", "workload"]
+        },
+        {
+          "name": "reader_workspace",
+          "subjects": ["workspace"]
+        }
+      ],
+      "workspaceScoped": true
     }
   ],
   "actions": [
@@ -84,6 +99,13 @@
       "id": "tengri.delegations.manage",
       "resourceKind": "tengri.workspace",
       "permission": "manage_grants"
+    },
+    {
+      "id": "google.project.read",
+      "resourceKind": "google.project",
+      "permission": "read",
+      "grantRelation": "reader",
+      "workspaceGrantRelation": "reader_workspace"
     }
   ]
 }

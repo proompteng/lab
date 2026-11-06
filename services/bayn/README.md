@@ -41,7 +41,10 @@ unverified rejections and rollback failures remain failures. This wait is unavai
 strategy abstention or a successful reliability obligation. Risk, quote and broker freshness checks remain unchanged.
 
 Cycle discovery bounds the authoritative equity-calendar read to the original five seconds. An unavailable calendar
-remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
+remains an operational failure. Discovery and decision preparation share an identical successful calendar read only
+within one bounded recovery pass, retaining its original evidence and observation times. A new pass, changed query,
+session boundary or backward clock movement requires a fresh read; failed or interrupted reads are never retained.
+Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
 crypto buys before final authorization or transmission. Retained crypto sells still require normal capital, ownership,
 funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v38 requires its reviewed
@@ -80,9 +83,15 @@ checkpoint tables in one statement. This second statement sees a competing trans
 lock wait. Every claim still reproduces its source and passes the database guards before its transaction commits;
 provider calls retain the original ten-second expiry.
 
-Repeated Jev target verification reuses the last successful semantic check only when a hash of the entire actual
-target and evidence matches. It retains one hash, not the source objects; changed source bytes, decisions or deadlines
-still require full reproduction. Newly inserted intents skip their intermediate reload inside the owning transaction.
+Repeated Jev target verification retains at most 64 successful full-content fingerprints so interleaved entry and
+recovery checks reuse exact targets. Changed source bytes, decisions or deadlines still require full reproduction.
+Execution decision construction validates its material once, computes its canonical hash once, and owns a frozen
+verified graph. Binding reuses that graph; copied or stored documents still require full validation.
+Decision rereads compare a digest computed from the actual PostgreSQL JSONB body with the previously verified read.
+They send only that digest and share the frozen body, while refreshing completion and supersession evidence each time.
+The one retained body remains capped at 8 MiB. Native valuation reads stream each compressed page and decode each
+consumed chunk once, preserving content, epoch and sequence checks without retaining a page of decoded graphs.
+Newly inserted intents skip their intermediate reload inside the owning transaction.
 The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
 their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
 
@@ -92,6 +101,14 @@ CPU work cannot leave that read transaction idle beyond its unchanged connection
 its enclosing writer transaction and deadline. Every session's frozen inference expenses are verified once.
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
+
+Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
+authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
+fees include recorded fill fees and posted broker fee effects; unposted charges and operating expenses remain outside
+that subtotal. When no account receipt is persisted, `forwardPerformance` stays null and
+`forwardPerformanceUnavailableReason` is `NO_PERSISTED_RECEIPT`. A retained receipt exposes its own authority generation,
+source revision and measurement window, independently of the current authority and running image. Unknown retained
+source or window values remain null.
 
 Inference expense snapshots drain one PostgreSQL statement before verifying request, receipt and cost evidence.
 Verification cannot hold that statement open and exhaust its database deadline. An owned read-only transaction closes
@@ -1363,6 +1380,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
   application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
+- Reconciliation reads accounting history once, derives each fill's expected transaction and ledger plan once, and
+  reuses those plans for receipt and TigerBeetle verification. The separate completed-fill verifier is removed.
+  Source economics, prior inventory including fee debits, transaction hashes, receipts, ledger records and balances
+  must still agree. Recovery rebuilds previously committed fee and cash-settlement plans only when a posting is pending.
 - Account reconciliation and forward-performance reads paginate the complete expected account history by TigerBeetle
   timestamp. Each request stays within the batch limit. Reads continue through short pages and request one additional
   record to detect unexpected history. Exact record identities, metadata, and aggregate balances remain mandatory;
@@ -1965,7 +1986,9 @@ database. Its migration refuses a database containing financial or other unrelat
 the financial PostgreSQL endpoint even when a different logical database is selected.
 
 The archive installs only the epoch, chunk and end tables with the original SQL checksum, ordered-prefix and
-append-only guards. Both databases retain synchronous replication, TLS, checksums and the existing backup store with
+append-only guards. Both databases use separate local NVMe WAL volumes with required cross-host synchronous
+replication. Archive appends emit `bayn.native-arrival.append` spans including the durable commit and retries.
+Both databases retain TLS, checksums and the existing backup store with
 separate server prefixes. The financial database retains all historical recorder bytes for historical reads; current
 capture readers must use the archive connection. No financial history, authority, strategy, fees, freshness or inference
 deadline changes. Separating the WAL removes raw capture writes from financial commits; verify actual admission and

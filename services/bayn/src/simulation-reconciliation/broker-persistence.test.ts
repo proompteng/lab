@@ -116,7 +116,6 @@ const store: ReconciliationPersistence = {
   },
   accounting: {
     account: () => Effect.die(new Error('empty successful reconciliation must not account a fill')),
-    verifyCompleted: () => Effect.void,
   },
   valuation: {
     value: () => Effect.succeed(valuation),
