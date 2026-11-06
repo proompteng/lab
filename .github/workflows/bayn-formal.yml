@@ -7,6 +7,30 @@ permissions:
   contents: read
 
 jobs:
+  tla:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21.0.9
+      - name: Install TypeScript dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
+      - name: Check TLA+ safety, liveness, fault detection and production conformance
+        env:
+          BAYN_TLA_OUTPUT_DIR: ${{ runner.temp }}/bayn-tla
+        run: bun run --filter @proompteng/bayn verify:tla
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bayn-tla-${{ github.sha }}
+          path: ${{ runner.temp }}/bayn-tla
+          if-no-files-found: error
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -62,4 +86,4 @@ jobs:
         env:
           BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
           BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
-        run: bun test services/bayn/src/system-assessment/postgres.integration.test.ts services/bayn/src/db/risk-clock-rejection.integration.test.ts
+        run: bun test services/bayn/src/system-assessment/postgres.integration.test.ts services/bayn/src/db/risk-clock-rejection.integration.test.ts services/bayn/src/db/candidate-observation-window.integration.test.ts

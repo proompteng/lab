@@ -1049,10 +1049,14 @@ export const runControlStudy = (
         const source = yield* openBacktestSource(arrivalsPath, prepared.input.source, runId, receipt)
         const market: ControlMarket = {
           advanceTo: (atMs) =>
-            source.advanceTo(atMs).pipe(
-              Effect.andThen(TestClock.setTime(atMs)),
-              Effect.mapError((cause) => new ControlStudyFailure({ message: 'Cannot advance control source', cause })),
-            ),
+            source
+              .advanceTo(atMs, (work) => work)
+              .pipe(
+                Effect.andThen(TestClock.setTime(atMs)),
+                Effect.mapError(
+                  (cause) => new ControlStudyFailure({ message: 'Cannot advance control source', cause }),
+                ),
+              ),
           quoteAt: (symbol, atMs) =>
             source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
           snapshot: (query) =>

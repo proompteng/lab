@@ -38,6 +38,7 @@ import { runAutonomousCyclePass } from './cycle/runner/program'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
 import {
   makeRecoveryFirstCycleDriver,
+  canReuseSourceWaitReconciliation,
   mutationDecisionBuilder,
   reconciliationForPreparation,
   runRestateAdvanceWithinTimeout,
@@ -747,6 +748,74 @@ const reconciliationResult = (
     },
   }
 }
+
+test('short source retries require exact flat facts, unchanged authority and original freshness', () => {
+  const exact = reconciliationResult()
+  const authority = exact.riskContext.authority
+  if (authority === null) throw new Error('fixture requires authority')
+  const position: Position = {
+    schemaVersion: 'bayn.position.v2',
+    accountId,
+    symbol: 'NVDA',
+    quantityAtoms: '1000000000',
+    averageEntryPriceMicros: '100000000',
+    costBasisMicros: '100000000',
+    marketPriceMicros: '100000000',
+    marketValueMicros: '100000000',
+    unrealizedPnlMicros: '0',
+    observedAt: reconciledAt,
+  }
+  const order: Order = {
+    schemaVersion: 'bayn.order.v3',
+    accountId,
+    brokerOrderId: 'source-retry-order',
+    clientOrderId: 'source-retry-client',
+    symbol: 'NVDA',
+    side: OrderSide.Buy,
+    orderType: OrderType.Limit,
+    timeInForce: TimeInForce.Day,
+    quantityAtoms: '1000000000',
+    filledQuantityAtoms: '0',
+    limitPriceMicros: '100000000',
+    status: OrderStatus.New,
+    observedAt: reconciledAt,
+  }
+  const now = Date.parse(reconciledAt)
+  const supported = (facts: ReconciliationPassResult, at = now, current = authority, age = 30_000) =>
+    canReuseSourceWaitReconciliation(facts, current, at, age)
+  expect(supported(exact)).toBe(true)
+  expect(supported(exact, now + 29_999)).toBe(true)
+  expect(supported(exact, now + 30_000)).toBe(false)
+  expect(supported(exact, now - 1)).toBe(false)
+  expect(supported(exact, now, authority, 0)).toBe(false)
+  expect(supported(exact, now, { ...authority, version: authority.version + 1 })).toBe(false)
+  expect(supported(exact, now, { ...authority, generationHash: 'f'.repeat(64) })).toBe(false)
+  expect(supported({ ...exact, riskContext: { ...exact.riskContext, unknownMutationCount: 1 } })).toBe(false)
+  expect(
+    supported({
+      ...exact,
+      riskContext: { ...exact.riskContext, authorityObservedAt: new Date(now + 1).toISOString() },
+    }),
+  ).toBe(false)
+  expect(
+    supported({ ...exact, report: { ...exact.report, metrics: { ...exact.report.metrics, accountingExact: false } } }),
+  ).toBe(false)
+  expect(
+    supported({
+      ...exact,
+      report: {
+        ...exact.report,
+        reconciliation: { ...exact.report.reconciliation, status: ReconciliationStatus.Discrepancy },
+      },
+    }),
+  ).toBe(false)
+  expect(supported({ ...exact, brokerState: { ...exact.brokerState, unknownOrderCount: 1 } })).toBe(false)
+  expect(supported({ ...exact, brokerState: { ...exact.brokerState, positions: [position] } })).toBe(false)
+  for (const status of [OrderStatus.New, OrderStatus.Pending, OrderStatus.PartiallyFilled])
+    expect(supported({ ...exact, brokerState: { ...exact.brokerState, orders: [{ ...order, status }] } })).toBe(false)
+  for (const status of [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected])
+    expect(supported({ ...exact, brokerState: { ...exact.brokerState, orders: [{ ...order, status }] } })).toBe(true)
+})
 
 test('one preparation pass reuses fresh reconciliation and refreshes on age or authority change', async () => {
   let reads = 0
@@ -5130,6 +5199,18 @@ describe('OBSERVE runtime composition', () => {
       const builder = mutationDecisionBuilder(input, fixture.preparation, fixture.policy)
       let document: CycleDecisionDocument | undefined
       let pricingReads = 0
+      let reconciliationWrites = 0
+      const executionStore = {
+        ...services.executionStore,
+        reconcile: (accountId, snapshot) =>
+          services.executionStore.reconcile(accountId, snapshot).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                reconciliationWrites += 1
+              }),
+            ),
+          ),
+      } satisfies ReconciliationStoreShape & AuthorityGenerationStoreShape
       const forbidden = () => Effect.die('pricing preparation test must not bind or submit')
       const cycleStore: CycleStoreShape = {
         readOldestUnfinished: () => Effect.succeed(Option.some(cycle)),
@@ -5156,13 +5237,21 @@ describe('OBSERVE runtime composition', () => {
                 Effect.gen(function* () {
                   if (reconcileForPricing === undefined)
                     return yield* Effect.die('driver omitted pricing reconciliation')
-                  document = yield* builder(currentCycle, reconcile, (minimumRemainingMs) =>
-                    Effect.gen(function* () {
-                      pricingReads += 1
-                      expect(minimumRemainingMs).toBe(fixtureProtocol.maximumQuoteAgeMs)
-                      return yield* reconcileForPricing(minimumRemainingMs)
-                    }),
-                  )
+                  if (document === undefined)
+                    document = yield* builder(currentCycle, reconcile, (minimumRemainingMs) =>
+                      Effect.gen(function* () {
+                        pricingReads += 1
+                        expect(minimumRemainingMs).toBe(fixtureProtocol.maximumQuoteAgeMs)
+                        return yield* reconcileForPricing(minimumRemainingMs)
+                      }),
+                    )
+                  else
+                    yield* reconcile.pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new CycleDecisionBuildError({ failure: 'operational', message: cause.message, cause }),
+                      ),
+                    )
                   // Stop at the tested preparation boundary; no durable decision or broker mutation belongs in this test.
                   return yield* new CycleDecisionBuildError({
                     failure: 'not-ready',
@@ -5177,16 +5266,29 @@ describe('OBSERVE runtime composition', () => {
               'mutation autonomous cycle loop',
             ),
           ).pipe(Effect.flatten)
-          return yield* driver.advance
+          const first = yield* driver.advance
+          if (cadenceMs === 30_000) {
+            expect(reconciliationWrites).toBe(1)
+            for (let second = 1; second <= 5; second++) {
+              yield* TestClock.adjust(1_000)
+              const retry = yield* driver.advance
+              expect(retry.observation.result).toBe('SUCCESS')
+              expect(reconciliationWrites).toBe(1)
+            }
+            yield* TestClock.adjust(25_000)
+            yield* driver.advance
+            expect(reconciliationWrites).toBe(2)
+          }
+          return first
         }).pipe(
           Effect.provideService(BrokerRead, { ...services.brokerRead, marketCalendar: calendarRead([]) }),
           Effect.provideService(CycleStore, cycleStore),
-          Effect.provideService(BrokerEventStore, services.executionStore),
-          Effect.provideService(FillAccountingStore, services.executionStore),
-          Effect.provideService(ValuationStore, services.executionStore),
-          Effect.provideService(ReconciliationStore, services.executionStore),
-          Effect.provideService(AuthorityGenerationStore, services.executionStore),
-          Effect.provideService(AuthorityRestrictionStore, services.executionStore),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
@@ -7183,6 +7285,7 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
 test.each([
   [false, DecisionReadinessReason.SnapshotCoverage, undefined, undefined],
   [true, DecisionReadinessReason.SnapshotCoverage, undefined, undefined],
+  [false, DecisionReadinessReason.InferenceUnavailable, undefined, undefined],
   [false, DecisionReadinessReason.SignalWindowObserved, 7_000, 7_000],
   [false, DecisionReadinessReason.LookbackWarmup, 7_000, 7_000],
   [false, DecisionReadinessReason.SignalWindowObserved, -1_000, undefined],
@@ -7311,7 +7414,7 @@ test.each([
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(counts).toEqual([1, 2, 3])
+    expect(counts).toEqual(bound || reason === DecisionReadinessReason.InferenceUnavailable ? [1, 2, 3] : [1, 1, 2])
   },
 )
 

@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: tengri
+transformers:
+- namespace-transformer.yaml
 resources:
 - observability.yaml
 - mesh-security.yaml
@@ -9,6 +10,7 @@ resources:
 - rbac.yaml
 - deployment.yaml
 - run-worker.yaml
+- run-reader.yaml
 - services.yaml
 - ingressroute.yaml
 - resource-quota.yaml
@@ -19,9 +21,9 @@ resources:
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:e1ad13e777b6fe22e832215ecc3c5b3052fc058e22179e4514cc712b88175154
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:1e5aca930f55e6b9c2dc4cd2cf795a4d8cf04f02f03064990898c0641710fa76
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:0753fa6ed8fbc9960b7052e0d47ab566d4b9bf35ffff2e635c2594e2508f0c3a
+  digest: sha256:f2f8dc005cd84874cf4fd2a45cda233aefe0b598ccfc493b9dc71cb399d8b171

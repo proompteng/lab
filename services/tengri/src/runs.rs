@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 use crate::{auth::Principal, grpc::ControlPlane};
 
+pub(crate) mod reader;
+
 // Query expiry limits admission; an authorized response may arrive later.
 const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
 const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -57,34 +59,6 @@ where
         tracing::warn!(operation, "durable run read recovery timed out");
         Status::unavailable("durable run status recovery timed out")
     })?
-}
-
-fn read_error(error: restate_sdk::ingress::ClientError) -> Status {
-    use restate_sdk::ingress::ClientError;
-    let class = match &error {
-        ClientError::Transport { .. } => "transport",
-        ClientError::Request { .. } => "request",
-        ClientError::Serialization { .. } => "serialization",
-        ClientError::InvalidRequest { .. } => "invalid_request",
-        ClientError::Protocol { .. } => "protocol",
-        ClientError::Status { .. } => "http_status",
-        ClientError::PayloadDecode { .. } => "payload_decode",
-    };
-    let status = error.response().map(|response| response.status().as_u16());
-    tracing::warn!(
-        class,
-        http_status = status,
-        "durable run read attempt failed"
-    );
-    match status {
-        Some(408) => Status::deadline_exceeded("run query expired before admission"),
-        Some(500..=599) => Status::unavailable("durable run status unavailable"),
-        Some(400 | 401 | 403 | 404 | 409 | 422) => client_error(error),
-        _ if matches!(error, ClientError::Transport { .. }) => {
-            Status::unavailable("durable run ingress unavailable")
-        }
-        _ => Status::internal("invalid durable run status response"),
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -336,52 +310,67 @@ pub(crate) async fn submit(
     };
     let envelope = seal(service, "admission", &admission).await?;
     let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, workspace_uid);
-    tokio::time::timeout(Duration::from_secs(10), client.admit(Json(envelope)).call())
-        .await
-        .map_err(|_| {
-            Status::unavailable("durable run acceptance timed out; retry the same operation")
-        })?
-        .map_err(client_error)?
-        .into_body()
-        .map_err(client_error)?;
-    read(service, &principal, &input.id, Some(digest)).await
+    let accepted =
+        match tokio::time::timeout(Duration::from_secs(10), client.admit(Json(envelope)).call())
+            .await
+        {
+            Ok(result) => result
+                .map_err(client_error)
+                .and_then(|response| response.into_body().map_err(client_error)),
+            Err(_) => Err(Status::unavailable(
+                "durable run acceptance timed out; retry the same operation",
+            )),
+        };
+    if let Err(error) = &accepted {
+        if !matches!(
+            error.code(),
+            tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+        ) {
+            return Err(error.clone());
+        }
+        tracing::warn!("durable admission response lost; reconciling the existing run");
+    }
+    match read(&principal, &input.id, Some(digest)).await {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error)
+            if matches!(
+                error.code(),
+                tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+            ) =>
+        {
+            accepted.and(Err(error))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) async fn read(
-    service: &ControlPlane,
     principal: &Principal,
     id: &str,
     digest: Option<String>,
 ) -> Result<Snapshot, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
-    let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
     recover_status("status", || async {
-        let query = Query {
-            run_id: id.into(),
-            owner_hash: principal.owner_hash.clone(),
-            workspace_uid: principal.context.workspace_uid.clone(),
-            digest: digest.clone(),
-            expires_at_ms: crate::ofz::now_ms()? + 2000,
-        };
-        let query = seal(service, "query", &query).await?;
-        let response = client
-            .status(Json(query))
-            .call()
+        reader::client()?
+            .status(&Query {
+                run_id: id.into(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: digest.clone(),
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            })
             .await
-            .map_err(read_error)?;
-        Ok(response.into_body().map_err(read_error)?.into_inner())
     })
     .await
 }
 
 pub(crate) async fn active(
-    service: &ControlPlane,
     principal: &Principal,
     thread_id: &str,
 ) -> Result<Vec<Snapshot>, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
-        let claims = active_claims(service, principal).await?;
+        let claims = active_claims(principal).await?;
         futures::future::try_join_all(
             claims
                 .iter()
@@ -389,48 +378,35 @@ pub(crate) async fn active(
                 // Scope before reading snapshots: an unavailable conversation must not
                 // prevent observing another. A failed selected read still fails closed.
                 .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
-                .map(|claim| read(service, principal, &claim.run_id, None)),
+                .map(|claim| read(principal, &claim.run_id, None)),
         )
         .await
     })
     .await
-    .map_err(|_| Status::unavailable("active run recovery timed out"))?
+    .map_err(|_| {
+        crate::metrics::global().record_run_read_failure();
+        Status::unavailable("active run recovery timed out")
+    })?
 }
 
-pub(crate) async fn thread_active(
-    service: &ControlPlane,
-    principal: &Principal,
-    thread_id: &str,
-) -> Result<bool, Status> {
-    Ok(active_claims(service, principal)
+pub(crate) async fn thread_active(principal: &Principal, thread_id: &str) -> Result<bool, Status> {
+    Ok(active_claims(principal)
         .await?
         .iter()
         .any(|claim| claim.thread_id == thread_id))
 }
 
-async fn active_claims(
-    service: &ControlPlane,
-    principal: &Principal,
-) -> Result<Vec<Claim>, Status> {
-    let client = TengriWorkspaceRunsIngressClient::from_client(
-        ingress()?,
-        principal.context.workspace_uid.clone(),
-    );
+async fn active_claims(principal: &Principal) -> Result<Vec<Claim>, Status> {
     recover_status("active", || async {
-        let query = Query {
-            run_id: String::new(),
-            owner_hash: principal.owner_hash.clone(),
-            workspace_uid: principal.context.workspace_uid.clone(),
-            digest: None,
-            expires_at_ms: crate::ofz::now_ms()? + 2000,
-        };
-        let envelope = seal(service, "active-query", &query).await?;
-        let response = client
-            .active(Json(envelope))
-            .call()
+        reader::client()?
+            .active(&Query {
+                run_id: String::new(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: None,
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            })
             .await
-            .map_err(read_error)?;
-        Ok(response.into_body().map_err(read_error)?.into_inner())
     })
     .await
 }
@@ -913,47 +889,6 @@ impl TengriAgentRun {
             .name("deliver_run_control")
             .await?)
     }
-
-    #[handler(journal_retention = "0s", idempotency_retention = "0s")]
-    async fn status(
-        &self,
-        ctx: SharedWorkflowContext<'_>,
-        envelope: Json<Envelope>,
-    ) -> HandlerResult<Json<Snapshot>> {
-        let run_id = ctx.key().to_owned();
-        let query: Query = ctx
-            .run(|| async {
-                let query: Query = open(&self.service, "query", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if query.run_id != run_id {
-                    return Err(TerminalError::new_with_code(403, "run unavailable").into());
-                }
-                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
-                    return Err(TerminalError::new_with_code(408, "run query expired").into());
-                }
-                Ok(Json(query))
-            })
-            .await?
-            .into_inner();
-        let snapshot = ctx
-            .get::<Json<Snapshot>>("snapshot")
-            .await?
-            .ok_or_else(|| TerminalError::new_with_code(503, "run is being admitted"))?
-            .into_inner();
-        if snapshot.owner_hash != query.owner_hash || snapshot.workspace_uid != query.workspace_uid
-        {
-            return Err(TerminalError::new_with_code(403, "run unavailable").into());
-        }
-        if query.digest.is_some_and(|digest| digest != snapshot.digest) {
-            return Err(TerminalError::new_with_code(
-                409,
-                "operation ID already has different input",
-            )
-            .into());
-        }
-        Ok(Json(snapshot))
-    }
 }
 
 impl TengriAgentRun {
@@ -1090,35 +1025,6 @@ impl TengriWorkspaceRuns {
         Ok(())
     }
 
-    #[handler(journal_retention = "0s", idempotency_retention = "0s")]
-    async fn active(
-        &self,
-        ctx: SharedObjectContext<'_>,
-        envelope: Json<Envelope>,
-    ) -> HandlerResult<Json<Vec<Claim>>> {
-        let workspace = ctx.key().to_owned();
-        ctx.run(|| async {
-            let query: Query = open(&self.service, "active-query", &envelope.0)
-                .await
-                .map_err(terminal)?;
-            if query.workspace_uid != workspace {
-                return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
-            }
-            if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
-                return Err(TerminalError::new_with_code(408, "run query expired").into());
-            }
-            Ok(())
-        })
-        .await?;
-        Ok(Json(
-            ctx.get::<Json<BTreeMap<String, Claim>>>("active")
-                .await?
-                .map(Json::into_inner)
-                .unwrap_or_default()
-                .into_values()
-                .collect(),
-        ))
-    }
     #[handler(ingress_private = true)]
     async fn store_stop(
         &self,

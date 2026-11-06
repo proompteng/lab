@@ -91,6 +91,11 @@ The archive is persisted before the manifest, and PostgreSQL rejects missing ref
 and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
 retry verifies and reuses their exact contents rather than replacing evidence.
 
+Whole-session decision reads retain premarket and later decisions as source context, including the original owners of
+inventory and mutations carried into the reporting period. Their market, universe and native exchange session must
+match the registered policy. Context outside the registered reporting window cannot complete scheduled decision work;
+the original window and deadlines still determine every numerator and denominator.
+
 Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
 witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
 the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
@@ -125,7 +130,7 @@ Selecting the deployed control still requires its frozen identity; selected abla
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
 
-The v37 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
+The v37 and v38 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
 Retained historical protocols still require their original provider tariffs for financial verification. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
 Replay requests use `bayn.backtest.v11` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
