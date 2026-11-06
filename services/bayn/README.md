@@ -123,6 +123,11 @@ its enclosing writer transaction and deadline. Every session's frozen inference 
 An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
 still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
 
+Opening-capital, cash-yield and durable-execution reads reuse the first cycle already captured for the report's
+account, authority generation and terminal-state scope. Each rereads its timestamp by primary key inside the same
+snapshot, preserving PostgreSQL microsecond precision and the original timestamp/identifier ordering. Cycle,
+decision, accounting and ledger verification retain their existing checks.
+
 Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
 authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
 fees include recorded fill fees and posted broker fee effects; unposted charges and operating expenses remain outside
@@ -147,6 +152,10 @@ with `Result.getOrThrow`. Production throwing compatibility exports and test-onl
 Effect decoder wrappers have been removed; tests decode the shared schemas with
 the same strict parse options. Immutable historical documents and the decoders
 used to read them remain supported.
+
+Canonical JSON serialization writes finite numbers and strings without JSON escape characters directly. Strings
+that need escaping still use the runtime JSON encoder. Unicode validation, sorted keys, descriptors, dense arrays,
+cycle checks and failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
 
 New target planning accepts only quote-bound inputs with an explicit allocation, verified bid/ask prices and
 per-symbol liquidity limits. Retired `bayn.paper-target-planner-input.v1` and `v2` inputs cannot construct new plans;

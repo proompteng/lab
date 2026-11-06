@@ -22,6 +22,7 @@ const files = [
   'src/cycle/store/integration.test.ts',
   'src/execution/intents/blocked-cycle-postgres.integration.test.ts',
   'src/forward-performance/postgres/read.integration.test.ts',
+  'src/forward-performance/postgres/cycles.integration.test.ts',
   'src/forward-performance/postgres/cash-reporting.integration.test.ts',
   'src/forward-performance/postgres/strategy.integration.test.ts',
   'src/db/forward-performance-receipt.integration.test.ts',
