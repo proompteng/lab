@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:db3ecbbce05bf2d1e1afd37a7b1c13f2cfdd27d503c997aedd1c4ed30636d862
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:600fe4d9cb9ad8436a7df56b74dbce9c7246408c9a44ebad98a567dd22421775
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -72,9 +72,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: kargo-sha-f88bec0546eaf2107e41b637a3603f6dca9229b3
+              value: kargo-sha-e16e9e12abc2fe52992d82ac63d1e832d014428f
             - name: TORGHUT_WS_COMMIT
-              value: f88bec0546eaf2107e41b637a3603f6dca9229b3
+              value: e16e9e12abc2fe52992d82ac63d1e832d014428f
             - name: JAVA_TOOL_OPTIONS
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=25.0 -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError
             - name: DORVUD_GLITCHTIP_DSN

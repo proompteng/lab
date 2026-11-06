@@ -6,7 +6,7 @@ import { strictParseOptions } from '../schemas'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import { JevContractError } from './contract'
 import { EntryAblationSelection } from './entry-inference-input'
-import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
+import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from './protocol'
 import { stagedChartQuestionPolicy as observedChartPolicy } from './retained-observed-staged-chart-questions'
 import { stagedChartQuestionPolicy as filteredChartPolicy } from './retained-filtered-staged-chart-questions'
 import { stagedChartQuestionPolicy as candidateChartPolicy } from './retained-candidate-staged-chart-questions'
@@ -16,7 +16,7 @@ export const entryAblationBehaviorHash = sha256('bayn.chart-entry-ablation.behav
 
 export const historicalAblationQuestionPolicyHash = (protocol: JevProtocolMaterial) =>
   canonicalHashV1Result(
-    protocol.schemaVersion === 'bayn.jev.protocol.v37'
+    usesJevOnlyInference(protocol)
       ? stagedChartQuestionPolicy
       : protocol.schemaVersion === 'bayn.jev.protocol.v36' || protocol.schemaVersion === 'bayn.jev.protocol.v35'
         ? observedChartPolicy

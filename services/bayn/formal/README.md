@@ -41,6 +41,12 @@ soundness or replace checks of Bayn's own proof export with the pinned toolchain
 
 ## Registered evaluation windows
 
+`ControllerTiming.lean` models `kafkaHandoffReadiness` and the activation wait in
+`composition/native-execution-runtime.ts`. Its theorems require ready, nonfailed history before handoff, reject an
+expired original bootstrap clock and give failure precedence over a stale ready flag. Executable conformance covers
+the exact deadline, retry, missing-clock, failed and ready cases. HTTP/2 transport regressions independently exercise
+both physical workers' startup checks and continued broker delegation during warmup and subsequent source recovery.
+
 Assessment and replay use the nonempty calendar chosen before the first open. The model has no fixed session
 count. `Bootstrap.lean` proves exact sample length and in-range indices for any positive registered block length,
 including truncated final blocks. Conformance compares multiple block lengths and 1-, 3-, 7-, 19-, 20-, 21-, and
@@ -299,6 +305,42 @@ The recovery driver publishes the absolute wake instant with the delay. Its comp
 real driver; native controller tests retain that instant across persistence work and projected replay, so durable
 publication cannot restart the source wait from a later clock.
 
+`entry_handoff_preserves_terminal_cutoff_and_counter_bounds` maps `nextIntradayEntryAttemptOrdinal`.
+A successor requires a completed/no-trade cycle or a verified recovered block, a real terminal time, the original
+session cutoff and the existing PostgreSQL integer bound. No extra cooldown starts at completion. Executable
+conformance covers terminal states, missing/future completion, cutoff equality and ordinal boundaries.
+
+`sharing_entry_requires_the_same_policy_and_market_scope` maps the actual indexed PostgreSQL entry-window query.
+Equity reads compare all eleven cycle-context fields. Continuous leases preserve the same policy, account and
+market identity while ignoring admission-specific lease hashes and UTC date labels. Management remains within
+one cycle. `equity_window_scope_preserves_its_exact_calendar` and
+`continuous_window_scope_ignores_only_the_rolling_lease` prove that distinction. The formal PostgreSQL gate
+runs the native query against matching equity cycles, a change to each context field, and three real continuous
+admissions in one signal minute across midnight, then compares every result with
+`latestCompatibleEntryWindow`. The same test calls `loadNativeEntryObservation` to reject the consumed window before
+any input read and allow the next window. Payloads remain unchanged. The entry index orders windows across cycles so the lookup stops at the newest compatible
+source instead of decompressing a maximum observation for every prior cycle. Management retains its per-cycle index.
+`ineligible_window_cannot_supply_a_source` excludes a foreign source from the model maximum.
+
+`unused_entry_handoff_requires_an_ended_unbound_attempt` maps `unusedEntryHandoffDelayMs`. Only an expired,
+unbound blocked attempt before the original submission cutoff gets an immediate continuation. All successor
+admission and authority checks run again; the ended lease is never extended.
+
+`source_wait_reuse_preserves_authority_and_original_freshness` maps
+`canReuseSourceWaitReconciliation` in the recovery driver. The executable comparison covers all 256 combinations
+of exactness, accounting, generation/version identity, positions, unresolved mutations, pending orders and unknown
+orders across original freshness boundaries. `source_wait_cannot_reuse_at_original_freshness_boundary` excludes
+reuse at expiry. This proves the read predicate; serialized-driver regressions separately verify periodic refresh
+and discard after mutation, bound cycles and failures. Reuse never changes final submission authority.
+
+`source_window_wake_preserves_original_admission` covers a committed, source-excluded window with a known next
+signal time. `evaluateJevObservationFromSnapshot` retains the source failure and supplies that time from the consumed
+window and protocol. The recovery driver can wake early only while the entry is active, unbound, and within its
+original lease. The wake equals the supplied future time and precedes both the original expiry and ordinary poll.
+`source_window_cannot_wake_at_original_expiry` rejects the exact expiry. The reachable example retains the observed
+4,471 ms wait with 26,136 ms left on the original lease; the ordinary 30-second delay would miss it. Source failures
+without a known next time keep their existing backoff, and a committed window cannot be reevaluated.
+
 Conformance covers 25 state transitions, 840 lifecycle/time cases, 1,494 binding cases and 1,296 completion-document
 cases. It includes absent, duplicate and changed retained documents, selected versus fallback snapshots, both decision
 modes, risk blocks, and attached versus explicitly supplied completion evidence. The full document-equivalence predicate
@@ -547,3 +589,9 @@ Executable conformance covers both markets and sides, and broker regressions ver
 `Bayn/Reliability.lean` proves that closed-window timing requires causal calendar arrival and completion. Eligible entry work cannot be classified as a closed window. `decision-work.ts` reproduces the registered day's calendar, native execution policy, physical controller build and account/generation before using that timing predicate. `closed-entry-window.test.ts` verifies that omitted, late, future, foreign and substituted evidence cannot supply successful work. The actual discovery regression retains the original admission clock across a delayed calendar read.
 
 `reconciliation_batching_keeps_each_original_deadline` maps to `obligation-witnesses.ts`. Its conformance cases and native obligation regression retain fixed denominators and show that late observations leave expired checks missed.
+
+`OperationalSafety.lean` maps to `src/system-assessment/operational-safety.ts`. It checks complete coverage of all
+six safety classes, proves missing evidence and known violations cannot pass, and includes a reachable clean case.
+Executable conformance covers every omitted class and each check status. PostgreSQL integration exercises the
+journals in real admission transactions, including concurrent authority writes, rollback, append-only rejection and
+historical receipt replay. These proofs do not authenticate provider receipts; that assumption is recorded in each audit.

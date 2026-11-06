@@ -79,6 +79,7 @@ export interface ExecutionControllerConfig {
 }
 
 export interface NativeExecutionRuntime {
+  readonly prepareActivation: (signal: AbortSignal) => Promise<void>
   readonly advance: (
     command: import('../execution/advance').AdvanceExecutionCommand,
     signal: AbortSignal,
@@ -684,14 +685,19 @@ export const makeBaynExecutionController = (
         },
       ),
 
-      prepareActivation: restate.handlers.object.exclusive(
-        { ingressPrivate: true },
-        async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown) => {
+      prepareActivation: restate.handlers.object.shared(
+        { ingressPrivate: true, retryPolicy: executionControllerCommandRetryPolicy },
+        async (ctx: restate.ObjectSharedContext<ControllerObjectState>, candidate: unknown) => {
           const request = decodeOrTerminal(
             decodeExecutionDeploymentActivation(candidate),
             'execution controller deployment activation failed validation',
           )
           verifyDeploymentBinding(config, ctx.key, request)
+          await ctx.run(
+            'verify Bayn deployment authority before controller handoff',
+            () => runtime.prepareActivation(ctx.request().attemptCompletedSignal),
+            { maxRetryAttempts: 0 },
+          )
           return readState(ctx)
         },
       ),

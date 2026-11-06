@@ -17,6 +17,15 @@ verified concurrent delivering set was 100 symbols, despite 500 admissions. The 
 uses one active connection and discovers its capacity from provider responses instead of assuming a
 permanent total symbol cap. Additional idle connections do not count as delivered coverage.
 
+`WEBULL_PRIORITY_SYMBOLS` gives Bayn's equity universe first access to streaming slots and a separate completed-M1
+polling loop. Priority bar requests repeat one second after the previous round finishes, so they do not wait for
+the full catalog sweep. The remaining catalog continues in the background. Both loops share the same API client,
+per-endpoint request pacing and provider cooldowns; priority polling does not increase the aggregate request limit.
+Bayn's first decision cut is two seconds after minute close. A measured ten-minute premarket window with the former
+five-second interval supplied 159 of 160 core symbol-minutes by ten seconds, but only 31 by that first cut. The shorter
+interval reduces polling delay within the same four-request-per-second budget; provider availability and actual
+consumer receipt still determine whether a bar arrives in time.
+
 Webull documents [five concurrent connections, a one-minute reconnect wait, and at most three pushes
 per second per connection](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/).
 The collector uses unique session IDs, reconnects after 60 seconds, and resubscribes explicitly.
@@ -36,14 +45,18 @@ Completed M1 [bars](https://developer.webull.com/apis/docs/reference/historical-
 for every candidate in batches of 20, with real-time entitlement required and PRE/RTH/ATH sessions.
 The production stock-bar endpoint rejected 100 symbols with `ILLEGAL_PARAMETER` and
 `symbols size must be between 1 and 20.`; a 20-symbol request succeeded. This limit is independent of
-the streaming subscription batch size. A full catalog sweep spans several minutes, so the five-minute
-window retains completed bars across those sweeps; `/coverage` reports each symbol's actual latest bar time.
+the streaming subscription batch size. A full catalog sweep spans several minutes; cold isolation of unsupported
+symbols can exceed the five-minute recovery window. Such sweeps emit explicit gap intervals with their affected
+background symbols, excluding independently polled priorities and already rejected symbols. An empty background
+does not emit a recovery gap. `/coverage` reports each symbol's actual latest bar time.
 Each batch uses a current completed UTC-minute cutoff and a five-minute recovery window, so later
 batches do not remain pinned to an earlier sweep's window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
-[documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects
+[documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). Pacing reserves request starts;
+network and capture waits do not hold the endpoint lock, so a stalled catalog response does not block
+independent priority requests. HTTP 429 starts the shared cooldown when response headers arrive and respects
 numeric or HTTP-date Retry-After without truncating long cooldowns, or waits 60 seconds. The final
-429 cooldown also applies to subsequent batches. Bounded 5xx retries apply to read-only calls; uncertain subscription
+429 cooldown also applies to subsequent batches and requests already waiting for a slot. Bounded 5xx retries apply to read-only calls; uncertain subscription
 failures reconnect instead of blindly repeating side effects.
 
 One invalid symbol rejects a whole provider batch. Bisection isolates invalid symbols without

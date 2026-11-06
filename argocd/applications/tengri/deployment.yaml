@@ -98,6 +98,8 @@ spec:
                   fieldPath: metadata.name
             - name: TENGRI_RESTATE_INGRESS
               value: http://restate.restate.svc.cluster.local:8080
+            - name: TENGRI_RUN_READER
+              value: http://tengri-run-reader.restate.svc.cluster.local:8080/
           image: registry.ide-newton.ts.net/lab/tengri
           imagePullPolicy: IfNotPresent
           livenessProbe:

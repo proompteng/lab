@@ -5,6 +5,19 @@ protection, reconciliation and recovery; crypto entry discovery and broker buys 
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Replacement execution workers start their read-only Kafka projection before exposing the Restate endpoint. Their
+`/startup-ready` check remains unavailable until each worker has completed its original history rebuild. Kubernetes
+requires both current replicas ready before the deployment activation hook runs. TCP startup and liveness probes stay
+independent. The startup check latches after the first successful rebuild so subsequent source recovery cannot withdraw
+broker observations or liquidation from a running endpoint. Entry reads still require current verified history and
+fresh quotes after every invalidation.
+
+The shared native activation preflight also waits for the selected worker's current history before reading authority
+and the predecessor. Its wait uses the consumer's original bootstrap deadline and remains interruptible. It acquires
+no trading driver, places no order and changes no authority. A failed rebuild leaves the recorded predecessor
+untouched. Shared preparation does not lock current-source ticks. Registering a different source still fences old
+ticks, so the complete replacement pool must warm before registration. Existing handoff and trading deadlines remain unchanged.
+
 Background broker polling makes one complete before/after history scan per durable ticket. Changed history or
 unsettled fill evidence rejects that cut and waits for the existing quota budget before acquiring a new ticket.
 It does not repeat full history reads under a pre-mutation ticket that cannot publish. Complete history, exact fill
@@ -31,8 +44,8 @@ Cycle discovery bounds the authoritative equity-calendar read to the original fi
 remains an operational failure. Before the first usable bar, after the entry cutoff and outside equity hours,
 discovery reports `WINDOW_CLOSED` without starting a crypto cycle. The physical broker guard independently rejects
 crypto buys before final authorization or transmission. Retained crypto sells still require normal capital, ownership,
-funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v37 and its original
-capital mandate, parameters, monetary limits, financial records and loss history remain bound to the deployment.
+funding and risk checks. `GET /v1/status` exposes the enforced entry market scope. Protocol v38 requires its reviewed
+PAPER mandate while preserving the broker identity, monetary limits, financial records and loss history.
 Historical crypto codecs, replay evidence and shared market data remain available for accounting and position recovery.
 
 A system-restricted, previously traded generation can enter settlement after an idle failure when every account
@@ -41,6 +54,13 @@ restriction proves the account flat. Every retained decision must reproduce a co
 decision. Recovery reuses the existing settled-account predicate and still requires a later
 exact reconciliation before OBSERVE rollover. It preserves the plan and all trading history; capital reactivation
 continues through the existing mandate checks.
+
+Live Kafka ingestion and native arrival retention run in one scoped Node worker thread per application runtime.
+The controller receives detached cuts containing only the requested snapshot inputs; readiness checks transfer no
+retained records. Synchronous financial decision verification cannot block ingestion.
+The thread owns the existing consumer and archive connection; shutdown finishes the arrival journal finalizers before
+acknowledging closure. Worker failure invalidates reads, and interrupted snapshot requests cancel their remote work.
+Kafka bootstrap, source verification, availability timestamps and archive queue bounds retain their existing contracts.
 
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
@@ -96,6 +116,22 @@ there is no full-equity or daily-reference-price fallback. Existing target-plan 
 for immutable historical evidence. Financial reports retain unsupported historical decision identities and accounting
 totals, while withholding unverifiable execution measurements rather than replaying retired planning contracts.
 
+A terminal native cycle may hand off to its successor without a second minute of cooldown. Entry observations are
+consumed across cycles only when account, standing plan, strategy/protocol, execution policy, calendar and session
+identities all match for exchange sessions. Continuous leases share consumption across their admission-specific
+calendar hashes and UTC date labels, preserving the remaining policy and market context. Management observations
+remain with their owning cycle. The successor waits for an unconsumed
+protocol signal window before reading inputs or dispatching inference; it cannot repeat the prior window. Original
+cycle leases, scheduled decision deadlines, risk admission and capital authority still apply to every attempt.
+
+Short retries for missing source inputs reuse the last exact reconciliation only while the account is flat, has no
+pending orders or unresolved mutations, and durable authority is unchanged. Every original observation must remain
+fresh within both the broker-state age bound and configured reconciliation interval. The serialized driver discards
+this read state after a bound or terminal cycle, mutation, other recovery outcome or failure; restart reconciles anew.
+Final submission keeps its separate single-use broker-state check. A committed source-excluded Jev window supplies
+the next protocol signal time, so the controller can wake before its original unused-entry lease expires. This keeps
+the source failure visible and never extends the lease or turns missing data into a successful decision.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
@@ -146,9 +182,9 @@ all existing funding and execution checks remain mandatory. An absent SPY featur
 prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
 are absent from the current numerical input. Independent momentum qualification requests and verifies its own
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
-Migration 172 admits only v37 requests and dispatch. Original v35/v36 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
+Migration 178 admits only v38 requests and dispatch after the existing flat, reconciled cutover. Original v35, v36 and v37 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
 
-The current source uses `jev` protocol v37, verified numerical input v23, batch v8 and entry inference input v8. It retains the
+The current source uses `jev` protocol v38, verified numerical input v24, batch v8 and entry inference input v8. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks pinned Jev 1.13 for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -159,7 +195,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v37 and its exact question-policy hash.
+current execution and database guards accept v38 and its exact question-policy hash.
 
 All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
 BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
@@ -383,7 +419,7 @@ allowance ends, leaving the existing three-minute recovery reserve. The position
 starts at its actual first fill. Equity flatten-before-close leads never shorten a continuous position's horizon.
 An unused native admission retains its expiry classification at the equity cutoff, including when decision construction
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
-evidence and cooldown guards before acquiring a successor.
+evidence and original cutoff guards before acquiring a successor.
 
 Current positions require explicit broker cost basis. Migration 115 rejects new cost-less position records;
 retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
@@ -471,7 +507,37 @@ controller handles without terminating its process. Reports retain typed operati
 exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
 error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
-## Webull research ingestion
+## Webull live ingestion
+
+`BAYN_KAFKA_WEBULL_BARS_TOPIC=dorvud.webull.raw.v1` adds native Webull captures to the existing equity Kafka
+consumer. The controller records completed M1 context in its immutable streaming snapshots. It does not query
+ClickHouse on this path. HTTP bars, MQTT messages and collector gaps retain their original identities. MQTT
+messages do not become bars or executable quotes.
+
+The consumer checks the native payload hash, exact decimal OHLCV, real-time entitlement marker, requested symbols,
+completed recovery window and producer clock. Only the latest completed minute is eligible. Its first consumer
+arrival must be within ten seconds of minute close and before the observation. Recovery polls cannot refresh that
+arrival; a late correction removes the current minute until a subsequent eligible observation. Scoped bar gaps and
+invalid captures withhold optional context without invalidating IEX inputs. Missing symbols remain explicit.
+Candidate snapshots retain independent Webull observations for IEX-excluded candidates so coverage comparisons
+include those cases. Their original IEX exclusions still prevent signal construction and trading.
+
+Snapshots retain each selected capture once, with native bytes, Kafka coordinate, consumer sequence and arrival.
+Recorded replay verifies that proof again. `Kafka Webull minute bars incorporated` logs measure the real consumer
+arrival delay, including late inputs. The existing streaming diagnostics command also reports Webull coverage.
+Historical diagnostic reads establish arrival at the diagnostic consumer only, not availability to an earlier decision.
+
+Protocol v38 carries `webullContext` in numerical input v24 and final proposal evidence v2. It contains one independently
+labeled completed M1 bar for the candidate, with exact native decimal strings and original receipt timing. The
+existing snapshot proof supplies it; no new query or service runs on the decision path. Jev questions explicitly
+consider this supplemental observation. Unavailable context is `null`. IEX remains the chart, execution-price and
+liquidity source, and its original candidate exclusions still apply. Nasdaq Basic and IEX retain separate prices
+and volume. The protocol cutover runs OBSERVE first. A reviewed, protocol-bound PAPER mandate is required to activate
+the revised strategy.
+The acceptance boundary is a deployed consumer receipt, regular-session completeness and latency measurements, then
+a comparison against IEX using recorded availability. Better returns require separate economic evidence.
+
+## Webull archive comparison
 
 `bayn-webull-research` reads the normalized Webull archive and compares completed M1 bars with the current Alpaca
 IEX archive. It is a read-only research/scanner input. Reports remain `UNQUALIFIED`; the command has no broker,
@@ -2063,7 +2129,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. Current
 requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
-`models: {"jev": "jev-1.13.0"}`, `inputDefinition: "bayn.jev-entry-state.v23"` and a positive `maximumCalls`
+`models: {"jev": "jev-1.13.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
 shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
 `bayn-backtest --instructions` reports it. `costs` uses `bayn.inference-rate-card.v1` with effective-dated provider/model
 rates. Candidate and chart ablation require only Jev tariffs; deterministic momentum requires none. Current preparation
@@ -2099,6 +2165,10 @@ elapsed-time and PostgreSQL measurements. Native operation timers pause at that 
 remaining duration; provider request timers retain their independent wall clock. The database clock resumes even
 when parsing fails or is interrupted. Provider, persistence and clock-synchronization work remain measured. Completing
 the measured scope retains elapsed time and publishes arrivals through that timestamp before scheduling or valuation.
+The source reader excludes time only while reading a chunk or consuming due arrivals. Polls between cached future
+arrivals and after verified EOF retain their broker deadline ticks without pausing either measured clock. This avoids
+pause/resume database writes on empty source checks. Every native poll, causal arrival, reconciliation, financial
+record and original operation deadline remains required. A source clock failure prevents further advancement.
 Deferred exit deadlines therefore still include native work before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 Initialization starts one minute before the first registered open and retains its measured start, completion and
@@ -2274,6 +2344,11 @@ assertions and ten-minute case budgets without sharing one fifteen-minute CI job
 locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
 Native latency replay diagnostics go to `node_modules/.cache/bayn-latency`; CI retains the full files as artifacts
 instead of streaming every accelerated replay pass to its console. Phase progress and test failures remain visible.
+The disposable diagnostic executable also retains cumulative host-clock timings for seventeen fixed reconciliation,
+cycle and PostgreSQL stages. It emits a checkpoint every 1,024 reconciliations, with at most 31 checkpoints and one
+terminal summary. Counts distinguish completion, failure and interruption; totals and maxima are inclusive, so nested
+stages overlap. Only stage names and numeric aggregates are emitted, never span payloads. Checkpoints remain useful
+when the case deadline kills the child before its terminal summary. The production executable and polling are unchanged.
 The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
