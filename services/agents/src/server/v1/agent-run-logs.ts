@@ -331,6 +331,7 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
         env: deps.env,
         fetch: deps.fetch,
         tailLines: parsed.tailLines,
+        maxBytes: deps.maxBytes,
         pod: parsed.pod,
         container: parsed.container,
       })
