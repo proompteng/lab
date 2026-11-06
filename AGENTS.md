@@ -16,9 +16,8 @@ Complete the requested change, prove it at the requested boundary, and stop.
 ## Scope and authority
 
 - Work directly. Do not spawn subagents.
-- Keep home-media application names, configuration, runbooks, and incident details in their separate owning
-  repository. Do not add those references to lab code, documentation, agent instructions, or PR descriptions.
-  Shared infrastructure documentation here must stay independent of those applications.
+- Keep application-specific content in its owning repository. Shared infrastructure documentation must stay focused
+  on the infrastructure without importing unrelated application details from other repositories.
 - Requests to build, change, fix, or ship authorize implementation, validation, commit, push, PR, CI and review fixes,
   and merge after required gates pass. Respect narrower limits such as local-only, draft-only, or do-not-deploy.
   Investigation, review, explanation, and planning requests authorize findings unless the user also requests changes.
