@@ -589,3 +589,9 @@ Executable conformance covers both markets and sides, and broker regressions ver
 `Bayn/Reliability.lean` proves that closed-window timing requires causal calendar arrival and completion. Eligible entry work cannot be classified as a closed window. `decision-work.ts` reproduces the registered day's calendar, native execution policy, physical controller build and account/generation before using that timing predicate. `closed-entry-window.test.ts` verifies that omitted, late, future, foreign and substituted evidence cannot supply successful work. The actual discovery regression retains the original admission clock across a delayed calendar read.
 
 `reconciliation_batching_keeps_each_original_deadline` maps to `obligation-witnesses.ts`. Its conformance cases and native obligation regression retain fixed denominators and show that late observations leave expired checks missed.
+
+`OperationalSafety.lean` maps to `src/system-assessment/operational-safety.ts`. It checks complete coverage of all
+six safety classes, proves missing evidence and known violations cannot pass, and includes a reachable clean case.
+Executable conformance covers every omitted class and each check status. PostgreSQL integration exercises the
+journals in real admission transactions, including concurrent authority writes, rollback, append-only rejection and
+historical receipt replay. These proofs do not authenticate provider receipts; that assumption is recorded in each audit.

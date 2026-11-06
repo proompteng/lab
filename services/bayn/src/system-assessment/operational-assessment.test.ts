@@ -4,10 +4,10 @@ import { Effect, Result, Schema } from 'effect'
 import { PgClient } from '@effect/sql-pg'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import {
-  evaluateOperationalAssessment,
   makeOperationalSafetyAudit,
   operationalAssessmentVerdict,
   verifyStoredOperationalAssessment,
+  evaluateOperationalAssessment,
 } from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { SystemSourceCutSchema } from './source-cut'
@@ -76,7 +76,7 @@ const fixture = (controllerPlanHash?: string | null) => {
 
 test('an open operating period and missing accounting cannot become a reliability certificate', () => {
   const { cut, input, verified } = fixture()
-  const result = Result.getOrThrow(evaluateOperationalAssessment(input, cut, verified))
+  const result = Result.getOrThrow(verifyStoredOperationalAssessment(input, cut, verified))
   expect(result.verdict).toBe('INCONCLUSIVE')
   expect(result.economicQualification).toBe('NOT_ASSESSED')
   expect(result.safety.pass).toBe(true)
@@ -91,7 +91,7 @@ test('an open operating period and missing accounting cannot become a reliabilit
   expect(result.missing).toContain('INCOMPLETE_MUTATION_SOURCE_COVERAGE')
   expect(
     Result.isFailure(
-      evaluateOperationalAssessment({ ...input, reliability: { good: 1000, scheduled: 1000 } }, cut, verified),
+      verifyStoredOperationalAssessment({ ...input, reliability: { good: 1000, scheduled: 1000 } }, cut, verified),
     ),
   ).toBe(true)
 })
@@ -101,7 +101,7 @@ test('scheduled work that never starts stays in the closed period denominator', 
   const asOf = '2026-11-04T00:03:00.000Z'
   const cut = { ...original, asOf }
   const result = Result.getOrThrow(
-    evaluateOperationalAssessment(
+    verifyStoredOperationalAssessment(
       { ...input, sourceCutHash: testHash(cut), safety: { ...input.safety, asOf } },
       cut,
       verified,
@@ -122,7 +122,7 @@ test('a retained null controller plan cannot certify current operational reliabi
   const sourceCutHash = testHash(cut)
   const historicalInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
   const historical = Result.getOrThrow(verifyStoredOperationalAssessment(historicalInput, cut, verified))
-  const current = Result.getOrThrow(evaluateOperationalAssessment(input, cut, verified))
+  const current = Result.getOrThrow(verifyStoredOperationalAssessment(input, cut, verified))
   expect(current.missing).toContain('UNBOUND_CONTROLLER_PLAN')
   expect(historical.missing).not.toContain('UNBOUND_CONTROLLER_PLAN')
   expect(historical).not.toHaveProperty('evaluationPolicy')
@@ -155,7 +155,7 @@ test('an empty recovery class is inapplicable only when its complete captured mu
   }
   const cut = { ...original, sourceMaterial, sourceMaterialHash: testHash(sourceMaterial) }
   const result = Result.getOrThrow(
-    evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(cut) }, cut, verified),
+    verifyStoredOperationalAssessment({ ...input, sourceCutHash: testHash(cut) }, cut, verified),
   )
   expect(result.reliability.classes.find((row) => row.class === ObligationClass.Recovery)?.status).toBe(
     ReliabilityStatus.NotApplicable,
@@ -167,8 +167,9 @@ test('an empty recovery class is inapplicable only when its complete captured mu
   }
   const changed = { ...cut, sourceMaterial: changedMaterial, sourceMaterialHash: testHash(changedMaterial) }
   expect(
-    Result.getOrThrow(evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(changed) }, changed, verified))
-      .missing,
+    Result.getOrThrow(
+      verifyStoredOperationalAssessment({ ...input, sourceCutHash: testHash(changed) }, changed, verified),
+    ).missing,
   ).toContain('UNRESOLVED_ACCOUNT_MUTATION')
 })
 
@@ -183,15 +184,17 @@ test('a safety violation rejects the operating claim and scope substitutions fai
       ],
     },
   }
-  expect(Result.getOrThrow(evaluateOperationalAssessment(unsafe, cut, verified)).verdict).toBe('REJECTED')
+  expect(Result.getOrThrow(verifyStoredOperationalAssessment(unsafe, cut, verified)).verdict).toBe('REJECTED')
   expect(
     Result.isFailure(
-      evaluateOperationalAssessment(input, { ...cut, registrationHash: testHash('another period') }, verified),
+      verifyStoredOperationalAssessment(input, { ...cut, registrationHash: testHash('another period') }, verified),
     ),
   ).toBe(true)
   const foreign = { ...cut, financial: [{ ...originalFinancial(), policy: JevResearchPolicy.Candidate }] }
   expect(
-    Result.isFailure(evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(foreign) }, foreign, verified)),
+    Result.isFailure(
+      verifyStoredOperationalAssessment({ ...input, sourceCutHash: testHash(foreign) }, foreign, verified),
+    ),
   ).toBe(true)
 })
 
@@ -225,7 +228,7 @@ test('each in-period controller pass must bind the registered build even without
     const cut = { ...original, controllerPasses: [pass] }
     const retainedHash = testHash(cut)
     const result = Result.getOrThrow(
-      evaluateOperationalAssessment({ ...input, sourceCutHash: retainedHash }, cut, verified),
+      verifyStoredOperationalAssessment({ ...input, sourceCutHash: retainedHash }, cut, verified),
     )
     expect(testHash(cut)).toBe(retainedHash)
     const retainedInput = {
@@ -405,7 +408,7 @@ const completeFixture = () => {
   ])
   const evaluate = (source: typeof cut) =>
     Result.getOrThrow(
-      evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(source), safety }, source, verified),
+      verifyStoredOperationalAssessment({ ...input, sourceCutHash: testHash(source), safety }, source, verified),
     )
   return { cut, input, verified, safety, evaluate, registration, build, passes, original, at, schedule }
 }
@@ -542,13 +545,13 @@ test('a verified file cannot certify different safety audit values or unverified
   const { cut, input, verified } = fixture()
   const unrelated = testHash('unrelated verified artifact')
   const replaced = { ...input, safety: { ...input.safety, sourceHash: unrelated } }
-  const result = Result.getOrThrow(evaluateOperationalAssessment(replaced, cut, new Set([...verified, unrelated])))
+  const result = Result.getOrThrow(verifyStoredOperationalAssessment(replaced, cut, new Set([...verified, unrelated])))
   expect(result.safety.pass).toBe(false)
   expect(result.missing).toContain('UNBOUND_SAFETY_AUDIT')
   expect(result.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
   const withoutScan = new Set(verified)
   withoutScan.delete(input.safety.auditEvidenceHash)
-  expect(Result.getOrThrow(evaluateOperationalAssessment(input, cut, withoutScan)).safety.pass).toBe(false)
+  expect(Result.getOrThrow(verifyStoredOperationalAssessment(input, cut, withoutScan)).safety.pass).toBe(false)
 })
 
 test('operational accounting requires exact fill receipts and ledger evidence without importing economic qualification gates', () => {
@@ -588,7 +591,9 @@ test('operational accounting requires exact fill receipts and ledger evidence wi
       },
     ]
     const cut = { ...original, sourceMaterial, sourceMaterialHash: testHash(sourceMaterial), financial }
-    return Result.getOrThrow(evaluateOperationalAssessment({ ...input, sourceCutHash: testHash(cut) }, cut, verified))
+    return Result.getOrThrow(
+      verifyStoredOperationalAssessment({ ...input, sourceCutHash: testHash(cut) }, cut, verified),
+    )
   }
   const exact = evaluate(forward)
   expect(exact.missing).not.toContain('INCOMPLETE_FILL_ACCOUNTING')
@@ -644,13 +649,13 @@ test('archive replay retains unwitnessed controller provenance and cannot downgr
     )
     const currentInput = { ...input, sourceCutHash: archive.hash, safety }
     const retainedInput = { ...currentInput, schemaVersion: 'bayn.operational-assessment-input.v1' }
-    expect(Result.isFailure(evaluateOperationalAssessment(currentInput, retained, verified))).toBe(true)
+    expect(Result.isFailure(verifyStoredOperationalAssessment(currentInput, retained, verified))).toBe(true)
     expect(Result.isFailure(verifyStoredOperationalAssessment(retainedInput, current, verified))).toBe(true)
     expect(Result.isFailure(evaluateOperationalAssessment(retainedInput, retained, verified))).toBe(true)
     return {
       archive,
       replay: current,
-      current: Result.getOrThrow(evaluateOperationalAssessment(currentInput, current, verified)),
+      current: Result.getOrThrow(verifyStoredOperationalAssessment(currentInput, current, verified)),
       retained: Result.getOrThrow(verifyStoredOperationalAssessment(retainedInput, retained, verified)),
     }
   }
@@ -750,7 +755,7 @@ test('archive replay preserves retained completion matching and rejects tampered
       ),
     )
     const current = Result.getOrThrow(
-      evaluateOperationalAssessment({ ...input, sourceCutHash: archive.hash, safety }, currentReplay, verified),
+      verifyStoredOperationalAssessment({ ...input, sourceCutHash: archive.hash, safety }, currentReplay, verified),
     )
     expect(current.verdict).not.toBe('OPERATIONALLY_RELIABLE_PAPER')
     expect(current.missing.filter((reason) => reason.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toEqual(
@@ -785,7 +790,7 @@ test('an archived null-plan registration remains historical evidence but fails t
     ),
   )
   const currentResult = Result.getOrThrow(
-    evaluateOperationalAssessment({ ...input, sourceCutHash: archive.hash }, current, verified),
+    verifyStoredOperationalAssessment({ ...input, sourceCutHash: archive.hash }, current, verified),
   )
   const retainedResult = Result.getOrThrow(
     verifyStoredOperationalAssessment(
