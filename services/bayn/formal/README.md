@@ -41,6 +41,12 @@ soundness or replace checks of Bayn's own proof export with the pinned toolchain
 
 ## Registered evaluation windows
 
+`ControllerTiming.lean` models `kafkaHandoffReadiness` and the activation wait in
+`composition/native-execution-runtime.ts`. Its theorems require ready, nonfailed history before handoff, reject an
+expired original bootstrap clock and give failure precedence over a stale ready flag. Executable conformance covers
+the exact deadline, retry, missing-clock, failed and ready cases. HTTP/2 transport regressions independently exercise
+both physical workers' startup checks and continued broker delegation during warmup and subsequent source recovery.
+
 Assessment and replay use the nonempty calendar chosen before the first open. The model has no fixed session
 count. `Bootstrap.lean` proves exact sample length and in-range indices for any positive registered block length,
 including truncated final blocks. Conformance compares multiple block lengths and 1-, 3-, 7-, 19-, 20-, 21-, and
