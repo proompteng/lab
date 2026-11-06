@@ -6,9 +6,9 @@ const ensureConnectedSpy = vi.fn()
 
 vi.mock('@/effect/config', () => {
   const effect = require('effect') as typeof import('effect')
-  const { Effect, Layer } = effect
+  const { Context, Layer } = effect
 
-  class AppConfigService extends Effect.Tag('@test/AppConfig')<AppConfigService, AppConfig>() {}
+  class AppConfigService extends Context.Service<AppConfigService, AppConfig>()('@test/AppConfig') {}
 
   const config: AppConfig = {
     idempotency: {
@@ -86,16 +86,16 @@ vi.mock('@/effect/config', () => {
 
 vi.mock('@/services/kafka', () => {
   const effect = require('effect') as typeof import('effect')
-  const { Effect, Layer } = effect
+  const { Context, Effect, Layer } = effect
 
-  class KafkaProducer extends Effect.Tag('@test/KafkaProducer')<
+  class KafkaProducer extends Context.Service<
     KafkaProducer,
     {
       publish: (message: unknown) => ReturnType<typeof Effect.succeed>
       ensureConnected: ReturnType<typeof Effect.succeed>
       isReady: ReturnType<typeof Effect.succeed<boolean>>
     }
-  >() {}
+  >()('@test/KafkaProducer') {}
 
   const KafkaProducerLayer = Layer.succeed(KafkaProducer, {
     publish: () => Effect.succeed(undefined),
@@ -116,33 +116,33 @@ vi.mock('@/services/kafka', () => {
 
 vi.mock('@/services/github/service', () => {
   const effect = require('effect') as typeof import('effect')
-  const { Effect, Layer } = effect
+  const { Context, Effect, Layer } = effect
 
-  class GithubService extends Effect.Tag('@test/GithubService')<
+  class GithubService extends Context.Service<
     GithubService,
     {
       postIssueReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       postIssueCommentReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       issueHasReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
-      findLatestPlanComment: (options: unknown) => ReturnType<typeof Effect.succeed>
       fetchPullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       markPullRequestReadyForReview: (options: unknown) => ReturnType<typeof Effect.succeed>
-      createPullRequestComment: (options: unknown) => ReturnType<typeof Effect.succeed>
+      listCommitPullRequests: (options: unknown) => ReturnType<typeof Effect.succeed>
+      approvePullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestReviewThreads: (options: unknown) => ReturnType<typeof Effect.succeed>
-      listPullRequestCheckFailures: (options: unknown) => ReturnType<typeof Effect.succeed>
+      listPullRequestBlockingChecks: (options: unknown) => ReturnType<typeof Effect.succeed>
     }
-  >() {}
+  >()('@test/GithubService') {}
 
   const GithubServiceLayer = Layer.succeed(GithubService, {
     postIssueReaction: () => Effect.succeed({ ok: true }),
     postIssueCommentReaction: () => Effect.succeed({ ok: true }),
     issueHasReaction: () => Effect.succeed({ ok: true, hasReaction: true }),
-    findLatestPlanComment: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     fetchPullRequest: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     markPullRequestReadyForReview: () => Effect.succeed({ ok: true }),
-    createPullRequestComment: () => Effect.succeed({ ok: true }),
+    listCommitPullRequests: () => Effect.succeed({ ok: true, pullNumbers: [] }),
+    approvePullRequest: () => Effect.succeed({ ok: true }),
     listPullRequestReviewThreads: () => Effect.succeed({ ok: true, threads: [] }),
-    listPullRequestCheckFailures: () => Effect.succeed({ ok: true, checks: [] }),
+    listPullRequestBlockingChecks: () => Effect.succeed({ ok: true, checks: [] }),
   })
 
   return {

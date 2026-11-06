@@ -64,7 +64,7 @@ describe('makeAppRuntime', () => {
     const runtime = makeAppRuntime()
 
     const config = await runtime.runPromise(
-      Effect.gen(function* (_) {
+      Effect.gen(function* () {
         return yield* AppConfigService
       }),
     )
@@ -73,7 +73,7 @@ describe('makeAppRuntime', () => {
     expect(config.kafka.brokers).toEqual(['broker:9092'])
 
     const kafka = await runtime.runPromise(
-      Effect.gen(function* (_) {
+      Effect.gen(function* () {
         return yield* KafkaProducer
       }),
     )

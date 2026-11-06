@@ -340,8 +340,6 @@ const expected = {
     includePaths: [
       'apps/froussard',
       'packages/agent-contracts',
-      'packages/codex',
-      'packages/discord',
       'packages/otel',
       'nix/images/froussard.nix',
       'nix/images/bun-workspace-service.nix',
