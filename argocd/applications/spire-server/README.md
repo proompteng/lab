@@ -55,7 +55,7 @@ workload private keys enter that ConfigMap. Namespace creation remains owned by 
 ## Workload identity federation
 
 Registered workloads can request audience-bound JWT-SVIDs through their existing Workload API socket.
-The issuer is `https://oidc-discovery.proompteng.ai`, and the default JWT-SVID lifetime is five minutes.
+The issuer is `https://oidc.proompteng.ai`, and the default JWT-SVID lifetime is five minutes.
 Existing SPIFFE subjects and registration selectors apply; federation does not enroll additional workloads.
 
 The `spire-system` Application runs two OIDC discovery replicas from the pinned SPIRE chart. They read the
@@ -63,8 +63,8 @@ existing `spire-bundle` ConfigMap, which Kubernetes updates as SPIRE rotates its
 no Workload API socket, workload registration, signing keys, or Kubernetes API token.
 The public endpoints are:
 
-- `https://oidc-discovery.proompteng.ai/.well-known/openid-configuration`
-- `https://oidc-discovery.proompteng.ai/keys`
+- `https://oidc.proompteng.ai/.well-known/openid-configuration`
+- `https://oidc.proompteng.ai/keys`
 
 Only GET requests to these paths pass through Traefik. Cert-manager supplies the public certificate;
 Cloudflare verifies the Traefik origin certificate, and Traefik verifies the discovery backend certificate.
