@@ -3,7 +3,7 @@ import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
-import type { AutonomousCycleStartup } from '../app'
+import type { AutonomousCycleStartupInput } from '../app'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import {
@@ -252,7 +252,7 @@ const verifyDecisionBindingEvidence = (
 }
 
 const observeMutationPass = (
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const facts = cyclePassLogFacts(observation)
@@ -388,7 +388,7 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
   })
 
 const observeMutationCycleResult = (
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   cadence: Ref.Ref<MutationReconciliationCadenceState>,
   result: CycleRunResult,
 ): Effect.Effect<AutonomousCyclePassObservation> =>
@@ -563,7 +563,7 @@ export const checkAdvancedMarketProjection = <R>(
 
 const makeRecoveryFirstCycleDriverEffect = (
   input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   capability: ExecutionCapability,
@@ -822,7 +822,7 @@ const makeRecoveryFirstCycleDriverEffect = (
 
 export const makeRecoveryFirstCycleDriver = (
   input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   capability: ExecutionCapability,
