@@ -23,16 +23,13 @@ test('native market capture keeps independent storage, required synchronous dura
     encoding: 'UTF8',
     dataChecksums: true,
   })
-  for (const key of [
-    'instances',
-    'imageName',
-    'enablePDB',
-    'enableSuperuserAccess',
-    'affinity',
-    'storage',
-    'postgresql',
-  ])
+  for (const key of ['instances', 'imageName', 'enablePDB', 'enableSuperuserAccess', 'affinity', 'postgresql'])
     expect(cluster.spec[key]).toEqual(financial.spec[key])
+  expect(cluster.spec.storage).toEqual({
+    storageClass: financial.spec.storage.storageClass,
+    size: '500Gi',
+    resizeInUseVolumes: true,
+  })
   expect(cluster.spec.minSyncReplicas).toBeUndefined()
   expect(cluster.spec.maxSyncReplicas).toBeUndefined()
   expect(cluster.spec.postgresql.synchronous).toEqual({ method: 'any', number: 1, dataDurability: 'required' })

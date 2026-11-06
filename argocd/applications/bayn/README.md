@@ -1,5 +1,10 @@
 # Bayn deployment
 
+The append-only native arrival archive has two expandable 500 GiB data volumes. At the November 5 measurement,
+the retained chunks occupied 85 GiB and grew by roughly 41 GiB per day; WAL archiving and the synchronous standby
+were current. Capacity expansion preserves the arrival evidence and replica placement. Verify both filesystem sizes,
+replication and new arrival commits after CNPG resizes them; PVC requests alone do not prove usable capacity.
+
 ## Current trading scope
 
 Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before

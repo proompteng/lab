@@ -1475,12 +1475,15 @@ data:
         rules:
           - alert: TorghutWSForwarderDown
             expr: |
-              up{
-                job="torghut",
-                namespace="torghut",
-                service="torghut-ws"
-              } == 0
+              max by (job, namespace, service) (
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-ws"
+                }
+              ) == 0
             for: 5m
+            keep_firing_for: 5m
             labels:
               severity: critical
             annotations:
@@ -1490,11 +1493,15 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
           - alert: TorghutWSForwarderNotReady
             expr: |
-              torghut_ws_readyz_status{
-                namespace="torghut",
-                service="torghut-ws"
-              } == 0
+              max by (job, namespace, service) (
+                torghut_ws_readyz_status{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-ws"
+                }
+              ) == 0
             for: 2m
+            keep_firing_for: 5m
             labels:
               severity: critical
             annotations:
