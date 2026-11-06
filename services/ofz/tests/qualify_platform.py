@@ -173,6 +173,43 @@ write(
 assert not permission(
     "kubernetes_namespace", "shared", "read_status", "human", "member"
 )
+for subject_kind in ("human", "workload"):
+    assignment = relationship(
+        "google_project", "approved", "reader", subject_kind, "caller"
+    )
+    assert not permission("google_project", "approved", "read", subject_kind, "caller")
+    write([{"operation": "OPERATION_TOUCH", "relationship": assignment}])
+    assert permission("google_project", "approved", "read", subject_kind, "caller")
+    assert not permission("google_project", "other", "read", subject_kind, "caller")
+    assert not permission("google_project", "approved", "read", subject_kind, "other")
+    write([{"operation": "OPERATION_DELETE", "relationship": assignment}])
+    assert not permission("google_project", "approved", "read", subject_kind, "caller")
+
+write(
+    [
+        touch(
+            "google_project",
+            "shared",
+            "reader_workspace",
+            "platform_workspace",
+            "second",
+        )
+    ]
+)
+assert permission("google_project", "shared", "read", "human", "other")
+assert not permission("google_project", "shared", "read", "human", "member")
+assert not permission("google_project", "shared", "read", "workload", "client")
+write(
+    [
+        {
+            "operation": "OPERATION_DELETE",
+            "relationship": relationship(
+                "platform_workspace", "second", "administrator", "human", "other"
+            ),
+        }
+    ]
+)
+assert not permission("google_project", "shared", "read", "human", "other")
 output = Path("platform/schema.sha256")
 if sys.argv[2] == "--write":
     output.write_text(digest)
