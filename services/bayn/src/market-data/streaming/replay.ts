@@ -33,6 +33,7 @@ import {
   type StreamingSnapshotManifest,
 } from './snapshot'
 import type { StreamingUniverse } from './raw-events'
+import { restoreWebullBars } from './webull-projection'
 import { StrategySnapshotManifestSchema } from './manifest-schema'
 import type { StrategyMarketSnapshot } from './snapshot'
 
@@ -97,12 +98,18 @@ export const reproduceStreamingSnapshot = (
     const rawTopics = new Set(Object.values(manifest.sourceTopics))
     const bootstrapFeatureTopics = [
       ...new Set(evidence.bootstrap.partitions.map((partition) => partition.topic)),
-    ].filter((topic) => !rawTopics.has(topic) && topic !== evidence.technical?.topic)
+    ].filter(
+      (topic) => !rawTopics.has(topic) && topic !== evidence.technical?.topic && topic !== evidence.webull?.topic,
+    )
     const featureTopic = bootstrapFeatureTopics[0]
     if (
       (evidence.technical !== undefined &&
         (rawTopics.has(evidence.technical.topic) ||
           !evidence.bootstrap.partitions.some((partition) => partition.topic === evidence.technical?.topic))) ||
+      (evidence.webull !== undefined &&
+        (rawTopics.has(evidence.webull.topic) ||
+          evidence.webull.topic === evidence.technical?.topic ||
+          !evidence.bootstrap.partitions.some((partition) => partition.topic === evidence.webull?.topic))) ||
       bootstrapFeatureTopics.length !== 1 ||
       featureTopic === undefined ||
       featureTopics.some((topic) => topic !== featureTopic)
@@ -116,6 +123,7 @@ export const reproduceStreamingSnapshot = (
         ...manifest.sourceTopics,
         features: featureTopic,
         ...(evidence.technical === undefined ? {} : { technicalFeatures: evidence.technical.topic }),
+        ...(evidence.webull === undefined ? {} : { webullBars: evidence.webull.topic }),
       },
     }
     const projection = yield* restoreRecordedProjection(manifest, rows, evidence, universe, evidence.bootstrap.epoch)
@@ -165,7 +173,10 @@ export const reproduceStreamingSnapshot = (
 const restoreRecordedProjection = (
   manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
   rows: PersistedIntradaySnapshotRows,
-  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence' | 'technical' | 'barPublications'>,
+  evidence: Pick<
+    StreamingSnapshotEvidence,
+    'records' | 'features' | 'sequence' | 'technical' | 'webull' | 'barPublications'
+  >,
   universe: StreamingUniverse,
   epoch: string,
   simulation?: typeof SimulatedSnapshotSourceSchema.Type,
@@ -191,7 +202,7 @@ const restoreRecordedProjection = (
     if (byCoordinate.size !== values.length || records.length !== values.length)
       return yield* Result.fail(fail('Recorded rows and receipts must have exactly one matching source coordinate'))
     let projection = {
-      ...emptyStreamingProjection(epoch, universe.topics.technicalFeatures),
+      ...emptyStreamingProjection(epoch, universe.topics.technicalFeatures, universe.topics.webullBars),
       availabilityMode: simulation === undefined ? ('observed' as const) : ('simulated' as const),
     }
     const receiptKeys = new Set<string>()
@@ -199,6 +210,7 @@ const restoreRecordedProjection = (
       ...records.map((receipt) => ({ kind: 'raw' as const, receipt })),
       ...evidence.features.map((receipt) => ({ kind: 'feature' as const, receipt })),
       ...(evidence.technical?.features ?? []).map((receipt) => ({ kind: 'technical' as const, receipt })),
+      ...(evidence.webull?.captures ?? []).map((receipt) => ({ kind: 'webull' as const, receipt })),
     ].toSorted((a, b) => a.receipt.sequence - b.receipt.sequence)
     let previousSequence = 0
     for (const delivery of deliveries) {
@@ -211,7 +223,14 @@ const restoreRecordedProjection = (
         return yield* Result.fail(fail('Recorded delivery sequence or availability lies outside the snapshot cut'))
       previousSequence = receipt.sequence
       projection = { ...projection, sequence: receipt.sequence - 1 }
-      if (delivery.kind === 'raw') {
+      if (delivery.kind === 'webull') {
+        projection = incorporateMarketRecord(
+          projection,
+          delivery.receipt.record,
+          universe,
+          delivery.receipt.availableAtMs,
+        )
+      } else if (delivery.kind === 'raw') {
         const raw = delivery.receipt
         const key = coordinate(raw.sourceTopic, raw.sourcePartition, raw.sourceOffset)
         const value = byCoordinate.get(key)
@@ -241,6 +260,20 @@ const restoreRecordedProjection = (
         )
       }
     }
+    if (evidence.webull !== undefined) {
+      const bars = yield* restoreWebullBars(
+        evidence.webull,
+        Date.parse(manifest.rangeEndAt),
+        Date.parse(manifest.observedAt),
+      ).pipe(Result.mapError((message) => fail(message)))
+      if (bars.some((bar) => !manifest.symbols.includes(bar.value.symbol)))
+        return yield* Result.fail(fail('Recorded Webull symbol lies outside the snapshot'))
+      // A compacted cut retains positive observations only, including their native proof.
+      projection = {
+        ...projection,
+        webull: { ...projection.webull, bars: new Map(bars.map((bar) => [bar.value.symbol, [bar]])) },
+      }
+    }
     projection = { ...projection, sequence: evidence.sequence }
     return projection
   })
@@ -264,11 +297,16 @@ export const reproduceSimulatedSnapshot = (
       barPublicationPolicy: _barPublicationPolicy,
       features: _features,
       technical: _technical,
+      webull: _webull,
       sequence: _sequence,
       ...source
     } = evidence
     const universe = evidence.marketSources.find((source) => source.universeId === manifest.universeId)
-    if (universe === undefined || universe.topics.technicalFeatures !== evidence.technical?.topic)
+    if (
+      universe === undefined ||
+      universe.topics.technicalFeatures !== evidence.technical?.topic ||
+      universe.topics.webullBars !== evidence.webull?.topic
+    )
       return yield* Result.fail(fail('Technical source differs from the simulated input cut'))
     const bounds = new Map(
       evidence.positions.map((position) => [
@@ -289,6 +327,7 @@ export const reproduceSimulatedSnapshot = (
         ),
         ...evidence.features,
         ...(evidence.technical?.features ?? []),
+        ...(evidence.webull?.captures ?? []).map((capture) => capture.record),
       ].some(
         (receipt) => BigInt(receipt.offset) >= (bounds.get(topicPartitionKey(receipt.topic, receipt.partition)) ?? -1n),
       )

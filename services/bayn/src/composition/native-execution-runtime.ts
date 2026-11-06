@@ -1,5 +1,6 @@
 import {
   Cause,
+  Clock,
   Context,
   Data,
   Deferred,
@@ -51,12 +52,14 @@ import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../resta
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'
+import { nativeActivationPreflight } from './native-activation-preflight'
 import {
   AutonomousWorkerApplicationResourcesLive,
   ExecutionControllerStatusResourceLive,
   WorkerMarketProjectionLive,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+import { kafkaHandoffReadiness, KafkaHandoffReadiness } from '../market-data/streaming/bootstrap'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -67,6 +70,7 @@ export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecuti
 export interface NativeExecutionRuntimeResource {
   readonly config: ExecutionControllerConfig
   readonly runtime: NativeExecutionRuntime
+  readonly readMarketReadiness: () => Promise<boolean>
 }
 
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
@@ -601,6 +605,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   projectionRunner: NativeExecutionProjectionRuntime<ProjectionR, ProjectionE>,
   hostRunner: ExecutionEffectRunner,
   planHash: string,
+  prepareActivation: NativeExecutionRuntime['prepareActivation'],
 ): NativeExecutionRuntime => {
   const replaceFailedRuntime = (cause: unknown): Promise<never> =>
     hostRunner
@@ -614,6 +619,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
       })
 
   return {
+    prepareActivation,
     advance: (command, signal) => {
       const parent = currentOpenTelemetryParentSpan()
       const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
@@ -636,9 +642,36 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
 
 export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<KafkaMarketProjection, E, R>) =>
   Layer.build(projection).pipe(
-    Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+    Effect.map((context) => {
+      const market = Context.get(context, KafkaMarketProjection)
+      return { market, layer: Layer.succeed(KafkaMarketProjection, market) }
+    }),
     Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
   )
+
+export const awaitNativeMarketProjectionReady = (projection: typeof KafkaMarketProjection.Service) =>
+  Effect.gen(function* () {
+    while (true) {
+      const status = yield* projection.status
+      const now = yield* Clock.currentTimeMillis
+      const readiness = kafkaHandoffReadiness(status, now)
+      if (readiness === KafkaHandoffReadiness.Ready) return
+      if (readiness !== KafkaHandoffReadiness.Waiting)
+        return yield* runtimeError(
+          'initialize',
+          'successor market history is unavailable; predecessor was not deactivated',
+          {
+            readiness,
+            ...status,
+          },
+        )
+      yield* Effect.sleep(
+        status.bootstrapDeadlineAtMs === null
+          ? 1000
+          : Math.max(1, Math.min(1000, status.bootstrapDeadlineAtMs - now + 1)),
+      )
+    }
+  })
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlan,
@@ -649,7 +682,9 @@ export const acquireNativeExecutionRuntime = (
       Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
       Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
     )
-    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
+    const { layer: prewarmedProjection, market } = yield* prewarmNativeMarketProjection(
+      WorkerMarketProjectionLive(plan),
+    )
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -679,6 +714,15 @@ export const acquireNativeExecutionRuntime = (
       projectionManaged,
       logManaged,
       config.planHash,
+      (signal) =>
+        projectionManaged.runPromise(
+          awaitNativeMarketProjectionReady(market).pipe(Effect.andThen(nativeActivationPreflight(plan))),
+          { signal },
+        ),
     )
-    return { config, runtime }
+    return {
+      config,
+      runtime,
+      readMarketReadiness: () => projectionManaged.runPromise(market.status.pipe(Effect.map((status) => status.ready))),
+    }
   })

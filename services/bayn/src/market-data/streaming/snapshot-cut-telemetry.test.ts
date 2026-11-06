@@ -92,11 +92,12 @@ test('the live rejection warning carries cut reasons while healthy snapshots emi
             Layer.provide(Layer.succeed(PgClient.PgClient, sql as PgClient.PgClient)),
             Layer.provide(
               Layer.succeed(KafkaMarketProjection, {
-                read: Effect.succeed(selected),
-                readForLiquidation: Effect.succeed(selected),
+                check: Effect.void,
+                read: () => Effect.succeed(selected),
                 status: Effect.succeed({
                   epoch: cut.projection.epoch,
                   ready: true,
+                  bootstrapDeadlineAtMs: null,
                   sequence: cut.projection.sequence,
                 }),
               }),

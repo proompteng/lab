@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { ConfigProvider, Effect, FileSystem, Redacted, Result } from 'effect'
+import { ValkeyCache } from './valkey-cache'
 import { PgClient } from '@effect/sql-pg'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
@@ -568,6 +569,12 @@ describe('runtime configuration loading', () => {
     const run = (runtime: typeof config) =>
       Effect.runPromise(
         captureOperationalSourceCut(runtime, registrationHash, registration).pipe(
+          Effect.provideService(ValkeyCache, {
+            get: () => Effect.die('Foreign-account capture must not read broker material'),
+            put: () => Effect.die('Foreign-account capture must not write cache'),
+            putAll: () => Effect.die('Foreign-account capture must not write cache'),
+            remove: () => Effect.die('Foreign-account capture must not remove cache'),
+          }),
           Effect.provideService(PgClient.PgClient, sql),
           Effect.provide(FileSystem.layerNoop({})),
           Effect.flip,
@@ -653,9 +660,12 @@ describe('runtime configuration loading', () => {
     expect(streaming.kafka?.brokers).toEqual(['one:9092', 'two:9092'])
     expect(streaming.kafka?.bootstrapTimeoutMs).toBe(300000)
     expect(streaming.kafka?.technicalFeaturesTopic).toBeUndefined()
+    expect(streaming.kafka?.webullBarsTopic).toBeUndefined()
     environment.set('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC', 'torghut.technical-features.v1')
+    environment.set('BAYN_KAFKA_WEBULL_BARS_TOPIC', 'dorvud.webull.raw.v1')
     const technical = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
     expect(technical.kafka?.technicalFeaturesTopic).toBe('torghut.technical-features.v1')
+    expect(technical.kafka?.webullBarsTopic).toBe('dorvud.webull.raw.v1')
     expect(JSON.stringify(streaming.kafka)).not.toContain('never-print-kafka-secret')
     for (const unsupportedDeadline of ['1', '120000', '300001']) {
       environment.set('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS', unsupportedDeadline)

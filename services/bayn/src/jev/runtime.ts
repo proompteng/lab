@@ -300,6 +300,9 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           message: `Jev has no inference candidate because market evidence is unavailable: ${sourceExclusions
             .map((candidate) => `${candidate.symbol} (${candidate.reason})`)
             .join(', ')}`,
+          availableAt: utcInstantFromEpochMillis(
+            jevSignalDueAtMs(Date.parse(rangeEndAt) + jevSignalIntervalMs, input.protocol),
+          ),
           readiness: sourceExclusions.some((candidate) => candidate.reason === JevSourceExclusion.NotReady)
             ? DecisionReadinessReason.SnapshotUnavailable
             : DecisionReadinessReason.SnapshotStale,
