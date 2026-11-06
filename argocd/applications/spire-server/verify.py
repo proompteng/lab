@@ -6,7 +6,7 @@ import subprocess
 from urllib.request import Request, urlopen
 
 
-JWT_ISSUER = "https://oidc-discovery.proompteng.ai"
+JWT_ISSUER = "https://oidc.proompteng.ai"
 
 
 def verify_public_keys(bundle, discovery, jwks):

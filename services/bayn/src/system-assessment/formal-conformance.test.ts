@@ -1,3 +1,5 @@
+import { conditionalBound } from './conditional-confidence'
+import { nativeSafetyCoverage, SafetyCheckStatus } from './operational-safety'
 import { nextIntradayEntryAttemptOrdinal } from '../cycle/runner/calendar-decisions'
 import { reconciliationCompletionSupported } from './obligation-witnesses'
 import { closedEntryWindowTimingSupported } from './decision-work'
@@ -36,12 +38,17 @@ import {
   JevAcceptanceInputSchema,
   JevNumericalVerdict,
   JevResearchPolicy,
-  evaluateJevAcceptance,
+  evaluateRetainedJevAcceptance,
   jevAcceptanceInferenceRateFloor,
 } from '../jev/acceptance'
 import { advanceQualificationEquity, binaryTradeEdge, cashInventoryTradingPnl, netTradingPnl } from './economics'
 import { reliabilityFraction } from './reliability'
-import { assessmentFixture, supportedAssessmentFixture, testHash } from './fixtures.test-support'
+import {
+  assessmentFixture,
+  supportedAssessmentFixture,
+  knownPayoffAssessmentFixture,
+  testHash,
+} from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { validateSystemRegistration } from './policy'
 import { frozenQuantityAtoms } from './frozen-control-report'
@@ -427,6 +434,45 @@ formal('pinned Lean executable conformance', () => {
         }),
       })),
     )
+  })
+
+  test('native safety coverage requires every class and never ignores incomplete evidence', () => {
+    const kinds = Object.values(SafetyViolationKind)
+    const cases = [
+      [],
+      kinds.map((kind) => ({ kind, status: SafetyCheckStatus.Pass })),
+      ...kinds.flatMap((kind) => [
+        kinds.filter((other) => other !== kind).map((kind) => ({ kind, status: SafetyCheckStatus.Pass })),
+        ...Object.values(SafetyCheckStatus).map((status) =>
+          kinds.map((other) => ({ kind: other, status: other === kind ? status : SafetyCheckStatus.Pass })),
+        ),
+      ]),
+    ]
+    expect(model(cases.map((checks) => ({ operation: 'nativeSafetyCoverage', checks })))).toEqual(
+      cases.map(nativeSafetyCoverage),
+    )
+  })
+
+  test('conditional lower bounds retain exact outward rounding and fixed alpha across arbitrary integer magnitudes', () => {
+    const cases = fc.sample(
+      fc.record({
+        values: fc.array(fc.bigInt({ min: -(10n ** 30n), max: 10n ** 30n }), { minLength: 1, maxLength: 21 }),
+        width: fc.bigInt({ min: 0n, max: 10n ** 35n }),
+        denominator: fc.bigInt({ min: 1n, max: 10n ** 50n }),
+      }),
+      { seed: 261106, numRuns: 120 },
+    )
+    expect(
+      model(
+        cases.map((row) => ({
+          operation: 'conditionalBound',
+          values: row.values.map(String),
+          lower: '0',
+          upper: String(row.width),
+          denominator: String(row.denominator),
+        })),
+      ),
+    ).toEqual(cases.map((row) => conditionalBound(row.values, 0n, row.width, row.denominator)))
   })
 
   test('market handoff requires ready history and retains the original bootstrap clock across retries', () => {
@@ -3487,7 +3533,7 @@ formal('pinned Lean executable conformance', () => {
   })
 
   test('complete qualification and failed evidence, safety and reliability gates agree with Lean', () => {
-    const { input, verifiedSources } = supportedAssessmentFixture()
+    const { input, verifiedSources } = knownPayoffAssessmentFixture()
     const unsafe = {
       ...input,
       safety: {
@@ -3527,23 +3573,43 @@ formal('pinned Lean executable conformance', () => {
     const lean = model(
       reports.map((report) => {
         const numerical = report.numerical
-        if (numerical === null || !('metrics' in numerical)) throw new Error('Expected complete numerical fixture')
+        if (
+          numerical === null ||
+          !('metrics' in numerical) ||
+          numerical.confidence === undefined ||
+          numerical.metrics === undefined
+        )
+          throw new Error('Expected complete numerical fixture')
         const terms = numerical.registration.analysis
         if (terms === undefined) throw new Error('Missing registered analysis terms')
+        const confidence = numerical.confidence
+        const statistical =
+          'profit' in confidence
+            ? {
+                operation: 'conditionalQualification',
+                profitLowerBoundTotal: confidence.profit.lowerSumMicros,
+                pairedLowerBoundTotals: confidence.paired.map((bound) => bound.lowerSumMicros),
+              }
+            : (() => {
+                if (!('bootstrap' in terms)) throw new Error('Missing retained bootstrap terms')
+                return {
+                  operation: 'qualification',
+                  blockLengthSessions: String(terms.bootstrap.blockLengthSessions),
+                  replicates: String(terms.bootstrap.replicates),
+                  attemptIndex: String(numerical.registration.attemptIndex),
+                  profitLowerBoundTotal: micros(
+                    confidence.meanNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length),
+                  ),
+                  pairedLowerBoundTotals: confidence.paired.map((p) =>
+                    micros(p.meanIncrementalNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length)),
+                  ),
+                }
+              })()
         return {
-          operation: 'qualification',
-          controlCount: String(numerical.confidence.paired.length),
-          blockLengthSessions: String(terms.bootstrap.blockLengthSessions),
-          replicates: String(terms.bootstrap.replicates),
-          attemptIndex: String(numerical.registration.attemptIndex),
+          ...statistical,
+          controlCount: String(confidence.paired.length),
           sessionCount: String(report.policies[0]?.sessions.length),
           netProfit: micros(numerical.metrics.netPnlUsd),
-          profitLowerBoundTotal: micros(
-            numerical.confidence.meanNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length),
-          ),
-          pairedLowerBoundTotals: numerical.confidence.paired.map((p) =>
-            micros(p.meanIncrementalNetPnlUsdLowerBound * Number(report.policies[0]?.sessions.length)),
-          ),
           maximumSessionLoss: micros(numerical.metrics.maximumSessionLossUsd),
           maximumDrawdown: micros(numerical.metrics.maximumDrawdownUsd),
           maximumSessionLossLimit: micros(terms.maximumSessionLossUsd),
@@ -3556,7 +3622,7 @@ formal('pinned Lean executable conformance', () => {
       }),
     )
     expect(lean).toEqual(reports.map((report) => report.verdict === 'QUALIFIED_PAPER'))
-    expect(lean).toEqual([false, false, false, false, false, false, true])
+    expect(lean).toEqual([true, false, false, false, false, false, true])
   })
   test('integer economics, reliability error budgets, and negative expectancy agree across languages', () => {
     const cash = fc
@@ -3697,7 +3763,7 @@ formal('pinned Lean executable conformance', () => {
   ])(
     'paired bootstrap: %i sessions, attempt %i, block length %i',
     (sessionCount, attemptIndex, blockLengthSessions) => {
-      const { input } = assessmentFixture(registrationFixture(undefined, sessionCount))
+      const { input } = assessmentFixture(registrationFixture(undefined, sessionCount, JevAcceptanceVersion.RetainedV5))
       const controlCount = (blockLengthSessions % 3) + 1
       const seed = (attemptIndex * 20260921) >>> 0
       const series = Array.from({ length: controlCount + 1 }, (_, i) => i).map((policy) =>
@@ -3750,7 +3816,7 @@ formal('pinned Lean executable conformance', () => {
           }
         }),
       })
-      const ts = Result.getOrThrow(evaluateJevAcceptance(acceptance))
+      const ts = Result.getOrThrow(evaluateRetainedJevAcceptance(acceptance))
       if (sessionCount === 1) {
         expect(ts.verdict).toBe(JevNumericalVerdict.Inconclusive)
         return

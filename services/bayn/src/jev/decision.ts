@@ -209,20 +209,30 @@ const TargetBase = Schema.Struct({
   ...ChartEntryTargetFields,
 })
 
-// Reuse only the latest exact value. A claimed evidence hash cannot establish that its source is unchanged.
-let lastVerifiedEntryTargetHash: string | undefined
+// Retain only successful full-content fingerprints, never caller-owned evidence.
+// Interleaved active/recovery targets must not evict one another on every check.
+const verifiedEntryTargetHashes = new Set<string>()
 
 export const JevEntryTargetSchema = TargetBase.check(
   Schema.makeFilter((target) => {
     const fingerprint = canonicalHashV1Result(target)
-    if (Result.isSuccess(fingerprint) && fingerprint.success === lastVerifiedEntryTargetHash) return []
+    if (Result.isSuccess(fingerprint) && verifiedEntryTargetHashes.delete(fingerprint.success)) {
+      verifiedEntryTargetHashes.add(fingerprint.success)
+      return []
+    }
     const { evidence, ...material } = target
     const reproduced = decideJevEntry(evidence).pipe(
       Result.flatMap(({ evidence: _, ...derived }) => canonicalHashV1Result(derived)),
     )
     const supplied = canonicalHashV1Result(material)
     if (Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success) {
-      if (Result.isSuccess(fingerprint)) lastVerifiedEntryTargetHash = fingerprint.success
+      if (Result.isSuccess(fingerprint)) {
+        verifiedEntryTargetHashes.add(fingerprint.success)
+        if (verifiedEntryTargetHashes.size > 64) {
+          const oldest = verifiedEntryTargetHashes.values().next().value
+          if (oldest !== undefined) verifiedEntryTargetHashes.delete(oldest)
+        }
+      }
       return []
     }
     return [{ path: ['evidence'], issue: 'complete recorded candidate evidence must reproduce the exact Jev target' }]

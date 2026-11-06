@@ -55,6 +55,13 @@ decision. Recovery reuses the existing settled-account predicate and still requi
 exact reconciliation before OBSERVE rollover. It preserves the plan and all trading history; capital reactivation
 continues through the existing mandate checks.
 
+Live Kafka ingestion and native arrival retention run in one scoped Node worker thread per application runtime.
+The controller receives detached cuts containing only the requested snapshot inputs; readiness checks transfer no
+retained records. Synchronous financial decision verification cannot block ingestion.
+The thread owns the existing consumer and archive connection; shutdown finishes the arrival journal finalizers before
+acknowledging closure. Worker failure invalidates reads, and interrupted snapshot requests cancel their remote work.
+Kafka bootstrap, source verification, availability timestamps and archive queue bounds retain their existing contracts.
+
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
 snapshot, symbol, timestamp and exclusion check within the original inference window.
@@ -73,9 +80,15 @@ checkpoint tables in one statement. This second statement sees a competing trans
 lock wait. Every claim still reproduces its source and passes the database guards before its transaction commits;
 provider calls retain the original ten-second expiry.
 
-Repeated Jev target verification reuses the last successful semantic check only when a hash of the entire actual
-target and evidence matches. It retains one hash, not the source objects; changed source bytes, decisions or deadlines
-still require full reproduction. Newly inserted intents skip their intermediate reload inside the owning transaction.
+Repeated Jev target verification retains at most 64 successful full-content fingerprints so interleaved entry and
+recovery checks reuse exact targets. Changed source bytes, decisions or deadlines still require full reproduction.
+Execution decision construction validates its material once, computes its canonical hash once, and owns a frozen
+verified graph. Binding reuses that graph; copied or stored documents still require full validation.
+Decision rereads compare a digest computed from the actual PostgreSQL JSONB body with the previously verified read.
+They send only that digest and share the frozen body, while refreshing completion and supersession evidence each time.
+The one retained body remains capped at 8 MiB. Native valuation reads stream each compressed page and decode each
+consumed chunk once, preserving content, epoch and sequence checks without retaining a page of decoded graphs.
+Newly inserted intents skip their intermediate reload inside the owning transaction.
 The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
 their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
 

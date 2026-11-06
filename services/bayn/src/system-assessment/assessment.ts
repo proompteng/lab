@@ -1,8 +1,10 @@
+import { conditionalStatisticalAssumptions } from './conditional-confidence'
+import { evaluateEconomicQualification } from './economic-qualification'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import {
-  evaluateJevAcceptance,
+  evaluateRetainedJevAcceptance,
   usesLegacyAcceptance,
   JevAcceptanceVersion,
   JevNumericalVerdict,
@@ -10,7 +12,7 @@ import {
 } from '../jev/acceptance'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { SystemAssessmentError } from './economics'
-import { SystemRegistrationSchema, validateSystemRegistration, registeredAssessmentTerms } from './policy'
+import { SystemRegistrationSchema, validateSystemRegistration, retainedAssessmentTerms } from './policy'
 import { RealismEvidenceSchema, RealismStatus, measureRealism } from './realism'
 import { ReliabilityInputSchema, ReliabilityStatus, measureReliability } from './reliability'
 import { SessionEvidenceSchema, assessSession } from './session'
@@ -287,25 +289,35 @@ export const evaluateSystemAssessment = (
       requireSource(violation.sourceHash)
       violations.push(`SAFETY:${violation.kind}`)
     }
-    const numericalResult = evaluateJevAcceptance(
-      {
-        schemaVersion: 'bayn.jev-acceptance-input.v1',
-        protocolHash: registration.acceptanceProtocolHash,
-        registration: {
-          planHash: registrationHash,
-          lockedAt: registration.registeredAt,
-          attemptIndex: registration.attemptIndex,
-          ...(legacy ? {} : { analysis: registeredAssessmentTerms(registration, candidatePolicy.riskPolicy) }),
-          sessions: registration.calendar.sessions,
-        },
-        policies: evaluated.map((p) => ({
-          policy: p.policy,
-          definitionHash: p.definitionHash,
-          sessions: p.sessions.map((s) => s.numerical),
-        })),
-      },
-      version,
-    )
+    if (registration.schemaVersion === 'bayn.system-registration.v4')
+      for (const support of registration.statisticalPlan.supports) requireSource(support.sourceHash)
+    type NumericalEvaluation =
+      | ReturnType<typeof evaluateEconomicQualification>
+      | ReturnType<typeof evaluateRetainedJevAcceptance>
+    const numericalResult: Result.Result<
+      Result.Result.Success<NumericalEvaluation>,
+      Result.Result.Failure<NumericalEvaluation>
+    > = version === JevAcceptanceVersion.Current
+      ? evaluateEconomicQualification(registration, evaluated)
+      : evaluateRetainedJevAcceptance(
+          {
+            schemaVersion: 'bayn.jev-acceptance-input.v1',
+            protocolHash: registration.acceptanceProtocolHash,
+            registration: {
+              planHash: registrationHash,
+              lockedAt: registration.registeredAt,
+              attemptIndex: registration.attemptIndex,
+              ...(legacy ? {} : { analysis: yield* retainedAssessmentTerms(registration, candidatePolicy.riskPolicy) }),
+              sessions: registration.calendar.sessions,
+            },
+            policies: evaluated.map((p) => ({
+              policy: p.policy,
+              definitionHash: p.definitionHash,
+              sessions: p.sessions.map((s) => s.numerical),
+            })),
+          },
+          version,
+        )
     const numerical = Result.isSuccess(numericalResult) ? numericalResult.success : null
     if (Result.isFailure(numericalResult))
       violations.push(
@@ -329,7 +341,7 @@ export const evaluateSystemAssessment = (
         : actual > 0n
           ? ProfitabilityStatus.Profitable
           : ProfitabilityStatus.NotProfitable
-    if (version === JevAcceptanceVersion.Current) missing.push('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
+    if (version === JevAcceptanceVersion.RetainedV5) missing.push('STATISTICAL_COVERAGE_NOT_ESTABLISHED')
     const confidence = numerical !== null && 'confidence' in numerical ? numerical.confidence : null
     const edge =
       confidence === null || missing.length > 0 || violations.length > 0
@@ -369,7 +381,18 @@ export const evaluateSystemAssessment = (
         netEconomicPnlMicros: actual?.toString() ?? null,
         qualificationPnlMicros: qualification?.toString() ?? null,
       },
-      edge: { status: edge, confidence, statisticalAssumptions: registration.statisticalAssumptions },
+      edge: {
+        status: edge,
+        confidence,
+        statisticalAssumptions:
+          registration.schemaVersion === 'bayn.system-registration.v4'
+            ? [
+                ...registration.statisticalAssumptions,
+                ...conditionalStatisticalAssumptions,
+                ...registration.statisticalPlan.supports.map((support) => support.assumption),
+              ]
+            : registration.statisticalAssumptions,
+      },
       cashFlowEvidenceAssumptions,
       decisionPersistenceAssumptions,
       nativeOrderEvidenceAssumptions,

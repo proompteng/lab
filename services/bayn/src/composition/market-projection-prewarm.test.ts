@@ -17,11 +17,11 @@ const fixture = () => {
     message: 'Kafka projection is rebuilding required history',
   })
   const market = {
-    read: Effect.suspend(() => {
+    check: Effect.suspend(() => {
       calls.read += 1
       return Effect.fail(unavailable)
     }),
-    readForLiquidation: Effect.die('Prewarm must not request liquidation evidence'),
+    read: () => Effect.die('Prewarm must not request snapshot evidence'),
     status: Effect.succeed({ epoch: 'test-epoch', ready: false, sequence: 0, bootstrapDeadlineAtMs: null }),
   }
   const projection = Layer.effect(
@@ -95,7 +95,7 @@ test('prewarm does not label rebuilding signal history as ready or read a signal
         bootstrapDeadlineAtMs: null,
       })
       expect(f.calls.read).toBe(0)
-      const cut = yield* market.read.pipe(Effect.result)
+      const cut = yield* market.check.pipe(Effect.result)
       expect(Result.isFailure(cut)).toBe(true)
       if (Result.isFailure(cut)) expect(cut.failure.message).toContain('rebuilding required history')
       expect(f.calls.driver).toBe(0)

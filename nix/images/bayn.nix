@@ -107,6 +107,7 @@ let
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "bun services/bayn/tools/compile-frozen-control.ts --frozen-source ${frozenControl.source}/services/bayn --dependencies ${frozenControl.dependencies}/services/bayn --revision ${lib.escapeShellArg repoRevision} --output services/bayn/dist/frozen-control-command.js"
     "node services/bayn/dist/verify-build-contract.js"
+    "node --check services/bayn/dist/market-projection-worker.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
