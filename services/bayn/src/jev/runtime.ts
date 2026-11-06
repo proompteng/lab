@@ -196,7 +196,7 @@ export const loadNativeEntryObservation = <E, R>(
         readiness: DecisionReadinessReason.SnapshotStale,
       })
     const inputAvailableAt = yield* currentUtcInstant
-    const observation = yield* Effect.fromResult(makeJevObservation({ ...input, snapshot })).pipe(
+    const observation = yield* Effect.suspend(() => Effect.fromResult(makeJevObservation({ ...input, snapshot }))).pipe(
       withObservedStage('bayn.jev.observation'),
     )
     return { snapshot, observation, inputAvailableAt }

@@ -1369,6 +1369,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
   application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
+- Reconciliation reads accounting history once, derives each fill's expected transaction and ledger plan once, and
+  reuses those plans for receipt and TigerBeetle verification. The separate completed-fill verifier is removed.
+  Source economics, prior inventory including fee debits, transaction hashes, receipts, ledger records and balances
+  must still agree. Recovery rebuilds previously committed fee and cash-settlement plans only when a posting is pending.
 - Account reconciliation and forward-performance reads paginate the complete expected account history by TigerBeetle
   timestamp. Each request stays within the batch limit. Reads continue through short pages and request one additional
   record to detect unexpected history. Exact record identities, metadata, and aggregate balances remain mandatory;
@@ -1971,7 +1975,9 @@ database. Its migration refuses a database containing financial or other unrelat
 the financial PostgreSQL endpoint even when a different logical database is selected.
 
 The archive installs only the epoch, chunk and end tables with the original SQL checksum, ordered-prefix and
-append-only guards. Both databases retain synchronous replication, TLS, checksums and the existing backup store with
+append-only guards. Both databases use separate local NVMe WAL volumes with required cross-host synchronous
+replication. Archive appends emit `bayn.native-arrival.append` spans including the durable commit and retries.
+Both databases retain TLS, checksums and the existing backup store with
 separate server prefixes. The financial database retains all historical recorder bytes for historical reads; current
 capture readers must use the archive connection. No financial history, authority, strategy, fees, freshness or inference
 deadline changes. Separating the WAL removes raw capture writes from financial commits; verify actual admission and

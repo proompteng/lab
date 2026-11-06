@@ -1134,7 +1134,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
     ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
     ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
     account: () => unusedAccounting,
-    verifyCompleted: () => Effect.void,
+
     value: () =>
       Effect.succeed({
         schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -5617,7 +5617,7 @@ describe('OBSERVE runtime composition', () => {
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
-      verifyCompleted: () => unused,
+
       value: () => unused,
       hasAccountBaseline: () => unused,
       retainCashReporting: () => Effect.void,
@@ -5822,7 +5822,7 @@ describe('OBSERVE runtime composition', () => {
             ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
             ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
             account: () => unusedAccounting,
-            verifyCompleted: () => Effect.void,
+
             value: () =>
               Effect.succeed({
                 schemaVersion: 'bayn.paper-valuation.v1' as const,

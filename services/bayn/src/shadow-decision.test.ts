@@ -621,6 +621,8 @@ describe('intraday shadow decision', () => {
     expect(Object.isFrozen(document)).toBe(true)
     expect(Object.isFrozen(document.bindings)).toBe(true)
     expect(Object.isFrozen(document.plannerInput?.brokerState.account)).toBe(true)
+    expect(Object.isFrozen(input.plannerInput.brokerState.account)).toBe(false)
+    expect(document.plannerInput?.brokerState.account).not.toBe(input.plannerInput.brokerState.account)
     expect(() => Object.assign(document.bindings, { accountId: 'mutated' })).toThrow()
     const copy = structuredClone(document)
     Object.assign(copy.bindings, { accountId: 'mutated' })
