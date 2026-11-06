@@ -96,7 +96,7 @@ spec:
                   fi
                   ;;
                 tengri)
-                  expected_tengri_policy_hash=a7344be9b1ac98031eff432210dca0b1483acabaa47ffc2d98e74d3d2006d4c0
+                  expected_tengri_policy_hash=3aae04083116479377970484377940d53dbd7f28ef700ef4110dcd67549d12a2
                   actual_tengri_policy_hash=$(
                     kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json |
                       jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)' |

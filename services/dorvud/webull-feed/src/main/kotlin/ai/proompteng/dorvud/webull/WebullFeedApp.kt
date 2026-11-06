@@ -121,7 +121,7 @@ fun main(args: Array<String>): Unit =
         credentials,
         kafka,
         env["WEBULL_TOPIC"] ?: "dorvud.webull.raw.v1",
-        env["WEBULL_STREAM_PRIORITY_SYMBOLS"].orEmpty().split(',').filter { it.isNotBlank() },
+        env["WEBULL_PRIORITY_SYMBOLS"].orEmpty().split(',').filter { it.isNotBlank() },
       )
     } finally {
       runCatching { Runtime.getRuntime().removeShutdownHook(shutdown) }
@@ -226,48 +226,44 @@ private suspend fun runWebullFeed(
         val bars =
           launch {
             var previousSweep: Instant? = null
-            while (isActive) {
-              val sweepStartedAt = Instant.now().truncatedTo(ChronoUnit.MINUTES)
-              previousSweep?.takeIf { it < sweepStartedAt.minus(5, ChronoUnit.MINUTES) }?.let { previous ->
-                control(
-                  "gap",
-                  buildJsonObject {
-                    put("channel", "bars")
-                    put("reason", "bounded_recovery_window_exceeded")
-                    put("scope", "catalog_sweep")
-                    put("from", previous.toString())
-                    put("to", sweepStartedAt.minus(5, ChronoUnit.MINUTES).toString())
-                    put("catalogId", activeCatalog.identity)
-                  },
-                )
-              }
-              previousSweep = sweepStartedAt
-              for (batch in activeCatalog.symbols.filter { it !in progress.invalidBarSymbols }.chunked(MAX_WEBULL_BAR_SYMBOLS)) {
-                val cutoff = Instant.now().truncatedTo(ChronoUnit.MINUTES)
-                try {
-                  collectWebullBarBatch(batch, {
-                    progress.requestedBars += it
-                    api.completedBars(it, cutoff)
-                  }, { progress.invalidBarSymbols.add(it) })
-                } catch (cancelled: CancellationException) {
-                  throw cancelled
-                } catch (failure: Exception) {
-                  control(
-                    "gap",
-                    buildJsonObject {
-                      put("channel", "bars")
-                      put("cutoff", cutoff.toString())
-                      put("symbols", buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } })
-                      put("errorClass", failure.javaClass.simpleName)
-                      if (failure is WebullApiFailure) put("providerCode", failure.code)
-                    },
-                  )
+            pollWebullBars(
+              activeCatalog.symbols,
+              prioritySymbols,
+              collect = { candidates, cutoff ->
+                val batch = candidates.filter { it !in progress.invalidBarSymbols }
+                if (batch.isNotEmpty()) {
+                  try {
+                    collectWebullBarBatch(batch, {
+                      progress.requestedBars += it
+                      api.completedBars(it, cutoff)
+                    }, { progress.invalidBarSymbols.add(it) })
+                  } catch (cancelled: CancellationException) {
+                    throw cancelled
+                  } catch (failure: Exception) {
+                    control(
+                      "gap",
+                      buildJsonObject {
+                        put("channel", "bars")
+                        put("cutoff", cutoff.toString())
+                        put("symbols", buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } })
+                        put("errorClass", failure.javaClass.simpleName)
+                        if (failure is WebullApiFailure) put("providerCode", failure.code)
+                      },
+                    )
+                  }
                 }
-              }
-              control("coverage", progress.report())
-              val next = sweepStartedAt.plus(1, ChronoUnit.MINUTES).toEpochMilli() - System.currentTimeMillis()
-              if (next > 0) delay(next)
-            }
+              },
+              sweepStarted = { sweepStartedAt, backgroundSymbols ->
+                webullCatalogSweepGap(
+                  previousSweep,
+                  sweepStartedAt,
+                  activeCatalog.identity,
+                  backgroundSymbols.filter { it !in progress.invalidBarSymbols },
+                )?.let { control("gap", it) }
+                previousSweep = sweepStartedAt
+              },
+              sweepCompleted = { control("coverage", progress.report()) },
+            )
           }
         val stream =
           launch {

@@ -25,7 +25,7 @@ import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
 import { InferenceRateCardSchema, inferenceRatesCoverWindow, prepareInferenceRateCard } from '../inference-costs'
 import { MarketKind } from '../instruments'
-import { JevProtocolSchema } from '../jev/protocol'
+import { JevProtocolSchema, usesJevOnlyInference } from '../jev/protocol'
 import {
   JevAcceptanceInputSchema,
   JevAcceptanceVersion,
@@ -311,7 +311,7 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       if (policy.costAllocationRuleHash !== (yield* canonicalHashV1Result(costAttributionRule)))
         return yield* invalid('Registration must freeze the executable service-period cost attribution rule')
       const { rates } = yield* prepareInferenceRateCard(policy.inferenceRateCard)
-      const jevOnly = registration.obligations.configuration.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+      const jevOnly = usesJevOnlyInference(registration.obligations.configuration.protocol)
       const requiredModels =
         policy.policy === JevResearchPolicy.Candidate
           ? [

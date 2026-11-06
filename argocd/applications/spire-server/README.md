@@ -52,6 +52,45 @@ API mount or private key.
 The server's built-in bundle publisher writes the host trust bundle to `spire-system/spire-bundle`. No signing keys or
 workload private keys enter that ConfigMap. Namespace creation remains owned by the platform ApplicationSet.
 
+## Workload identity federation
+
+Registered workloads can request audience-bound JWT-SVIDs through their existing Workload API socket.
+The issuer is `https://oidc.proompteng.ai`, and the default JWT-SVID lifetime is five minutes.
+Existing SPIFFE subjects and registration selectors apply; federation does not enroll additional workloads.
+
+The `spire-system` Application runs two OIDC discovery replicas from the pinned SPIRE chart. They read the
+existing `spire-bundle` ConfigMap, which Kubernetes updates as SPIRE rotates its public keys. Discovery needs
+no Workload API socket, workload registration, signing keys, or Kubernetes API token.
+The public endpoints are:
+
+- `https://oidc.proompteng.ai/.well-known/openid-configuration`
+- `https://oidc.proompteng.ai/keys`
+
+Only GET requests to these paths pass through Traefik. Cert-manager supplies the public certificate;
+Cloudflare verifies the Traefik origin certificate, and Traefik verifies the discovery backend certificate.
+Health endpoints and SPIRE APIs are not exposed by this route.
+
+To enroll a destination, register this issuer with its OIDC federation feature and bind an exact SPIFFE subject
+and provider-required audience to the required resource permissions. For example, Relay's subject is
+`spiffe://proompteng.ai/ns/relay/sa/relay`. Fetch a fresh JWT-SVID for that audience from the registered
+application process, then exchange it through the destination's supported SDK or token endpoint.
+Keep tokens in memory and renew them before expiry. Ofz still controls application resource authorization.
+This issuer configuration creates no destination accounts, roles, or grants and does not remove existing vendor keys.
+Provider setup references are [AWS](https://spiffe.io/docs/latest/keyless/oidc-federation-aws/) and
+[Google Cloud](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-other-providers).
+
+Roll out the reviewed `spire-server` issuer configuration, `spire-system` discovery resources and certificate,
+then the Cloudflare route through their existing GitOps Applications. Preserve the SPIRE datastore, signing keys,
+trust domain, registrations, and existing application credentials. The five-minute default applies to newly issued
+JWT-SVIDs; existing tokens retain their original expiry. To recover discovery, revert its resources and route through
+Git without changing the trust domain or resetting SPIRE storage.
+
+Run `python3 argocd/applications/spire-server/verify.py --context galactic-tailscale` after reconciliation.
+It checks public HTTPS discovery, the issuer, JWT lifetime, and every published key against SPIRE's JWT authorities.
+Repeat after key rotation has propagated through the ConfigMap projection. Before replacing a destination credential,
+also prove an authorized API call, denial for another subject and audience, expired-token rejection, and automatic renewal
+using that destination. Public discovery alone does not prove token exchange or destination authorization.
+
 ## Talos configuration
 
 Talos kubelet serving certificates use a node-specific CA and node DNS name. The agent chart's `hostCert` mode reads

@@ -1,5 +1,7 @@
 import { legacyReconciliationSchemaVersion } from '../execution/legacy-wire'
 import { readRegisteredFinancialIdentity } from './capital-identity'
+import { captureOperationalSafetySource } from './operational-safety-source'
+import { ValkeyCache } from '../valkey-cache'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import { makeOperationalSafetyAudit, verifyStoredOperationalAssessment } from './operational-assessment'
 import { registeredSchedule } from './schedule'
@@ -230,6 +232,64 @@ postgres('PostgreSQL prospective system qualification', () => {
     )
   })
 
+  test('native authority journals commit and roll back with the original state, including concurrent changes', async () => {
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+        VALUES (${sha256('native authority journal')},'bayn.authority-generation-history.v1','OBSERVE',1,clock_timestamp())`
+          yield* sql`INSERT INTO authority_state(schema_version,generation_hash,maximum,effective,kill_state,version,updated_at)
+        SELECT 'bayn.paper-authority.v1',generation_hash,'OBSERVE','OBSERVE','CLEAR',1,activated_at FROM authority_generations`
+        }),
+      ),
+    )
+    const update = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      yield* sql`UPDATE authority_state SET kill_state='ACTIVE',reason='operator hold',version=version+1,
+        updated_at=greatest(clock_timestamp(),updated_at+interval '1 millisecond') WHERE singleton`
+    })
+    expect(
+      Exit.isFailure(
+        await runtime.runPromiseExit(asApplication(update.pipe(Effect.andThen(Effect.fail('rollback hold'))))),
+      ),
+    ).toBe(true)
+    const history = Effect.gen(function* () {
+      return yield* (yield* PgClient.PgClient)`SELECT authority_version::integer AS version, previous_state AS previous, authority_state AS state FROM operational_safety_authority_transitions ORDER BY authority_version`
+    })
+    expect((await runtime.runPromise(history)).map((row) => row['version'])).toEqual([1])
+    await runtime.runPromise(Effect.all([asApplication(update), asApplication(update)], { concurrency: 2 }))
+    const journal = await runtime.runPromise(history)
+    expect(journal.map((row) => row['version'])).toEqual([1, 2, 3])
+    expect(journal[1]?.['previous']).toEqual(journal[0]?.['state'])
+    expect(journal[2]?.['previous']).toEqual(journal[1]?.['state'])
+    expect(
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* PgClient.PgClient)`SELECT to_jsonb(a) AS state FROM authority_state a`
+        }),
+      ),
+    ).toEqual([{ state: journal[2]?.['state'] }])
+    for (const table of ['operational_safety_authority_transitions', 'operational_safety_mutation_admissions']) {
+      for (const action of [
+        `UPDATE ${table} SET captured_at=clock_timestamp()`,
+        `DELETE FROM ${table}`,
+        `TRUNCATE ${table}`,
+      ]) {
+        // An empty table still rejects TRUNCATE; row-level guards apply when rows exist.
+        const result = await runtime.runPromiseExit(
+          asApplication(
+            Effect.gen(function* () {
+              yield* (yield* PgClient.PgClient).unsafe(action)
+            }),
+          ),
+        )
+        if (table === 'operational_safety_authority_transitions' || action.startsWith('TRUNCATE'))
+          expect(Exit.isFailure(result)).toBe(true)
+      }
+    }
+  })
+
   test('operational registration preserves capital, has its own retained history and cannot certify economics', async () => {
     const base = operationalRegistrationFixture()
     const definition = base.policies[0]
@@ -331,6 +391,71 @@ postgres('PostgreSQL prospective system qualification', () => {
       ).toBe(true)
     }
     const saved = await runtime.runPromise(asApplication(registerOperationalPeriod(prospective, sources)))
+    const baseline = await runtime.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* PgClient.PgClient)`SELECT registration_hash, authority_state FROM operational_safety_baselines`
+      }),
+    )
+    expect(baseline).toEqual([{ registration_hash: saved.registrationHash, authority_state: null }])
+    if (formalModelExecutable !== undefined)
+      expect(runFormalModel([{ operation: 'nativeSafetyJournalInsert', triggerDepth: '2' }])).toEqual([
+        baseline.length === 1,
+      ])
+
+    for (const statement of [
+      `INSERT INTO operational_safety_baselines(registration_hash,authority_state) VALUES ('${saved.registrationHash}',null)`,
+      `INSERT INTO operational_safety_authority_transitions(authority_version,authority_state) VALUES (100,'{}')`,
+      `INSERT INTO operational_safety_mutation_admissions(event_id,authority_state) VALUES ('${sha256('invented admission')}',null)`,
+    ])
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                yield* (yield* PgClient.PgClient).unsafe(statement)
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+
+    if (formalModelExecutable !== undefined)
+      expect(runFormalModel([{ operation: 'nativeSafetyJournalInsert', triggerDepth: '1' }])).toEqual([false])
+    const nativeSafety = await runtime.runPromise(
+      captureOperationalSafetySource(
+        config,
+        saved.registrationHash,
+        definition.riskPolicy.accountId,
+        await runtime.runPromise(databaseNow),
+      ).pipe(
+        Effect.provideService(ValkeyCache, {
+          get: () => Effect.die('No broker observation is published'),
+          put: () => Effect.die('read only'),
+          putAll: () => Effect.die('read only'),
+          remove: () => Effect.die('read only'),
+        }),
+      ),
+    )
+    expect(nativeSafety.baseline?.authority).toBeNull()
+    expect(nativeSafety.authority).toBeNull()
+    expect(nativeSafety.broker.status).toBe('UNAVAILABLE')
+    for (const statement of [
+      'UPDATE operational_safety_baselines SET captured_at=clock_timestamp()',
+      'DELETE FROM operational_safety_baselines',
+      'TRUNCATE operational_safety_baselines',
+    ]) {
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                yield* (yield* PgClient.PgClient).unsafe(statement)
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
     expect(await runtime.runPromise(readAssessmentRegistration(saved.registrationHash))).toEqual(prospective)
     expect(Exit.isFailure(await runtime.runPromiseExit(readSystemRegistration(saved.registrationHash)))).toBe(true)
     expect(
@@ -365,19 +490,26 @@ postgres('PostgreSQL prospective system qualification', () => {
     sources.add(safety.sourceHash)
     sources.add(safety.auditEvidenceHash)
     const input = {
-      schemaVersion: 'bayn.operational-assessment-input.v2',
+      schemaVersion: 'bayn.operational-assessment-input.v3',
       registration: prospective,
       sourceCutHash: savedCut.sourceCutHash,
-      safety,
     }
     const result = await runtime.runPromise(asApplication(assessAndPersistOperational(input, sources)))
     expect(result.verdict).toBe('INCONCLUSIVE')
     expect(result.economicQualification).toBe('NOT_ASSESSED')
-    expect(result.evaluationPolicy).toBe('bayn.operational-build-binding.v1')
-    const assertLegacyReadback = async (sourceCutHash: string, currentAssessmentHash: string) => {
-      const legacyInput = { ...input, sourceCutHash, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    expect(result.evaluationPolicy).toBe('bayn.operational-native-safety.v1')
+    const assertLegacyReadback = async (
+      sourceCutHash: string,
+      currentAssessmentHash: string,
+      version: 'bayn.operational-assessment-input.v1' | 'bayn.operational-assessment-input.v2',
+    ) => {
+      const legacyInput = { ...input, safety, sourceCutHash, schemaVersion: version }
       const evidence = await runtime.runPromise(
-        readOperationalAssessmentSourceCut(sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
+        readOperationalAssessmentSourceCut(
+          sourceCutHash,
+          prospective,
+          version === 'bayn.operational-assessment-input.v1' ? 'RETAINED_OPERATIONAL_V1' : 'CURRENT',
+        ),
       )
       const legacy = {
         ...Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, evidence, sources)),
@@ -406,7 +538,8 @@ postgres('PostgreSQL prospective system qualification', () => {
         Exit.isFailure(await runtime.runPromiseExit(asApplication(assessAndPersistOperational(legacyInput, sources)))),
       ).toBe(true)
     }
-    await assertLegacyReadback(savedCut.sourceCutHash, result.assessmentHash)
+    for (const version of ['bayn.operational-assessment-input.v1', 'bayn.operational-assessment-input.v2'] as const)
+      await assertLegacyReadback(savedCut.sourceCutHash, result.assessmentHash, version)
     const compact = Schema.decodeUnknownSync(OperationalSourceCutSchema)({
       ...savedCut.cut,
       schemaVersion: 'bayn.operational-source-cut.v1',
@@ -475,7 +608,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     const unboundInput = { ...input, sourceCutHash: unboundCut.sourceCutHash }
     const unboundResult = await runtime.runPromise(asApplication(assessAndPersistOperational(unboundInput, sources)))
     expect(unboundResult.missing).toContain(`UNBOUND_CONTROLLER_BUILD:${unboundPass.receiptHash}`)
-    const retainedArchiveInput = { ...unboundInput, schemaVersion: 'bayn.operational-assessment-input.v1' }
+    const retainedArchiveInput = { ...unboundInput, safety, schemaVersion: 'bayn.operational-assessment-input.v1' }
     const retainedArchive = await runtime.runPromise(
       readOperationalAssessmentSourceCut(unboundCut.sourceCutHash, prospective, 'RETAINED_OPERATIONAL_V1'),
     )
@@ -513,7 +646,8 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(await runtime.runPromise(readPersistedOperationalAssessment(compactResult.assessmentHash))).toEqual(
       compactResult,
     )
-    await assertLegacyReadback(storedCompact.sourceCutHash, compactResult.assessmentHash)
+    for (const version of ['bayn.operational-assessment-input.v1', 'bayn.operational-assessment-input.v2'] as const)
+      await assertLegacyReadback(storedCompact.sourceCutHash, compactResult.assessmentHash, version)
     const financialRegistration = await runtime.runPromise(asApplication(registerFixture(registration())))
     expect(
       Exit.isFailure(
@@ -2081,6 +2215,13 @@ postgres('PostgreSQL prospective system qualification', () => {
       asApplication(source('owned close', ['committed-admission', 'rolled-back-admission'])),
     )
     await runtime.runPromise(asApplication(admit('committed-admission')))
+    const safetyAdmission = Effect.gen(function* () {
+      return yield* (yield* PgClient.PgClient)`SELECT event_id,authority_state FROM operational_safety_mutation_admissions ORDER BY event_id`
+    })
+    expect(await runtime.runPromise(safetyAdmission)).toEqual([
+      { event_id: sha256('committed-admission'), authority_state: null },
+    ])
+
     const sessionDate = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -2180,6 +2321,27 @@ postgres('PostgreSQL prospective system qualification', () => {
       ),
     )
     expect(Exit.isFailure(rollback)).toBe(true)
+    expect(
+      (await runtime.runPromise(safetyAdmission)).some((row) => row['event_id'] === sha256('rolled-back-admission')),
+    ).toBe(false)
+    for (const action of [
+      'UPDATE operational_safety_mutation_admissions SET captured_at=clock_timestamp()',
+      'DELETE FROM operational_safety_mutation_admissions',
+      'TRUNCATE operational_safety_mutation_admissions',
+    ]) {
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                yield* (yield* PgClient.PgClient).unsafe(action)
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    }
+
     for (const action of [
       'UPDATE execution_decision_admissions SET observed_at = clock_timestamp()',
       'DELETE FROM execution_decision_admissions',
