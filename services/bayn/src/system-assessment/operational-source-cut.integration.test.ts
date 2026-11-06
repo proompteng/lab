@@ -21,8 +21,8 @@ import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './d
 import { MutationEventSchema, MutationEventType } from '../execution/mutations/model'
 import { readSystemControllerPasses } from './capture-queries'
 import {
-  evaluateOperationalAssessment,
   makeOperationalSafetyAudit,
+  evaluateOperationalAssessment,
   verifyStoredOperationalAssessment,
 } from './operational-assessment'
 import { qualificationDeadlines } from './configuration'
@@ -323,7 +323,7 @@ postgres('replayed operational source records', () => {
       expect(replayed.work.controllerWork.size).toBe(0)
       expect(replayed.unboundControllerBuilds).toHaveLength(1)
       const { input, sources } = assessmentFixture(cut, f.registration)
-      const result = Result.getOrThrow(evaluateOperationalAssessment(input, replayed, sources))
+      const result = Result.getOrThrow(verifyStoredOperationalAssessment(input, replayed, sources))
       expect(result.missing.includes(`UNBOUND_CONTROLLER_BUILD:${pass.receiptHash}`)).toBe(row.missing)
     }
   })
@@ -359,16 +359,16 @@ postgres('replayed operational source records', () => {
     expect(current.unboundControllerBuilds.map((row) => row.receiptHash)).toEqual([f.pass.receiptHash])
     const { input, sources } = assessmentFixture(cut, f.registration)
     const legacyInput = { ...input, schemaVersion: 'bayn.operational-assessment-input.v1' }
-    expect(Result.isFailure(evaluateOperationalAssessment(input, retained, sources))).toBe(true)
+    expect(Result.isFailure(verifyStoredOperationalAssessment(input, retained, sources))).toBe(true)
     expect(Result.isFailure(verifyStoredOperationalAssessment(legacyInput, current, sources))).toBe(true)
     expect(Result.isFailure(evaluateOperationalAssessment(legacyInput, retained, sources))).toBe(true)
     const legacy = Result.getOrThrow(verifyStoredOperationalAssessment(legacyInput, retained, sources))
     expect(legacy).not.toHaveProperty('evaluationPolicy')
     expect(legacy.missing.some((row) => row.startsWith('UNBOUND_CONTROLLER_BUILD:'))).toBe(false)
-    expect(Result.getOrThrow(evaluateOperationalAssessment(input, current, sources)).missing).toContain(
+    expect(Result.getOrThrow(verifyStoredOperationalAssessment(input, current, sources)).missing).toContain(
       `UNBOUND_CONTROLLER_BUILD:${f.pass.receiptHash}`,
     )
-    expect(Result.getOrThrow(evaluateOperationalAssessment(input, current, sources)).evaluationPolicy).toBe(
+    expect(Result.getOrThrow(verifyStoredOperationalAssessment(input, current, sources)).evaluationPolicy).toBe(
       'bayn.operational-build-binding.v1',
     )
   })
@@ -432,7 +432,7 @@ postgres('replayed operational source records', () => {
     }
     const replayed = await runtime.runPromise(replayOperationalSourceRecords(cut, registration))
     const { input, sources } = assessmentFixture(cut, registration)
-    expect(Result.getOrThrow(evaluateOperationalAssessment(input, replayed, sources)).missing).toContain(
+    expect(Result.getOrThrow(verifyStoredOperationalAssessment(input, replayed, sources)).missing).toContain(
       'UNBOUND_CONTROLLER_PLAN',
     )
   })

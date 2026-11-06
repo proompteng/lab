@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { ConfigProvider, Effect, FileSystem, Redacted, Result } from 'effect'
+import { ValkeyCache } from './valkey-cache'
 import { PgClient } from '@effect/sql-pg'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
@@ -568,6 +569,12 @@ describe('runtime configuration loading', () => {
     const run = (runtime: typeof config) =>
       Effect.runPromise(
         captureOperationalSourceCut(runtime, registrationHash, registration).pipe(
+          Effect.provideService(ValkeyCache, {
+            get: () => Effect.die('Foreign-account capture must not read broker material'),
+            put: () => Effect.die('Foreign-account capture must not write cache'),
+            putAll: () => Effect.die('Foreign-account capture must not write cache'),
+            remove: () => Effect.die('Foreign-account capture must not remove cache'),
+          }),
           Effect.provideService(PgClient.PgClient, sql),
           Effect.provide(FileSystem.layerNoop({})),
           Effect.flip,
