@@ -37,6 +37,12 @@ The checked-in mandate annotation currently identifies request
 This annotation is in `argocd/applications/bayn/alpaca-sealedsecret.yaml`; it records identity, not permission to
 change the encrypted request. No encrypted or plaintext secret is copied into this document.
 
+The draft also updates `nix/images/bayn.nix`'s compiled parameter/protocol constants and OCI labels to v39.
+These identify the successor image; `verify-build-contract` must verify them against the executable. They do not
+update any deployed manifest or activation request. Keeping v38 build metadata on v39 source correctly fails the
+image build, so that mismatch is not used as a release gate. The draft hold and reviewed authority ordering remain
+mandatory even when the source image builds successfully.
+
 `capitalActivationRequestIdentityIsCurrent` compares the exact protocol hash, parameter hash, schema version,
 strategy name and behavior hash. `researchCapitalRecoveryRequestIsCompatible` enforces the same identity before
 durable recovery. A v38 mandate or build-lineage continuation cannot authorize v39. The Research grant class,
@@ -110,7 +116,8 @@ The retained helpers are wired to existing read-only consumers, not just exporte
 | Forward-performance decision projection          | Uses that same retained document verifier for the original candidate and control trading evidence                                                                                             | Older unsupported versions and unknown identities remain explicitly unverified |
 
 Independent original candidate, ablation and repeated-momentum entry and protective-stop documents pin exact
-canonical bytes, document content hashes and target material. Tests reject outer-rehashed planner/risk/authority
+canonical bytes, document content hashes and target material. Original Bun/Nix Node crypto documents also prove
+native fractional quantity and asset-profile reconstruction. Tests reject outer-rehashed planner/risk/authority
 tampering, recognized-policy relabeling, mixed or unknown protocol versions, and v38 documents bound to a current
 operational registration. Public readers retain old control context without attributing it to candidate work.
 A separate work-binding regression matches account, generation, risk and reporting interval while varying only
@@ -119,12 +126,18 @@ the original work is otherwise creditable. Synthetic fixture generations are nev
 capital mandate. Current v39 entry and exit construction for all three policies is exercised separately with
 unchanged raw liquidation allowances.
 
-The original chart identity already includes PNG compression bytes. Bun 1.4.3 and production Node 24.11.1 produce
-different `IDAT` bytes for identical chart pixels, so immutable entry fixtures are pinned separately for those
-runtimes. A bounded Node subprocess regression verifies original Node v38 entry/exit documents with the new
-retained verifier and public profitability projection for all three policy identities. The checked-in fixture
-provenance records original source revisions and runtime. Existing operator commands use compiled Node bundles;
-no launcher, hash tolerance or renderer change is introduced.
+The original chart identity already includes PNG compression bytes. Bun 1.4.3, production Nix Node 24.11.1 with
+shared zlib 1.3.1, and the official Node 24.11.1 build with bundled zlib 1.3.1-470d3a2 produce different `IDAT`
+bytes for identical pixels. The original v38 decoder independently demonstrates the same build-dependent
+rejection; Node's version number alone is not a compatibility proof. Immutable fixtures and full capture/parity
+provenance preserve that boundary.
+
+The bounded `test:production-runtime` regression is mandatory in both Nix image builds using their actual
+production Node. It verifies all seven original production-compatible candidate/control/crypto documents,
+current rejection and public profitability projection. Unit tests retain the Bun evidence. The script
+remains type-checked and formatted; its temporary bundle and fixtures are not installed into the image. Existing
+operator commands use compiled Node bundles. No runtime skip, alternate hash, launcher or renderer change is
+introduced.
 
 Migration number 0183 was rechecked against main `fbaf67ff61354c2625851510f870e75ab248ffc6`, whose latest migration
 is 0182. Renumber and repeat the migration proof if another migration lands before this deferred cutover.

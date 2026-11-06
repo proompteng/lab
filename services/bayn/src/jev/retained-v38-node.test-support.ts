@@ -11,6 +11,14 @@ import {
 import { verifyPerformanceDecisions } from '../forward-performance/postgres/projection'
 
 assert.equal(process.versions['bun'], undefined, 'Production evidence must be replayed by Node')
+const runtime = {
+  executable: process.execPath,
+  node: process.versions['node'],
+  arch: process.arch,
+  platform: process.platform,
+  zlib: process.versions['zlib'],
+  sharedZlib: process.config.variables['node_shared_zlib'],
+}
 const goldens = [
   {
     bytes: 1_523_926,
@@ -42,6 +50,11 @@ const goldens = [
     canonicalHash: '1f295ab9a50da75e4d0d87913a2f78e5181717ff6125d4548e181e54572d8941',
     contentHash: '005815abb3c0ecb46f84def21cbb9d7517f8af9c193ef828227e1b02fd57e4c3',
   },
+  {
+    bytes: 245_187,
+    canonicalHash: '79a832650d6e5deebbe4d1b1acbceee7a48d3661e33c63024460aa037e7f5e2d',
+    contentHash: '39b9bb4151b38b273843d41bf32ba134e6c88b7208b6b111f26016287d7645a4',
+  },
 ]
 const paths = process.argv.slice(2)
 assert.equal(paths.length, goldens.length)
@@ -50,7 +63,9 @@ for (const [index, path] of paths.entries()) {
   const bytes = gunzipSync(readFileSync(path))
   assert.equal(bytes.byteLength, golden.bytes)
   assert.equal(sha256(bytes), golden.canonicalHash)
-  const document = Result.getOrThrow(decodeRetainedJevV38ExecutionDecisionDocument(JSON.parse(bytes.toString('utf8'))))
+  const decoded = decodeRetainedJevV38ExecutionDecisionDocument(JSON.parse(bytes.toString('utf8')))
+  if (Result.isFailure(decoded)) throw new Error(`${JSON.stringify(runtime)}: ${decoded.failure.message}`)
+  const document = decoded.success
   assert.equal(document.contentHash, golden.contentHash)
   assert.equal(Result.getOrThrow(canonicalJsonV1Result(document)), bytes.toString('utf8'))
   assert.equal(Result.isFailure(decodeExecutionDecisionDocument(document)), true)
@@ -69,4 +84,4 @@ for (const [index, path] of paths.entries()) {
     true,
   )
 }
-process.stdout.write('RETAINED_V38_NODE_ENTRY_EXIT_VERIFIED')
+process.stdout.write(JSON.stringify({ status: 'VERIFIED', caseCount: goldens.length, runtime }))

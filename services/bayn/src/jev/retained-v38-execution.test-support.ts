@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { Result } from 'effect'
+import { MarketKind } from '../instruments'
 
 import { decodeRetainedJevV38ExecutionDecisionDocument } from '../shadow-decision-contract'
 
@@ -9,6 +10,7 @@ import { decodeRetainedJevV38ExecutionDecisionDocument } from '../shadow-decisio
 export const retainedV38ExecutionGoldens = [
   {
     name: 'entry-equity',
+    market: MarketKind.Equity,
     file: 'entry-equity.json.gz',
     bytes: 1_523_926,
     contentHash: '28239567cc102e26338e384850d98eaa1e3555f1f4ce6bfee769277bd2c2b4e7',
@@ -16,6 +18,7 @@ export const retainedV38ExecutionGoldens = [
   },
   {
     name: 'exit-protective-stop',
+    market: MarketKind.Equity,
     file: 'exit-protective-stop-document.json.gz',
     bytes: 34_714,
     contentHash: '10195fb9969a20442553812630dba45a5d597544040ff9161cff9b23110bfbcc',
@@ -23,6 +26,7 @@ export const retainedV38ExecutionGoldens = [
   },
   {
     name: 'entry-ablation',
+    market: MarketKind.Equity,
     file: 'entry-ablation-document.json.gz',
     bytes: 1_458_989,
     contentHash: '8720d8f56d8d9a476b1f9de99b1bcb48280672c852afba5c9efce888330f3b32',
@@ -30,6 +34,7 @@ export const retainedV38ExecutionGoldens = [
   },
   {
     name: 'entry-momentum',
+    market: MarketKind.Equity,
     file: 'entry-momentum-document.json.gz',
     bytes: 1_061_094,
     contentHash: 'b35781ba2b97a56ff799f6e9de748d140d2759d39c342138f650c832ef5f0938',
@@ -37,6 +42,7 @@ export const retainedV38ExecutionGoldens = [
   },
   {
     name: 'exit-ablation-node',
+    market: MarketKind.Equity,
     file: 'node-exit-ablation.json.gz',
     bytes: 34_714,
     contentHash: 'f0a3fa911898387768091caa4db69f9bf7b9187863e5594abd7bf2b5f83bc091',
@@ -44,10 +50,19 @@ export const retainedV38ExecutionGoldens = [
   },
   {
     name: 'exit-momentum-node',
+    market: MarketKind.Equity,
     file: 'node-exit-momentum.json.gz',
     bytes: 34_714,
     contentHash: '005815abb3c0ecb46f84def21cbb9d7517f8af9c193ef828227e1b02fd57e4c3',
     canonicalHash: '1f295ab9a50da75e4d0d87913a2f78e5181717ff6125d4548e181e54572d8941',
+  },
+  {
+    name: 'entry-crypto',
+    market: MarketKind.Crypto,
+    file: 'entry-crypto-bun.json.gz',
+    bytes: 245_187,
+    contentHash: 'c32c7f165c899b141db95a2424681000d5778841ceaeef9d01f8d20f5e2e1763',
+    canonicalHash: '8190e6d80bfa29d7c2f11d5521977e7bedb43071d6f3858574fad7bd699f7413',
   },
 ] as const
 

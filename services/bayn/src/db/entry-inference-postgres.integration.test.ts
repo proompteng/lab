@@ -896,31 +896,60 @@ integration('committed sequential provider handoff', () => {
         )
         yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
           VALUES (${original.requestId},'CHART',${claim.claimHash},${terminal.terminalHash},${sql.json(terminal)})`
+        const successorFixture = nativeJevFixture(
+          JevPurpose.Entry,
+          new Date(Date.parse(request.observedAt) + 60_000).toISOString(),
+          replayAccountId,
+          undefined,
+          Result.getOrThrow(canonicalHashV1Result({ cutover: 'v39', previousCycleId: original.cycleId })),
+        )
+        const successorPlan = Result.getOrThrow(
+          makeJevTradingSignalBatch({
+            observation: successorFixture.observation.payload,
+            expiresAt: new Date(
+              Date.parse(successorFixture.observation.payload.observedAt) +
+                successorFixture.protocol.inferenceValidityMs,
+            ).toISOString(),
+            planVersion: JevBatchPlanVersion.V8,
+          }),
+        )
+        const successorCandidate = successorPlan.candidates.find(
+          (entry) => entry.status === JevCandidatePlanStatus.Requested,
+        )
+        if (successorCandidate?.status !== JevCandidatePlanStatus.Requested)
+          throw new Error('Expected current post-cutover request')
+        const successor = successorCandidate.request
+        // One symbol/source/generation belongs to one request. The successor gets a new native cycle and source;
+        // the retained request is never replaced or admitted again under a different protocol identity.
+        expect(successor.cycleId).not.toBe(original.cycleId)
+        expect(successor.snapshotId).not.toBe(original.snapshotId)
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${successor.observedAt} WHERE account_id=${replayAccountId}`
+        yield* (yield* CycleStore).acquire(successorFixture.draft, successor.observedAt)
         yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
-          VALUES (${request.requestId},${request.cycleId},${request.authorityGenerationHash},${sql.json(request)})`
+          VALUES (${successor.requestId},${successor.cycleId},${successor.authorityGenerationHash},${sql.json(successor)})`
         for (const [index, changed] of [
           original.request,
-          { ...request.request, protocol: { ...request.request.protocol, schemaVersion: 'bayn.jev.protocol.v38' } },
+          { ...successor.request, protocol: { ...successor.request.protocol, schemaVersion: 'bayn.jev.protocol.v38' } },
           {
-            ...request.request,
+            ...successor.request,
             numericalState: {
-              ...request.request.numericalState,
+              ...successor.request.numericalState,
               entryEconomics: { maximumEntryQuoteDriftBps: 10, maximumEntryLimitSlippageBps: 0 },
             },
           },
           {
-            ...request.request,
+            ...successor.request,
             numericalState: {
-              ...request.request.numericalState,
+              ...successor.request.numericalState,
               entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: '0' },
             },
           },
-          { ...request.request, numericalState: { ...request.request.numericalState, entryEconomics: {} } },
+          { ...successor.request, numericalState: { ...successor.request.numericalState, entryEconomics: {} } },
         ].entries()) {
           const id = Result.getOrThrow(canonicalHashV1Result({ invalidInput: index }))
           const rejected =
             yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
-            VALUES (${id},${request.cycleId},${request.authorityGenerationHash},${sql.json({ ...request, requestId: id, request: changed })})`.pipe(
+            VALUES (${id},${successor.cycleId},${successor.authorityGenerationHash},${sql.json({ ...successor, requestId: id, request: changed })})`.pipe(
               Effect.result,
             )
           if (Result.isSuccess(rejected))

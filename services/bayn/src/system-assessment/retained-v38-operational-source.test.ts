@@ -3,10 +3,12 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
 import { canonicalJsonV1Result } from '../hash'
+import { MarketKind } from '../instruments'
 import { JevAcceptanceVersion } from '../jev/acceptance'
 import { retainedV38ExecutionFixture, retainedV38ExecutionGoldens } from '../jev/retained-v38-execution.test-support'
 import { isContinuousMarket } from '../market-hours'
 import { registrationFixture, testHash } from './fixtures.test-support'
+import { decisionMarketScopeSupported } from './decision-work'
 import { operationalRegistrationFixture } from './operational-period.test-support'
 import { bindOperationalObligations, registeredDecisionWork } from './operational-obligations'
 import { validateOperationalRegistration, verifyStoredOperationalRegistration } from './operational-period'
@@ -79,7 +81,7 @@ const fixture = (index: number, current = false) => {
   return { document, registration, cut, manifest, record, read }
 }
 
-test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
+test.each(retainedV38ExecutionGoldens.flatMap((golden, index) => (golden.market === MarketKind.Equity ? [index] : [])))(
   'public operational replay preserves genuine v38 execution context: %i',
   async (index) => {
     const f = fixture(index)
@@ -105,6 +107,14 @@ test('historical operational replay rejects a v38 document bound to a current re
   expect(Result.isSuccess(validateOperationalRegistration(f.registration))).toBe(true)
   expect(Result.isFailure(await f.read(f.manifest))).toBe(true)
   expect(Result.isFailure(await f.read(f.cut))).toBe(true)
+})
+
+test('verified retained crypto execution does not widen the equity operational source scope', () => {
+  const index = retainedV38ExecutionGoldens.findIndex((golden) => golden.market === MarketKind.Crypto)
+  const { document } = retainedV38ExecutionFixture(index)
+  const f = fixture(0)
+  expect(Result.isSuccess(verifyStoredOperationalRegistration(f.registration))).toBe(true)
+  expect(decisionMarketScopeSupported(document, f.registration)).toBe(false)
 })
 
 test.each(

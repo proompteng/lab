@@ -10,7 +10,10 @@ import {
   makeExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { RuntimeStrategyDecisionSchema } from '../strategy/runtime-decision'
-import { persistenceDocumentFixture } from '../system-assessment/decision-persistence.test-support'
+import {
+  persistenceDocumentFixture,
+  cryptoPersistenceDocumentFixture,
+} from '../system-assessment/decision-persistence.test-support'
 import { protectiveStopDocumentFixture, makeProtectiveStopDocumentFixture } from './exit-document.test-support'
 import { controlDocumentFixture } from './control-document.test-support'
 import { RetainedJevV38ExitTargetSchema } from './retained-v38-targets'
@@ -109,6 +112,7 @@ test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
 
 test.each([
   { name: 'candidate entry', fixture: persistenceDocumentFixture },
+  { name: 'candidate crypto entry', fixture: cryptoPersistenceDocumentFixture },
   { name: 'candidate exit', fixture: protectiveStopDocumentFixture },
   { name: 'ablation entry', fixture: controlDocumentFixture('ablation') },
   { name: 'momentum entry', fixture: controlDocumentFixture('momentum') },
