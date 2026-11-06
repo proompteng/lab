@@ -239,6 +239,30 @@ def readCycleIdentity (json : Json) : Except String CycleIdentity := do
     accountId := ← json.getObjValAs? String "accountId"
   }
 
+def readEntryWindowScope (json : Json) : Except String EntryWindowScope := do
+  return {
+    schemaVersion := ← json.getObjValAs? String "schema_version",
+    identitySchemaVersion := ← json.getObjValAs? String "identity_schema_version",
+    strategy := ← json.getObjValAs? String "strategy_name",
+    protocol := ← json.getObjValAs? String "strategy_protocol_hash",
+    qualification := ← json.getObjValAs? String "qualification_run_id",
+    account := ← json.getObjValAs? String "account_id",
+    executionPolicy := ← json.getObjValAs? String "execution_policy_hash",
+    calendarSchema := ← json.getObjValAs? String "execution_calendar_schema_version",
+    calendarSource := ← json.getObjValAs? String "execution_calendar_source",
+    calendar := ← json.getObjValAs? String "execution_calendar_hash",
+    session := ← json.getObjValAs? String "execution_session_date"
+  }
+
+def readEntryWindowSource (json : Json) : Except String EntryWindowSource := do
+  return {
+    cycle := ← json.getObjValAs? String "cycle",
+    scope := ← readEntryWindowScope (← json.getObjVal? "scope"),
+    jev := ← json.getObjValAs? Bool "jev",
+    entry := ← json.getObjValAs? Bool "entry",
+    windowEnd := ← readInteger json "windowEnd"
+  }
+
 def readCycleEvidence (json : Json) : Except String CycleEvidence := do
   return {
     identity := ← readCycleIdentity (← json.getObjVal? "identity"),
@@ -617,6 +641,30 @@ def evaluate (json : Json) : Except String Json := do
     return toJson (pendingMarketInputsContinuation (← json.getObjValAs? Bool "pending")
       (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
       (← json.getObjValAs? Nat "normalDelay"))
+  | "sourceWaitReconciliationReusable" =>
+    return toJson (sourceWaitReconciliationReusable
+      (← json.getObjValAs? Bool "exact") (← json.getObjValAs? Bool "accounting")
+      (← json.getObjValAs? Bool "sameGeneration") (← json.getObjValAs? Bool "sameVersion")
+      (← json.getObjValAs? Bool "flat") (← json.getObjValAs? Bool "clearMutations")
+      (← json.getObjValAs? Bool "clearOrders") (← readInteger json "oldest")
+      (← readInteger json "newest") (← readInteger json "now") (← readInteger json "maximumAge"))
+  | "unusedEntryHandoffContinuation" =>
+    return toJson (unusedEntryHandoffContinuation (← json.getObjValAs? Bool "expiredTerminal")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now"))
+  | "entryAttemptSuccessor" =>
+    return toJson (entryAttemptSuccessor (← readCycleState (← json.getObjVal? "state"))
+      (← json.getObjValAs? Bool "native") (← json.getObjValAs? Bool "recovered")
+      (← readOptionalInteger json "terminalAt") (← readInteger json "now") (← readInteger json "cutoff")
+      (← json.getObjValAs? Nat "ordinal"))
+  | "latestCompatibleEntryWindow" =>
+    if !(← json.getObjValAs? Bool "targetExists") then return toJson (none : Option Int)
+    let sources ← (← (← json.getObjVal? "sources").getArr?).toList.mapM readEntryWindowSource
+    return toJson (latestCompatibleEntryWindow (← json.getObjValAs? Bool "entry")
+      (← json.getObjValAs? String "targetCycle") (← readEntryWindowScope (← json.getObjVal? "scope")) sources)
+  | "sourceWindowContinuation" =>
+    return toJson (sourceWindowContinuation (← json.getObjValAs? Bool "known")
+      (← readCycleEvidence (← json.getObjVal? "cycle")) (← readInteger json "now")
+      (← readInteger json "availableAt") (← json.getObjValAs? Nat "normalDelay"))
   | "cycleDecisionBinding" =>
     return toJson (cycleDecisionBinding (← readCycleEvidence (← json.getObjVal? "cycle"))
       (← readCycleDecision (← json.getObjVal? "document")) (← readInteger json "now")
@@ -886,6 +934,20 @@ def evaluate (json : Json) : Except String Json := do
     let scheduled ← readNatural json "scheduled"
     return toJson (if scheduled = 0 ∨ good > scheduled then "UNDETERMINED"
       else if reliabilityPass good scheduled then "MEETS_TARGET" else "MISSES_TARGET")
+  | "marketHandoffReadiness" =>
+    let deadline ← readOptionalField json "deadline" (fun value => do
+      let text ← value.getStr?
+      match text.toInt? with
+      | some n => return n
+      | none => throw "deadline must be an integer string or null")
+    return toJson (marketHandoffReadiness (← json.getObjValAs? Bool "ready")
+      (← json.getObjValAs? Bool "failed") deadline (← readInteger json "now"))
+  | "nativeSafetyJournalInsert" =>
+    return toJson (nativeSafetyJournalInsertAllowed (← readNatural json "triggerDepth"))
+  | "nativeSafetyCoverage" =>
+    let checks ← (← json.getObjValAs? (Array Json) "checks").toList.mapM fun check => do
+      return { kind := ← check.getObjValAs? String "kind", status := ← check.getObjValAs? String "status" : SafetyCheck }
+    return toJson (if nativeSafetyComplete checks then "COMPLETE" else "INCOMPLETE")
   | "currentTradingScope" =>
     let market ← json.getObjValAs? String "market"
     let sell ← json.getObjValAs? Bool "sell"

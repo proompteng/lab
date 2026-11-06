@@ -13,6 +13,7 @@ import { TechnicalMarketFeatureSchema } from '../features/technical-contract'
 import { NativeMarketFeatureSchema } from '../features/native-feature'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import { MarketSourcesSchema } from './raw-events'
+import { WebullSnapshotEvidenceSchema } from './webull-projection'
 
 const PositionFields = { topic: StrictNonEmptyStringSchema, partition: NonNegativeIntegerSchema }
 const Timestamp = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(253402300799999))
@@ -55,6 +56,7 @@ const StreamingRecordReceiptSchema = Schema.Struct({
 const CutFields = {
   barPublicationPolicy: Schema.Literal(BarPublicationPolicy.ObservedHistory),
   technical: Schema.optionalKey(TechnicalSnapshotEvidenceSchema),
+  webull: Schema.optionalKey(WebullSnapshotEvidenceSchema),
   positions: Schema.Array(Schema.Struct({ ...PositionFields, offset: UnsignedMicrosSchema })).check(
     Schema.isMinLength(1),
   ),

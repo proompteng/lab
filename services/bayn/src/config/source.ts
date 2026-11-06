@@ -58,6 +58,9 @@ export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, '
             technicalFeaturesTopic: Config.option(nonEmptyString('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC')).pipe(
               Config.map(Option.getOrUndefined),
             ),
+            webullBarsTopic: Config.option(nonEmptyString('BAYN_KAFKA_WEBULL_BARS_TOPIC')).pipe(
+              Config.map(Option.getOrUndefined),
+            ),
             username: nonEmptyString('BAYN_KAFKA_USERNAME'),
             password: secretString('BAYN_KAFKA_PASSWORD'),
             groupPrefix: nonEmptyString('BAYN_KAFKA_GROUP_PREFIX').pipe(Config.withDefault('bayn-market-v1')),
