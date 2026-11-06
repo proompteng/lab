@@ -1656,15 +1656,43 @@ durableTest.each(
           const recovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
           const concurrentRecovery = yield* openGeneration(runtime.authorityGenerationHash, 'CloseOnly')
           let lastRecovery
+          let protectionRestored = scenario !== 'recovery-filled'
+          let closeWindowReached = false
           for (let attempt = 0; attempt < 20 && !(yield* recovery.needsRebind); attempt++) {
-            yield* advanceBy(attempt === 3 ? closeAtMs - (yield* Clock.currentTimeMillis) : 1000)
-            if (attempt === 3)
+            // Concurrent controllers may need separate passes to recover, cancel, and reconcile the entry.
+            // Reach durable protection before moving the market to the liquidation window.
+            if (!closeWindowReached && attempt >= 3 && protectionRestored) {
+              yield* advanceBy(closeAtMs - (yield* Clock.currentTimeMillis))
               for (const arrival of closeArrivals)
                 cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+              closeWindowReached = true
+            } else {
+              if (!closeWindowReached && scenario === 'recovery-filled') {
+                const nextAt = (yield* Clock.currentTimeMillis) + 1000
+                const quote = observedQuoteAt(cursor.projection, 'AAPL', nextAt)
+                if (quote === undefined) throw new Error('Missing recovery protection quote')
+                expect(nextAt - Date.parse(quote.value.eventAt), JSON.stringify(lastRecovery)).toBeLessThanOrEqual(
+                  protocol.maximumQuoteAgeMs,
+                )
+              }
+              yield* advanceBy(1000)
+            }
             lastRecovery = yield* Effect.all([recovery.advance, concurrentRecovery.advance], { concurrency: 2 }).pipe(
               Effect.provideService(OperationDeadlineClock, liveClock),
             )
+            if (!closeWindowReached && scenario === 'recovery-filled') {
+              const acceptedProtection = yield* sql`SELECT i.intent_id FROM intents i
+                JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+                WHERE i.account_id=${accountId} AND i.side='SELL' AND i.protection->>'_tag'='Oco'
+                  AND i.state='ACKNOWLEDGED' AND i.terminal_outcome IS NULL AND r.outcome='APPROVED'
+                  AND EXISTS (SELECT 1 FROM mutation_events e WHERE e.intent_id=i.intent_id
+                    AND e.event_type='SUBMIT_ACCEPTED')`
+              expect(acceptedProtection.length).toBeLessThanOrEqual(1)
+              protectionRestored = acceptedProtection.length === 1
+            }
           }
+          expect(protectionRestored, JSON.stringify(lastRecovery)).toBe(true)
+          if (scenario === 'recovery-filled') expect(closeWindowReached, JSON.stringify(lastRecovery)).toBe(true)
           expect(yield* recovery.needsRebind, JSON.stringify(lastRecovery)).toBe(true)
           yield* concurrentRecovery.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
           expect(yield* concurrentRecovery.needsRebind).toBe(true)
