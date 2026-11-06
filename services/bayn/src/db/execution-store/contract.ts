@@ -73,7 +73,6 @@ export interface BrokerEventStoreShape {
 
 export interface FillAccountingStoreShape {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
-  readonly verifyCompleted: (inputs: readonly FillEventInput[]) => Effect.Effect<void, ExecutionStoreError>
 }
 
 export interface ValuationStoreShape {

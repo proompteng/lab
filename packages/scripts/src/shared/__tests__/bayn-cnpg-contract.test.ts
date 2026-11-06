@@ -29,17 +29,20 @@ test('native market capture keeps independent storage, required synchronous dura
     'enablePDB',
     'enableSuperuserAccess',
     'affinity',
-    'storage',
+    'walStorage',
     'postgresql',
   ])
     expect(cluster.spec[key]).toEqual(financial.spec[key])
   expect(cluster.spec.minSyncReplicas).toBeUndefined()
+  expect(cluster.spec.storage).toEqual({ ...financial.spec.storage, size: '200Gi' })
   expect(cluster.spec.maxSyncReplicas).toBeUndefined()
   expect(cluster.spec.postgresql.synchronous).toEqual({ method: 'any', number: 1, dataDurability: 'required' })
-  expect(cluster.spec.walStorage).toBeUndefined()
   expect(cluster.metadata.annotations['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
   expect(cluster.spec.managed).toBeUndefined()
-  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([{ name: 'cnpg-default-monitoring', key: 'queries' }])
+  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([
+    { name: 'cnpg-default-monitoring', key: 'queries' },
+    { name: 'bayn-postgres-monitoring', key: 'queries' },
+  ])
   expect(cluster.spec.plugins[0].parameters).toEqual({
     barmanObjectName: 'bayn-db',
     serverName: 'bayn-native-arrival-db-live',
@@ -166,11 +169,15 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([
     { name: 'cnpg-default-monitoring', key: 'queries' },
     { name: 'bayn-postgres-monitoring', key: 'queries' },
+    { name: 'bayn-postgres-monitoring', key: 'financial-queries' },
   ])
   const monitor = readManifest('argocd/applications/bayn/postgres-monitoring.yaml')
   expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
   expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
-  const queries = YAML.parse(monitor.data.queries)
+  const commonQueries = YAML.parse(monitor.data.queries)
+  for (const query of Object.values(commonQueries) as Record<string, unknown>[])
+    expect(query.target_databases).toBeUndefined()
+  const queries = { ...commonQueries, ...YAML.parse(monitor.data['financial-queries']) }
   expect(Object.keys(queries).sort()).toEqual([
     'bayn_generation_index',
     'bayn_io',

@@ -6,12 +6,12 @@ import { Effect, ManagedRuntime, Redacted, Schema } from 'effect'
 import { baynTestPostgresUrl } from './test-environment.test-support'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const Manifest = Schema.Struct({ data: Schema.Struct({ queries: Schema.String }) })
+const Manifest = Schema.Struct({ data: Schema.Record(Schema.String, Schema.String) })
 const Queries = Schema.Record(
   Schema.String,
   Schema.Struct({
     query: Schema.String,
-    target_databases: Schema.Array(Schema.String),
+    target_databases: Schema.optionalKey(Schema.Array(Schema.String)),
     metrics: Schema.Array(
       Schema.Record(Schema.String, Schema.Struct({ usage: Schema.String, description: Schema.String })),
     ),
@@ -37,7 +37,11 @@ describePostgres('PostgreSQL 18 monitoring query execution', () => {
         readFileSync(new URL('../../../argocd/applications/bayn/postgres-monitoring.yaml', import.meta.url), 'utf8'),
       ),
     )
-    const queries = Schema.decodeUnknownSync(Queries)(Bun.YAML.parse(manifest.data.queries))
+    const queries = Object.fromEntries(
+      Object.values(manifest.data).flatMap((value) =>
+        Object.entries(Schema.decodeUnknownSync(Queries)(Bun.YAML.parse(value))),
+      ),
+    )
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -52,7 +56,7 @@ describePostgres('PostgreSQL 18 monitoring query execution', () => {
             expect(version[0]?.version).toBeGreaterThanOrEqual(180000)
             expect(version[0]?.version).toBeLessThan(190000)
             for (const [name, query] of Object.entries(queries)) {
-              expect(query.target_databases).toEqual(['bayn'])
+              expect(query.target_databases).toEqual(name === 'bayn_generation_index' ? ['bayn'] : undefined)
               const rows = yield* sql.unsafe<Record<string, unknown>>(query.query)
               expect(rows.length).toBeGreaterThan(0)
               expect(Object.keys(rows[0] ?? {}).sort()).toEqual(query.metrics.flatMap(Object.keys).sort())
