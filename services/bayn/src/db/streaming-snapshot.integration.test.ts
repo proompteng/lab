@@ -377,6 +377,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
               status: Effect.succeed({
                 epoch: 'fixture-epoch',
                 ready: true,
+                bootstrapDeadlineAtMs: null,
                 sequence: withdrawn.cut.projection.sequence,
               }),
             }),
@@ -415,6 +416,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
               status: Effect.succeed({
                 epoch: 'fixture-epoch',
                 ready: true,
+                bootstrapDeadlineAtMs: null,
                 sequence: fixture.cut.projection.sequence,
               }),
             }),
