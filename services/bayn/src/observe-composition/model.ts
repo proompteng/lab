@@ -79,10 +79,6 @@ export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
   readonly nextDelayMs: number
 }
 
-export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
-  driver: RecoveryFirstCycleDriver<R>,
-) => Effect.Effect<void, never, R>
-
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
   readonly brokerEnvironment?: BrokerEnvironment
