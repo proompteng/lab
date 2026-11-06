@@ -11,9 +11,15 @@ import { OrderSide, type Fill } from '../src/execution/contracts'
 import { sha256 } from '../src/hash'
 import { verifyAccountingHistory } from '../src/reconciliation/algebra'
 
-// Before changing the implementation, bundle domain.ts as domain.mjs and algebra.ts as algebra.mjs
-// into one temporary directory with `bun build --target=node --outfile=...`. Run this benchmark
-// under the production Node version with that directory as its sole argument.
+// From the baseline checkout root, before changing the implementation:
+// bayn_baseline_directory="$(mktemp -d -t bayn-accounting-baseline.XXXXXX)"
+// bun build services/bayn/src/accounting/domain.ts --target=node --outfile="$bayn_baseline_directory/domain.mjs"
+// bun build services/bayn/src/reconciliation/algebra.ts --target=node --outfile="$bayn_baseline_directory/algebra.mjs"
+// From the candidate checkout root in the same shell:
+// bun build services/bayn/tools/benchmark-accounting-verification.ts --target=node --outfile="$bayn_baseline_directory/benchmark.mjs"
+// node "$bayn_baseline_directory/benchmark.mjs" "$bayn_baseline_directory"
+// Use the production Node version (v24.11.1 for the original measurement). Both implementations
+// receive the same synthetic history; fixture construction and parity checks are not timed.
 const baselinePath = process.argv[2]
 assert(baselinePath !== undefined, 'Usage: benchmark-accounting-verification <baseline-directory>')
 const baseline: typeof accounting = await import(pathToFileURL(resolve(baselinePath, 'domain.mjs')).href)
