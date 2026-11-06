@@ -229,7 +229,7 @@ test('federation fetches exact JWT identities, exchanges over TLS, renews once, 
         if (message.method === 'tools/call') resourceCalls++
         response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }))
       } else {
-        expect(request.url).toBe('/records?query=approved')
+        expect(request.url === '/records?query=approved' || request.url === '/probe').toBe(true)
         resourceCalls++
         response.end(JSON.stringify({ result: 'authorized fixture result' }))
       }
@@ -402,6 +402,64 @@ test('federation fetches exact JWT identities, exchanges over TLS, renews once, 
     mode = 'normal'
     expect((await invoke()).every((result) => result.ok)).toBe(true)
     expect(stderr).not.toContain('PRIVATE_')
+    const probeBinary = process.env.RELAY_FEDERATION_PROBE_BIN
+    if (!probeBinary) throw new Error('run services/relay/test-client.sh to build the federation probe')
+    const probeConfig = {
+      version: 1,
+      connectors: [
+        {
+          type: 'http',
+          id: 'probe',
+          endpoint: `${issuer}/`,
+          ca_file: cert,
+          authentication,
+          operations: [
+            {
+              operation: { ...operation, input_schema: { type: 'object', additionalProperties: false } },
+              method: 'GET',
+              path: '/probe',
+            },
+          ],
+        },
+      ],
+    }
+    const probe = async () => {
+      const probeProcess = spawn(probeBinary, [], {
+        env: { ...process.env, SPIFFE_ENDPOINT_SOCKET: socket },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      probeProcess.stdout.on('data', (chunk) => {
+        stdout += chunk
+      })
+      probeProcess.stderr.on('data', (chunk) => {
+        stderr += chunk
+      })
+      const exited = new Promise<number | null>((resolve, reject) => {
+        probeProcess.once('error', reject)
+        probeProcess.once('close', resolve)
+      })
+      probeProcess.stdin.end(JSON.stringify(probeConfig))
+      return { code: await exited, stdout, stderr }
+    }
+    expect(await probe()).toEqual({
+      code: 0,
+      stdout: `${JSON.stringify({ result: 'authorized fixture result' })}\n`,
+      stderr: '',
+    })
+    const callsBeforeDenial = resourceCalls
+    mode = 'denied'
+    const deniedProbe = await probe()
+    expect(deniedProbe.code).toBe(1)
+    expect(deniedProbe.stdout).toBe('')
+    expect(deniedProbe.stderr).not.toContain('PRIVATE_')
+    expect(resourceCalls).toBe(callsBeforeDenial)
+    mode = 'normal'
+    const exchangesBeforeInvalid = exchanges
+    probeConfig.connectors[0].operations[0].method = 'POST'
+    expect((await probe()).code).toBe(1)
+    expect(exchanges).toBe(exchangesBeforeInvalid)
     expect(failures).toEqual([])
   } finally {
     child.kill('SIGKILL')
