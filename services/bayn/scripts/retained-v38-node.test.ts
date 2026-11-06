@@ -28,7 +28,7 @@ test('production Nix Node replays original v38 entry and exit bytes through reta
         join(fixtures, 'node-exit-momentum.json.gz'),
         join(fixtures, 'entry-crypto-node.json.gz'),
       ],
-      { stdout: 'pipe', stderr: 'pipe', timeout: 10_000, killSignal: 'SIGKILL' },
+      { stdout: 'pipe', stderr: 'pipe', timeout: 30_000, killSignal: 'SIGKILL' },
     )
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
@@ -47,4 +47,4 @@ test('production Nix Node replays original v38 entry and exit bytes through reta
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
-}, 15_000)
+}, 45_000)

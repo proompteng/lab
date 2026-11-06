@@ -43,6 +43,11 @@ update any deployed manifest or activation request. Keeping v38 build metadata o
 image build, so that mismatch is not used as a release gate. The draft hold and reviewed authority ordering remain
 mandatory even when the source image builds successfully.
 
+The existing Kargo contract tests require the sealed mandate and runtime manifests to agree with that compiled
+image identity. They intentionally remain unchanged and reject this source-only draft's v39/v38 mismatch until
+the reviewed deactivation and coordinated binding changes below are ready. A passing image build does not make
+those delivery checks optional; neither their expectations nor the deployed bindings are rewritten in this draft.
+
 `capitalActivationRequestIdentityIsCurrent` compares the exact protocol hash, parameter hash, schema version,
 strategy name and behavior hash. `researchCapitalRecoveryRequestIsCompatible` enforces the same identity before
 durable recovery. A v38 mandate or build-lineage continuation cannot authorize v39. The Research grant class,
