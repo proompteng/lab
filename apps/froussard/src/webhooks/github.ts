@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto'
 import type { Webhooks } from '@octokit/webhooks'
 import { Effect, pipe } from 'effect'
 import type { Effect as EffectType } from 'effect/Effect'
-import * as Either from 'effect/Either'
+import * as Result from 'effect/Result'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import * as TSemaphore from 'effect/TSemaphore'
+import * as Semaphore from 'effect/Semaphore'
 
 import type { AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
@@ -16,7 +16,7 @@ import { GithubService } from '@/services/github/service'
 import type { KafkaProducer } from '@/services/kafka'
 
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
-import { handlePullRequestEvent } from './github/events/pull-request'
+import { handlePullRequestEvent, handleReadinessEvent } from './github/events/pull-request'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
 import type { IdempotencyStore } from './idempotency-store'
 import type { WebhookConfig } from './types'
@@ -113,49 +113,56 @@ const extractRepositoryFromUrl = (repositoryUrl: string): string | undefined => 
 }
 
 const AtlasContextSchema = Schema.Struct({
-  repository: Schema.optionalWith(
-    Schema.Struct({
-      full_name: Schema.optionalWith(Schema.String, { nullable: true }),
-      default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
+  repository: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        full_name: Schema.optional(Schema.NullOr(Schema.String)),
+        default_branch: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
   ),
-  issue: Schema.optionalWith(
-    Schema.Struct({
-      repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
+  issue: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        repository_url: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
   ),
-  pull_request: Schema.optionalWith(
-    Schema.Struct({
-      base: Schema.optionalWith(
-        Schema.Struct({
-          ref: Schema.optionalWith(Schema.String, { nullable: true }),
-          repo: Schema.optionalWith(
+  pull_request: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        base: Schema.optional(
+          Schema.NullOr(
             Schema.Struct({
-              full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+              ref: Schema.optional(Schema.NullOr(Schema.String)),
+              repo: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({
+                    full_name: Schema.optional(Schema.NullOr(Schema.String)),
+                  }),
+                ),
+              ),
             }),
-            { nullable: true },
           ),
-        }),
-        { nullable: true },
-      ),
-      head: Schema.optionalWith(
-        Schema.Struct({
-          sha: Schema.optionalWith(Schema.String, { nullable: true }),
-        }),
-        { nullable: true },
-      ),
-    }),
-    { nullable: true },
+        ),
+        head: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              sha: Schema.optional(Schema.NullOr(Schema.String)),
+            }),
+          ),
+        ),
+      }),
+    ),
   ),
-  ref: Schema.optionalWith(Schema.String, { nullable: true }),
-  after: Schema.optionalWith(Schema.String, { nullable: true }),
-  head_commit: Schema.optionalWith(
-    Schema.Struct({
-      id: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
+  ref: Schema.optional(Schema.NullOr(Schema.String)),
+  after: Schema.optional(Schema.NullOr(Schema.String)),
+  head_commit: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        id: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
   ),
 })
 
@@ -163,9 +170,9 @@ const toOptionalString = (value: unknown) =>
   typeof value === 'string' && value.trim().length > 0 ? Option.some(value) : Option.none()
 
 const extractAtlasContext = (payload: unknown): { repository?: string; ref?: string; commit?: string } => {
-  const decoded = Schema.decodeUnknownEither(AtlasContextSchema)(payload)
-  if (Either.isLeft(decoded)) return {}
-  const value = decoded.right
+  const decoded = Schema.decodeUnknownResult(AtlasContextSchema)(payload)
+  if (Result.isFailure(decoded)) return {}
+  const value = decoded.success
 
   const repository = pipe(
     toOptionalString(value.repository?.full_name),
@@ -174,7 +181,7 @@ const extractAtlasContext = (payload: unknown): { repository?: string; ref?: str
       pipe(
         toOptionalString(value.issue?.repository_url),
         Option.map(extractRepositoryFromUrl),
-        Option.flatMap(Option.fromNullable),
+        Option.flatMap(Option.fromNullishOr),
       ),
     ),
     Option.getOrElse(() => undefined),
@@ -319,15 +326,15 @@ export const createGithubWebhookHandler = ({
   idempotencyStore,
 }: GithubWebhookDependencies) => {
   const githubService = runtime.runSync(
-    Effect.gen(function* (_) {
+    Effect.gen(function* () {
       return yield* GithubService
     }),
   )
-  const githubSemaphore = TSemaphore.unsafeMake(4)
+  const githubSemaphore = Semaphore.makeUnsafe(4)
 
   const runGithub = <A, E>(
     factory: () => EffectType<A, E, AppLogger | AppConfigService | GithubService | KafkaProducer>,
-  ) => runtime.runPromise(TSemaphore.withPermits(githubSemaphore, 1)(factory()))
+  ) => runtime.runPromise(Semaphore.withPermits(githubSemaphore, 1)(factory()))
 
   return async (rawBody: string, request: Request): Promise<Response> => {
     const signatureHeader = request.headers.get('x-hub-signature-256')
@@ -463,6 +470,17 @@ export const createGithubWebhookHandler = ({
         }
       }
 
+      await handleReadinessEvent({
+        parsedPayload,
+        headers,
+        config,
+        executionContext,
+        deliveryId,
+        actionValue,
+        senderLogin,
+        eventName,
+      })
+
       if (eventName === 'push') {
         void triggerAtlasEnrichment({
           config: config.atlas,
@@ -510,6 +528,7 @@ export const createGithubWebhookHandler = ({
         },
       )
     } catch (error) {
+      idempotencyStore.release(`github:${deliveryId}`)
       logger.error(
         { err: error, deliveryId, eventName, action: actionValue ?? null, identifiers },
         'failed to enqueue github webhook event',
