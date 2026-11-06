@@ -14,7 +14,10 @@ export default Effect.gen(function* () {
   // A reviewed OBSERVE cutover and native settlement must precede this source release.
   // This migration never changes authority, grants, mandates, or retained financial evidence.
   yield* sql`DO $cutover$ BEGIN
-    IF EXISTS (SELECT 1 FROM authority_state WHERE effective <> 'OBSERVE')
+    IF EXISTS (
+      SELECT 1 FROM authority_state WHERE maximum IS DISTINCT FROM 'OBSERVE'
+        OR effective IS DISTINCT FROM 'OBSERVE' OR kill_state IS DISTINCT FROM 'CLEAR' OR reason IS NOT NULL
+    )
       OR EXISTS (SELECT 1 FROM intents WHERE state <> 'TERMINAL')
       OR EXISTS (SELECT 1 FROM autonomous_cycles WHERE state IN ('PENDING', 'ACTIVE'))
       OR EXISTS (
@@ -47,18 +50,20 @@ export default Effect.gen(function* () {
           SELECT status, reconciled_at FROM reconciliations r WHERE r.account_id = g.account_id
           ORDER BY reconciled_at DESC, reconciliation_id DESC LIMIT 1
         ) latest ON true
-        WHERE a.maximum = 'PAPER' AND (
+        WHERE
           latest.status IS DISTINCT FROM 'EXACT'
           OR latest.reconciled_at IS NULL
           OR latest.reconciled_at > clock_timestamp()
           OR latest.reconciled_at < clock_timestamp() - interval '60 seconds'
           OR latest.reconciled_at < (SELECT max(occurred_at) FROM mutation_events m JOIN intents i USING (intent_id) WHERE i.account_id = g.account_id)
-        )
       )
       OR EXISTS (
-        SELECT 1 FROM jev_evaluation_requests request
-        LEFT JOIN jev_evaluation_resolutions resolution USING (request_id)
-        WHERE resolution.request_id IS NULL AND (request.payload->>'expiresAt')::timestamptz > clock_timestamp()
+        WITH unresolved AS MATERIALIZED (
+          SELECT request.payload FROM jev_evaluation_requests request
+          LEFT JOIN jev_evaluation_resolutions resolution USING (request_id)
+          WHERE resolution.request_id IS NULL
+        )
+        SELECT 1 FROM unresolved WHERE (payload->>'expiresAt')::timestamptz > clock_timestamp()
       )
     THEN
       RAISE EXCEPTION 'effective-entry-allowance cutover requires terminal cycles, OBSERVE authority, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims'

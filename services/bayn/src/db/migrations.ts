@@ -1,4 +1,5 @@
-import effectiveEntryAllowanceInput from '../../migrations/0183_effective_entry_allowance_input'
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
+import effectiveEntryObserveCutover from '../../migrations/0183_effective_entry_observe_cutover'
 import conditionalStatisticalQualification from '../../migrations/0182_conditional_statistical_qualification'
 import webullObserveCutover from '../../migrations/0179_webull_observe_cutover'
 import jevEntryWindowIndex from '../../migrations/0180_jev_entry_window_index'
@@ -185,7 +186,8 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
-  '183_effective_entry_allowance_input': effectiveEntryAllowanceInput,
+  '184_effective_entry_allowance_input': effectiveEntryAllowanceInput,
+  '183_effective_entry_observe_cutover': effectiveEntryObserveCutover,
   '179_webull_observe_cutover': webullObserveCutover,
   '178_webull_entry_context': webullEntryContext,
   '176_operational_source_records': operationalSourceRecords,

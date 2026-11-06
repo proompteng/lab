@@ -2,10 +2,10 @@
 
 ## Release boundary
 
-This is a draft executable protocol successor. Do not merge it into automatic delivery until the separate native
-deactivation and protocol-bound PAPER reactivation changes have been reviewed and ordered. The draft changes no
-GitOps activation manifest, SealedSecret, credential, capital mandate, account, or running authority. A refusing
-migration is a fail-closed protection, not a deployment plan or approval to interrupt PAPER service.
+This protocol successor follows the guarded v38 OBSERVE transition in PR #15720. Verify that transition's
+published image, native clear OBSERVE authority and settled account before merging this source change.
+The v39 source and all configured strategy bindings move together while the old mandate remains absent.
+A refusing migration protects the boundary; it does not perform native settlement or authorize PAPER activation.
 
 The defect is conflicting retained input metadata. v38 already caps entries at the original inference ask rounded
 upward to the broker tick, applying zero quote drift and zero limit slippage. Its numerical entry economics still
@@ -30,23 +30,19 @@ ten-second inference validity, universe and equity-entry/retained-crypto-exit sc
 | Effective entry allowances                 | 0/0                                                                | 0/0                                                                |
 | Raw shared protocol allowances             | 10/10                                                              | 10/10                                                              |
 
-The checked-in mandate annotation currently identifies request
+The retained v38 mandate removed by the OBSERVE transition identifies request
 `588976a7a41ea2b4d64d65597411634e0517cf31869c9051205c739add4c57ed`, with authored source
 `42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e` and authored image
 `sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a`.
-This annotation is in `argocd/applications/bayn/alpaca-sealedsecret.yaml`; it records identity, not permission to
-change the encrypted request. No encrypted or plaintext secret is copied into this document.
+Its former annotation in `argocd/applications/bayn/alpaca-sealedsecret.yaml` records identity, not permission to
+change the encrypted request. Preserve the validated request privately before removing it so the new request
+can reproduce its account, risk policy and limits exactly. No encrypted or plaintext secret belongs in this document.
 
-The draft also updates `nix/images/bayn.nix`'s compiled parameter/protocol constants and OCI labels to v39.
-These identify the successor image; `verify-build-contract` must verify them against the executable. They do not
-update any deployed manifest or activation request. Keeping v38 build metadata on v39 source correctly fails the
-image build, so that mismatch is not used as a release gate. The draft hold and reviewed authority ordering remain
-mandatory even when the source image builds successfully.
-
-The existing Kargo contract tests require the sealed mandate and runtime manifests to agree with that compiled
-image identity. They intentionally remain unchanged and reject this source-only draft's v39/v38 mismatch until
-the reviewed deactivation and coordinated binding changes below are ready. A passing image build does not make
-those delivery checks optional; neither their expectations nor the deployed bindings are rewritten in this draft.
+The source updates `nix/images/bayn.nix`'s compiled parameter/protocol constants and OCI labels, together with
+the corresponding strategy bindings in all three runtime manifests. `verify-build-contract` verifies the image
+identity against the executable. The existing Kargo tests remain unchanged: they require matching source
+bindings and the complete OBSERVE configuration while the sealed request, annotation and activation inputs
+are absent. Source publication and a passing image build do not create capital authority.
 
 `capitalActivationRequestIdentityIsCurrent` compares the exact protocol hash, parameter hash, schema version,
 strategy name and behavior hash. `researchCapitalRecoveryRequestIsCompatible` enforces the same identity before
@@ -57,21 +53,27 @@ turnover records are retained; this correction provides no permission to widen t
 
 ## Required reviewed ordering
 
-1. Keep this successor draft out of main while the v38 PAPER binding is active. Prepare the normal reviewed GitOps
-   native deactivation on a v38-compatible source. Remove the old activation request, kind and research lineage
-   inputs through the established OBSERVE-only path. The native controller must settle its work and record OBSERVE;
-   a manifest edit alone is not proof of settlement. Preserve credentials and existing account ownership.
-2. Verify terminal cycles/intents, no live broker orders, flat broker and ledger inventory, complete accounting,
-   zero unresolved mutations, fresh EXACT reconciliation after settlement, and no unexpired unresolved inference
-   request. Existing crypto positions retain their normal v38 exit/recovery path until flat. Do not force the
-   migration past a held position, an operator hold or stale reconciliation.
+1. Before changing the v38 binding, preserve its validated mandate privately and prove terminal cycles/intents,
+   no open broker orders, flat broker and ledger inventory, complete accounting, zero unresolved mutations,
+   fresh EXACT reconciliation and no unexpired unresolved inference request. Existing positions retain their
+   normal v38 exit/recovery path until flat. The configured-null successor cannot liquidate positions.
+2. Deliver PR #15720 through the normal v38 image/Kargo/Argo path. Migration 183 rechecks that settlement boundary
+   under locks and restricts only the exact clear v38 PAPER identity. Remove the sealed request, mandate
+   annotation, request/kind and lineage together; configuration removal alone cannot change durable authority.
+   Native preflight then admits the recognized restriction, serializes predecessor handoff and lets native
+   settlement plus a later fresh reconciliation create maximum/effective OBSERVE with kill CLEAR and no reason.
+   Verify that clear state, natural controller progress, absence of the Secret's old request key, unchanged
+   financial totals and fresh exact reconciliation before proceeding. Operator holds remain held.
 3. After that boundary, merge the reviewed v39 source with its corresponding source identity bindings. In
    `deployment.yaml`, `execution-controller.yaml` and `execution-activation.yaml`, update
    `BAYN_STRATEGY_PARAMETER_HASH`; update `BAYN_STRATEGY_PROTOCOL_HASH` wherever configured. Keep the activation
    request/kind/lineage absent while v39 starts in OBSERVE. Let main → immutable image → Kargo → Argo deliver the
    image and source bindings. Do not set an image digest or invoke activation manually.
-4. Migration 183 refuses non-OBSERVE authority and repeats the terminal/flat/settled/accounting/reconciliation/claim
-   checks under advisory and table locks. It changes only protocol admission constraints and functions. It retains
+4. Migration 184 requires maximum/effective OBSERVE, kill CLEAR and no restriction reason, and repeats the
+   terminal/flat/settled/accounting/reconciliation/claim checks under advisory and table locks. Reconciliation
+   covers the current OBSERVE account after its last mutation; it is not limited to PAPER generations. Unresolved
+   request matching is materialized before inspecting expiry so resolved historical payloads are not decoded.
+   It changes only protocol admission constraints and functions. It retains
    v38 rows and permits their existing terminal receipts, while new requests and dispatch require v39. New
    economics must be null for an unfunded candidate or carry numeric 0/0. Mixed versions, 10-bp metadata, string
    zeros and missing fields fail closed. The migration never updates authority or financial evidence.
@@ -89,10 +91,16 @@ turnover records are retained; this correction provides no permission to widen t
    original inference caps and preserve existing exits and accounting. Input consistency alone does not prove
    improved profitability.
 
-The source-only draft deliberately leaves step 3's GitOps identity update and steps 1/6's activation changes for
-that coordinated review. Replacing only the Secret, editing an annotation, extending v38 build lineage, suppressing
-the migration guard, or directly calling the activation handler is not a valid cutover. Follow the existing native
-deactivation/mandate-rotation rollback procedure if activation has occurred.
+Step 3's matching GitOps strategy bindings are included with this source. Step 6 requires the immutable v39
+build produced after the verified OBSERVE boundary. Replacing only the Secret, editing an annotation, extending
+v38 build lineage, suppressing migration guards or invoking the activation handler manually cannot complete it.
+
+Before migration 184, rollback can restore the complete reviewed v38 source/mandate/lineage through native
+same-account activation from verified clear OBSERVE. After migration 184, retain a v39-compatible runtime:
+the database no longer admits v38 executable writes. Before the new mandate realizes, reverting its entire
+binding preserves v39 OBSERVE. After v39 PAPER realization, removing that mandate requires an exact-v39 guarded
+restriction, flat settlement and another native OBSERVE transition; the v38-only migration 183 cannot do it.
+A compatible image-only rollback retains the v39 mandate and uses normal Kargo lineage and native handoff.
 
 ## Regression evidence
 
@@ -104,7 +112,7 @@ reconstruct those exact bytes and reject rehashed source substitution. Current e
 Tests compare every other economics field across v38/v39 for equity and crypto, including off-tick asks and crypto
 fee tiers; they also verify unchanged raw 10-bp settings, rejection of unknown/mixed protocols, and refusal of the
 v38 mandate by both fresh activation and recovery. Existing historical protocol/cost tests remain part of the
-service suite. The existing PostgreSQL integration shard exercises pre183→183 migration with retained v38 requests
+service suite. The existing PostgreSQL integration shard exercises pre184→184 migration with retained v38 requests
 and claims, completion of their original terminal receipt, current-v39 insertion, malformed-input rejection and
 refusal while cycles or PAPER authority remain active. CI supplies the isolated real PostgreSQL proof.
 
@@ -144,5 +152,5 @@ remains type-checked and formatted; its temporary bundle and fixtures are not in
 operator commands use compiled Node bundles. No runtime skip, alternate hash, launcher or renderer change is
 introduced.
 
-Migration number 0183 was rechecked against main `fbaf67ff61354c2625851510f870e75ab248ffc6`, whose latest migration
-is 0182. Renumber and repeat the migration proof if another migration lands before this deferred cutover.
+Migration 0183 belongs to the prerequisite v38 OBSERVE transition in PR #15720; this successor uses 0184.
+Recheck main's migration sequence before delivery and repeat the migration proof if that sequence changes.

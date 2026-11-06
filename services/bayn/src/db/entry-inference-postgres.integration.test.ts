@@ -1,4 +1,4 @@
-import effectiveEntryAllowanceInput from '../../migrations/0183_effective_entry_allowance_input'
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
@@ -842,7 +842,7 @@ integration('committed sequential provider handoff', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 183))),
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 184))),
           table: 'schema_migrations',
         })
         yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
@@ -2277,10 +2277,10 @@ integration('committed sequential provider handoff', () => {
             UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
               updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${request.cycleId}`
             yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
-            yield* sql`CREATE TEMP TABLE authority_state (generation_hash text, maximum text, effective text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE authority_state (generation_hash text, maximum text, effective text, kill_state text, reason text) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
             yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
-            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER','PAPER')`
+            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER','PAPER','CLEAR',NULL)`
             yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','EXACT',clock_timestamp(),${'b'.repeat(64)})`
             const authorityBefore = yield* sql`SELECT * FROM authority_state`
             const requestBefore =

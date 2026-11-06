@@ -229,8 +229,8 @@ reference series; a reference explicitly included in a research snapshot must st
 Migration 178 admits only v38 requests and dispatch after the existing flat, reconciled cutover. Original v35, v36 and v37 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
 
 The current source uses `jev` protocol v39, verified numerical input v24, batch v8 and entry inference input v8. Its
-[reviewed cutover](../../docs/bayn/effective-entry-allowance-cutover.md) is separate from the still-v38 deployed mandate;
-the draft source change leaves GitOps activation and sealed authority unchanged. It retains the
+[reviewed cutover](../../docs/bayn/effective-entry-allowance-cutover.md) follows the guarded v38 OBSERVE transition;
+source and GitOps strategy bindings move together while the old mandate remains absent. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks pinned Jev 1.13 for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -1131,10 +1131,10 @@ tick. Protocol v39 reports effective values of 0 bps for `numericalState.entryEc
 and `maximumEntryLimitSlippageBps`. Retained v38 inputs still record the original 10 bps values and reconstruct their
 unchanged request and batch hashes. Both versions enforce the same zero entry allowances and broker tick rounding.
 Shared protocol fields remain 10 bps because liquidation and proposal stop economics still consume them. Fees,
-funding, exit prices and thresholds are unchanged. Migration 183 requires already-OBSERVE authority and a settled,
+funding, exit prices and thresholds are unchanged. Migration 184 requires clear OBSERVE authority and a settled,
 flat, freshly reconciled account; it does not restrict, rotate or activate authority itself. The
-[cutover procedure](../../docs/bayn/effective-entry-allowance-cutover.md) must be reviewed before this draft is merged
-into the automatic delivery path.
+[cutover procedure](../../docs/bayn/effective-entry-allowance-cutover.md) requires verified native settlement
+after migration 183 before v39 enters the automatic delivery path.
 
 Quote-backed instrument-quantized closes use LIMIT/DAY equity or LIMIT/IOC crypto orders with an allowance bounded
 by the existing risk policy, currently ten basis points from the verified bid. Close prices round toward the quote
