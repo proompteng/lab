@@ -50,7 +50,11 @@ import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-po
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
-import { ExecutionControllerStatusStore, type ExecutionControllerStatus } from '../execution/controller-status'
+import {
+  ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+} from '../execution/controller-status'
 import type { AdvanceExecutionCommand } from '../execution/advance'
 import { executionControllerPlanHash } from '../execution/controller'
 import { executeNativeExecutionAdvance } from '../composition/native-execution-runtime'
@@ -1686,9 +1690,20 @@ durableTest.each(
             }
           }
           expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
-          if (crashedCommand === undefined || abandoned === undefined) throw new Error('Missing pre-projection crash')
+          if (
+            crashedCommand === undefined ||
+            abandoned === undefined ||
+            !executionControllerStatusHasCompletion(abandoned)
+          )
+            throw new Error('Missing pre-projection crash')
           const beforeProjection = yield* controllerStatuses.read(controllerKey)
           expect(beforeProjection?.nextSequence ?? 0).toBe(crashedCommand.sequence)
+          const readCompletionObservations = sql<{ id: string; status: unknown }>`
+            SELECT observation_id::text AS id, status FROM execution_controller_observations
+            WHERE controller_key=${controllerKey} AND (status->>'epoch')::bigint=${crashedCommand.epoch}
+              AND (status->>'last_sequence')::bigint=${crashedCommand.sequence}
+            ORDER BY observation_id`
+          expect(yield* readCompletionObservations).toEqual([])
           const originalMutations = yield* sql`SELECT intent_id, request_hash FROM mutation_events
             WHERE event_type = 'SUBMIT_STARTED' ORDER BY intent_id`
           expect(originalMutations).toHaveLength(1)
@@ -1710,6 +1725,24 @@ durableTest.each(
           ).toEqual(originalMutations)
           expect((yield* broker.snapshot).orders.map(({ order }) => order.clientOrderId)).toEqual(originalOrderIds)
           expect(committed.observation?.executionIssuedAt).toBe(replayCommand.issuedAt)
+          expect(committed.outcome.receiptHash).not.toBe(abandoned.lastReceiptHash)
+          const committedObservations = yield* readCompletionObservations
+          // The status trigger retains the completion; a fresh statement separately witnesses its commit.
+          expect(committedObservations).toHaveLength(2)
+          expect(committedObservations[0]?.status).toEqual(committedObservations[1]?.status)
+          expect(committedObservations[0]?.status).toEqual(
+            expect.objectContaining({
+              controller_key: controllerKey,
+              plan_hash: executionControllerPlanHash,
+              active: true,
+              epoch: crashedCommand.epoch,
+              next_sequence: crashedCommand.sequence + 1,
+              last_sequence: crashedCommand.sequence,
+              last_outcome: committed.outcome._tag,
+              last_receipt_hash: committed.outcome.receiptHash,
+              last_pass: committed.observation,
+            }),
+          )
           expect(yield* controllerStatuses.project(abandoned).pipe(Effect.flip)).toMatchObject({ failure: 'conflict' })
           expect(
             yield* executeNativeExecutionAdvance(
@@ -1722,12 +1755,7 @@ durableTest.each(
               executionControllerPlanHash,
             ),
           ).toEqual(committed)
-          expect(
-            yield* sql`SELECT count(*)::int AS observations,
-            count(DISTINCT status->>'last_receipt_hash')::int AS receipts
-            FROM execution_controller_observations WHERE controller_key=${controllerKey}
-              AND (status->>'last_sequence')::bigint=${crashedCommand.sequence}`,
-          ).toEqual([{ observations: 1, receipts: 1 }])
+          expect(yield* readCompletionObservations).toEqual(committedObservations)
           const restricted = yield* readAuthority
           expect(restricted).toMatchObject({
             maximum: Authority.Execution,

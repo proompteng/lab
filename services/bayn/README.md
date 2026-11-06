@@ -938,6 +938,11 @@ Issued-at latency describes the attempt whose completion was committed; it canno
 cover that attempt's earlier schedule window. Its value alone is not evidence of improved storage or delivery latency.
 This removes one clock acknowledgement round trip; it does not bound Restate storage or delivery latency.
 
+Removing the clock operation changes the journal shape. Roll this out through the existing immutable
+`RestateDeployment` revisions: in-flight invocations must drain on their pinned old deployment, while new invocations
+use the new revision. Do not force-repin old invocations to this journal shape. Controller state and tick payload
+schemas remain unchanged. See [Restate service versioning](https://docs.restate.dev/services/versioning).
+
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
