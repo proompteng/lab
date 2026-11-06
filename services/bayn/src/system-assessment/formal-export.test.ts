@@ -10,6 +10,9 @@ const ScopeSchema = Schema.fromJsonString(
   Schema.Struct({
     modules: Schema.Array(Schema.String),
     declarations: Schema.Array(Schema.Struct({ name: Schema.String, module: Schema.String })),
+    runtimeImplementations: Schema.Array(
+      Schema.Struct({ name: Schema.String, module: Schema.String, safety: Schema.Literals(['partial', 'unsafe']) }),
+    ),
   }),
 )
 const readScope = (path: string) =>
@@ -53,11 +56,22 @@ formal('complete owned Lean proof export', () => {
       'Bayn.registered_expected_profit_bound',
       'Bayn.conditional_qualification_preserves_every_requirement',
       'Bayn.single_session_without_arbitrary_activity_quota_is_reachable',
+      'Bayn.bestMomentum',
+      'Bayn.expenseCoverage',
+      'Bayn.latestBatchCompletion',
+      'Bayn.latestCompatibleEntryWindow',
+      'Bayn.sampleWindow',
+      'Bayn.tariffCoveredUntil',
+      'Bayn.weightedAllocationsAux',
       'evaluate',
       'main',
     ])
       expect(names.has(name)).toBe(true)
     expect(scope.declarations.every((declaration) => scope.modules.includes(declaration.module))).toBe(true)
+    expect(
+      scope.runtimeImplementations.some((implementation) => implementation.name === 'Bayn.bestMomentum._unsafe_rec'),
+    ).toBe(true)
+    expect(scope.declarations.some((declaration) => declaration.name === 'Bayn.bestMomentum._unsafe_rec')).toBe(false)
   })
 
   test('module ownership includes foreign namespaces and unused private proofs, with full used dependencies', () => {
@@ -71,8 +85,15 @@ formal('complete owned Lean proof export', () => {
         join(fixture, 'ScopeOwned.lean'),
         'module\npublic import ScopeDependency\npublic section\nnamespace OutsideBayn\ntheorem owned : True := Dependency.needed\nprivate theorem hidden : True := True.intro\nend OutsideBayn\n',
       )
-      writeFileSync(join(fixture, 'ScopeBadOwned.lean'), 'axiom requiredForbidden : False\n')
-      for (const name of ['ScopeDependency', 'ScopeOwned', 'ScopeBadOwned'])
+      writeFileSync(
+        join(fixture, 'ScopeBadOwned.lean'),
+        'axiom requiredForbidden : False\ntheorem invalidOwnedProof : False := requiredForbidden\n',
+      )
+      writeFileSync(
+        join(fixture, 'ScopeUnsafeOwned.lean'),
+        'unsafe def uncheckable : Nat := 0\ntheorem stillFine : True := True.intro\n',
+      )
+      for (const name of ['ScopeDependency', 'ScopeOwned', 'ScopeBadOwned', 'ScopeUnsafeOwned'])
         success(
           ['lake', 'env', 'lean', '-R', fixture, '-o', join(fixture, `${name}.olean`), join(fixture, `${name}.lean`)],
           fixture,
@@ -99,6 +120,9 @@ formal('complete owned Lean proof export', () => {
         true,
       )
       expect(run(['lake', 'env', 'lean', '--run', 'Export.lean', manifest], fixture).code).not.toBe(0)
+      const unsafe = run(['lake', 'env', 'lean', '--run', 'Export.lean', manifest, 'ScopeUnsafeOwned'], fixture)
+      expect(unsafe.code).not.toBe(0)
+      expect(unsafe.errors + unsafe.output).toContain('Non-logical model declaration')
       if (process.platform === 'linux') {
         expect(run(['lake', 'check', '--from-export', valid, '--paranoid']).code).toBe(0)
         expect(run(['lake', 'check', '--from-export', invalid, '--paranoid']).code).not.toBe(0)

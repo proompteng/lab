@@ -26,8 +26,12 @@ The command runs `lake -q build`, `bash check.sh`, and the production conformanc
 runs the PostgreSQL handoff, recovery, and assessment suites against its isolated database. `check.sh` builds every
 tracked model module in a sandbox, including roots outside the default target graph, and passes the retained export
 to pinned `lake check --from-export ... --paranoid`.
-Every tracked model module is included. `Export.lean` selects all declarations by their defining module, including
+Every tracked model module is included. `Export.lean` selects every logical declaration by its defining module, including
 private declarations and namespaces outside `Bayn`. The pinned exporter includes their complete transitive dependencies.
+Compiler-generated unsafe or partial implementations are recorded separately; their total logical definitions remain
+roots. A non-internal unsafe or partial model declaration fails export. The checker inputs never substitute an executable
+implementation for the logical definition it implements.
+Selection affects roots only; the pinned exporter's dependency traversal is unchanged.
 Unreferenced theorems from imported libraries are not additional roots. The generated scope manifest records every
 selected declaration and module; regression fixtures exercise private roots, foreign namespaces, used dependencies,
 unrelated library axioms and rejection of an owned nonstandard axiom. All six checkers and the axiom allowlist remain
