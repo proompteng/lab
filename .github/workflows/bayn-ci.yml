@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       bayn: ${{ github.event_name != 'pull_request' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn }}
+      formal: ${{ github.event_name != 'pull_request' && steps.manual.outputs.formal || fromJSON(steps.filter.outputs.affected).formal }}
       image: ${{ github.event_name != 'pull_request' && steps.manual.outputs.image || fromJSON(steps.filter.outputs.affected).image }}
     steps:
       - uses: actions/checkout@v5
@@ -31,9 +32,11 @@ jobs:
           workspaces: |
             bayn: ['', 'services/bayn', 'packages/scripts']
             image: ['', 'services/bayn']
+            formal: ['', 'services/bayn']
           filters: |
             bayn:
               - 'services/bayn/**'
+              - '!services/bayn/formal/**'
               - 'services/dorvud/**'
               - 'packages/scripts/src/bayn/**'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
@@ -61,8 +64,20 @@ jobs:
               - 'bunfig.toml'
               - 'patches/**'
               - 'tsconfig.base.json'
+            formal:
+              - 'services/bayn/src/**'
+              - 'services/bayn/migrations/**'
+              - 'services/bayn/formal/**'
+              - 'services/bayn/package.json'
+              - 'services/bayn/tsconfig*.json'
+              - 'tsconfig.base.json'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - '.github/workflows/bayn-formal.yml'
+              - '.github/workflows/bayn-ci.yml'
             image:
               - 'services/bayn/**'
+              - '!services/bayn/formal/**'
               - 'nix/images/bayn.nix'
               - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
@@ -91,11 +106,12 @@ jobs:
           {
             echo 'bayn=true'
             echo 'image=false'
+            echo 'formal=true'
           } >> "$GITHUB_OUTPUT"
 
   formal-verification:
     needs: changes
-    if: needs.changes.outputs.bayn == 'true'
+    if: needs.changes.outputs.formal == 'true'
     uses: ./.github/workflows/bayn-formal.yml
 
   pr-checks:
@@ -158,7 +174,7 @@ jobs:
           env -u BAYN_ALPACA_ACCOUNT_ID
           -u BAYN_ALPACA_KEY_ID
           -u BAYN_ALPACA_SECRET_KEY
-          bun test --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
+          bun test src tools --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
           --timings=tools/ci-unit-timings.json --update-timings
           --reporter=junit --reporter-outfile=unit-results.xml
       - name: Retain test durations and results
@@ -485,6 +501,7 @@ jobs:
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
+          FORMAL_RELEVANT: ${{ needs.changes.outputs.formal }}
           FORMAL_RESULT: ${{ needs.formal-verification.result }}
           GEPA_RESULT: ${{ needs.gepa.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
@@ -501,13 +518,16 @@ jobs:
             echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
             exit 1
           fi
+          if [[ "${FORMAL_RELEVANT}" == 'true' && "${FORMAL_RESULT}" != 'success' ]]; then
+            echo "FORMAL_RESULT must be success for proof or conformance inputs, got ${FORMAL_RESULT}" >&2
+            exit 1
+          fi
           if [[ "${BAYN_RELEVANT}" != 'true' ]]; then
             echo 'No Bayn release inputs changed; the required gate is satisfied without running Bayn-specific jobs.'
             exit 0
           fi
           for result_name in \
             PR_CHECKS_RESULT \
-            FORMAL_RESULT \
             GEPA_RESULT \
             UNIT_RESULT \
             ARCHIVE_RESULT \

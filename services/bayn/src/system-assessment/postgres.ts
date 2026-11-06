@@ -77,6 +77,13 @@ export const initializeQualificationHistory = (input: unknown, verifiedSources: 
 export const registerSystemQualification = (input: unknown, verifiedSources: ReadonlySet<string>) =>
   Effect.gen(function* () {
     const { registration, registrationHash } = yield* Effect.fromResult(validateSystemRegistration(input))
+    if (
+      registration.schemaVersion === 'bayn.system-registration.v4' &&
+      registration.statisticalPlan.supports.some((support) => !verifiedSources.has(support.sourceHash))
+    )
+      return yield* new SystemAssessmentError({
+        message: 'Registration requires verified statistical support sources before the first open',
+      })
     if (registration.costAllocationPlans.some((plan) => !verifiedSources.has(plan.basisSourceHash)))
       return yield* new SystemAssessmentError({
         message: 'Registration requires verified cost allocation basis artifacts before the first open',

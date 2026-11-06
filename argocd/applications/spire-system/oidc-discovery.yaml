@@ -5,7 +5,7 @@ metadata:
   namespace: spire-system
 spec:
   secretName: oidc-discovery-proompteng-ai-tls
-  dnsNames: [oidc-discovery.proompteng.ai]
+  dnsNames: [oidc.proompteng.ai]
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
@@ -17,7 +17,7 @@ metadata:
   name: oidc-discovery
   namespace: spire-system
 spec:
-  serverName: oidc-discovery.proompteng.ai
+  serverName: oidc.proompteng.ai
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -28,7 +28,7 @@ spec:
   entryPoints: [websecure]
   routes:
     - kind: Rule
-      match: Host(`oidc-discovery.proompteng.ai`) && Method(`GET`) && (Path(`/.well-known/openid-configuration`) || Path(`/keys`))
+      match: Host(`oidc.proompteng.ai`) && Method(`GET`) && (Path(`/.well-known/openid-configuration`) || Path(`/keys`))
       services:
         - name: spire-spiffe-oidc-discovery-provider
           port: 443

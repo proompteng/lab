@@ -22,7 +22,8 @@ import { JevEvaluationStore } from './evaluation'
 import { JevExitReason } from './exit'
 import { nativeJevFixture } from './native.test-support'
 import { JevPositionStore, JevPurpose } from './portfolio'
-import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime'
+import { evaluateJevObservation, evaluateJevPositionManagement, loadNativeEntryObservation } from './runtime'
+import { ActiveExecutionStages, type ActiveExecutionStage } from '../telemetry'
 import { utcInstantFromEpochMillis } from '../time'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { defaultJevProtocolDocument } from './protocol'
@@ -271,6 +272,42 @@ describe('entry-bound native position exits', () => {
 })
 
 describe('entry observation admission', () => {
+  test('observation construction runs inside its observed stage', async () => {
+    const fixture = nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:30:32.000Z')
+    const active = new Map<symbol, ActiveExecutionStage>()
+    let reads = 0
+    const snapshot = {
+      ...fixture.snapshot,
+      get bars() {
+        reads++
+        expect([...active.values()].some(({ stage }) => stage === 'bayn.jev.observation')).toBe(true)
+        return fixture.snapshot.bars
+      },
+    }
+    const result = await Effect.runPromise(
+      loadNativeEntryObservation(
+        {
+          cycleId: fixture.observation.payload.cycleId,
+          authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+          protocol: fixture.protocol,
+          portfolio: fixture.portfolio,
+        },
+        snapshot.manifest.rangeEndAt,
+        Effect.succeed(snapshot),
+      ).pipe(
+        Effect.provideService(ActiveExecutionStages, active),
+        Effect.provideService(CandidateObservationStore, {
+          record: () => Effect.die('Observation construction must not persist'),
+          latestJevWindowEnd: () => Effect.succeed(Option.none()),
+        }),
+        Effect.provide(Logger.layer([])),
+      ),
+    )
+    expect(reads).toBeGreaterThan(0)
+    expect(active.size).toBe(0)
+    expect(result.observation.contentHash).toBe(fixture.observation.contentHash)
+  })
+
   test.each([
     ['failed', 'INFERENCE_INCOMPLETE', 'INFERENCE_UNAVAILABLE'],
     ['expired', 'OUTSIDE_VALIDITY_WINDOW', 'INFERENCE_EXPIRED'],

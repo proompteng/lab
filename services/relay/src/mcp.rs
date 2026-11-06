@@ -1,6 +1,6 @@
 use crate::{
     connector::{Connector, Failure, Normalized, Output},
-    credentials::Authentication,
+    credentials::{Authentication, Credentials},
     process::Profile,
     registered::{Operation, Prepared, RegisteredOperation},
 };
@@ -89,6 +89,7 @@ pub struct McpOperation {
 pub struct Mcp {
     id: String,
     transport: Transport,
+    credentials: Credentials,
     operations: BTreeMap<String, (RegisteredOperation, String)>,
 }
 
@@ -146,6 +147,10 @@ impl Mcp {
         operations: Vec<McpOperation>,
     ) -> anyhow::Result<Self> {
         validate(&transport, &operations)?;
+        let credentials = Credentials::new(match &transport {
+            Transport::Http { authentication, .. } => authentication.clone(),
+            Transport::Stdio { .. } => Authentication::None,
+        })?;
         let mut registered = BTreeMap::new();
         for entry in operations {
             let operation = RegisteredOperation::new(entry.operation)?;
@@ -154,6 +159,7 @@ impl Mcp {
         Ok(Self {
             id,
             transport,
+            credentials,
             operations: registered,
         })
     }
@@ -254,9 +260,7 @@ impl Mcp {
                     .map_err(|error| provider_error(&error, "upstream MCP initialization failed"))?
             }
             Transport::Http {
-                endpoint,
-                ca_file,
-                authentication,
+                endpoint, ca_file, ..
             } => {
                 let client = crate::mcp_http::Client::new(ca_file.as_deref())?;
                 let mut config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(endpoint.clone())
@@ -264,7 +268,7 @@ impl Mcp {
                 config.retry_config = std::sync::Arc::new(
                     rmcp::transport::common::client_side_sse::NeverRetry::default(),
                 );
-                let config = if let Some(token) = authentication.bearer(bearer).await? {
+                let config = if let Some(token) = self.credentials.bearer(bearer).await? {
                     config.auth_header(token)
                 } else {
                     config
@@ -291,11 +295,7 @@ impl Connector for Mcp {
     }
     fn provider(&self) -> Option<crate::credentials::Provider<'_>> {
         match &self.transport {
-            Transport::Http {
-                endpoint,
-                authentication,
-                ..
-            } => authentication.provider(endpoint),
+            Transport::Http { endpoint, .. } => self.credentials.provider(endpoint),
             Transport::Stdio { .. } => None,
         }
     }

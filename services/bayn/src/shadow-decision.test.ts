@@ -26,6 +26,7 @@ import type { Statement } from 'effect/sql/Statement'
 import { CycleStore, type CycleStoreShape } from './cycle/store/model'
 import { CycleStoreLive, makeCycleStore, withWriterFenceCycleStore } from './cycle/store/postgres'
 import { makeCycleQueries } from './cycle/store/queries'
+import { decodeDecisionInput } from './cycle/store/rows'
 import { DecisionEvidenceMismatch, cycleStoreError, runCycleStore } from './cycle/store/model'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from './execution/writer-fence'
 import { unusedEntryExpiresAt } from './cycle/entry-admission'
@@ -64,7 +65,7 @@ import { prepareMutationIntent } from './observe-composition/mutation-intent-int
 import type { ReconciliationPassResult } from './reconciler'
 
 import { bindCycleExecutionSession } from './execution-session'
-import { canonicalHashV1Result } from './hash'
+import { canonicalHashV1Result, sha256 } from './hash'
 import { CycleDecisionRow } from './forward-performance/postgres/model'
 import { verifyPerformanceDecisions } from './forward-performance/postgres/projection'
 import { IntradaySnapshotPurpose, type IntradaySnapshotRequest } from './market-data/intraday/model'
@@ -609,6 +610,36 @@ describe('intraday shadow decision', () => {
       }),
     )
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+    const bound = await Effect.runPromise(
+      decodeDecisionInput({
+        cycleId: document.bindings.cycleId,
+        document,
+        observedAt: document.createdAt,
+      }),
+    )
+    expect(bound.document).toBe(document)
+    expect(Object.isFrozen(document)).toBe(true)
+    expect(Object.isFrozen(document.bindings)).toBe(true)
+    expect(Object.isFrozen(document.plannerInput?.brokerState.account)).toBe(true)
+    expect(Object.isFrozen(input.plannerInput.brokerState.account)).toBe(false)
+    expect(document.plannerInput?.brokerState.account).not.toBe(input.plannerInput.brokerState.account)
+    expect(() => Object.assign(document.bindings, { accountId: 'mutated' })).toThrow()
+    const copy = structuredClone(document)
+    Object.assign(copy.bindings, { accountId: 'mutated' })
+    expect(
+      Result.isFailure(
+        await Effect.runPromise(
+          Effect.result(
+            decodeDecisionInput({
+              cycleId: document.bindings.cycleId,
+              document: copy,
+              observedAt: document.createdAt,
+            }),
+          ),
+        ),
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(makeExecutionDecisionDocument(document))).toBe(true)
   })
 
   test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
@@ -662,7 +693,7 @@ describe('intraday shadow decision', () => {
     },
   )
 
-  test('decision rereads reuse only exact fresh JSON and retain current database evidence', async () => {
+  test('decision rereads reuse only the actual stored digest and retain current database evidence', async () => {
     const original = await Effect.runPromise(buildObserveShadowDecision(fixture()))
     const alternate = await Effect.runPromise(buildObserveShadowDecision(fixture({}, false, 'another-account')))
     const persisted = structuredClone(original)
@@ -692,13 +723,13 @@ describe('intraday shadow decision', () => {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
               const [query, parameters] = statement.compile()
               if (query === 'clock_timestamp()') return statement
-              expect(query).toContain('document = $1::jsonb')
+              expect(query).toContain("sha256(convert_to(document::text, 'UTF8'))")
               expect(query).toContain('paper_cycle_completion_evidence_matches')
               expect(query).toContain('paper_cycle_generation_is_superseded')
-              const supplied: unknown = typeof parameters[0] === 'string' ? JSON.parse(parameters[0]) : parameters[0]
+              const supplied = parameters[1]
               suppliedDocuments.push(supplied)
-              const matches =
-                Result.getOrThrow(canonicalHashV1Result(supplied)) === Result.getOrThrow(canonicalHashV1Result(stored))
+              const digest = sha256(JSON.stringify(stored))
+              const matches = supplied === digest
               queries += 1
               const result = Effect.succeed(
                 missing
@@ -709,6 +740,7 @@ describe('intraday shadow decision', () => {
                         // mismatch must decode the complete newly read document.
                         document: matches ? null : stored,
                         matches_retained_document: matches,
+                        document_digest: digest,
                         execution_completion_evidence_matches: completion,
                         execution_generation_is_superseded: superseded,
                       },
@@ -728,16 +760,17 @@ describe('intraday shadow decision', () => {
           expect(cold).toEqual(original)
           if (cold === undefined) throw new Error('Expected cold document')
           expect(suppliedDocuments).toEqual([null])
-          Object.defineProperty(cold.bindings, 'accountId', { value: 'caller-poison' })
+          expect(() => Object.defineProperty(cold.bindings, 'accountId', { value: 'caller-poison' })).toThrow()
           const first = (yield* read())[0]
-          expect(suppliedDocuments[1]).toEqual(persisted)
+          expect(suppliedDocuments[1]).toEqual(sha256(JSON.stringify(persisted)))
           expect(first).toEqual(persisted)
           if (first === undefined) throw new Error('Expected retained document')
           expect(cycleDecisionStoreEvidence(first)).toEqual({
             executionCompletionEvidenceMatches: false,
             executionGenerationIsSuperseded: false,
           })
-          Object.defineProperty(first.bindings, 'accountId', { value: 'return-poison' })
+          expect(first.bindings).toBe(cold.bindings)
+          expect(() => Object.defineProperty(first.bindings, 'accountId', { value: 'return-poison' })).toThrow()
           completion = true
           superseded = true
           const second = (yield* read())[0]
@@ -751,23 +784,22 @@ describe('intraday shadow decision', () => {
           expect(Result.isFailure(yield* Effect.result(read()))).toBe(true)
           stored = alternate
           expect(yield* read()).toEqual([alternate])
-          // A seed (including one from a subsequently failed bind) cannot create a row.
+          // A retained read cannot create a missing row.
           missing = true
           expect(yield* read()).toEqual([])
-          expect(suppliedDocuments[5]).toEqual(alternate)
+          expect(suppliedDocuments[5]).toEqual(sha256(JSON.stringify(alternate)))
           expect(queries).toBe(6)
           missing = false
           stored = persisted
-          yield* store.retainValidatedDecision(persisted)
+          expect(yield* read()).toEqual([persisted])
           pauseNext = true
           const pending = yield* Effect.forkChild(read())
           yield* Deferred.await(started)
-          yield* store.retainValidatedDecision(alternate)
           stored = alternate
           expect(yield* read()).toEqual([alternate])
           yield* Deferred.succeed(released, undefined)
           expect(yield* Fiber.join(pending)).toEqual([persisted])
-          expect(queries).toBe(8)
+          expect(queries).toBe(9)
           const exotic = structuredClone(persisted)
           const alteredJson = new Proxy(exotic.bindings, {
             get(target, key, receiver) {
@@ -776,7 +808,6 @@ describe('intraday shadow decision', () => {
             },
           })
           Object.defineProperty(exotic, 'bindings', { value: alteredJson })
-          yield* store.retainValidatedDecision(exotic)
           stored = JSON.parse(JSON.stringify(exotic))
           expect(Result.isFailure(yield* Effect.result(read()))).toBe(true)
         }),
@@ -811,12 +842,13 @@ describe('intraday shadow decision', () => {
                 const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
                 const [query, parameters] = statement.compile()
                 if (query === 'clock_timestamp()') return statement
-                const supplied = parameters[0]
+                const supplied = parameters[1]
                 hasRetainedBody.push(supplied !== null)
                 return Effect.succeed([
                   {
                     document: supplied === null ? document : null,
                     matches_retained_document: supplied !== null,
+                    document_digest: sha256(JSON.stringify(document)),
                     execution_completion_evidence_matches: false,
                     execution_generation_is_superseded: false,
                   },
@@ -865,8 +897,9 @@ describe('intraday shadow decision', () => {
               if (mode === 'defect') return Effect.die(defect)
               if (mode === 'wait') return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
               const row = {
-                document: parameters[0] === null ? document : null,
-                matches_retained_document: parameters[0] !== null,
+                document: parameters[1] === null ? document : null,
+                matches_retained_document: parameters[1] !== null,
+                document_digest: sha256(JSON.stringify(document)),
                 execution_completion_evidence_matches: false,
                 execution_generation_is_superseded: false,
               }
