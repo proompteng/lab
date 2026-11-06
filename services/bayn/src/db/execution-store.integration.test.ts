@@ -52,15 +52,18 @@ import { brokerFeeLedgerPlan } from '../accounting/domain'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { LedgerPlan } from '../ledger-plan'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
-import { makeAccountingInterpreter } from './execution-store/accounting'
-import { makeBrokerEventInterpreter } from './execution-store/broker-events'
 import { BrokerRead, type BrokerReadShape, type FeeActivity } from '../broker/alpaca/model'
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { persistStableSnapshot } from '../simulation-reconciliation/broker-persistence'
 import { ReconciliationClock, runOnce } from '../reconciler'
 import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
-import { makeReconciliation, verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
+import {
+  readAccountingHistory,
+  makeReconciliation,
+  verifyBrokerStateVersion,
+  type BrokerSnapshot,
+} from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { postCashSettlements, prepareCashSettlements, readCashSettlements } from './cash-settlements'
@@ -280,7 +283,7 @@ const fillEvent = (id: string, side: OrderSide, quantityAtoms: string, priceMicr
   }
 }
 
-const ingestReconciliationCut = (openPosition: boolean, ledgerPostingRequired?: boolean) =>
+const ingestReconciliationCut = (openPosition: boolean, ledgerPostingRequired: boolean) =>
   Effect.gen(function* () {
     const events = yield* BrokerEventStore
     const account = openPosition ? accountEvent() : flatAccountEvent()
@@ -305,7 +308,7 @@ const ingestReconciliationCut = (openPosition: boolean, ledgerPostingRequired?: 
       fees: [],
       valuation,
       reconciledAt: observedAt,
-      ...(ledgerPostingRequired === undefined ? {} : { ledgerPostingRequired }),
+      ledgerPostingRequired,
     }
   })
 
@@ -887,25 +890,23 @@ describePostgres('PostgreSQL execution persistence', () => {
     )
   })
 
-  for (const posting of [undefined, true] as const) {
-    test(`retains two commits when ingestion posting is ${posting === undefined ? 'unknown' : 'required'}`, async () => {
-      const commits: string[] = []
-      const tracer = Tracer.make({
-        span(options) {
-          if (options.name === 'bayn.postgres.commit') commits.push(options.name)
-          return new Tracer.NativeSpan(options)
-        },
-      })
-      const result = await runtime.runPromise(
-        Effect.flatMap(ReconciliationStore, (store) =>
-          store.reconcile(accountId, ingestReconciliationCut(false, posting)),
-        ).pipe(Effect.provideService(Tracer.Tracer, tracer)),
-      )
-      expect(result.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
-      expect(commits).toHaveLength(2)
-      expect(result.snapshot).not.toHaveProperty('ledgerPostingRequired')
+  test('retains two commits when ingestion requires posting', async () => {
+    const commits: string[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        if (options.name === 'bayn.postgres.commit') commits.push(options.name)
+        return new Tracer.NativeSpan(options)
+      },
     })
-  }
+    const result = await runtime.runPromise(
+      Effect.flatMap(ReconciliationStore, (store) =>
+        store.reconcile(accountId, ingestReconciliationCut(false, true)),
+      ).pipe(Effect.provideService(Tracer.Tracer, tracer)),
+    )
+    expect(result.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
+    expect(commits).toHaveLength(2)
+    expect(result.snapshot).not.toHaveProperty('ledgerPostingRequired')
+  })
 
   test('commits fee preparation with its source cut before posting and recovers it before replaying ingestion', async () => {
     const commits: string[] = []
@@ -1085,7 +1086,12 @@ describePostgres('PostgreSQL execution persistence', () => {
               const snapshot = yield* events.ingestPositions(positionSnapshot(sourceHash, positions))
               const completed = yield* events.completeHistory([fill])
               expect(completed.has(fill.sourceEventId)).toBeTrue()
-              yield* accounting.verifyCompleted([fill])
+              yield* readAccountingHistory(
+                yield* PgClient.PgClient,
+                accountId,
+                [fill].map((event) => event.fill),
+                config.tigerBeetle.ledger,
+              )
               const valuation = yield* valuations.value({
                 accountEventId: accountReceipt.eventId,
                 positionSnapshotId: snapshot.snapshotId,
@@ -1410,13 +1416,26 @@ describePostgres('PostgreSQL execution persistence', () => {
 
         const history = [observedOrder, accountedFill, preparedFill, unaccountedFill, newOrder]
         const completed = yield* events.completeHistory(history)
-        yield* accounting.verifyCompleted([accountedFill])
-        const accountingMismatch = yield* accounting
-          .verifyCompleted([{ ...accountedFill, fill: { ...accountedFill.fill, quantityAtoms: '2000000000' } }])
-          .pipe(Effect.flip)
+        yield* readAccountingHistory(
+          yield* PgClient.PgClient,
+          accountId,
+          [accountedFill].map((event) => event.fill),
+          config.tigerBeetle.ledger,
+        )
+        const accountingMismatch = yield* readAccountingHistory(
+          yield* PgClient.PgClient,
+          accountId,
+          [{ ...accountedFill.fill, quantityAtoms: '2000000000' }],
+          config.tigerBeetle.ledger,
+        ).pipe(Effect.flip)
         yield* accounting.account(preparedFill)
         const completedAfterRecovery = yield* events.completeHistory(history)
-        yield* accounting.verifyCompleted([accountedFill, preparedFill])
+        yield* readAccountingHistory(
+          yield* PgClient.PgClient,
+          accountId,
+          [accountedFill, preparedFill].map((event) => event.fill),
+          config.tigerBeetle.ledger,
+        )
         const conflict = yield* events
           .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
           .pipe(Effect.flip)
@@ -1431,15 +1450,14 @@ describePostgres('PostgreSQL execution persistence', () => {
       observedOrder.sourceEventId,
     ])
     expect(result.postingFailure).toMatchObject({ operation: 'account', failure: 'ledger' })
-    expect(result.accountingMismatch).toMatchObject({ operation: 'account', failure: 'conflict' })
+    expect(result.accountingMismatch).toMatchObject({ operation: 'reconcile', failure: 'invariant' })
     expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
   })
 
-  test('completed fill verification reads the inventory fee sources once per history', async () => {
+  test('one accounting history verification reads inventory fee sources once', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const fence = yield* WriterFence
         const accounting = yield* FillAccountingStore
         yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
         const inputs = Array.from({ length: 8 }, (_, index) => {
@@ -1456,14 +1474,12 @@ describePostgres('PostgreSQL execution persistence', () => {
             return statement
           },
         })
-        const verifier = makeAccountingInterpreter(
+        yield* readAccountingHistory(
           monitored,
-          journal(journalControl),
-          config,
-          makeBrokerEventInterpreter(monitored, fence),
-          fence,
+          accountId,
+          inputs.map((event) => event.fill),
+          config.tigerBeetle.ledger,
         )
-        yield* verifier.verifyCompleted(inputs)
         expect(lookups).toHaveLength(1)
         const lookup = lookups[0]
         if (lookup === undefined) throw new Error('Completed accounting verification did not issue a query')
@@ -1671,7 +1687,12 @@ describePostgres('PostgreSQL execution persistence', () => {
         const accounting = yield* FillAccountingStore
         yield* accounting.account(secondBuy)
         yield* accounting.account(sell)
-        yield* accounting.verifyCompleted([buy, secondBuy, sell])
+        yield* readAccountingHistory(
+          yield* PgClient.PgClient,
+          accountId,
+          [buy, secondBuy, sell].map((event) => event.fill),
+          config.tigerBeetle.ledger,
+        )
         const sql = yield* PgClient.PgClient
         return yield* sql`SELECT
         (sum(quantity_delta_atoms) - (SELECT sum((data->'coinDebit'->>'quantityAtoms')::numeric) FROM broker_fee_accounting))::text AS quantity,
@@ -2424,7 +2445,12 @@ describePostgres('PostgreSQL execution persistence', () => {
             expect(report.cashYieldEvidence?.accountedCashDeltaMicros).toBe(hasRegulatory ? '915896' : '2055896')
           }),
         )
-        yield* accounting.verifyCompleted([buy, sell])
+        yield* readAccountingHistory(
+          yield* PgClient.PgClient,
+          accountId,
+          [buy, sell].map((event) => event.fill),
+          config.tigerBeetle.ledger,
+        )
         expect(
           yield* sql`SELECT sum(quantity_atoms)::text AS quantity,sum(cost_basis_micros)::text AS cost FROM broker_inventory_debits WHERE posted`,
         ).toEqual([{ quantity: '82625', cost: '200392' }])
