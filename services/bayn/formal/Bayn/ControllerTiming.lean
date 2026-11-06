@@ -5,6 +5,29 @@ import Lean.Elab.Tactic.Omega
 
 namespace Bayn
 
+def marketHandoffReadiness (ready failed : Bool) (deadline : Option Int) (now : Int) : String :=
+  if failed then "FAILED"
+  else if ready then "READY"
+  else if deadline.any (fun bound => bound < now) then "EXPIRED"
+  else "WAITING"
+
+theorem market_handoff_requires_ready_nonfailed_history (r f : Bool) (d : Option Int) (now : Int)
+    (passes : marketHandoffReadiness r f d now = "READY") : r = true ∧ f = false := by
+  cases r <;> cases f <;> simp_all [marketHandoffReadiness]
+  split at passes <;> contradiction
+
+theorem market_handoff_cannot_restart_expired_bootstrap (d now : Int) (expired : d < now) :
+    marketHandoffReadiness false false (some d) now = "EXPIRED" := by
+  simp [marketHandoffReadiness, expired]
+
+theorem market_handoff_failure_overrides_old_readiness (r : Bool) (d : Option Int) (now : Int) :
+    marketHandoffReadiness r true d now = "FAILED" := by
+  simp [marketHandoffReadiness]
+
+example : marketHandoffReadiness false false (some 5000) 5000 = "WAITING" ∧
+    marketHandoffReadiness false false (some 5000) 5001 = "EXPIRED" ∧
+    marketHandoffReadiness true false (some 5000) 10000 = "READY" := by decide
+
 /-- This checks retained build claims; receipt authenticity is a separate evidence requirement. -/
 def controllerBuildBound (registeredSource registeredDigest workerSource workerDigest
     registeredRepository workerRepository : Option String) : Bool :=

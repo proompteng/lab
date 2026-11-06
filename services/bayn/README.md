@@ -5,6 +5,19 @@ protection, reconciliation and recovery; crypto entry discovery and broker buys 
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Replacement execution workers start their read-only Kafka projection before exposing the Restate endpoint. Their
+`/startup-ready` check remains unavailable until each worker has completed its original history rebuild. Kubernetes
+requires both current replicas ready before the deployment activation hook runs. TCP startup and liveness probes stay
+independent. The startup check latches after the first successful rebuild so subsequent source recovery cannot withdraw
+broker observations or liquidation from a running endpoint. Entry reads still require current verified history and
+fresh quotes after every invalidation.
+
+The shared native activation preflight also waits for the selected worker's current history before reading authority
+and the predecessor. Its wait uses the consumer's original bootstrap deadline and remains interruptible. It acquires
+no trading driver, places no order and changes no authority. A failed rebuild leaves the recorded predecessor
+untouched. Shared preparation does not lock current-source ticks. Registering a different source still fences old
+ticks, so the complete replacement pool must warm before registration. Existing handoff and trading deadlines remain unchanged.
+
 Background broker polling makes one complete before/after history scan per durable ticket. Changed history or
 unsettled fill evidence rejects that cut and waits for the existing quota budget before acquiring a new ticket.
 It does not repeat full history reads under a pre-mutation ticket that cannot publish. Complete history, exact fill
