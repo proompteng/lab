@@ -1,3 +1,7 @@
+import { rebuildAccountingLedger } from '../accounting/domain'
+import type { AccountingTransaction } from '../accounting/schema'
+import type { AccountingReceipt } from '../execution/contracts'
+import type { PreparedAccounting } from '../accounting/model'
 import { feeAccrualCohortSettled, verifyFeeAccrualRecord } from '../db/fee-accruals'
 import { quantityFromDecimal } from '../quantity'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -570,6 +574,28 @@ const requireBrokerIdentity = (
     : Effect.succeed(config as BoundForwardPerformanceConfig)
 }
 
+const verifyRetainedAccounting = (
+  transactions: readonly AccountingTransaction[],
+  receipts: readonly AccountingReceipt[],
+  config: ForwardPerformanceConfig,
+) =>
+  Result.gen(function* () {
+    const prepared: PreparedAccounting[] = []
+    for (const transaction of transactions) {
+      const ledger = yield* Result.mapError(
+        rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
+        (cause): ReconciliationAlgebraFailure => ({
+          _tag: 'AccountingPlanFailed',
+          transactionId: transaction.transactionId,
+          brokerEventId: transaction.brokerEventId,
+          cause,
+        }),
+      )
+      prepared.push({ transaction, ledger })
+    }
+    return yield* verifyAccountingReceipts(prepared, receipts, config)
+  })
+
 export const readForwardPerformanceInput = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
@@ -593,7 +619,7 @@ export const readForwardPerformanceInput = (
       ),
     )
 
-    const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
+    const accountingVerification = verifyRetainedAccounting(postgres.transactions, postgres.receipts, config)
     const feeRecords = postgres.brokerFeeRecords ?? []
     const feeLedgerEvidence = yield* Effect.forEach(feeRecords, (record) =>
       Effect.fromResult(verifyBrokerFeeRecord(record, identity.accountId, config.tigerBeetle)).pipe(
@@ -643,7 +669,7 @@ export const readForwardPerformanceInput = (
         .filter((settlement) => generationTransactionIds.has(settlement.data.transactionId))
         .map((settlement) => settlement.plan),
     ]
-    const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
+    const ledgerVerification = verifyRetainedAccounting(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
     const accountPlans = [
       ...(Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []),
       ...feePlans.flat(),
