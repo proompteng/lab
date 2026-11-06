@@ -1,6 +1,6 @@
 use crate::{
     connector::{Connector, Failure, Normalized, Output},
-    credentials::Authentication,
+    credentials::{Authentication, Credentials},
     registered::{Operation, Prepared, RegisteredOperation},
 };
 use futures::StreamExt;
@@ -27,7 +27,7 @@ pub struct HttpOperation {
 pub struct Http {
     id: String,
     client: reqwest::Client,
-    authentication: Authentication,
+    authentication: Credentials,
     endpoint: String,
     operations: BTreeMap<String, (RegisteredOperation, Method, reqwest::Url)>,
 }
@@ -121,7 +121,7 @@ impl Http {
         Ok(Self {
             id,
             client,
-            authentication,
+            authentication: Credentials::new(authentication)?,
             endpoint: endpoint.to_string(),
             operations: registered,
         })

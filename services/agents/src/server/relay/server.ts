@@ -14,7 +14,7 @@ import { createSubmissionStore } from './store'
 
 export const RELAY_ID = 'spiffe://proompteng.ai/ns/relay/sa/relay'
 export const RELAY_AUDIENCE = 'https://agents.k8s.proompteng.ai/mcp/relay'
-const jwks = createRemoteJWKSet(new URL('https://oidc-discovery.proompteng.ai/keys'), { timeoutDuration: 3000 })
+const jwks = createRemoteJWKSet(new URL('https://oidc.proompteng.ai/keys'), { timeoutDuration: 3000 })
 export const verifyRelayToken = async (token: string, keys: Parameters<typeof jwtVerify>[1] = jwks) => {
   if (!token || token.length > 16_384) throw new Error('invalid workload token')
   await jwtVerify(token, keys, {

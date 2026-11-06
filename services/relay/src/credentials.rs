@@ -6,9 +6,18 @@ use tonic::Status;
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Authentication {
     None,
-    BearerFile { path: String },
-    Oauth2 { profile: String },
-    SpiffeJwt { audience: String },
+    BearerFile {
+        path: String,
+    },
+    Oauth2 {
+        profile: String,
+    },
+    SpiffeJwt {
+        audience: String,
+    },
+    WorkloadIdentity {
+        federation: crate::federation::Registration,
+    },
 }
 
 pub struct Provider<'a> {
@@ -23,21 +32,55 @@ impl Authentication {
                 Self::None => true,
                 Self::BearerFile { path } => std::path::Path::new(path).is_absolute(),
                 Self::Oauth2 { profile } => crate::config::identifier(profile),
-                Self::SpiffeJwt { audience } =>
-                    reqwest::Url::parse(audience).is_ok_and(|url| url.scheme() == "https"
+                Self::SpiffeJwt { audience } => reqwest::Url::parse(audience).is_ok_and(|url| {
+                    url.scheme() == "https"
                         && url.host_str().is_some()
                         && url.username().is_empty()
                         && url.password().is_none()
                         && url.query().is_none()
-                        && url.fragment().is_none()),
+                        && url.fragment().is_none()
+                }),
+                Self::WorkloadIdentity { federation } => {
+                    federation.validate()?;
+                    true
+                }
             },
             "invalid connector authentication registration"
         );
         Ok(())
     }
+}
+
+pub(crate) enum Credentials {
+    None,
+    BearerFile(String),
+    Oauth2(String),
+    WorkloadIdentity(Box<crate::federation::Federation>),
+    SpiffeJwt(platform_client::jwt::Identity),
+}
+
+impl Credentials {
+    pub(crate) fn new(authentication: Authentication) -> anyhow::Result<Self> {
+        authentication.validate()?;
+        Ok(match authentication {
+            Authentication::None => Self::None,
+            Authentication::BearerFile { path } => Self::BearerFile(path),
+            Authentication::Oauth2 { profile } => Self::Oauth2(profile),
+            Authentication::SpiffeJwt { audience } => {
+                Self::SpiffeJwt(platform_client::jwt::Identity::new(
+                    std::env::var("SPIFFE_ENDPOINT_SOCKET")?,
+                    "spiffe://proompteng.ai/ns/relay/sa/relay",
+                    audience,
+                )?)
+            }
+            Authentication::WorkloadIdentity { federation } => {
+                Self::WorkloadIdentity(Box::new(crate::federation::Federation::new(federation)?))
+            }
+        })
+    }
     pub(crate) fn provider<'a>(&'a self, destination: &'a str) -> Option<Provider<'a>> {
         match self {
-            Self::Oauth2 { profile } => Some(Provider {
+            Self::Oauth2(profile) => Some(Provider {
                 profile,
                 destination,
             }),
@@ -47,13 +90,13 @@ impl Authentication {
     pub(crate) async fn bearer(&self, provided: Option<&str>) -> Result<Option<String>, Status> {
         let token = match self {
             Self::None => return Ok(None),
-            Self::BearerFile { path } => read_file(path).await?,
-            Self::SpiffeJwt { audience } => {
-                platform_client::jwt_svid(audience, "spiffe://proompteng.ai/ns/relay/sa/relay")
-                    .await
-                    .map_err(|_| Status::unavailable("Relay workload credential unavailable"))?
-            }
-            Self::Oauth2 { .. } => provided
+            Self::BearerFile(path) => read_file(path).await?,
+            Self::WorkloadIdentity(federation) => federation.bearer().await?,
+            Self::SpiffeJwt(identity) => identity
+                .token()
+                .await
+                .map_err(|_| Status::unavailable("Relay workload credential unavailable"))?,
+            Self::Oauth2(_) => provided
                 .ok_or_else(|| {
                     Status::failed_precondition(
                         "connect the provider account before using this tool",
