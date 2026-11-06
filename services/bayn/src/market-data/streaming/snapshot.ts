@@ -102,10 +102,7 @@ const recordReceipt = (entry: ObservedMarketValue<IntradayRecordIdentity>) =>
     }),
   )
 
-export const constructStreamingSnapshot = (
-  cut: KafkaProjectionCut,
-  query: IntradaySnapshotQuery,
-): Result.Result<StreamingVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
+export const prepareStreamingSnapshotCut = (cut: KafkaProjectionCut, query: IntradaySnapshotQuery) =>
   Result.gen(function* () {
     const request = yield* verifyIntradaySnapshotQuery(query)
     const state = cut.projection
@@ -136,6 +133,16 @@ export const constructStreamingSnapshot = (
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
       )
+    return { request, sourceBootstrap, sourcePositions }
+  })
+
+export const constructStreamingSnapshot = (
+  cut: KafkaProjectionCut,
+  query: IntradaySnapshotQuery,
+): Result.Result<StreamingVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const { request, sourceBootstrap, sourcePositions } = yield* prepareStreamingSnapshotCut(cut, query)
+    const state = cut.projection
     const snapshot = yield* constructSnapshotMaterial(state, request, sourcePositions, {
       schemaVersion: 'bayn.streaming-market-snapshot.v1',
       streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: sourceBootstrap },

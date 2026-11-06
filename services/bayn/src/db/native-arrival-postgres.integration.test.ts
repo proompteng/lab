@@ -22,7 +22,11 @@ import { makeNativeArrivalStore, readNativeArrivalChunks, readNativeArrivalEpoch
 import { PostgresClientLive } from './postgres-client'
 import { migrationLoader } from './migrations'
 import { postgresMigrations } from './postgres-migrations'
-import { NativeArrivalArchiveLive, nativeArrivalArchiveMigrations } from './native-arrival-archive'
+import {
+  NativeArrivalArchiveLive,
+  nativeArrivalArchiveConfig,
+  nativeArrivalArchiveMigrations,
+} from './native-arrival-archive'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_native_arrival_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -293,11 +297,19 @@ describePostgres('PostgreSQL native arrival retention', () => {
     )
     const archiveRuntimes = Array.from({ length: 2 }, () =>
       ManagedRuntime.make(
-        NativeArrivalArchiveLive({
-          operationTimeoutMs,
-          postgres: { url: Redacted.make('postgresql://unused@127.0.0.1:1/financial'), tls: false, caPath: '/unused' },
-          nativeArrivalPostgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-        }).pipe(Layer.provideMerge(NodeServices.layer)),
+        NativeArrivalArchiveLive(
+          Result.getOrThrow(
+            nativeArrivalArchiveConfig({
+              operationTimeoutMs,
+              postgres: {
+                url: Redacted.make('postgresql://unused@127.0.0.1:1/financial'),
+                tls: false,
+                caPath: '/unused',
+              },
+              nativeArrivalPostgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+            }),
+          ),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     )
     try {
