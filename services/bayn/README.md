@@ -1302,6 +1302,11 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
+- Execution acquires a scoped driver directly. Production and replay share one serialized generation-rebinding
+  path: when authority changes, the next pass prepares its replacement before advancing. Failed or interrupted
+  preparation retains the clients and retries preparation without running the stale driver. Production preparation
+  is bounded by the existing initialization budget. Market projection prewarming and controller-status projection
+  remain independent of trading acquisition, and public health derives from durable observations.
 - Execution inherits the native Restate attempt's trace across lazy acquisition and recovering Effect runtimes.
   Controller scheduling, internal stages, PostgreSQL and broker spans can be inspected together in Tempo and joined
   to structured logs. Propagation reads existing context without adding durable commands or I/O.

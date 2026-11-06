@@ -19,7 +19,6 @@ import * as executionCycleModule from './observe-composition/execution-cycle'
 import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Semaphore, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { AutonomousCycleLoop } from './app'
 import type { AutonomousCyclePassObservation } from './runtime-state'
 import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
@@ -93,7 +92,7 @@ import {
   type ReconciliationStoreShape,
   type ValuationStoreShape,
 } from './db/execution-store'
-import { operationalError, retryableOperationalError, type OperationalError } from './errors'
+import { operationalError, retryableOperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from './execution/authority'
 import {
   IntentStore,
@@ -168,7 +167,7 @@ import {
   type MutationAutonomousCycleInput,
   type ObserveAutonomousCycleInput,
   type RecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverOwner,
+  type RecoveryFirstRuntime,
 } from './observe-composition/model'
 import { runMutationPassWithinTimeout, selectClosingSymbolPass } from './observe-composition/decision-builder'
 import { ensureExecutionCycleClosure, recoverBoundExecutionContext } from './observe-composition/execution-cycle'
@@ -253,6 +252,10 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     }),
   )
 }
+
+type RecoveryFirstCycleDriverOwner = (
+  driver: RecoveryFirstCycleDriver,
+) => Effect.Effect<void, never, RecoveryFirstRuntime>
 
 const ownRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverOwner = (driver) => {
   const run = (): ReturnType<RecoveryFirstCycleDriverOwner> =>
@@ -5674,25 +5677,7 @@ describe('OBSERVE runtime composition', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const acquireLoop: Effect.Effect<
-            AutonomousCycleLoop<
-              | BrokerRead
-              | CycleStore
-              | BrokerEventStore
-              | FillAccountingStore
-              | ValuationStore
-              | ReconciliationStore
-              | AuthorityGenerationStore
-              | AuthorityRestrictionStore
-              | IntentStore
-              | MutationStore
-              | WriterFence
-              | CandidateObservationStore
-              | JevTestServices
-            >,
-            OperationalError,
-            AuthorityGenerationStore
-          > = startup({
+          const acquireLoop = startup({
             cycleBindingId: 'c'.repeat(64),
             recordPass: () => Effect.die('driver publication must not execute a cycle pass'),
           })
