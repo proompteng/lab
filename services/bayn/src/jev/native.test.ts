@@ -33,6 +33,16 @@ describe('native Jev entry and position observations', () => {
     const decode = Schema.decodeUnknownResult(JevEntryTargetSchema)
     expect(Result.getOrThrow(decode(target))).toEqual(target)
     expect(Result.getOrThrow(decode(structuredClone(target)))).toEqual(target)
+    const evidence = target.evidence
+    const other = Result.getOrThrow(
+      decideJevEntry({
+        ...evidence,
+        batchResult: nativeJevBatchResult(evidence.batchPlan, evidence.decidedAt, () => false, 0.9),
+      }),
+    )
+    expect(other.selectedSymbols).toEqual([])
+    expect(Result.getOrThrow(decode(other))).toEqual(other)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
 
     const changed = structuredClone(target)
     const originalHash = changed.evidence.batchPlan.observationHash

@@ -101,6 +101,83 @@ is `{ "type": "none" }`, `{ "type": "bearer_file", "path": "/mounted/token" }`, 
 `{ "type": "oauth2", "profile": "inventory" }`. Provider authentication failures remain distinct from Ofz denials.
 OAuth profiles and destinations must match Ofz registrations at startup and every enrollment refresh.
 
+### Workload identity federation
+
+HTTP and HTTP MCP registrations also accept `workload_identity`. Relay obtains a JWT-SVID from its local
+SPIRE Workload API, verifies the exact registered subject and audience plus expiry, asks the agent to validate
+it, and exchanges it for a bearer access token using [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html).
+The token service must support JWT subject tokens, the registered audience and scopes, and return an access token
+with `issued_token_type`, `token_type: Bearer`, and `expires_in` between 1 and 86,400 seconds.
+
+```json
+{
+  "type": "workload_identity",
+  "federation": {
+    "spiffe_id": "spiffe://proompteng.ai/ns/relay/sa/relay",
+    "audience": "//iam.googleapis.com/projects/952507162578/locations/global/workloadIdentityPools/proompteng-ai/providers/spire",
+    "token_endpoint": "https://sts.googleapis.com/v1/token",
+    "scopes": ["https://www.googleapis.com/auth/cloud-platform.read-only"]
+  }
+}
+```
+
+This registration uses the same value for the JWT audience and the token-exchange audience. The issuer is
+`https://oidc.proompteng.ai`. The Google pool `proompteng-ai` uses one provider, `spire`, with that exact issuer and
+audience, `google.subject = assertion.sub`, and `assertion.sub.startsWith('spiffe://proompteng.ai/')` as its admission
+condition. Pool admission authenticates identities from our trust domain. Grant resource permissions to each workload's
+exact SPIFFE subject; do not grant roles to the whole pool. This follows
+[Google's WIF guidance](https://docs.cloud.google.com/iam/docs/best-practices-for-using-workload-identity-federation)
+on sharing a provider while keeping authorization specific to external identities.
+For the Google test project `lab-wif-test-20261105`, the intended proof is a custom role containing only
+`resourcemanager.projects.get`, then an authorized HTTP GET to
+`https://cloudresourcemanager.googleapis.com/v3/projects/952507162578`.
+[Google's STS contract](https://docs.cloud.google.com/iam/docs/reference/sts/rest/v1/TopLevel/token) defines the
+exchange; [Resource Manager calls are free](https://cloud.google.com/resource-manager/pricing).
+Creating a Google project alone does not configure its pool, provider, permission binding or Relay operation.
+
+The production registration in [`config.json`](../../argocd/applications/relay/config.json) exposes
+`google-project__read` through normal Relay discovery and execution. Ofz owns its `google.project.read` permission
+and resource enrollment in the Proompteng workspace. Assign its `reader` relationship through workspace administration
+before use. The [deployment acceptance steps](../../argocd/applications/relay/README.md#google-project-metadata)
+exercise the deployed MCP client, Ofz authorization, Google API response and durable execution receipts.
+
+Operators can run `relay-federation-probe` inside the deployed Relay container to verify the Workload API,
+token exchange and destination permission before enrolling a connector. It reads a Relay configuration from stdin,
+requires exactly one HTTP connector with workload identity authentication and one GET operation accepting `{}`,
+and prints the bounded resource response. It uses the same JWT, token exchange and HTTP implementation as Relay.
+Tokens remain in memory. Errors produce a nonzero exit status without printing credentials.
+
+```sh
+kubectl --context galactic-tailscale -n relay exec -i deployment/relay -c relay -- \
+  /bin/relay-federation-probe < services/relay/examples/google-project.json
+```
+
+This is an operator diagnostic under Kubernetes exec authority, not a Relay API operation. It does not create Ofz
+relationships or expose the probe to application clients. The checked example reads only the test project's metadata.
+Relay permits public IPv4 HTTPS egress for provider endpoints, using the same private-address exclusions as OpenCode.
+Applications still use fixed reviewed HTTPS destinations, verified certificates and no redirects or environment proxies.
+Roll out the reviewed image and network policy through Kargo before probing. Recovery is a Git revert and normal
+promotion; no identity, signing key, datastore or existing connector changes are required.
+
+The connector owns its fixed destination, federation registration, operation paths and Ofz resource/action mappings.
+Callers cannot supply any of these in tool arguments. Federation runs only after the existing Ofz authorization and
+durable execution start. It represents Relay's machine identity; it does not replace per-user OAuth accounts or grant
+the calling human/workload any Ofz permission. Register and authorize the corresponding Ofz operation before enabling
+the connector, and permit its token and resource hosts in deployment egress policy.
+
+Access tokens are held only in memory, separately for each connector. Concurrent requests share one successful
+refresh. Renewal starts 10% before expiry, capped at 30 seconds, using a newly fetched JWT. Failed renewal fails the
+operation; no expired cached token is used. A provider denial does not replay the resource request. JWT acquisition
+has a five-second deadline; the entire exchange, including cache-lock wait, has a ten-second deadline and a 32 KiB
+response budget. Redirects, environment proxies and automatic retries are disabled. Provider response bodies and
+tokens are never included in errors. Optional federation `ca_file` is an absolute CA path independent of the resource
+server's CA; production Google registrations use the system trust store.
+
+The isolated test in `test-client.sh` uses real Unix-socket Workload API RPCs, signed JWTs, HTTPS OIDC discovery/JWKS,
+token exchange and both actual adapters. It checks concurrent refresh, signing-key rotation, expiry, wrong
+subject/audience/issuer/signature, provider denial, redirect/lost responses and malformed credentials. It does not
+establish that Google trust or production Ofz grants have been enrolled; those require separate live proof.
+
 For example, after enrolling `inventory.account` and `inventory.items.read` in Ofz:
 
 ```json

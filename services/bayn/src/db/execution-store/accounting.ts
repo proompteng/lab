@@ -22,9 +22,8 @@ import {
   decideSuccessorAbsence,
   planAccountingReceipt,
 } from './decisions'
-import { liftStoreDecision, executionStoreError, failExecutionStore, runExecutionOperation } from './errors'
+import { liftStoreDecision, executionStoreError, runExecutionOperation } from './errors'
 import {
-  decodeCompletedAccountingRows,
   decodeFillInput,
   decodePositionCost,
   decodeReceipt,
@@ -36,7 +35,6 @@ import {
 
 export interface AccountingInterpreter {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
-  readonly verifyCompleted: (inputs: readonly FillEventInput[]) => Effect.Effect<void, ExecutionStoreError>
 }
 
 export const makeAccountingInterpreter = (
@@ -290,93 +288,5 @@ export const makeAccountingInterpreter = (
       ),
     )
 
-  const verifyCompleted = (inputs: readonly FillEventInput[]): Effect.Effect<void, ExecutionStoreError> =>
-    runExecutionOperation(
-      'account',
-      Effect.gen(function* () {
-        const first = inputs[0]
-        if (first === undefined) return
-        if (inputs.some((input) => input.broker !== first.broker || input.accountId !== first.accountId)) {
-          return yield* failExecutionStore('account', 'invariant', 'completed fill history spans multiple accounts')
-        }
-
-        yield* writerFence.transaction(
-          Effect.gen(function* () {
-            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
-            const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
-            const rows = yield* sql<Record<string, unknown>>`
-              WITH inventory_debits AS MATERIALIZED (
-                SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at, posted
-                FROM broker_inventory_debits
-                WHERE account_id = ${first.accountId} AND posted
-              ), ranked AS (
-                SELECT
-                  transaction.schema_version, transaction.transaction_id, transaction.broker_event_id,
-                  transaction.intent_id, transaction.account_id, transaction.symbol, transaction.side,
-                  transaction.quantity_atoms::text AS quantity_atoms,
-                  transaction.price_atoms::text AS price_atoms,
-                  transaction.notional_micros::text AS notional_micros,
-                  transaction.fee_micros::text AS fee_micros,
-                  transaction.cost_basis_micros::text AS cost_basis_micros,
-                  transaction.realized_pnl_micros::text AS realized_pnl_micros,
-                  transaction.quantity_delta_atoms::text AS quantity_delta_atoms,
-                  transaction.cost_basis_delta_micros::text AS cost_basis_delta_micros,
-                  transaction.cash_delta_micros::text AS cash_delta_micros,
-                  transaction.ledger_plan_hash, transaction.content_hash, transaction.occurred_at,
-                  event.source_event_id, event.normalized_content_hash AS event_content_hash,
-                  (COALESCE(sum(transaction.quantity_delta_atoms) OVER (
-                    PARTITION BY transaction.account_id, transaction.symbol
-                    ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                  ), 0) - COALESCE((SELECT sum(fee.quantity_atoms) FROM inventory_debits AS fee
-                    WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
-                      AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_quantity_atoms,
-                  (COALESCE(sum(transaction.cost_basis_delta_micros) OVER (
-                    PARTITION BY transaction.account_id, transaction.symbol
-                    ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                  ), 0) - COALESCE((SELECT sum(fee.cost_basis_micros) FROM inventory_debits AS fee
-                    WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
-                      AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_cost_micros
-                FROM accounting_transactions AS transaction
-                JOIN fills AS historical_fill ON historical_fill.event_id = transaction.broker_event_id
-                JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
-                WHERE transaction.account_id = ${first.accountId}
-                  AND event.account_id = ${first.accountId}
-                  AND event.broker = ${first.broker}
-              )
-              SELECT * FROM ranked WHERE source_event_id IN ${sql.in(sourceIds)}
-            `.pipe(Effect.flatMap(decodeCompletedAccountingRows))
-            const bySourceId = new Map(rows.map((row) => [row.source_event_id, row]))
-            for (const input of inputs) {
-              const row = bySourceId.get(input.sourceEventId)
-              if (row === undefined) {
-                return yield* failExecutionStore(
-                  'account',
-                  'invariant',
-                  'completed fill accounting transaction is missing',
-                )
-              }
-              if (row.event_content_hash !== input.contentHash) {
-                return yield* failExecutionStore(
-                  'account',
-                  'conflict',
-                  'completed fill source identity differs from broker observation',
-                )
-              }
-              const expected = yield* expectedAccounting(row.broker_event_id, input, {
-                quantityAtoms: row.prior_quantity_atoms,
-                costMicros: row.prior_cost_micros,
-              })
-              yield* liftStoreDecision(
-                'account',
-                decidePreparedAccountingReplay(accountingTransactionFromRow(row), expected),
-              )
-            }
-          }),
-        )
-      }),
-    )
-
-  return { account, verifyCompleted }
+  return { account }
 }

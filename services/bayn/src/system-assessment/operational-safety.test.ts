@@ -1,5 +1,6 @@
+import { nativeOrderSafetyFixture } from './operational-safety-orders.test-support'
 import { expect, test } from 'bun:test'
-import { Effect, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { Authority, KillState } from '../execution/contracts'
 import { SafetyViolationKind } from './assessment'
@@ -9,12 +10,6 @@ import { evaluateOperationalAssessment } from './operational-assessment'
 import { testHash } from './fixtures.test-support'
 import type { OperationalSafetySource } from './operational-safety-source'
 import { ReliabilityStatus } from './reliability'
-import { BrokerReadErrorKind } from '../broker/alpaca/failures'
-import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
-import { bracketEvidenceFixture, nativeEntryEvidenceFixture } from './bracket-evidence.test-support'
-import { executionOrderPlans } from './execution-plans'
-import { makeExecutionIntentFromDecodedPlan } from '../execution/intents/domain'
-import { intentPlanSchemaVersion } from '../execution/contracts'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { mutationIdResult } from '../execution/mutations/decisions'
@@ -126,86 +121,8 @@ test('every defined safety class needs coverage and a known violation cannot bec
 })
 
 test('native approved orders reject excess fill quantity and substituted client identity', async () => {
-  const f = nativeSafetyFixture()
-  const document = await Effect.runPromise(makePersistenceDocumentFixture(f.definition.riskPolicy.accountId))
-  const entry =
-    document.deltaRisk[0]?.protection?._tag === 'Bracket'
-      ? bracketEvidenceFixture(document)
-      : nativeEntryEvidenceFixture(document)
-  const plans = Result.getOrThrow(executionOrderPlans(entry.cut.decisions, []))
-  const id = document.orderedIntentIds[0]!
-  const target = document.targetPlan.intentTargets[0]!
-  const delta = document.deltaRisk[0]!
-  const plan = {
-    schemaVersion: intentPlanSchemaVersion,
-    ...target,
-    notionalLimitMicros: delta.notionalLimitMicros,
-    limitPriceMicros: delta.limitPriceMicros,
-    ...(delta.protection === undefined ? {} : { protection: delta.protection }),
-  }
-  const intent = Result.getOrThrow(makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash))
-  const registration = {
-    ...f.registration,
-    policies: [{ ...f.definition, authorityGenerationHash: document.bindings.authorityGenerationHash }] as const,
-  }
-  const authority = { ...f.authority, generation_hash: document.bindings.authorityGenerationHash }
-  const rawOrders = entry.cut.orders.map((row) => ({
-    eventId: row.eventId,
-    contentHash: testHash(row.order),
-    occurredAt: row.occurredAt,
-    order:
-      row.order.parentBrokerOrderId === undefined ? { ...row.order, clientOrderId: intent.clientOrderId } : row.order,
-  }))
-  const rawFills = entry.cut.fills.map((fill) => ({
-    eventId: fill.fillId,
-    contentHash: testHash(fill),
-    sourceTimestamp: `${fill.occurredAt.slice(0, -1)}000000Z`,
-    sourceSequence: fill.sourceSequence,
-    observedAt: entry.cut.asOf,
-    transactionId: null,
-    receiptId: null,
-    fill: {
-      schemaVersion: 'bayn.fill.v2' as const,
-      accountId: target.accountId,
-      fillId: fill.fillId,
-      brokerOrderId: fill.brokerOrderId,
-      clientOrderId: rawOrders.find((row) => row.order.brokerOrderId === fill.brokerOrderId)!.order.clientOrderId,
-      intentId: id,
-      symbol: target.symbol,
-      side: fill.side,
-      quantityAtoms: fill.quantityAtoms,
-      priceAtoms: fill.priceAtoms,
-      feeMicros: '0',
-      occurredAt: fill.occurredAt,
-    },
-  }))
-  const source: OperationalSafetySource = {
-    ...f.safety,
-    authority,
-    baseline: { capturedAt: f.registration.registeredAt, authority },
-    broker: {
-      status: 'UNAVAILABLE',
-      kind: BrokerReadErrorKind.ObservationPending,
-      operation: 'fixture',
-      retryable: true,
-    },
-    intents: [
-      {
-        intentId: id,
-        authorityGenerationHash: document.bindings.authorityGenerationHash,
-        plan,
-        risk: delta.evaluation.decision,
-      },
-    ],
-    orders: rawOrders,
-    fills: rawFills,
-  }
-  const scan = (safety: OperationalSafetySource, mutations = entry.cut.mutations.slice(0, 0)) => {
-    const cut = { ...changed(f, safety), mutations }
-    const auditor = Result.getOrThrow(makeOperationalSafetyScan(cut, registration))
-    Result.getOrThrow(auditor.consume(plans))
-    return Result.getOrThrow(auditor.finish())
-  }
+  const { scan, source, rawFills, rawOrders, target, entry, plans, id, document, intent, authority } =
+    await nativeOrderSafetyFixture()
   const valid = scan(source)
   expect(valid.checks.filter((check) => check.status === 'VIOLATION')).toEqual([])
   expect(valid.checks.some((check) => check.code === 'NATIVE_LIMIT_AND_SIDE' && check.status === 'PASS')).toBe(true)
