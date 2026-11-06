@@ -22,13 +22,16 @@ original deadlines and capital enforcement remain unchanged. Historical cuts and
 ## Webull supplementary context
 
 The effective-entry pricing cutover first keeps the v38 runtime and removes the sealed activation request,
-its mandate annotation and all three activation inputs together. Migration 183 rechecks terminal cycles and
+its mandate annotation and all three activation inputs together. When the exact clear v38 PAPER authority
+needs restriction, migration 183 rechecks terminal cycles and
 intents, flat broker and ledger inventory, settled orders, complete accounting, fresh exact reconciliation
 covering the last mutation, and no unexpired unresolved inference claims under the existing writer lock.
 Only then does it restrict the exact clear v38 PAPER identity with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`.
 It preserves every generation and financial record; native settlement and a subsequent fresh reconciliation
 must create the clear OBSERVE successor. Removing configuration alone cannot change durable PAPER authority.
 An operator hold or different strategy identity remains unchanged and cannot be silently cleared.
+An already-OBSERVE or unrelated authority is a no-op, so missing or stale reconciliation cannot prevent its
+worker from starting to refresh evidence. The later v39 protocol migration still requires fresh, settled OBSERVE.
 
 Verify clear OBSERVE authority, naturally advancing controller passes, flat positions, no open orders,
 unchanged fill/accounting totals and fresh exact reconciliation before deploying v39. Keep the old mandate

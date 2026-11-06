@@ -13,7 +13,20 @@ export default Effect.gen(function* () {
     jev_staged_skip_receipts IN ACCESS EXCLUSIVE MODE`
   // Removing a mandate cannot change durable authority. Prove settlement before restricting the
   // exact reviewed v38 identity; native recovery owns the subsequent clear OBSERVE generation.
-  yield* sql`DO $cutover$ BEGIN
+  yield* sql`DO $cutover$
+    DECLARE target_generation_hash text;
+    BEGIN
+      SELECT state.generation_hash INTO target_generation_hash
+      FROM authority_state state JOIN authority_generations generation USING (generation_hash)
+      WHERE generation.strategy_name='jev'
+        AND generation.strategy_parameter_schema_version='bayn.jev.protocol.v38'
+        AND generation.strategy_behavior_hash='76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
+        AND generation.strategy_parameter_hash='fa21a9d606eed0332637937d4d46035ba649d3fef968ab39480af796f13f419b'
+        AND generation.strategy_protocol_hash='489e704106e73592eb03dd8daf0750cbbb157e4d257bf53b948da1449b0c2d3c'
+        AND state.maximum='PAPER' AND state.effective='PAPER' AND state.kill_state='CLEAR'
+        AND state.reason IS NULL;
+      -- A no-op migration must not prevent an OBSERVE worker from starting to refresh its own evidence.
+      IF target_generation_hash IS NULL THEN RETURN; END IF;
     IF EXISTS (SELECT 1 FROM intents WHERE state <> 'TERMINAL')
       OR EXISTS (SELECT 1 FROM autonomous_cycles WHERE state IN ('PENDING', 'ACTIVE'))
       OR EXISTS (
@@ -64,18 +77,10 @@ export default Effect.gen(function* () {
       RAISE EXCEPTION 'effective-entry OBSERVE cutover requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete accounting and no unexpired inference claims'
         USING ERRCODE = '55000';
     END IF;
-  END $cutover$`
-  yield* sql`UPDATE authority_state state
+    UPDATE authority_state state
     SET effective='OBSERVE', kill_state='ACTIVE', reason='BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
       version=state.version+1,
       updated_at=greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
-    FROM authority_generations generation
-    WHERE state.generation_hash=generation.generation_hash
-      AND generation.strategy_name='jev'
-      AND generation.strategy_parameter_schema_version='bayn.jev.protocol.v38'
-      AND generation.strategy_behavior_hash='76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67'
-      AND generation.strategy_parameter_hash='fa21a9d606eed0332637937d4d46035ba649d3fef968ab39480af796f13f419b'
-      AND generation.strategy_protocol_hash='489e704106e73592eb03dd8daf0750cbbb157e4d257bf53b948da1449b0c2d3c'
-      AND state.maximum='PAPER' AND state.effective='PAPER' AND state.kill_state='CLEAR'
-      AND state.reason IS NULL`
+    WHERE state.generation_hash=target_generation_hash;
+  END $cutover$`
 })
