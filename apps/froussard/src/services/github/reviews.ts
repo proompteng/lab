@@ -515,8 +515,8 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
         detail: 'Froussard approval requires the tuslagch identity',
       })
     const pull = yield* fetchPullRequest({ ...options, fetchImplementation: fetchFn })
+    if (!pull.ok) return pull
     if (
-      !pull.ok ||
       pull.pullRequest.state !== 'open' ||
       pull.pullRequest.merged ||
       pull.pullRequest.draft ||
@@ -524,7 +524,7 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
     )
       return yield* Effect.fail<ApprovalError>({
         type: 'not-ready',
-        detail: 'Pull request is unavailable, closed, a draft, or owned by tuslagch',
+        detail: 'Pull request is closed, a draft, or owned by tuslagch',
       })
     if (pull.pullRequest.headSha !== options.headSha)
       return yield* Effect.fail<ApprovalError>({
@@ -621,8 +621,8 @@ export const approvePullRequest = (options: ApprovePullRequestOptions): Effect.E
       return { ok: true as const, reviewUrl: reconciled.html_url }
     }
     const latestPull = yield* fetchPullRequest({ ...options, fetchImplementation: fetchFn })
+    if (!latestPull.ok) return latestPull
     if (
-      !latestPull.ok ||
       latestPull.pullRequest.headSha !== options.headSha ||
       latestPull.pullRequest.state !== 'open' ||
       latestPull.pullRequest.draft

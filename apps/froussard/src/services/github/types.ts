@@ -221,6 +221,7 @@ export type ApprovePullRequestResult =
       ok: false
       reason:
         | ListBlockingChecksFailureReason
+        | FetchPullRequestFailureReason
         | 'missing-token'
         | 'identity-mismatch'
         | 'not-ready'

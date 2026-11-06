@@ -32,6 +32,9 @@ const server = () => {
     changeHeadOnCreate: false,
     approvals: 0,
     nextId: 1,
+    pullReads: 0,
+    failPullRead: 0,
+    pullFailure: 'network' as 'network' | 'invalid' | number,
   }
   const writes: Array<{ method: string; path: string; body: unknown }> = []
   const fetch: FetchLike = async (input, init) => {
@@ -40,7 +43,13 @@ const server = () => {
     const data = init?.body ? JSON.parse(init.body) : undefined
     if (method !== 'GET') writes.push({ method, path: url.pathname, body: data })
     if (url.pathname === '/user') return response({ login: state.login })
-    if (url.pathname.endsWith('/pulls/7'))
+    if (url.pathname.endsWith('/pulls/7')) {
+      state.pullReads++
+      if (state.pullReads === state.failPullRead) {
+        if (state.pullFailure === 'network') throw new Error('GitHub connection lost')
+        if (state.pullFailure === 'invalid') return response({ malformed: true })
+        return response({ message: 'GitHub unavailable' }, state.pullFailure)
+      }
       return response({
         number: 7,
         title: 'Change',
@@ -52,6 +61,7 @@ const server = () => {
         head: { ref: 'feature', sha: state.head },
         base: { ref: 'main' },
       })
+    }
     if (url.pathname.endsWith('/comments'))
       return response([
         {
@@ -199,6 +209,31 @@ describe('approvePullRequest', () => {
         }),
       ),
     ).toMatchObject({ ok: false, reason: 'http-error', status: 403 })
+  })
+
+  describe.each([1, 2])('pull request revalidation %i', (failPullRead) => {
+    it.each([
+      ['network', 'network-error'],
+      [429, 'http-error'],
+      [503, 'http-error'],
+      ['invalid', 'invalid-pull-request'],
+    ] as const)('preserves %s failure and resumes on retry', async (pullFailure, reason) => {
+      const api = server()
+      Object.assign(api.state, { failPullRead, pullFailure })
+
+      expect(await api.approve()).toMatchObject({
+        ok: false,
+        reason,
+        ...(typeof pullFailure === 'number' ? { status: pullFailure } : {}),
+      })
+      expect(api.state.approvals).toBe(0)
+      expect(api.state.reviews).toHaveLength(failPullRead - 1)
+
+      api.state.failPullRead = 0
+      expect(await api.approve()).toMatchObject({ ok: true })
+      expect(api.state.approvals).toBe(1)
+      expect(api.writes.filter((write) => write.path.endsWith('/reviews'))).toHaveLength(1)
+    })
   })
 })
 
