@@ -33,6 +33,7 @@
                   "maxLength": 20000
                 },
                 "tokenBudget": {
+                  "description": "Optional token budget. Budgeted tasks must be at most 8192 characters.",
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 10000000

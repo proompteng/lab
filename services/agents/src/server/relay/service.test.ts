@@ -161,6 +161,26 @@ describe('Relay AgentRuns', () => {
     ])
     expect(f.submit).toHaveBeenCalledTimes(1)
   })
+  it('rejects an oversized budgeted task before reserving or dispatching it', async () => {
+    const f = fixture()
+    await expect(
+      f.service.call('start_run', { task: 'x'.repeat(8193), tokenBudget: 1000 }, invocation(), target),
+    ).rejects.toThrow('8192')
+    expect(f.rows.size).toBe(0)
+    expect(f.submit).not.toHaveBeenCalled()
+  })
+  it.each([
+    { length: 8192, tokenBudget: 1000 },
+    { length: 20_000, tokenBudget: undefined },
+  ])('accepts a task at its supported limit: $length with budget $tokenBudget', async ({ length, tokenBudget }) => {
+    const f = fixture(),
+      ctx = invocation(),
+      task = 'x'.repeat(length)
+    await f.service.call('start_run', { task, tokenBudget }, ctx, target)
+    expect(f.rows.get(ctx.operationId)?.request_payload).toMatchObject({ implementation: { text: task } })
+    if (tokenBudget) expect(f.rows.get(ctx.operationId)?.request_payload.goal).toEqual({ objective: task, tokenBudget })
+    expect(f.submit).toHaveBeenCalledTimes(1)
+  })
   it('rejects raw admin arguments, action substitution and a recreated namespace before submission', async () => {
     const f = fixture()
     await expect(f.service.call('start_run', { task: 'x', namespace: 'ofz' }, invocation(), target)).rejects.toThrow()

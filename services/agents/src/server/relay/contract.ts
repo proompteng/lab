@@ -7,10 +7,21 @@ export const relayRunTools = {
       'Start one task using the approved agent and repository. Returns a durable runId after admission. If the reply is lost, use get_run with the Relay operationId as runId; never submit the task again to recover it.',
     action: 'agents.runs.start',
     readOnly: false,
-    schema: z.strictObject({
-      task: z.string().trim().min(1).max(20_000),
-      tokenBudget: z.number().int().positive().max(10_000_000).optional(),
-    }),
+    schema: z
+      .strictObject({
+        task: z.string().trim().min(1).max(20_000),
+        tokenBudget: z
+          .number()
+          .int()
+          .positive()
+          .max(10_000_000)
+          .optional()
+          .describe('Optional token budget. Budgeted tasks must be at most 8192 characters.'),
+      })
+      .refine((args) => args.tokenBudget === undefined || args.task.length <= 8192, {
+        path: ['task'],
+        message: 'Budgeted tasks must be at most 8192 characters.',
+      }),
   },
   list_runs: {
     description: 'List recent runs in this approved Agents target.',

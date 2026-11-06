@@ -85,7 +85,7 @@ type AgentRunKubernetesServiceDefinition = {
     now: number,
     recordQueueDepth: AgentRunQueueDepthRecorder,
   ) => Effect.Effect<AdmissionDecision, AgentRunKubeError>
-  readonly applyAgentRun: (
+  readonly createAgentRun: (
     kube: KubernetesClient,
     resource: AgentRunKubernetesResource,
     namespace: string,
@@ -798,8 +798,10 @@ export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
         kubeEffect('evaluate-admission-limits', RESOURCE_MAP.AgentRun, namespace, () =>
           evaluateAdmissionLimits(kube, namespace, repository, config, now, recordQueueDepth),
         ),
-      applyAgentRun: (kube, resource, namespace) =>
-        kubeEffect('apply-agent-run', RESOURCE_MAP.AgentRun, namespace, () => kube.apply(resource)),
+      createAgentRun: (kube, resource, namespace) =>
+        kubeEffect('create-agent-run', RESOURCE_MAP.AgentRun, namespace, () =>
+          kube.createManifest(JSON.stringify(resource), namespace),
+        ),
     }),
     Layer.succeed(AgentRunPolicyService, {
       validate: (namespace, checks, kube) =>
@@ -1394,8 +1396,8 @@ export const submitAgentRunWithServicesEffect = (
           }
 
           const resource = createAgentRunResource(parsed, deliveryId, runIdempotencyKey)
-          const appliedResult = yield* kubernetes.applyAgentRun(kube, resource, parsed.namespace).pipe(Effect.either)
-          if (appliedResult._tag === 'Left') {
+          const createdResult = yield* kubernetes.createAgentRun(kube, resource, parsed.namespace).pipe(Effect.either)
+          if (createdResult._tag === 'Left') {
             if (idempotencyReservation) {
               yield* stores
                 .deleteIdempotencyKey(activeStore, {
@@ -1405,13 +1407,21 @@ export const submitAgentRunWithServicesEffect = (
                 })
                 .pipe(Effect.catchAll(() => Effect.void))
             }
-            return yield* Effect.fail(appliedResult.left)
+            if (asRecord(createdResult.left.cause)?.code === 409) {
+              return yield* Effect.fail(
+                new AgentRunConflictError({
+                  message: 'AgentRun name already exists',
+                  details: { namespace: parsed.namespace, name: parsed.metadata?.name },
+                }),
+              )
+            }
+            return yield* Effect.fail(createdResult.left)
           }
 
-          const applied = appliedResult.right
-          const metadata = (applied.metadata ?? {}) as Record<string, unknown>
+          const created = createdResult.right
+          const metadata = (created.metadata ?? {}) as Record<string, unknown>
           const externalRunId = asString(metadata.name)
-          const runtimeProvider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
+          const runtimeProvider = asString(readNested(created, ['spec', 'runtime', 'type'])) ?? 'unknown'
 
           if (idempotencyReservation && externalRunId) {
             yield* stores.assignIdempotencyKey(activeStore, {
@@ -1423,14 +1433,14 @@ export const submitAgentRunWithServicesEffect = (
             })
           }
 
-          const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
+          const statusPhase = asString(asRecord(created.status)?.phase) ?? 'Pending'
           const record = yield* stores.createRun(activeStore, {
             agentName: parsed.agentRef.name,
             deliveryId,
             provider: runtimeProvider,
             status: statusPhase,
             externalRunId,
-            payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
+            payload: { request: payload, resource: created, status: asRecord(created.status) ?? {} },
           })
           yield* stores
             .createAuditEvent(activeStore, {
@@ -1442,7 +1452,7 @@ export const submitAgentRunWithServicesEffect = (
                 agent: parsed.agentRef.name,
                 agentRunId: record.id,
                 agentRunName: externalRunId,
-                agentRunUid: asString(asRecord(applied.metadata)?.uid),
+                agentRunUid: asString(asRecord(created.metadata)?.uid),
                 provider: runtimeProvider,
               },
             })
@@ -1453,7 +1463,7 @@ export const submitAgentRunWithServicesEffect = (
                 }),
               ),
             )
-          return { status: 201, body: { ok: true, agentRun: record, resource: applied } }
+          return { status: 201, body: { ok: true, agentRun: record, resource: created } }
         }),
       stores.close,
     )
