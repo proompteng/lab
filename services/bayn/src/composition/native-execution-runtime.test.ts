@@ -1267,7 +1267,12 @@ describe('native execution runtime', () => {
         executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
       )
       const replay = await Effect.runPromise(
-        executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
+        executeNativeExecutionAdvance(
+          { ...command, issuedAt: '2026-08-13T18:01:00.000Z' },
+          replayDriver,
+          uncertainStore,
+          controllerPlanHash,
+        ),
       )
 
       expect(advanceCount).toBe(1)
@@ -1296,7 +1301,7 @@ describe('native execution runtime', () => {
     let readCount = 0
     const authoritative = status({
       lastReceiptHash: hash('a'),
-      lastPass: windowClosedObservation,
+      lastPass: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
     })
     if (!executionControllerStatusHasCompletion(authoritative)) {
       throw new Error('projection-race fixture requires completion evidence')
@@ -1327,7 +1332,12 @@ describe('native execution runtime', () => {
     }
 
     const observed = await Effect.runPromise(
-      executeNativeExecutionAdvance(command, replayDriver, racingStore, controllerPlanHash),
+      executeNativeExecutionAdvance(
+        { ...command, issuedAt: '2026-08-13T18:01:00.000Z' },
+        replayDriver,
+        racingStore,
+        controllerPlanHash,
+      ),
     )
 
     expect(advanceCount).toBe(1)
@@ -1335,7 +1345,7 @@ describe('native execution runtime', () => {
     expect(readCount).toBe(2)
     expect(observed).toEqual({
       completedAt: authoritative.completedAt,
-      observation: windowClosedObservation,
+      observation: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
       outcome: {
         _tag: authoritative.lastOutcome,
         receiptHash: authoritative.lastReceiptHash,
