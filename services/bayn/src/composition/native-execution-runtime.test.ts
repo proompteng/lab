@@ -17,6 +17,8 @@ import {
   ScopedRef,
 } from 'effect'
 import { TestClock } from 'effect/testing'
+import { PgClient } from '@effect/sql-pg'
+import { nativeActivationPreflight, NativeActivationPreflightError } from './native-activation-preflight'
 
 import type { ApplicationPlan } from '../app'
 import type { NativeExecutionRuntime } from '../restate/restate-execution-controller'
@@ -183,6 +185,7 @@ const withExecutionRuntime = (
           ScopedRef.getUnsafe(managed),
           { runPromise: Effect.runPromise },
           controllerPlanHash,
+          () => Promise.resolve(),
         )
         yield* Effect.promise(() => use(runtime))
       }),
@@ -247,6 +250,91 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
 }
 
 describe('native execution runtime', () => {
+  const observePreflight = <E>(read: Effect.Effect<readonly unknown[], E>) => {
+    const original = plan({ brokerAccess: 'read-only' })
+    const { capitalActivationRequestJson: _request, ...config } = original.config
+    const sql = (() => read) as unknown as PgClient.PgClient
+    return nativeActivationPreflight({ ...original, config }).pipe(Effect.provideService(PgClient.PgClient, sql))
+  }
+  const authorityRow = {
+    schema_version: 'bayn.paper-authority.v1',
+    generation_hash: 'a'.repeat(64),
+    maximum: 'OBSERVE',
+    effective: 'OBSERVE',
+    kill_state: 'CLEAR',
+    reason: null,
+    version: '1',
+    updated_at: '2026-11-05T18:00:00.000Z',
+    observed_at: new Date('2026-11-05T18:01:00.000Z'),
+  }
+
+  test.each([{ rows: [] }, { rows: [authorityRow] }])(
+    'authority preflight reads once without initializing or replacing execution resources: %j',
+    async ({ rows }) => {
+      let reads = 0
+      await Effect.runPromise(
+        observePreflight(
+          Effect.sync(() => {
+            reads += 1
+            return rows
+          }),
+        ),
+      )
+      expect(reads).toBe(1)
+    },
+  )
+
+  test.each([
+    { ...authorityRow, maximum: 'PAPER', effective: 'PAPER' },
+    { ...authorityRow, maximum: 'invalid' },
+    { ...authorityRow, version: '0' },
+    { ...authorityRow, updated_at: '2026-11-05T18:02:00.000Z' },
+  ])('authority preflight rejects incompatible or invalid durable state: %j', async (row) => {
+    const result = await Effect.runPromise(observePreflight(Effect.succeed([row])).pipe(Effect.result))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(NativeActivationPreflightError)
+  })
+
+  test('authority preflight retains typed read failures and propagates defects', async () => {
+    const failure = new Error('database unavailable')
+    const result = await Effect.runPromise(observePreflight(Effect.fail(failure)).pipe(Effect.result))
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { cause: failure } })
+    const defect = await Effect.runPromiseExit(observePreflight(Effect.die(failure)))
+    expect(Exit.isFailure(defect)).toBe(true)
+    if (Exit.isFailure(defect)) expect(Cause.hasDies(defect.cause)).toBe(true)
+  })
+
+  test.each(['timeout', 'interruption'])(
+    'authority preflight cancels its read and finalizes once on %s',
+    async (kind) => {
+      let released = 0
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const read = Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined)
+            return yield* Effect.never
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                released += 1
+              }),
+            ),
+          )
+          const fiber = yield* Effect.forkChild(observePreflight(read))
+          yield* Deferred.await(started)
+          if (kind === 'timeout') yield* TestClock.adjust(30_000)
+          else yield* Fiber.interrupt(fiber)
+          return yield* Fiber.await(fiber)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+      expect(Exit.isFailure(result)).toBe(true)
+      expect(released).toBe(1)
+      if (Exit.isFailure(result) && kind === 'timeout') {
+        expect(Cause.hasFails(result.cause)).toBe(true)
+      }
+    },
+  )
   test('retains exact Jev observation references across stores, waiting, recovery and subsequent passes', async () => {
     const firstHash = hash('b')
     const recoveredHash = hash('a')
@@ -675,6 +763,7 @@ describe('native execution runtime', () => {
   test('keeps replacement registration and projection writer-fence-free until the first execution tick', async () => {
     let acquired = 0
     let released = 0
+    let preflights = 0
     let publishedSlot: RecoveryFirstCycleDriverSlot | undefined
     const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const executionResources = Layer.merge(
@@ -730,8 +819,14 @@ describe('native execution runtime', () => {
             projectionManaged,
             hostRunner,
             controllerPlanHash,
+            async () => {
+              preflights += 1
+            },
           )
 
+          expect(acquired).toBe(0)
+          yield* Effect.promise(() => runtime.prepareActivation(new AbortController().signal))
+          expect(preflights).toBe(1)
           expect(acquired).toBe(0)
           yield* Effect.promise(() => runtime.log('info', 'inactive worker discovery', {}))
           expect(acquired).toBe(0)
@@ -885,6 +980,7 @@ describe('native execution runtime', () => {
               projectionManaged,
               hostRunner,
               controllerPlanHash,
+              () => Promise.resolve(),
             )
             if (failure instanceof NativeExecutionRuntimeError) {
               yield* Effect.promise(() => runtime.advance(command, new AbortController().signal))
@@ -1500,6 +1596,7 @@ describe('native execution runtime', () => {
               ScopedRef.getUnsafe(managed),
               runner,
               controllerPlanHash,
+              () => Promise.resolve(),
             )
             yield* Effect.promise(() =>
               context.with(trace.setSpanContext(context.active(), nativeParent), () =>

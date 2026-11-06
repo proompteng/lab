@@ -19,6 +19,39 @@ large immutable evidence cuts. Use a 3 GiB Node heap for that command and stream
 A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The native controller's resource limits,
 original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
 
+## Webull supplementary context
+
+Protocol v38 adds the latest completed Webull M1 bar to each candidate's numerical input v24 and final Jev evidence.
+The native Kafka arrival cut supplies the bar, with a ten-second availability limit and exact provider decimals.
+Missing, late or invalid data remains absent. Source labels distinguish Webull HTTP bars from the existing IEX chart,
+volume and execution prices; consolidated SIP/NBBO coverage and improved trading returns are not established.
+
+Migration 178 requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete
+accounting and no unexpired inference claims. It admits only v38 execution requests while preserving all original
+financial and provider evidence, including read-only v37 cost verification. The source cutover removes the old sealed
+mandate and its three runtime inputs, then runs OBSERVE. After verifying the published immutable image and native
+cutover, restore the same sandbox account's PAPER mandate through reviewed GitOps, bound to that image and the v38
+strategy. Broker credentials, risk limits, fees, funding, loss history and turnover remain unchanged.
+
+Migration 179 restricts a clear v37 PAPER generation with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. Native recovery then
+settles the prior generation and requires fresh exact reconciliation before creating clear OBSERVE authority.
+Existing operator holds, v38 grants and immutable financial history remain intact. Removing the sealed request alone
+does not change durable authority and cannot complete this handoff.
+
+The native OBSERVE cutover completed on 2026-11-05 against source
+`42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e` and image
+`sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a`.
+Migration 179, clear OBSERVE authority, advancing controller passes, flat inventory and fresh exact reconciliation
+were verified after Kargo promotion. The sealed v38 PAPER request
+`588976a7a41ea2b4d64d65597411634e0517cf31869c9051205c739add4c57ed` is authored against that verified build.
+It retains the existing sandbox account, broker credentials and risk policy. Its sealed identity, activation
+generation and all three runtime lineages move together; native PAPER activation still requires runtime verification.
+
+Both stages require the reviewed protocol-cutover approval. Do not merge this source cutover before that approval.
+After PAPER restoration, verify natural model requests contain source-bound Webull context, exact reconciliation,
+unchanged limits and successful native receipts. OBSERVE alone does not complete integration. Rollback follows the
+native deactivation and mandate-rotation procedure below; never restore the retired mandate by itself.
+
 ## Jev-only inference
 
 Protocol v37 moves CHART and conditional BASE_START to pinned Jev 1.13 image assets. The final proposal judgments
@@ -551,7 +584,16 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
 The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
-validates the target against the latest worker before reading durable controller state. A pinned stale coordinator
+validates the target against the latest worker before reading durable controller state. Each current replica must
+first pass its HTTP/2 `/startup-ready` probe after completing its original Kafka history rebuild. TCP liveness stays
+independent. Startup readiness latches after the first successful rebuild, preserving the endpoint for broker
+observations and liquidation during later source recovery. Entry reads retain their current-history checks.
+The shared `prepareActivation` handler waits for current history without blocking predecessor ticks, using the
+consumer's original bootstrap deadline. It then performs the existing authority preflight. Before an OBSERVE successor
+can retire its predecessor, a bounded read-only preflight rejects untransitioned PAPER authority and unrelated holds.
+Absent or existing OBSERVE authority and recognized restricted-generation recovery remain admissible; the existing
+native settlement, reconciliation, identity and capital checks still apply afterward. The preflight does not rotate
+authority, restore a mandate or prove broker exposure. A pinned stale coordinator
 cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
 activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
 source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.

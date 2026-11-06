@@ -18,6 +18,7 @@ import { bindOperationalWork, registeredControllerWork, registeredDecisionWork }
 import { type OperationalRegistration, validateOperationalRegistration } from './operational-period'
 import { readSystemSourceCutPayload, SystemSourceCutSchema } from './source-cut'
 import { readSystemSourceRecord, SystemSourceRecordKind } from './source-records'
+import { makeOperationalSafetyScan, type NativeOperationalSafetyAudit } from './operational-safety'
 
 export const OperationalSourceReferenceSchema = Schema.Struct({
   kind: Schema.Enum(SystemSourceRecordKind),
@@ -73,6 +74,7 @@ export type VerifiedOperationalSourceCut = {
   }[]
   readonly work: Parameters<typeof bindOperationalWork>[3]
   readonly admissions: Result.Result.Success<ReturnType<typeof decisionAdmissionWitnesses>>
+  readonly nativeSafetyAudit: NativeOperationalSafetyAudit
 }
 
 export const isVerifiedOperationalSourceCut = (
@@ -126,6 +128,7 @@ export const replayOperationalSourceRecords = (
       index.set(reference.sourceId, reference)
     }
     const protectionsByDecision = protectionIntentsByDecision(cut.protectionIntents)
+    const safety = yield* Effect.fromResult(makeOperationalSafetyScan(cut, registration))
     const documentWork = new Map<string, ReturnType<typeof registeredDecisionWork>>()
     const intentOwners = new Set<string>()
     const retainedProtections = new Set<string>()
@@ -133,6 +136,7 @@ export const replayOperationalSourceRecords = (
       const row = yield* readDecision(reference, registration)
       const protections = protectionsByDecision.get(row.document.contentHash) ?? []
       const plans = yield* Effect.fromResult(executionOrderPlans([row], protections))
+      yield* Effect.fromResult(safety.consume(plans))
       for (const intentId of plans.keys()) {
         if (intentOwners.has(intentId))
           return yield* new SystemAssessmentError({ message: 'Ambiguous execution intent ownership' })
@@ -208,6 +212,7 @@ export const replayOperationalSourceRecords = (
       unboundControllerBuilds,
       work: { documentWork, controllerWork },
       admissions,
+      nativeSafetyAudit: yield* Effect.fromResult(safety.finish()),
     } satisfies VerifiedOperationalSourceCut
   })
 

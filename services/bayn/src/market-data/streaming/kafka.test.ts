@@ -110,6 +110,31 @@ class FakeTransport implements KafkaProjectionTransport {
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe((self) => provideTestLayer(self, TestClock.layer())))
 
+test('history arriving after the original bootstrap deadline cannot make a cold worker ready', async () => {
+  const transport = new FakeTransport()
+  transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '10' : '0')
+  await program(
+    Effect.gen(function* () {
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => transport)
+      yield* Effect.sleep(5500).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            transport.drained = positions('10')
+          }),
+        ),
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust(6500)
+      const status = yield* market.status
+      expect(status.ready).toBe(false)
+      expect(status.bootstrapDeadlineAtMs).toBe(5000)
+      expect(status.failure).toBe('Kafka bootstrap deadline exceeded')
+      expect(Result.isFailure(yield* market.read.pipe(Effect.result))).toBe(true)
+    }),
+  )
+  expect(transport.closeCount).toBe(1)
+})
+
 test('native retention observes the trading consumer cut, including rejected records and repeated deliveries', async () => {
   await program(
     Effect.gen(function* () {

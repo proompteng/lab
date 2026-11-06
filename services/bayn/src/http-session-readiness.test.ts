@@ -547,7 +547,7 @@ test('no eligible candidate remains ordinary abstention after the decision deadl
   expect(metrics).toContain('bayn_execution_session_condition{condition="decision_lagging"} 0\n')
 })
 
-test('an unused entry expiry reports rearming during the market rotation cooldown', () => {
+test('an unused entry expiry reports rearming during the market rotation handoff', () => {
   const state = sessionState('2026-10-01T14:00:30.000Z')
   const current = state.cycle.current
   if (current === null) throw new Error('fixture cycle missing')

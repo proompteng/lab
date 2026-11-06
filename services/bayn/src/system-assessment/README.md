@@ -91,6 +91,11 @@ The archive is persisted before the manifest, and PostgreSQL rejects missing ref
 and operational manifests attached to financial registrations. Interrupted capture can leave retained archive rows;
 retry verifies and reuses their exact contents rather than replacing evidence.
 
+Whole-session decision reads retain premarket and later decisions as source context, including the original owners of
+inventory and mutations carried into the reporting period. Their market, universe and native exchange session must
+match the registered policy. Context outside the registered reporting window cannot complete scheduled decision work;
+the original window and deadlines still determine every numerator and denominator.
+
 Assessment reads every referenced source and runs the same decision, execution-plan, admission, controller and durable
 witness checks used for retained full cuts. Correctness counters are derived during replay and cannot be supplied by
 the manifest. Missing, substituted or malformed sources fail verification. Existing `bayn.system-source-cut.v4` cuts
@@ -125,7 +130,7 @@ Selecting the deployed control still requires its frozen identity; selected abla
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
 
-The v37 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
+The v37 and v38 candidate and chart ablation require continuous Jev tariff coverage from the first open through the final close.
 Retained historical protocols still require their original provider tariffs for financial verification. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
 Replay requests use `bayn.backtest.v11` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
@@ -317,13 +322,22 @@ evidence obligation.
    report. `--persist-receipt` also persists that forward-performance report.
 
 The same history, register, capture, and assess commands accept operational packets. Their program and schema select
-the operational evaluator; its input contains the saved registration, source-cut hash, and a verified source-bound
-safety audit. Counters and successful-event totals are derived from the committed evidence rather than supplied by
-the packet. Operational registration requires verified calendar/scope and retained incident artifacts and the
-existing durable authorized generation. Registration and reporting do not change trading authority or risk limits.
-Current operational packets use `bayn.operational-assessment-input.v2`; results bind the rule with
-`evaluationPolicy: bayn.operational-build-binding.v1` inside the existing assessment envelope. Stored v1 inputs
-reproduce their original immutable receipts only on historical read and cannot enter current assessment admission.
+the operational evaluator. Current `bayn.operational-assessment-input.v3` packets contain only the saved
+registration and source-cut hash. The evaluator derives the native safety audit from the same cut; supplied clean
+audit declarations are rejected. Results bind `evaluationPolicy: bayn.operational-native-safety.v1` and retain each
+native check, its source identity and the explicit provider and database assumptions.
+
+Migration 181 adds append-only authority-at-registration, authority-transition and mutation-admission journals in the
+original PostgreSQL transactions. Rollback removes the original write and its journal together. Existing registrations
+are not backfilled with invented authority baselines. Capture retains the currently published full broker observation,
+raw durable order/fill and intent/risk records, and the complete account ledger and cash settlements. A missing
+baseline, broker observation, ownership, authority transition or accounting record yields incomplete evidence; known
+unauthorized effects or invalid risk terms remain violations. No order is submitted to create coverage.
+
+Counters and successful-event totals come from committed witnesses. Operational registration still requires verified
+calendar/scope and retained incident artifacts and the existing durable authorized generation. Registration and
+reporting do not change trading authority or risk limits. Stored v1 and v2 inputs reproduce their original immutable
+receipts only on historical read and cannot enter current assessment admission.
 Their original source/digest controller comparison is frozen separately from the current build matcher.
 Those historical results do not establish a certificate under the current build-binding rule.
 Compact source replay carries the selected policy only in verified in-memory evidence; its immutable manifest is

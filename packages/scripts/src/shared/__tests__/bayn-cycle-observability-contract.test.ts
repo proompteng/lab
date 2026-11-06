@@ -11,6 +11,8 @@ interface MimirRule {
   readonly alert: string
   readonly expr: string
   readonly for: string
+  readonly keep_firing_for?: string
+  readonly annotations: { readonly summary: string; readonly description: string }
 }
 
 const baynRules = (): readonly MimirRule[] => {
@@ -509,8 +511,19 @@ describe('Bayn cycle operations alert contract', () => {
       expect(runbook).toContain(`\`${alert}\``)
     }
     expect(normalizedRunbook).toContain(
-      'An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms recovery.',
+      'The underlying condition clears only when its source-of-truth state changes and the next bounded projection or health probe confirms recovery.',
     )
+    const failed = baynRules().find(({ alert }) => alert === 'BaynCycleFailed')
+    expect(failed?.for).toBe('1m')
+    expect(failed?.keep_firing_for).toBe('5m')
+    expect(failed?.annotations.summary).toContain('fail-closed execution condition')
+    const description = failed?.annotations.description.replaceAll(/\s+/g, ' ')
+    expect(description).toContain('does not necessarily mean a terminal cycle failure')
+    expect(description).toContain('Firing is retained for 5 minutes after the condition clears')
+    expect(description).toContain('Check cycle.reason and the matching cycle/trace')
+    expect(description).not.toContain('remains current')
+    expect(normalizedRunbook).toContain('Notification timestamps are not incident onset or duration')
+    expect(normalizedRunbook).toContain('A terminal COMPLETED cycle can include a canceled, unfilled entry')
     expect(normalizedRunbook).toContain(
       'When `cycle.reason=LAST_CYCLE_BLOCKED`, branch on the exact persisted `cycle.last.terminalReason`',
     )
