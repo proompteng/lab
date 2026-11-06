@@ -8,7 +8,7 @@ import {
   ReliabilityStatus,
 } from '../../src/system-assessment/reliability'
 import { testHash } from '../../src/system-assessment/fixtures.test-support'
-import { formalModelExecutable, runFormalModel as model } from './model'
+import { formalModelExecutable, runFormalModel as model } from '../../src/system-assessment/formal-model.test-support'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 const at = (ms: number) => new Date(Date.parse('2026-11-06T14:30:00.000Z') + ms).toISOString()

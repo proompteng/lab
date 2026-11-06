@@ -7,7 +7,7 @@ import { mutationIdResult } from '../../src/execution/mutations/decisions'
 import { MutationEventSchema, MutationEventType } from '../../src/execution/mutations/model'
 import { nativeOrderSafetyFixture } from '../../src/system-assessment/operational-safety-orders.test-support'
 import { testHash } from '../../src/system-assessment/fixtures.test-support'
-import { formalModelExecutable, runFormalModel as model } from './model'
+import { formalModelExecutable, runFormalModel as model } from '../../src/system-assessment/formal-model.test-support'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 formal('native auditor consumes original admission and routing evidence', () => {

@@ -10,7 +10,7 @@ import {
   testHash,
 } from '../../src/system-assessment/fixtures.test-support'
 import { JevResearchPolicy } from '../../src/jev/acceptance'
-import { formalModelExecutable, runFormalModel as model } from './model'
+import { formalModelExecutable, runFormalModel as model } from '../../src/system-assessment/formal-model.test-support'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 const micros = (usd: number) => String(Math.round(usd * 1_000_000))

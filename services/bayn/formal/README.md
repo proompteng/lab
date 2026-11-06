@@ -18,7 +18,8 @@ rejections, and conformance failures return a nonzero exit code. The command bui
 this suite without that variable and is not a substitute for `verify:formal`.
 
 Formal TypeScript tests and the TLC runner live under `formal/`, outside the service's ordinary `src` and `tools`
-test discovery. Run `bun run --filter @proompteng/bayn test` for service tests. Formal-only PRs run the formal jobs;
+test discovery. The database tests share a small `src/system-assessment/formal-model.test-support.ts` process adapter;
+it runs only when formal CI supplies the built executable. The image source still excludes `formal/`. Run `bun run --filter @proompteng/bayn test` for service tests. Formal-only PRs run the formal jobs;
 service, migration and relevant dependency changes also run them. Deployment/config-only PRs retain their service
 checks without rebuilding the proof environment. Exact-revision runtime publication still requires both Lean and TLC.
 Changes confined to `formal/` do not publish an image or reactivate the controller. PostgreSQL's normal matrix owns

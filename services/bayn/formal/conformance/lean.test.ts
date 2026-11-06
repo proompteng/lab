@@ -200,7 +200,7 @@ import { CaptureDisposition } from '../../src/market-data/streaming/transport-ev
 import { topicPartitionKey } from '../../src/market-data/streaming/projection'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../../src/jev/resolution'
 
-import { formalModelExecutable, runFormalModel as model } from './model'
+import { formalModelExecutable, runFormalModel as model } from '../../src/system-assessment/formal-model.test-support'
 import { persistenceDocumentFixture } from '../../src/system-assessment/decision-persistence.test-support'
 import { emptySourceCutFixture } from '../../src/system-assessment/source-cut.test-support'
 import {

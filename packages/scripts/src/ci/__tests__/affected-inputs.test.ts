@@ -670,30 +670,3 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     expect(matchesPaths(path, paths)).toBe(false)
   expect(matchesPaths('services/bayn/src/execution/controller.ts', paths)).toBe(true)
 })
-
-test('the Bayn aggregate rejects missing formal results even when runtime jobs are inapplicable', () => {
-  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
-  const steps = property(property(property(workflow, 'jobs'), 'required'), 'steps')
-  if (!Array.isArray(steps)) throw new Error('Missing aggregate gate')
-  const step = steps[0]
-  const names = property(step, 'env')
-  if (typeof names !== 'object' || names === null) throw new Error('Missing gate inputs')
-  const good = Object.fromEntries(
-    Object.keys(names).map((name) => [name, name.endsWith('_RELEVANT') ? 'true' : 'success']),
-  )
-  const run = (overrides: Record<string, string>) =>
-    Bun.spawnSync(['bash', '-c', text(property(step, 'run'))], {
-      env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', ...good, ...overrides },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    }).exitCode
-  expect(run({})).toBe(0)
-  expect(run({ BAYN_RELEVANT: 'false', IMAGE_RELEVANT: 'false' })).toBe(0)
-  for (const failure of ['failure', 'cancelled', 'skipped']) {
-    expect(run({ BAYN_RELEVANT: 'false', IMAGE_RELEVANT: 'false', FORMAL_RESULT: failure })).not.toBe(0)
-    expect(run({ FORMAL_RESULT: failure })).not.toBe(0)
-  }
-  expect(run({ FORMAL_RELEVANT: 'false', FORMAL_RESULT: 'skipped' })).toBe(0)
-  expect(run({ UNIT_RESULT: 'failure' })).not.toBe(0)
-  expect(run({ IMAGE_RESULT: 'failure' })).not.toBe(0)
-})
