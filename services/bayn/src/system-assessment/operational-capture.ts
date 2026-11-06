@@ -40,6 +40,7 @@ import {
 } from './operational-source-cut'
 import { SystemSourceCutSchema } from './source-cut'
 import { makeSystemSourceRecord, persistSystemSourceRecord, SystemSourceRecordKind } from './source-records'
+import { captureOperationalSafetySource } from './operational-safety-source'
 
 export const makeOperationalSourceSpool = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -127,6 +128,7 @@ export const captureOperationalSourceCut = (
             lastSession: last.sessionDate,
             asOf,
           }
+          const safety = yield* captureOperationalSafetySource(config, registrationHash, identity.accountId, asOf)
           const forward = yield* readForwardPerformanceInput(config, undefined, {
             authorityGenerationHash: definition.authorityGenerationHash,
           })
@@ -247,6 +249,7 @@ export const captureOperationalSourceCut = (
           )
           return {
             asOf,
+            safety,
             forward,
             financial,
             inferenceSources,
@@ -283,6 +286,7 @@ export const captureOperationalSourceCut = (
         runtimeConfiguration,
         accounts: [{ policy: JevResearchPolicy.Candidate, identity: accountIdentity, forward, inferenceSnapshots }],
         mutations,
+        safety: captured.safety,
       }
       const cut = yield* Schema.decodeUnknownEffect(
         OperationalSourceCutSchema,
