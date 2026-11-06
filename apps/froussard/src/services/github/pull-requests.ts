@@ -2,8 +2,6 @@ import { Effect, Schema } from 'effect'
 
 import { DEFAULT_API_BASE_URL, DEFAULT_USER_AGENT, readResponseText, toError, trimTrailingSlash } from './common'
 import type {
-  CreatePullRequestCommentOptions,
-  CreatePullRequestCommentResult,
   FetchLike,
   FetchPullRequestOptions,
   FetchPullRequestResult,
@@ -18,14 +16,14 @@ const globalFetch: FetchLike | null =
 const GitHubPullRequestSchema = Schema.Struct({
   number: Schema.Number,
   title: Schema.String,
-  body: Schema.optionalWith(Schema.String, { nullable: true, default: () => '' }),
+  body: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.String,
   draft: Schema.Boolean,
   merged: Schema.Boolean,
   state: Schema.String,
-  additions: Schema.optionalWith(Schema.Number, { default: () => 0 }),
-  deletions: Schema.optionalWith(Schema.Number, { default: () => 0 }),
-  changed_files: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  additions: Schema.optional(Schema.Number),
+  deletions: Schema.optional(Schema.Number),
+  changed_files: Schema.optional(Schema.Number),
   head: Schema.Struct({
     ref: Schema.String,
     sha: Schema.String,
@@ -33,22 +31,23 @@ const GitHubPullRequestSchema = Schema.Struct({
   base: Schema.Struct({
     ref: Schema.String,
   }),
-  user: Schema.optionalWith(
-    Schema.Struct({
-      login: Schema.optionalWith(Schema.String, { nullable: true }),
-    }),
-    { nullable: true },
+  user: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
   ),
-  mergeable_state: Schema.optionalWith(Schema.String, { nullable: true }),
+  mergeable_state: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
-const decodePullRequest = Schema.decodeUnknown(GitHubPullRequestSchema)
+const decodePullRequest = Schema.decodeUnknownEffect(GitHubPullRequestSchema)
 
 const GitHubPullRequestNodeSchema = Schema.Struct({
   node_id: Schema.String,
 })
 
-const decodePullRequestNode = Schema.decodeUnknown(GitHubPullRequestNodeSchema)
+const decodePullRequestNode = Schema.decodeUnknownEffect(GitHubPullRequestNodeSchema)
 
 export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effect<FetchPullRequestResult> => {
   const {
@@ -98,10 +97,10 @@ export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effec
           detail: error instanceof Error ? error.message : String(error),
         }),
       onSuccess: (response) =>
-        Effect.gen(function* (_) {
+        Effect.gen(function* () {
           if (!response.ok) {
             const detail = yield* readResponseText(response).pipe(
-              Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+              Effect.catch(() => Effect.succeed<string | undefined>(undefined)),
             )
             return {
               ok: false as const,
@@ -111,27 +110,27 @@ export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effec
             }
           }
 
-          const bodyResult = yield* readResponseText(response).pipe(Effect.either)
-          if (bodyResult._tag === 'Left') {
+          const bodyResult = yield* readResponseText(response).pipe(Effect.result)
+          if (bodyResult._tag === 'Failure') {
             return {
               ok: false as const,
               reason: 'network-error',
-              detail: bodyResult.left.message,
+              detail: bodyResult.failure.message,
             }
           }
 
           let parsed: PullRequestSummary
           try {
-            const raw = bodyResult.right.length === 0 ? {} : JSON.parse(bodyResult.right)
-            const decodedResult = yield* decodePullRequest(raw).pipe(Effect.either)
-            if (decodedResult._tag === 'Left') {
+            const raw = bodyResult.success.length === 0 ? {} : JSON.parse(bodyResult.success)
+            const decodedResult = yield* decodePullRequest(raw).pipe(Effect.result)
+            if (decodedResult._tag === 'Failure') {
               return {
                 ok: false as const,
                 reason: 'invalid-pull-request',
-                detail: String(decodedResult.left),
+                detail: String(decodedResult.failure),
               }
             }
-            const decoded = decodedResult.right
+            const decoded = decodedResult.success
             parsed = {
               number: decoded.number,
               title: decoded.title,
@@ -193,7 +192,7 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
 
   const pullUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/pulls/${pullNumber}`
 
-  return Effect.gen(function* (_) {
+  return Effect.gen(function* () {
     const pullResponseResult = yield* Effect.tryPromise({
       try: () =>
         fetchFn(pullUrl, {
@@ -206,10 +205,10 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
           },
         }),
       catch: toError,
-    }).pipe(Effect.either)
+    }).pipe(Effect.result)
 
-    if (pullResponseResult._tag === 'Left') {
-      const error = pullResponseResult.left
+    if (pullResponseResult._tag === 'Failure') {
+      const error = pullResponseResult.failure
       return {
         ok: false as const,
         reason: 'network-error',
@@ -217,10 +216,10 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
       }
     }
 
-    const pullResponse = pullResponseResult.right
+    const pullResponse = pullResponseResult.success
     if (!pullResponse.ok) {
       const detail = yield* readResponseText(pullResponse).pipe(
-        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+        Effect.catch(() => Effect.succeed<string | undefined>(undefined)),
       )
 
       return {
@@ -231,27 +230,27 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
       }
     }
 
-    const pullBodyResult = yield* readResponseText(pullResponse).pipe(Effect.either)
-    if (pullBodyResult._tag === 'Left') {
+    const pullBodyResult = yield* readResponseText(pullResponse).pipe(Effect.result)
+    if (pullBodyResult._tag === 'Failure') {
       return {
         ok: false as const,
         reason: 'network-error',
-        detail: pullBodyResult.left.message,
+        detail: pullBodyResult.failure.message,
       }
     }
 
     let nodeId: string
     try {
-      const raw = pullBodyResult.right.length === 0 ? {} : JSON.parse(pullBodyResult.right)
-      const decodedResult = yield* decodePullRequestNode(raw).pipe(Effect.either)
-      if (decodedResult._tag === 'Left') {
+      const raw = pullBodyResult.success.length === 0 ? {} : JSON.parse(pullBodyResult.success)
+      const decodedResult = yield* decodePullRequestNode(raw).pipe(Effect.result)
+      if (decodedResult._tag === 'Failure') {
         return {
           ok: false as const,
           reason: 'network-error',
-          detail: String(decodedResult.left),
+          detail: String(decodedResult.failure),
         }
       }
-      nodeId = decodedResult.right.node_id
+      nodeId = decodedResult.success.node_id
     } catch (error) {
       return {
         ok: false as const,
@@ -295,10 +294,10 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
           body: payload,
         }),
       catch: toError,
-    }).pipe(Effect.either)
+    }).pipe(Effect.result)
 
-    if (responseResult._tag === 'Left') {
-      const error = responseResult.left
+    if (responseResult._tag === 'Failure') {
+      const error = responseResult.failure
       return {
         ok: false as const,
         reason: 'network-error',
@@ -306,13 +305,13 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
       }
     }
 
-    const response = responseResult.right
+    const response = responseResult.success
     if (response.ok) {
       return { ok: true as const }
     }
 
     const detail = yield* readResponseText(response).pipe(
-      Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+      Effect.catch(() => Effect.succeed<string | undefined>(undefined)),
     )
 
     return {
@@ -322,100 +321,4 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
       detail,
     }
   })
-}
-
-export const createPullRequestComment = (
-  options: CreatePullRequestCommentOptions,
-): Effect.Effect<CreatePullRequestCommentResult> => {
-  const {
-    repositoryFullName,
-    pullNumber,
-    body,
-    token,
-    apiBaseUrl = DEFAULT_API_BASE_URL,
-    userAgent = DEFAULT_USER_AGENT,
-    fetchImplementation = globalFetch,
-  } = options
-
-  if (!token || token.trim().length === 0) {
-    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
-  }
-
-  const [owner, repo] = repositoryFullName.split('/')
-  if (!owner || !repo) {
-    return Effect.succeed({
-      ok: false,
-      reason: 'invalid-repository' as const,
-      detail: repositoryFullName,
-    })
-  }
-
-  const fetchFn = fetchImplementation
-  if (!fetchFn) {
-    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
-  }
-
-  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${pullNumber}/comments`
-  const payload = JSON.stringify({ body })
-
-  return Effect.tryPromise({
-    try: () =>
-      fetchFn(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': userAgent,
-          Authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: payload,
-      }),
-    catch: toError,
-  }).pipe(
-    Effect.flatMap((response) => {
-      if (response.ok) {
-        return readResponseText(response).pipe(
-          Effect.map((text): CreatePullRequestCommentResult => {
-            if (!text) {
-              return { ok: true } as const
-            }
-            try {
-              const parsed = JSON.parse(text) as { html_url?: unknown }
-              const commentUrl =
-                parsed && typeof parsed === 'object' && typeof parsed.html_url === 'string'
-                  ? parsed.html_url
-                  : undefined
-              return { ok: true, commentUrl } as const
-            } catch (error) {
-              return {
-                ok: false as const,
-                reason: 'invalid-json',
-                detail: error instanceof Error ? error.message : String(error),
-              } as const
-            }
-          }),
-        )
-      }
-
-      return readResponseText(response).pipe(
-        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
-        Effect.map(
-          (detail): CreatePullRequestCommentResult => ({
-            ok: false,
-            reason: 'http-error',
-            status: response.status,
-            detail,
-          }),
-        ),
-      )
-    }),
-    Effect.catchAll((error) =>
-      Effect.succeed<CreatePullRequestCommentResult>({
-        ok: false,
-        reason: 'network-error',
-        detail: error instanceof Error ? error.message : String(error),
-      }),
-    ),
-  )
 }
