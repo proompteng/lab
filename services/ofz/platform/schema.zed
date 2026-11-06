@@ -27,3 +27,10 @@ definition platform_delegation {
     relation issuer: human
     permission use = subject
 }
+
+definition google_project {
+    relation reader: human | workload
+    relation reader_workspace: platform_workspace
+
+    permission read = reader + reader_workspace->human_member
+}
