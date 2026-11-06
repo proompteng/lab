@@ -42,7 +42,12 @@ export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig,
 export const makeBrokerObservationCapture = Effect.gen(function* () {
   const permit = yield* Semaphore.make(1)
   let previous:
-    | { readonly history: BrokerHistory; readonly completedAt: string; readonly generation: number }
+    | {
+        readonly history: BrokerHistory
+        readonly completedAt: string
+        readonly generation: number
+        readonly latestFillId: string | null
+      }
     | undefined
   return (
     fresh: BrokerReadShape,
@@ -61,6 +66,13 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
               ticket.generation !== previous.generation + 1)
           )
             previous = undefined
+          // The existing latest-fill read starts a fresh bracket immediately after a newly reported fill.
+          const recentFills =
+            previous === undefined
+              ? undefined
+              : yield* fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
+          if (recentFills !== undefined && previous?.latestFillId !== (recentFills.value.items[0]?.activityId ?? null))
+            previous = undefined
           yield* Effect.annotateCurrentSpan('broker.history.reused', previous !== undefined)
           const value = yield* Effect.all(
             {
@@ -74,7 +86,10 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
                 limit: 1,
                 direction: SortDirection.Descending,
               }),
-              recentFills: fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
+              recentFills:
+                recentFills === undefined
+                  ? fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending })
+                  : Effect.succeed(recentFills),
             },
             { concurrency: 2 },
           )
@@ -97,6 +112,7 @@ export const makeBrokerObservationCapture = Effect.gen(function* () {
                     history: exit.value.snapshot.history,
                     completedAt: exit.value.completedAt,
                     generation: ticket.generation,
+                    latestFillId: exit.value.recentFills.value.items[0]?.activityId ?? null,
                   }
                 : undefined
             }),

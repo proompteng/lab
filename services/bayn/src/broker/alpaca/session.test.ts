@@ -149,9 +149,10 @@ describe('Alpaca broker session acquisition retry', () => {
                 )
               if (url.pathname === '/v2/account/activities/FILL') {
                 const token = url.searchParams.get('page_token')
-                const offset = token === null ? 0 : fills.findIndex((fill) => fill.id === token) + 1
+                const rows = url.searchParams.get('direction') === 'desc' ? fills.toReversed() : fills
+                const offset = token === null ? 0 : rows.findIndex((fill) => fill.id === token) + 1
                 const pageSize = Number(url.searchParams.get('page_size'))
-                return response(fills.slice(offset, offset + pageSize))
+                return response(rows.slice(offset, offset + pageSize))
               }
               if (url.pathname === '/v2/account') return response(accountResponse)
               if (url.pathname === '/v2/account/configurations') return response(accountConfigurationResponse)
@@ -186,6 +187,22 @@ describe('Alpaca broker session acquisition retry', () => {
         expect((yield* Fiber.join(second)).snapshot.history.fills).toHaveLength(2_002)
         expect(requests).toBe(81)
         expect(yield* budget.nextPollNotBeforeMs).toBe(48_600)
+        const last = fills.at(-1)
+        if (last === undefined) throw new Error('Expected a complete fill fixture')
+        fills.push({
+          ...last,
+          id: 'fill-2002::62e69015-8549-4bfd-b9c3-01e75843f47d',
+          transaction_time: '1970-01-01T00:00:00.000Z',
+        })
+        yield* budget.beginCapture
+        const changed = yield* captureBrokerObservation(
+          read,
+          { generation: 3, startedAt: yield* currentUtcInstant },
+          30_000,
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(30_000)
+        expect((yield* Fiber.join(changed)).snapshot.history.fills).toHaveLength(2_003)
+        expect(requests).toBe(133)
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })
