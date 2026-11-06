@@ -1,7 +1,9 @@
 # System assessment
 
 These modules report a registered PAPER policy against its economic, matched-control, reliability, safety, and
-realism requirements. Current bootstrap outputs are research diagnostics, not a coverage certificate. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
+realism requirements. Current statistical qualification uses prospectively registered conditional support and exact
+microdollar bounds. Retained bootstrap outputs remain research diagnostics. `evaluateSystemAssessment` is pure;
+the capture and persistence paths bind its input to
 immutable source records. An assessment never admits an order or grants capital authority.
 
 ## Economics
@@ -121,10 +123,11 @@ complete costs, statistical edge, or a combined qualification verdict.
 
 ## Prospective registration
 
-`validateSystemRegistration` admits `bayn.system-registration.v3`: a nonempty prospective calendar, candidate and at
-least one selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original
-deadlines, statistical assumptions, allocation, and a bootstrap plan. Block length, replicate budget, and seed are
-immutable before the first open. The allocation must fit every bound source-approved risk policy. Both existing
+`validateSystemRegistration` validates current `bayn.system-registration.v4` registrations and retained historical
+versions; new admission accepts only v4. It binds a nonempty prospective calendar, candidate and at least one
+selected matched control, source/image/prompt identities, cost weights, actual inference tariffs, original deadlines,
+allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
+have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
@@ -229,14 +232,29 @@ selected paired net edge, and compliance with the registered source-approved los
 turnover, control-profit ratios, best-session removal, ten-basis-point stress, and p95 latency are diagnostics.
 Missing stress evidence leaves that diagnostic unresolved; supplied contradictory evidence still rejects binding.
 There is no fixed session count. Candidate and selected controls must cover every registered session exactly,
-including losses, downtime, blocked decisions, and zero-trade costs. The bootstrap preregisters its dependence block,
-seed, and finite work budget. Its nominal error allocation covers absolute profit and selected comparisons across attempts only if the constituent bounds have valid coverage.
+including losses, downtime, blocked decisions, and zero-trade costs.
+
+New `bayn.system-registration.v4` registrations require `statisticalPlan.method: CONDITIONAL_HOEFFDING_V1` and one
+prospective support interval, source artifact and explicit assumption for every selected policy. They have no
+bootstrap or replicate budget. `economic-qualification.ts` uses actual fully attributed session net profit and exact
+conditional Hoeffding lower bounds for the candidate and every paired control. Its estimand is average registered
+expected session net profit over the fixed calendar, not future or stationary returns. Supports are assumptions about
+the complete policy, including costs and failures; observed extrema and stop limits do not establish those assumptions.
+The registered `meanModel: DETERMINISTIC_CONDITIONAL_SESSION_MEANS` assumes each session's conditional expected
+net profit given prior information equals its expected net profit given registration information. Session means
+may differ across dates; this is not inferred from observed returns. There are no default production support bounds. Out-of-support observations reject the model rather than being clipped.
+
+The result retains support assumptions, conditional MGF, registered mean model and causal-filtration assumptions, exact alpha, integer radius
+and rational mean bound. The familywise 0.05 budget is shared across all claims and immutable attempts. Missing evidence
+cannot qualify. Failed statistical targets report `NOT_ESTABLISHED`; an incomplete result remains `UNDETERMINED`.
 See the [statistical procedure](../../../../docs/bayn/jev-migration-validation.md#statistical-comparison).
 
-Current assessments include `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, retain observed profit and bootstrap diagnostics,
-and cannot emit established edge or `QUALIFIED_PAPER`. Known violations still reject; otherwise the result is
-inconclusive. No fixed calendar length or activity quota repairs the missing coverage argument. A future inferential
-method requires its own justified assumptions and versioned policy before it can establish qualification.
+Stored v5 research assessments retain `STATISTICAL_COVERAGE_NOT_ESTABLISHED`, their original bootstrap outputs and
+policy hash. Stored v4 and earlier assessments retain their original rules. New admission accepts only v4 registration
+with the current policy identities; it cannot upgrade an earlier attempt or reset the history. The private reporting
+command owns current assessment. `tools/jev-acceptance.ts --retained-input` reproduces the retained v5 numerical research
+checker and is not a current qualification route.
+
 A complete failed window and an incomplete window retain distinct outcomes. Source calendar evidence must support
 the market and hours claimed. The supported reference calendar remains broker-observed US regular sessions;
 that scope does not establish continuous-market performance.
@@ -283,9 +301,9 @@ its prospectively registered operation timeout; the CLI does not replace it with
 Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
 assessment receipt. Reading a saved assessment recomputes its result under the policy recorded in its registration and verifies its hash.
-Migrations 169 and 170 admit only current v3 registrations under the research-only qualification policy, preserve ordered attempts and append-only financial history,
-and support selected controls and preregistered bootstrap terms. New registrations require the current policy.
-Retained v2/v3/v4 acceptance records keep their original terms and policy identities;
+Migrations 169 and 170 retain the historical v3 research registration contract. Migration 182 admits current v4
+registrations with conditional statistical support, preserving ordered attempts and append-only financial history.
+Retained v2/v3/v4/v5 acceptance records keep their original terms and policy identities;
 they are verified through the same evaluator, without reopening admission under that retired policy. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
