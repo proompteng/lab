@@ -95,6 +95,8 @@ spec:
         key: queries
       - name: bayn-postgres-monitoring
         key: queries
+      - name: bayn-postgres-monitoring
+        key: financial-queries
     disableDefaultQueries: false
   plugins:
     - name: barman-cloud.cloudnative-pg.io

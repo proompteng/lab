@@ -5,6 +5,7 @@ import { DateTime, Result } from 'effect'
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
 import { CycleState, CycleTerminalReason } from '../model'
 import { EntryAllocationReason } from '../entry-allocation-observation'
+import { ForwardPerformanceUnavailableReason } from '../observability'
 import {
   decodeCycleObservabilityProjectionRows,
   projectCycleObservabilityRow,
@@ -127,6 +128,10 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   accounting_execution_fees_micros: '0',
   accounting_net_realized_pnl_after_execution_fees_micros: '0',
   performance_receipt_created_at: null,
+  performance_authority_generation_hash: null,
+  performance_source_revision: null,
+  performance_window_opened_at: null,
+  performance_window_closed_at: null,
   performance_evidence_status: null,
   performance_profitability: null,
   performance_gross_realized_pnl_micros: null,
@@ -199,6 +204,16 @@ describe('cycle observability projection', () => {
     })
   })
 
+  test.each([
+    { performance_source_revision: 'unknown' },
+    { performance_window_opened_at: '2026-07-24T13:30:00.000+00:00' },
+    { performance_window_closed_at: '2026-02-30T20:00:00.000Z' },
+  ])('rejects malformed present receipt provenance at the SQL boundary (%j)', (invalid) => {
+    expect(decodeCycleObservabilityProjectionRows([{ ...emptyRow(), ...invalid }])).toMatchObject({
+      _tag: 'Failure',
+    })
+  })
+
   test('projects the empty durable state without effects', () => {
     expect(projectCycleObservabilityRow(emptyRow())).toEqual(
       Result.succeed({
@@ -219,6 +234,7 @@ describe('cycle observability projection', () => {
         execution: emptyExecutionFunnel(),
         economics: {
           accounting: {
+            scope: 'ACCOUNT_HISTORY',
             fillCount: 0,
             transactionCount: 0,
             receiptCount: 0,
@@ -230,6 +246,7 @@ describe('cycle observability projection', () => {
             netRealizedPnlAfterExecutionFeesMicros: '0',
           },
           forwardPerformance: null,
+          forwardPerformanceUnavailableReason: ForwardPerformanceUnavailableReason.NoPersistedReceipt,
         },
       }),
     )
@@ -317,6 +334,10 @@ describe('cycle observability projection', () => {
         row: { ...emptyRow(), performance_receipt_created_at: sqlTimestamp('2026-07-24T21:06:00.000Z') },
         message: 'forward-performance economics projection is incomplete',
       },
+      {
+        row: { ...emptyRow(), performance_authority_generation_hash: 'a'.repeat(64) },
+        message: 'forward-performance economics projection is incomplete',
+      },
     ] as const
 
     for (const testCase of cases) {
@@ -333,9 +354,14 @@ describe('cycle observability projection', () => {
     }
   })
 
-  test('projects running accounting and immutable all-cost performance separately', () => {
+  test('separates account history and retained receipt provenance from the current authority', () => {
     const row: CycleObservabilityProjectionRow = {
       ...emptyRow(),
+      authority_generation_hash: 'a'.repeat(64),
+      authority_maximum: Authority.Execution,
+      authority_effective: Authority.Execution,
+      authority_kill: KillState.Clear,
+      authority_updated_at: '2026-07-27T13:00:00.000Z',
       accounting_fill_count: 4,
       accounting_transaction_count: 4,
       accounting_receipt_count: 4,
@@ -344,6 +370,10 @@ describe('cycle observability projection', () => {
       accounting_execution_fees_micros: '500000',
       accounting_net_realized_pnl_after_execution_fees_micros: '12000000',
       performance_receipt_created_at: sqlTimestamp('2026-07-24T21:06:00.000Z'),
+      performance_authority_generation_hash: 'b'.repeat(64),
+      performance_source_revision: 'c'.repeat(40),
+      performance_window_opened_at: '2026-07-24T13:30:00.000Z',
+      performance_window_closed_at: '2026-07-24T21:06:00.000Z',
       performance_evidence_status: 'SUFFICIENT',
       performance_profitability: 'PROFITABLE',
       performance_gross_realized_pnl_micros: '12500000',
@@ -362,6 +392,7 @@ describe('cycle observability projection', () => {
     if (Result.isFailure(projected)) return expect.unreachable(projected.failure.message)
     expect(projected.success.economics).toEqual({
       accounting: {
+        scope: 'ACCOUNT_HISTORY',
         fillCount: 4,
         transactionCount: 4,
         receiptCount: 4,
@@ -374,6 +405,10 @@ describe('cycle observability projection', () => {
       },
       forwardPerformance: {
         createdAt: '2026-07-24T21:06:00.000Z',
+        authorityGenerationHash: 'b'.repeat(64),
+        sourceRevision: 'c'.repeat(40),
+        windowOpenedAt: '2026-07-24T13:30:00.000Z',
+        windowClosedAt: '2026-07-24T21:06:00.000Z',
         evidenceStatus: 'SUFFICIENT',
         profitability: 'PROFITABLE',
         grossRealizedPnlMicros: '12500000',
@@ -386,6 +421,29 @@ describe('cycle observability projection', () => {
         accountingReceiptsExact: true,
         ledgerExact: true,
       },
+      forwardPerformanceUnavailableReason: null,
+    })
+    expect(projected.success.authority?.generationHash).toBe('a'.repeat(64))
+    expect(Result.isSuccess(decodeCycleObservabilityProjectionRows([row]))).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodeCycleObservabilityProjectionRows([{ ...row, performance_source_revision: 'c'.repeat(64) }]),
+      ),
+    ).toBe(true)
+
+    const withoutProvenance = projectCycleObservabilityRow({
+      ...row,
+      performance_source_revision: null,
+      performance_window_opened_at: null,
+      performance_window_closed_at: null,
+    })
+    expect(Result.isSuccess(withoutProvenance)).toBe(true)
+    if (Result.isFailure(withoutProvenance)) return expect.unreachable(withoutProvenance.failure.message)
+    expect(withoutProvenance.success.economics?.forwardPerformance).toMatchObject({
+      authorityGenerationHash: 'b'.repeat(64),
+      sourceRevision: null,
+      windowOpenedAt: null,
+      windowClosedAt: null,
     })
   })
 

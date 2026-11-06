@@ -73,11 +73,11 @@ spiffe-oidc-discovery-provider:
   enabled: true
   namespaceOverride: spire-system
   replicaCount: 2
-  jwtIssuer: https://oidc-discovery.proompteng.ai
+  jwtIssuer: https://oidc.proompteng.ai
   bundleSource: ConfigMap
   bundleConfigMap: spire-bundle
   config:
-    jwksUri: https://oidc-discovery.proompteng.ai/keys
+    jwksUri: https://oidc.proompteng.ai/keys
     setKeyUse: true
   tls:
     spire:

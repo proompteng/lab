@@ -19,6 +19,7 @@ public import Bayn.Mutations
 public import Bayn.DecisionWork
 public import Bayn.ControllerTiming
 public import Bayn.OperationalSafety
+public import Bayn.ConditionalConfidence
 public import Bayn.TradingScope
 public import Bayn.AccountProtection
 public import Bayn.ReplaySession
