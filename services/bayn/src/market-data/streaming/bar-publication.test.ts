@@ -11,6 +11,7 @@ import { constructSimulatedSnapshot, constructStreamingSnapshot } from './snapsh
 import { simulationFixture } from '../../testing/simulated-streaming-fixture'
 import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from './replay'
 import { StreamingSnapshotEvidenceSchema } from './evidence-schema'
+import { compactStreamingProjection } from './query-cut'
 
 for (const symbol of ['AAPL', 'SPY']) {
   test(`accepts normal corrected bars for ${symbol} independently of quote age`, () => {
@@ -110,6 +111,19 @@ test('identical late republications preserve timeliness and exact feature lineag
     ),
   )
   expect(snapshot.manifest.candidateExclusions).toEqual([])
+  const compact = Result.getOrThrow(
+    compactStreamingProjection(
+      { ...cut, projection, positions },
+      { ...query, observedAt: new Date(replacement.computedAtMs).toISOString() },
+    ),
+  )
+  const transferred = Result.getOrThrow(
+    constructStreamingSnapshot(
+      { ...cut, projection: compact, positions },
+      { ...query, observedAt: new Date(replacement.computedAtMs).toISOString() },
+    ),
+  )
+  expect(transferred).toEqual(snapshot)
   expect(snapshot.bars.find((bar) => bar.symbol === 'SPY' && bar.eventAt === first.eventAt)?.sourceOffset).toBe(
     last.sourceOffset,
   )
