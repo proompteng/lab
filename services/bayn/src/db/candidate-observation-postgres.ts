@@ -1,3 +1,5 @@
+import { continuousMarketHours } from '../market-hours'
+import { JevPurpose } from '../jev/portfolio'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { PgClient } from '@effect/sql-pg'
@@ -113,15 +115,54 @@ export const recordReproducedJevObservation = (
   )
 }
 
-export const makeCandidateObservationStore = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  return {
-    latestJevWindowEnd: ({ cycleId, purpose }) =>
-      sql`
+export const latestJevObservationWindowQuery = (
+  sql: PgClient.PgClient,
+  { cycleId, purpose }: Parameters<CandidateObservationStore['Service']['latestJevWindowEnd']>[0],
+) =>
+  purpose !== JevPurpose.Entry
+    ? sql`
         SELECT max(payload #>> '{manifest,rangeEndAt}') AS at FROM intraday_candidate_observations
         WHERE cycle_id = ${cycleId} AND payload ->> 'schemaVersion' = 'bayn.jev-observation.v1'
           AND payload #>> '{portfolio,purpose}' = ${purpose}
-      `.pipe(
+      `
+    : sql`
+        SELECT max(latest.at) AS at FROM (
+          SELECT observation.payload #>> '{manifest,rangeEndAt}' AS at
+          FROM intraday_candidate_observations AS observation
+          WHERE observation.payload ->> 'schemaVersion' = 'bayn.jev-observation.v1'
+            AND observation.payload #>> '{portfolio,purpose}' = ${purpose}
+            AND observation.payload #>> '{manifest,rangeEndAt}' IS NOT NULL
+            AND observation.cycle_id = ANY(ARRAY(
+              SELECT previous.cycle_id FROM autonomous_cycles AS current
+              JOIN autonomous_cycles AS previous ON (
+                previous.cycle_id = current.cycle_id OR (
+                  previous.schema_version = current.schema_version AND
+                  previous.identity_schema_version = current.identity_schema_version AND
+                  previous.strategy_name = current.strategy_name AND
+                  previous.strategy_protocol_hash = current.strategy_protocol_hash AND
+                  previous.qualification_run_id = current.qualification_run_id AND
+                  previous.account_id = current.account_id AND
+                  previous.execution_policy_hash = current.execution_policy_hash AND
+                  previous.execution_calendar_schema_version = current.execution_calendar_schema_version AND
+                  previous.execution_calendar_source = current.execution_calendar_source AND (
+                    (current.execution_calendar_schema_version = ${continuousMarketHours.schemaVersion} AND
+                     current.execution_calendar_source = ${continuousMarketHours.source}) OR (
+                      previous.execution_calendar_hash = current.execution_calendar_hash AND
+                      previous.execution_session_date = current.execution_session_date
+                    )
+                  )
+                )
+              ) WHERE current.cycle_id = ${cycleId}
+            ))
+          ORDER BY observation.payload #>> '{manifest,rangeEndAt}' DESC LIMIT 1
+        ) AS latest
+      `
+
+export const makeCandidateObservationStore = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  return {
+    latestJevWindowEnd: (input) =>
+      latestJevObservationWindowQuery(sql, input).pipe(
         Effect.flatMap(
           Schema.decodeUnknownEffect(
             Schema.Tuple([Schema.Struct({ at: Schema.NullOr(UtcInstantSchema) })]),

@@ -452,8 +452,8 @@ test('unbound in-period workers prevent an otherwise complete certificate withou
   )
   const retainedForeign = historicalFor(foreignRepository)
   expect(retainedForeign.verdict).toBe('OPERATIONALLY_RELIABLE_PAPER')
-  // Original v1 receipt material, including the foreign-repository controller completion evidence.
-  expect(testHash(retainedForeign)).toBe('a2873915c8c3ef1ac976cd0c0d127e0a6b6f7b75285380b9d1e0a42084a90d1b')
+  // The v38 fixture retains the v1 receipt encoding and foreign-repository completion evidence.
+  expect(testHash(retainedForeign)).toBe('361bc0e9077f7f955a6f2d6986d125555e8ebb7773099e3941ba95b13e0ebf68')
   for (const executionBuild of [
     undefined,
     { ...build, sourceRevision: 'b'.repeat(40) },

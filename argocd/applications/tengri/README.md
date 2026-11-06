@@ -28,3 +28,21 @@ Validate the active contracts with:
 bash services/ofz/test-ha-manifests.sh
 bun test packages/scripts/src/tengri/gitops-contract.test.ts
 ```
+
+## Private run reader
+
+The same Tengri image runs `run-reader` in the existing Restate namespace. This isolates the fixed state-query routes
+from the admin API: controllers can call only `/status` and `/active` over strict mesh mTLS, and only the reader can
+reach admin port 9070. It has no Kubernetes API permissions, mounted token or application secrets. The namespace
+transformer defaults ordinary resources to Tengri while preserving this explicit Restate namespace; no Namespace is
+rendered or created by this application.
+
+Rollout order: enroll the reader's dedicated SPIRE proxy identity, publish the immutable paired images, then let
+Kargo promote the Tengri release. Argo installs reader policy and Service in wave -2, waits for reader readiness in
+wave -1, updates controllers in wave 0, and registers the worker in wave 1. Preserve old workers while accepted runs
+remain pinned to them. The removed public `status` and `active` handlers have no compatibility path. No run-state,
+home-volume or database migration is needed. The CNI preflight hash converges after the promoted controller policy.
+
+If the reader cannot query state, reads fail closed and execution remains durable. Correct the reader release through
+the same promotion path; never replay accepted input, edit snapshots to fabricate completion, expose the admin API
+to controllers, or replace the retained home to make a status check pass.

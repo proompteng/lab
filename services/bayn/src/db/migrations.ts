@@ -1,3 +1,6 @@
+import webullObserveCutover from '../../migrations/0179_webull_observe_cutover'
+import jevEntryWindowIndex from '../../migrations/0180_jev_entry_window_index'
+import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import riskClockRejection from '../../migrations/0177_risk_clock_rejection'
 import operationalSourceRecords from '../../migrations/0176_operational_source_records'
 import operationalControllerEvidence from '../../migrations/0175_operational_controller_evidence'
@@ -179,7 +182,10 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '179_webull_observe_cutover': webullObserveCutover,
+  '178_webull_entry_context': webullEntryContext,
   '176_operational_source_records': operationalSourceRecords,
+  '180_jev_entry_window_index': jevEntryWindowIndex,
   '177_risk_clock_rejection': riskClockRejection,
   '175_operational_controller_evidence': operationalControllerEvidence,
   '164_focused_entry_evidence': focusedEntryEvidence,

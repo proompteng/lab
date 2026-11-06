@@ -11,24 +11,13 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { makeWebullResearchQueries } from './webull-research-queries'
+import { WebullRequestState, WebullSession, WebullSymbolSchema, webullPriceFields } from './webull-contract'
 
 export class WebullResearchError extends Data.TaggedError('WebullResearchError')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
 
-export enum WebullSession {
-  Pre = 'PRE',
-  Regular = 'RTH',
-  After = 'ATH',
-}
-export enum WebullRequestState {
-  Observed = 'OBSERVED',
-  Empty = 'EMPTY',
-  Excluded = 'EXCLUDED',
-  Omitted = 'OMITTED',
-  Rejected = 'REJECTED',
-}
 enum FeedComparisonState {
   Match = 'MATCH',
   Different = 'DIFFERENT',
@@ -39,12 +28,6 @@ enum SelectionKind {
   Catalog = 'catalog',
   Symbols = 'symbols',
 }
-const SymbolSchema = Schema.String.check(
-  Schema.isMaxLength(64),
-  Schema.makeFilter((value) => value.trim().length > 0 && !/\p{Cc}/u.test(value), {
-    expected: 'a provider symbol without control characters',
-  }),
-)
 export const WebullResearchInputSchema = Schema.Struct({
   startAt: UtcInstantSchema.check(
     Schema.makeFilter((value) => Date.parse(value) % 60_000 === 0, { expected: 'a completed-minute boundary' }),
@@ -54,7 +37,7 @@ export const WebullResearchInputSchema = Schema.Struct({
     Schema.Struct({ kind: Schema.Literal(SelectionKind.Catalog) }),
     Schema.Struct({
       kind: Schema.Literal(SelectionKind.Symbols),
-      symbols: Schema.Array(SymbolSchema).check(
+      symbols: Schema.Array(WebullSymbolSchema).check(
         Schema.isMinLength(1),
         Schema.isMaxLength(1_000),
         Schema.makeFilter((values) => new Set(values).size === values.length, { expected: 'unique symbols' }),
@@ -64,17 +47,6 @@ export const WebullResearchInputSchema = Schema.Struct({
 })
 export type WebullResearchInput = typeof WebullResearchInputSchema.Type
 
-const DecimalSchema = Schema.String.check(
-  Schema.isPattern(/^\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/),
-  Schema.isMaxLength(128),
-  Schema.makeFilter(
-    (value) => {
-      const parsed = BigDecimal.fromString(value)
-      return Option.isSome(parsed) && Math.abs(parsed.value.scale) <= 128
-    },
-    { expected: 'an exact decimal with scale at most 128' },
-  ),
-)
 const MillisecondsSchema = Schema.FiniteFromString.check(
   Schema.isInt(),
   Schema.isBetween({ minimum: 0, maximum: 8_640_000_000_000_000 }),
@@ -86,29 +58,13 @@ const provenanceFields = {
   source_partition: NonNegativeIntegerSchema,
   source_offset: UnsignedMicrosSchema,
 }
-const PriceSchema = DecimalSchema.check(
-  Schema.makeFilter(
-    (value) => {
-      const parsed = BigDecimal.fromString(value)
-      return Option.isSome(parsed) && BigDecimal.isPositive(parsed.value)
-    },
-    { expected: 'a positive price' },
-  ),
-)
-const priceFields = {
-  open: PriceSchema,
-  high: PriceSchema,
-  low: PriceSchema,
-  close: PriceSchema,
-  volume: DecimalSchema,
-}
 export const WebullResearchBarSchema = Schema.Struct({
   provider: Schema.Literal('webull'),
   feed: Schema.Literal('nasdaq_basic'),
-  symbol: SymbolSchema,
+  symbol: WebullSymbolSchema,
   bar_start_ms: MillisecondsSchema,
   session: Schema.Enum(WebullSession),
-  ...priceFields,
+  ...webullPriceFields,
   ...provenanceFields,
   archived_ns: UnsignedMicrosSchema,
   capture_id: Schema.String.check(Schema.isUUID()),
@@ -119,7 +75,7 @@ export type WebullResearchBar = typeof WebullResearchBarSchema.Type
 export const WebullResearchRequestSchema = Schema.Struct({
   provider: Schema.Literal('webull'),
   feed: Schema.Literal('nasdaq_basic'),
-  symbol: SymbolSchema,
+  symbol: WebullSymbolSchema,
   request_state: Schema.Enum(WebullRequestState),
   observed_count: NonNegativeIntegerSchema,
   excluded_count: NonNegativeIntegerSchema,
@@ -142,9 +98,9 @@ export const AlpacaResearchBarSchema = Schema.Struct({
   feed: Schema.Literal('iex'),
   universe_id: Schema.Literal('torghut-core-equity-v2'),
   session: Schema.String,
-  symbol: SymbolSchema,
+  symbol: WebullSymbolSchema,
   bar_start_ms: MillisecondsSchema,
-  ...priceFields,
+  ...webullPriceFields,
   ...provenanceFields,
 })
 export type AlpacaResearchBar = typeof AlpacaResearchBarSchema.Type
