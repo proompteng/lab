@@ -286,9 +286,7 @@ export function ConnectionsPanel({
         operation.targets.some((target) => target.resource.kind === 'kubernetes.namespace'),
     )
       ? 'Kubernetes'
-      : id === 'agents'
-        ? 'Agents'
-        : id
+      : id.charAt(0).toUpperCase() + id.slice(1)
   const targetNames = new Map(
     catalog?.operations
       .flatMap((operation) => operation.targets)

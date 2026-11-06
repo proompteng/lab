@@ -199,7 +199,7 @@ jobs:
         env:
           AGENTS_STORE_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
         run: |
-          bun run services/agents/scripts/generate-relay-registration.ts --check
+          bun services/relay/generate.ts --check
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
 

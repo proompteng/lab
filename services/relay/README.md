@@ -14,6 +14,35 @@ arguments cannot select another account, destination or command. CLI and HTTP ad
 An HTTP POST may represent a read, such as a search; the operator must verify the provider operation before enrollment.
 Registering a transport does not grant resource access or introduce a policy definition into Ofz.
 
+## Onboard a connector
+
+Author one definition in [`connectors/`](connectors/). Both `galactic.ts` and `agents.ts` use the same compiler.
+The definition contains the adapter configuration, exact target/workspace assignments, and action-to-grant policy.
+MCP input schemas can come directly from the provider's existing contracts, as AgentRun's do.
+
+```sh
+bun services/relay/generate.ts
+bash services/ofz/qualify-platform.sh --write
+bun test services/relay/onboarding.test.ts
+bun services/relay/generate.ts --check
+```
+
+Generation owns Relay's `config.json`, the Ofz platform `policies.json`, `schema.zed`, and `services.json`, and the
+`relay_*` approval rules in OpenCode's `opencode.json`. Do not edit those generated fields. Ofz's `*.base.*` files
+retain service identities, workspace membership setup, and platform-specific graph policy. Removing a definition
+removes its generated enrollment; it does not delete execution receipts, provider data, or existing native grants.
+Review removal impact before rollout. The compiler rejects unknown workspaces, conflicting policies, actions without
+policy, and targets outside the declared scope. The runtime parser and native SpiceDB qualification remain authoritative.
+
+HTTP, CLI and MCP connectors use their existing adapters. OAuth2 and workload federation select the adapter's
+authentication configuration. An existing MCP server needs a registration, not a new wrapper service. Native mutation
+providers must honor Relay's authenticated invocation context and their own recovery contract. A new protocol needs
+an adapter; a new provider on an existing protocol does not need changes to Relay's executor, Ofz's evaluator,
+Tengri's connection flow, or OpenCode's bridge. A custom result card is optional.
+
+The generated common policy supports direct human/workload grants and workspace-member grants. Infrastructure
+identity, secrets and network paths still require explicit enrollment. Registering the connector assigns no grants.
+
 Tool discovery uses the same Ofz identity and resource permissions as execution. `ListOperations` requires the
 current human session or the caller's attested workload identity. Relay asks Ofz for approved workspace/resource/action
 scopes before building each adapter's tool schemas. An unapproved namespace appears in neither targets nor schema
@@ -255,7 +284,7 @@ host alias pins that hostname to the configured ingress VIP rather than the publ
 The reviewed profile in `argocd/applications/agents/relay-targets.json` fixes workspace, namespace UID, agent,
 repository, base branch, VCS and credential bindings, and a two-hour Job deadline. Callers supply task text and an
 optional token budget. `start_run`, `list_runs`, `get_run`, `read_logs`, `get_result` and `cancel_run` are generated
-from the Agents Zod contracts by `bun run services/agents/scripts/generate-relay-registration.ts`; CI runs `--check`.
+from the Agents Zod contracts by `bun services/relay/generate.ts`; CI runs `--check`.
 
 Ofz owns `agents.target` policy with separate `agents.runs.read`, `agents.runs.logs`, `agents.runs.start` and
 `agents.runs.cancel` actions. Registering `agents/lab` does not grant these actions. Workspace administrators assign

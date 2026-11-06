@@ -58,6 +58,11 @@
       "name": "Proompteng",
       "resources": [
         {
+          "kind": "agents.target",
+          "id": "agents/lab",
+          "name": "Lab agents"
+        },
+        {
           "kind": "kubernetes.namespace",
           "id": "galactic/f4b6e45e-cd1b-426d-acd3-41b50219182e",
           "name": "ofz"
@@ -71,11 +76,6 @@
           "kind": "kubernetes.namespace",
           "id": "galactic/f16c9bf3-6947-4438-8158-cef04834b558",
           "name": "opencode"
-        },
-        {
-          "kind": "agents.target",
-          "id": "agents/lab",
-          "name": "Lab agents"
         }
       ],
       "initial_clients": ["tengri-web", "opencode"],

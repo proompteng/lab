@@ -8,6 +8,17 @@ pub struct Namespace {
     pub name: String,
     pub uid: String,
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn generated_production_registration_passes_the_runtime_parser() {
+        super::Config::parse(include_bytes!(
+            "../../../argocd/applications/relay/config.json"
+        ))
+        .expect("generated connector configuration must satisfy the runtime contract");
+    }
+}
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Connector {
