@@ -32,10 +32,16 @@ no trading driver, places no order and changes no authority. A failed rebuild le
 untouched. Shared preparation does not lock current-source ticks. Registering a different source still fences old
 ticks, so the complete replacement pool must warm before registration. Existing handoff and trading deadlines remain unchanged.
 
-Background broker polling makes one complete before/after history scan per durable ticket. Changed history or
-unsettled fill evidence rejects that cut and waits for the existing quota budget before acquiring a new ticket.
-It does not repeat full history reads under a pre-mutation ticket that cannot publish. Complete history, exact fill
-coverage, mutation and broker-event fences, freshness, deadlines and quota accounting remain unchanged.
+Background broker polling brackets account and position reads with two matching complete history scans. Consecutive
+successful tickets reuse the preceding poll's completed scan as the next before-read, and fetch the full after-history
+again, including old fill or fee corrections. A durable generation gap, backward clock, failed or interrupted capture
+discards retained history. Captures serialize inside the existing broker runtime; replacement starts cold. Changed
+history or unsettled fill evidence rejects the cut and waits for the existing quota budget before a new ticket.
+Pagination retains page-size, ordering, duplicate and cursor checks, with the original capture deadline bounding work
+instead of a lifetime row ceiling. Full-history cost still grows with account history; this removes the duplicate scan.
+Complete history, exact fill coverage, mutation and broker-event fences, freshness, deadlines and quota accounting
+remain unchanged. Parent pass and poll timers retain metrics, spans and failure logs while their inner operation
+reports slow-duration warnings once.
 
 New cycles discovered during an open, unexpired submission window acquire their authority slot and activate in one
 PostgreSQL transaction under the existing writer fence. This removes an immediate second WAL commit. A failed

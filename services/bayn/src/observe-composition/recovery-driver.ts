@@ -288,7 +288,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
     const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
     let interruptionRequestedAt = startedAt
     return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
-      withObservedStage(stage),
+      withObservedStage(stage, { slowAfterMs: null }),
       Effect.provideService(ActiveExecutionStages, activeStages),
       operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
