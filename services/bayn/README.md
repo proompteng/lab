@@ -1,5 +1,12 @@
 # Bayn
 
+When every snapshot candidate is excluded, status readiness includes fixed-size `inputReadiness` evidence for that
+rejected observation: its exact window, required rolling feature definition, candidate count and counts with a
+matching observed feature or completed final-minute bar. These counts are not current consumer health or proof of
+upstream receipt. Missing matching features include unavailable, late and different-window evidence. The original
+observation timestamp remains explicit; historical status does not become fresh evidence. Free-form errors, symbols,
+prices and raw records are not added to this diagnostic. Snapshot admission and candidate exclusions are unchanged.
+
 Bayn is a single-writer execution service with equity-only entries. Existing crypto positions retain risk-reducing exits,
 protection, reconciliation and recovery; crypto entry discovery and broker buys are disabled. Restate schedules one account-keyed controller, pure TypeScript
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
