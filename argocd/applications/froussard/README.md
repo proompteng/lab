@@ -12,6 +12,8 @@ Froussard uses `tuslagch` through `froussard/github-token`, sourced from
 overrides that source. Argo Workflows keeps its separate existing token from
 `op://infra/github/personal-access-token` (`ARGO_WORKFLOWS_GITHUB_TOKEN_OP_PATH`).
 Do not substitute Froussard's credential into the Argo Workflows secret.
+Argo waits for the Froussard token's decrypted generation in sync wave `-1` before
+starting the new workload, so the new revision cannot capture the old identity.
 
 The ready comment is now the body of an `APPROVED` review from `tuslagch`, bound to
 the checked commit. Pending CI, unresolved threads, drafts, conflicts, and missing
