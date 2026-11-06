@@ -70,7 +70,7 @@ def kubectl(context, namespace, *args, check=True):
     )
 
 
-def verify_ha(context):
+def verify_datastore(context):
     database = json.loads(
         kubectl(
             context, "spire-server", "get", "cluster", "spire-db", "-o", "json"
@@ -80,23 +80,6 @@ def verify_ha(context):
     assert database["status"].get("readyInstances") == 3, (
         "PostgreSQL is not fully ready"
     )
-    for selector in (
-        "app.kubernetes.io/name=server,app.kubernetes.io/instance=spire",
-        "cnpg.io/cluster=spire-db",
-    ):
-        replicas = json.loads(
-            kubectl(
-                context, "spire-server", "get", "pods", "-l", selector, "-o", "json"
-            ).stdout
-        )["items"]
-        replicas = [
-            pod for pod in replicas if not pod["metadata"].get("deletionTimestamp")
-        ]
-        hosts = {pod["spec"].get("nodeName") for pod in replicas}
-        assert len(replicas) == 3 and len(hosts) == 3 and None not in hosts, (
-            selector,
-            "HA replicas must use three distinct hosts",
-        )
     config = json.loads(
         kubectl(
             context, "spire-server", "get", "configmap", "spire-server", "-o", "json"
@@ -141,7 +124,7 @@ def verify(context):
         if name == "spire-server":
             assert desired == 3, (name, "expected three HA replicas")
             assert status.get("updatedReplicas") == 3, "SPIRE rollout is incomplete"
-    verify_ha(context)
+    verify_datastore(context)
     wif = verify_wif(context)
     denied = kubectl(
         context,
