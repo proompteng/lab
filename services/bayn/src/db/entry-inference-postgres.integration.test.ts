@@ -113,6 +113,10 @@ import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { Authority } from '../execution/contracts'
+import { makeAuthorityPostgres } from './execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from './execution-store/observe-authority'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const url = baynTestPostgresUrl ?? 'postgresql://localhost/bayn_sequential_entry_0391_test'
@@ -847,9 +851,25 @@ integration('committed sequential provider handoff', () => {
         })
         yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
           VALUES (${replayAccountId},${replaySourceHash},${request.observedAt})`
+        const broker = Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: replayAccountId,
+          }),
+        )
+        const authority = makeObserveAuthorityInterpreter(
+          sql,
+          makeAuthorityPostgres(sql, { now: sql`${request.observedAt}::timestamptz` }),
+          broker,
+        )
+        const initialized = yield* authority.ensureAuthorityGeneration({
+          generationHash: request.authorityGenerationHash,
+          maximum: Authority.Observe,
+        })
+        expect(initialized).toMatchObject({ maximum: Authority.Observe, effective: Authority.Observe, kill: 'CLEAR' })
         yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
-        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
-          VALUES (${request.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${request.observedAt})`
         const originalPlan = Result.getOrThrow(
           reconstructRetainedJevV38TradingSignalBatch({
             observation: {
@@ -874,10 +894,20 @@ integration('committed sequential provider handoff', () => {
         yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
           UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
             updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${original.cycleId}`
+        const reconciliation = fixture.portfolio.brokerState.reconciliation
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+          VALUES (${reconciliation.reconciliationId},${reconciliation.schemaVersion},${broker.accountId},
+            ${reconciliation.expectedHash},${reconciliation.observedHash},${reconciliation.contentHash},
+            ${reconciliation.status},'[]'::jsonb,clock_timestamp())`
         const requestsBefore = yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`
         const claimsBefore = yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`
         const authorityBefore =
           yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g ORDER BY generation_hash`
+        const authorityStateBefore = yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`
+        expect(authorityStateBefore).toHaveLength(1)
+        expect(
+          yield* sql`SELECT g.account_id FROM authority_state a JOIN authority_generations g USING (generation_hash)`,
+        ).toEqual([{ account_id: broker.accountId }])
         yield* sql.withTransaction(effectiveEntryAllowanceInput)
         expect(yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`).toEqual(
           requestsBefore,
@@ -888,6 +918,7 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g ORDER BY generation_hash`,
         ).toEqual(authorityBefore)
+        expect(yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`).toEqual(authorityStateBefore)
         const rejectedDispatch = yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
           VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
         if (Result.isSuccess(rejectedDispatch)) throw new Error('A retained v38 request was allowed new dispatch')
@@ -2267,10 +2298,37 @@ integration('committed sequential provider handoff', () => {
     ),
   )
 
-  test('v39 cutover refuses PAPER even after settlement and preserves authority and request bytes', async () =>
+  test.each([
+    {
+      name: 'clear PAPER authority',
+      state: { maximum: 'PAPER', effective: 'PAPER', kill: 'CLEAR', reason: null },
+      reconciliation: 'fresh',
+    },
+    {
+      name: 'PAPER awaiting native OBSERVE settlement',
+      state: {
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+      },
+      reconciliation: 'fresh',
+    },
+    {
+      name: 'OBSERVE under an operator hold',
+      state: { maximum: 'OBSERVE', effective: 'OBSERVE', kill: 'ACTIVE', reason: 'operator hold' },
+      reconciliation: 'fresh',
+    },
+    ...['missing', 'stale', 'future', 'nonexact', 'before-mutation'].map((reconciliation) => ({
+      name: `clear OBSERVE with ${reconciliation} reconciliation`,
+      state: { maximum: 'OBSERVE', effective: 'OBSERVE', kill: 'CLEAR', reason: null },
+      reconciliation,
+    })),
+  ])('v39 cutover refuses $name without changing authority or retained request/claim bytes', async (scenario) =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        yield* retainCheckpoint(request)
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
@@ -2279,14 +2337,36 @@ integration('committed sequential provider handoff', () => {
             yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE authority_state (generation_hash text, maximum text, effective text, kill_state text, reason text) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE intents (intent_id text,account_id text,state text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE mutation_events (intent_id text,occurred_at timestamptz) ON COMMIT DROP`
             yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
-            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER','PAPER','CLEAR',NULL)`
-            yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','EXACT',clock_timestamp(),${'b'.repeat(64)})`
-            const authorityBefore = yield* sql`SELECT * FROM authority_state`
-            const requestBefore =
-              yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${request.requestId}`
+            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},${scenario.state.maximum},
+              ${scenario.state.effective},${scenario.state.kill},${scenario.state.reason})`
+            if (scenario.reconciliation !== 'missing') {
+              const ageSeconds =
+                scenario.reconciliation === 'stale'
+                  ? -61
+                  : scenario.reconciliation === 'future'
+                    ? 3600
+                    : scenario.reconciliation === 'before-mutation'
+                      ? -1
+                      : 0
+              yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',
+                ${scenario.reconciliation === 'nonexact' ? 'DISCREPANCY' : 'EXACT'},
+                clock_timestamp()+${ageSeconds}*interval '1 second',${'b'.repeat(64)})`
+            }
+            if (scenario.reconciliation === 'before-mutation') {
+              yield* sql`INSERT INTO intents VALUES (${'c'.repeat(64)},'paper-cutover','TERMINAL')`
+              yield* sql`INSERT INTO mutation_events VALUES (${'c'.repeat(64)},clock_timestamp())`
+            }
+            const authorityBefore = yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`
+            const generationsBefore = yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g`
+            const requestsBefore = yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`
+            const claimsBefore =
+              yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`
+            expect(claimsBefore.length).toBeGreaterThan(0)
             const rejected = yield* sql.withTransaction(effectiveEntryAllowanceInput).pipe(Effect.result)
-            if (Result.isSuccess(rejected)) throw new Error('The protocol cutover accepted PAPER authority')
+            if (Result.isSuccess(rejected)) throw new Error(`The protocol cutover accepted ${scenario.name}`)
             expect(rejected.failure).toMatchObject({
               reason: {
                 cause: {
@@ -2297,14 +2377,21 @@ integration('committed sequential provider handoff', () => {
                 },
               },
             })
-            expect(yield* sql`SELECT * FROM authority_state`).toEqual(authorityBefore)
-            expect(
-              yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${request.requestId}`,
-            ).toEqual(requestBefore)
+            expect(yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`).toEqual(authorityBefore)
+            expect(yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g`).toEqual(
+              generationsBefore,
+            )
+            expect(yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`).toEqual(
+              requestsBefore,
+            )
+            expect(yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`).toEqual(
+              claimsBefore,
+            )
           }),
         )
       }),
-    ))
+    ),
+  )
 
   test('dated fee cutover refuses a held position without changing authority', async () =>
     runtime.runPromise(
