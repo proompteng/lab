@@ -19,6 +19,7 @@ import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config/model'
@@ -1681,14 +1682,49 @@ durableTest.each(
               Effect.provideService(OperationDeadlineClock, liveClock),
             )
             if (!closeWindowReached && scenario === 'recovery-filled') {
-              const acceptedProtection = yield* sql`SELECT i.intent_id FROM intents i
+              const acceptedProtection = yield* sql<{ intent_id: string }>`SELECT i.intent_id FROM intents i
                 JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
                 WHERE i.account_id=${accountId} AND i.side='SELL' AND i.protection->>'_tag'='Oco'
                   AND i.state='ACKNOWLEDGED' AND i.terminal_outcome IS NULL AND r.outcome='APPROVED'
                   AND EXISTS (SELECT 1 FROM mutation_events e WHERE e.intent_id=i.intent_id
                     AND e.event_type='SUBMIT_ACCEPTED')`
               expect(acceptedProtection.length).toBeLessThanOrEqual(1)
-              protectionRestored = acceptedProtection.length === 1
+              protectionRestored = false
+              for (const accepted of acceptedProtection) {
+                const intent = Option.getOrThrow(yield* intents.read(accepted.intent_id)).intent
+                if (intent.protection?._tag !== 'Oco') throw new Error('Missing retained recovery Oco terms')
+                const protectedState = yield* broker.snapshot
+                expect(protectedState.fills).toHaveLength(1)
+                expect(protectedState.ledger.positions).toHaveLength(1)
+                const position = protectedState.ledger.positions[0]
+                const parent = protectedState.orders.find(
+                  ({ order }) => order.clientOrderId === intent.clientOrderId,
+                )?.order
+                if (position === undefined || parent === undefined) throw new Error('Missing recovery protection group')
+                expect(position.symbol).toBe(intent.symbol)
+                expect(position.quantityAtoms).toBe(intent.quantityAtoms)
+                expect(parent.accountId).toBe(accountId)
+                const children = protectedState.orders
+                  .filter(({ order }) => order.parentBrokerOrderId === parent.brokerOrderId)
+                  .map(({ order }) => order)
+                Result.getOrThrow(
+                  verifyProtectionGroup(
+                    { ...parent, legs: children },
+                    { symbol: position.symbol, quantityAtoms: position.quantityAtoms, protection: intent.protection },
+                  ),
+                )
+                expect(parent.status).toBe(OrderStatus.New)
+                expect(parent.filledQuantityAtoms).toBe('0')
+                expect(parent.firstArrivedAt).toBeDefined()
+                expect(children).toHaveLength(1)
+                const stop = children[0]
+                if (stop === undefined) throw new Error('Missing working recovery stop')
+                expect(stop.status).toBe(OrderStatus.New)
+                expect(stop.quantityAtoms).toBe(position.quantityAtoms)
+                expect(stop.filledQuantityAtoms).toBe('0')
+                expect(stop.firstArrivedAt).toBeDefined()
+                protectionRestored = true
+              }
             }
           }
           expect(protectionRestored, JSON.stringify(lastRecovery)).toBe(true)
