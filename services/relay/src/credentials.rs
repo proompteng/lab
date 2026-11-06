@@ -6,8 +6,15 @@ use tonic::Status;
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Authentication {
     None,
-    BearerFile { path: String },
-    Oauth2 { profile: String },
+    BearerFile {
+        path: String,
+    },
+    Oauth2 {
+        profile: String,
+    },
+    WorkloadIdentity {
+        federation: crate::federation::Registration,
+    },
 }
 
 pub struct Provider<'a> {
@@ -22,14 +29,39 @@ impl Authentication {
                 Self::None => true,
                 Self::BearerFile { path } => std::path::Path::new(path).is_absolute(),
                 Self::Oauth2 { profile } => crate::config::identifier(profile),
+                Self::WorkloadIdentity { federation } => {
+                    federation.validate()?;
+                    true
+                }
             },
             "invalid connector authentication registration"
         );
         Ok(())
     }
+}
+
+pub(crate) enum Credentials {
+    None,
+    BearerFile(String),
+    Oauth2(String),
+    WorkloadIdentity(Box<crate::federation::Federation>),
+}
+
+impl Credentials {
+    pub(crate) fn new(authentication: Authentication) -> anyhow::Result<Self> {
+        authentication.validate()?;
+        Ok(match authentication {
+            Authentication::None => Self::None,
+            Authentication::BearerFile { path } => Self::BearerFile(path),
+            Authentication::Oauth2 { profile } => Self::Oauth2(profile),
+            Authentication::WorkloadIdentity { federation } => {
+                Self::WorkloadIdentity(Box::new(crate::federation::Federation::new(federation)?))
+            }
+        })
+    }
     pub(crate) fn provider<'a>(&'a self, destination: &'a str) -> Option<Provider<'a>> {
         match self {
-            Self::Oauth2 { profile } => Some(Provider {
+            Self::Oauth2(profile) => Some(Provider {
                 profile,
                 destination,
             }),
@@ -39,8 +71,9 @@ impl Authentication {
     pub(crate) async fn bearer(&self, provided: Option<&str>) -> Result<Option<String>, Status> {
         let token = match self {
             Self::None => return Ok(None),
-            Self::BearerFile { path } => read_file(path).await?,
-            Self::Oauth2 { .. } => provided
+            Self::BearerFile(path) => read_file(path).await?,
+            Self::WorkloadIdentity(federation) => federation.bearer().await?,
+            Self::Oauth2(_) => provided
                 .ok_or_else(|| {
                     Status::failed_precondition(
                         "connect the provider account before using this tool",
