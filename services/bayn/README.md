@@ -1,5 +1,12 @@
 # Bayn
 
+Broker read timing separates `bayn.alpaca.read.headers` (request execution through response headers, including
+configured transport retries) from `bayn.alpaca.read.body` (body transfer and JSON parsing). Both remain inside the
+original total read deadline and use only the existing finite operation/dependency/outcome labels. A header-stage
+stall does not identify DNS, proxy, connection-pool, TLS or provider latency individually. Successful phase timing
+does not establish schema validity, complete history or fresh reconciliation. These diagnostics do not change
+broker requests, retry budgets, quota accounting, freshness, authority or recovery behavior.
+
 When every snapshot candidate is excluded, status readiness includes fixed-size `inputReadiness` evidence for that
 rejected observation: its exact window, required rolling feature definition, candidate count and counts with a
 matching observed feature or completed final-minute bar. These counts are not current consumer health or proof of
