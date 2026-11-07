@@ -652,7 +652,7 @@ build through the Temporal SDK; the pinned legacy CLI is used only for workflow 
 - `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and experimental; it only requests `delta.jangar_event` frames when OpenWebUI rich rendering is already enabled on the server.
 - Authentication and rate limiting are intentionally disabled because this endpoint is for internal use only; place it behind your own network guardrails when exposing it.
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
-- Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
+- Server-side Effect services follow `Context.Service + Layer` patterns; see `src/server/effect-services.md`.
 
 ## agentctl
 
