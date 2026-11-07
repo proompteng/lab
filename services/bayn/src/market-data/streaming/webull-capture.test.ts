@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { Result } from 'effect'
 
 import { WebullRequestState, WebullSession } from '../webull-contract'
-import { decodeWebullCapture, WebullCaptureKind } from './webull-capture'
+import { decodeWebullCapture, WebullCaptureKind, WebullProducerClockDirection } from './webull-capture'
 
 const receivedAt = '2026-11-05T14:32:02.123456789Z'
 const bar = {
@@ -202,6 +202,37 @@ test('Kafka coordinates and the producer clock cannot be omitted or relabeled', 
     { topic: native.topic, partition: native.partition, offset: native.offset, value: native.value },
   ]
   for (const value of invalid) expect(Result.isFailure(decodeWebullCapture(value))).toBe(true)
+})
+
+test.each([-5001, 5001])(
+  'producer clock rejections expose the signed difference %i without inferring its cause',
+  (difference) => {
+    const native = record()
+    const decoded = decodeWebullCapture({ ...native, timestampMs: native.timestampMs + difference })
+    expect(Result.isFailure(decoded)).toBe(true)
+    if (!Result.isFailure(decoded)) throw new Error('Expected a producer clock rejection')
+    expect(decoded.failure).toMatchObject({
+      _tag: 'WebullProducerClockError',
+      message: 'Webull timestamp violates the producer clock contract',
+      producerClock: {
+        kafkaTimestampMs: native.timestampMs + difference,
+        collectorReceivedAtMs: native.timestampMs,
+        kafkaMinusCollectorReceiptMs: difference,
+        maximumDifferenceMs: 5000,
+        direction:
+          difference > 0
+            ? WebullProducerClockDirection.KafkaAfterCollectorReceipt
+            : WebullProducerClockDirection.KafkaBeforeCollectorReceipt,
+      },
+    })
+  },
+)
+
+test('the inclusive producer clock bound preserves successful native output and nanosecond receipts', () => {
+  const native = record()
+  const expected = bars(native)
+  for (const difference of [-5000, 0, 5000])
+    expect(bars({ ...native, timestampMs: native.timestampMs + difference })).toEqual(expected)
 })
 
 test('MQTT messages stay ignored for bar context and collector gaps retain their scope', () => {
