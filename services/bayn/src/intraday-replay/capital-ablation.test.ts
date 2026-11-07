@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from '../jev/protocol'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -314,8 +315,8 @@ test('turnover reserve and loss gates bind both arms without dropping opportunit
 test('retired or changed protocols, duplicate ids and foreign accounts cannot compare', () => {
   const opp = opportunity()
   for (const protocol of [
-    { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v4' },
-    { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v5' },
+    { ...retainedJevProtocolV39Document, schemaVersion: 'bayn.jev.protocol.v4' },
+    { ...retainedJevProtocolV39Document, schemaVersion: 'bayn.jev.protocol.v5' },
     { ...defaultJevProtocolDocument, maximumGrossWeight: 0.4 },
   ]) {
     expect(
@@ -344,7 +345,7 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('uncertain proposal judgments stay outside both funded populations', () => {
   const opp = opportunity(0, true, 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v39')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v40')
   expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('source-anchored-proposal-judgments')
   expect(baseline?.metrics.filledEntries).toBe(0)
   expect(candidate?.metrics.filledEntries).toBe(0)

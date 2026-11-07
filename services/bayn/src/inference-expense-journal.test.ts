@@ -1,3 +1,4 @@
+import { entryEvaluationRequestFixture as stagedRequestFixture } from './jev/retained-jev.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit, Result } from 'effect'
 import { ConnectionError, SqlError } from 'effect/sql/SqlError'
@@ -18,10 +19,7 @@ import {
   makeConditionalEvaluationReceipt,
 } from './jev/conditional-entry.test-support'
 import { JevOutcome } from './jev/evidence'
-import {
-  entryEvaluationRequestFixture as stagedRequestFixture,
-  stagedCheckpointFixture,
-} from './jev/entry-inference.test-support'
+import { stagedCheckpointFixture } from './jev/entry-inference.test-support'
 import { makeJevResolution, JevResolutionStatus } from './jev/resolution'
 import { postInferenceExpenses, readInferenceExpenseLedger } from './inference-expense-journal'
 import { runInferenceExpensePass } from './inference-expense-runtime'

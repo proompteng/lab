@@ -20,7 +20,9 @@ export enum JevFailure {
   NotDispatched = 'NOT_DISPATCHED',
 }
 
-export const jevModel = 'jev-1.13.0' as const
+export const jevModel = 'jev-1.14.0' as const
+export const retainedJevModel = 'jev-1.13.0' as const
+const Model = Schema.Literals([jevModel, retainedJevModel])
 export const jevEndpoint = 'https://api.typesafe.ai/v1/systemone' as const
 
 const QuestionName = StrictNonEmptyStringSchema.check(Schema.isMaxLength(64))
@@ -36,6 +38,7 @@ const ChoiceCriteria = Schema.Record(QuestionName, Schema.NullOr(Instructions)).
 )
 
 const Question = Schema.Union([
+  Schema.Struct({ type: Schema.Literal('box'), instructions: Instructions }),
   Schema.Struct({
     type: Schema.Literal('noul'),
     instructions: Instructions,
@@ -50,7 +53,7 @@ const Question = Schema.Union([
 ])
 
 export const JevRequestSchema = Schema.Struct({
-  model: Schema.Literal(jevModel),
+  model: Model,
   state: Schema.Json.check(
     Schema.makeFilter((value) => typeof value === 'string' || (value !== null && typeof value === 'object')),
   ),
@@ -74,6 +77,16 @@ export const JevRequestSchema = Schema.Struct({
 export type JevRequest = typeof JevRequestSchema.Type
 
 const Answer = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal('box'),
+    box: Schema.Struct({
+      top: UnitIntervalSchema,
+      bottom: UnitIntervalSchema,
+      left: UnitIntervalSchema,
+      right: UnitIntervalSchema,
+    }).check(Schema.makeFilter((box) => box.left <= box.right && box.top <= box.bottom)),
+    confidence: UnitIntervalSchema,
+  }),
   Schema.Struct({ type: Schema.Literal('noul'), noul: UnitIntervalSchema }),
   Schema.Struct({
     type: Schema.Literal('choice'),
@@ -91,7 +104,7 @@ const Answer = Schema.Union([
 ])
 
 export const JevResponseSchema = Schema.Struct({
-  model: Schema.Literal(jevModel),
+  model: Model,
   answers: Schema.Record(QuestionName, Answer),
   usage: Schema.Struct({ input_tokens: NonNegativeIntegerSchema, output_tokens: NonNegativeIntegerSchema }),
 })
@@ -120,6 +133,12 @@ export const prepareJevRequest = (input: unknown) =>
     strictParseOptions,
   )(input).pipe(
     Result.mapError((cause) => new JevContractError({ message: 'Jev request violates its contract', cause })),
+    Result.flatMap((request) =>
+      Object.values(request.questions).some((question) => question.type === 'box') &&
+      (request.model !== jevModel || request.assets === undefined)
+        ? Result.fail(new JevContractError({ message: 'Box questions require Jev 1.14 and a source image' }))
+        : Result.succeed(request),
+    ),
     Result.flatMap((request) =>
       canonicalJsonWithHashV1Result(request).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Jev request cannot be serialized', cause })),
@@ -183,6 +202,8 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
   )(input).pipe(
     Result.mapError((cause) => new JevContractError({ message: 'Jev response violates its contract', cause })),
     Result.flatMap((response) => {
+      if (response.model !== request.model)
+        return Result.fail(new JevContractError({ message: 'Jev response model differs from the request' }))
       if (!sameKeys(request.questions, response.answers)) {
         return Result.fail(new JevContractError({ message: 'Jev answer identities differ from the request' }))
       }
@@ -193,7 +214,8 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
             new JevContractError({ message: 'Jev answer type differs from the request', question: name }),
           )
         }
-        if (question.type === 'noul' || answer.type === 'noul') continue
+        if (question.type === 'noul' || answer.type === 'noul' || question.type === 'box' || answer.type === 'box')
+          continue
         const probabilities = Object.values(answer.probabilities)
         const expected =
           question.type === 'score'
