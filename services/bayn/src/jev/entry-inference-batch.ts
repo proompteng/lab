@@ -1,6 +1,6 @@
 import { JevEvaluationStore, type JevDispatch } from './evaluation'
 import { JevOutcome, makeJevEvaluationReceipt, type JevEvaluationRequest } from './evidence'
-import { Cause, Clock, Effect, Exit, Redacted, Result, Schema } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
@@ -218,13 +218,32 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
             yield* logCommittedEntryHandoff(owner.request.cycleId, committed, owner.sourceFeasibility)
         }
       })
+    const pending: {
+      readonly transition: EntryStageTransition
+      readonly completed: Deferred.Deferred<void, Effect.Error<ReturnType<typeof commit>>>
+    }[] = []
+    const commitReady = (transition: EntryStageTransition) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const completed = yield* Deferred.make<void, Effect.Error<ReturnType<typeof commit>>>()
+          pending.push({ transition, completed })
+          if (pending.length === 1) {
+            // Coalesce ready charts for one round trip; later charts can commit independently of this batch.
+            yield* Effect.yieldNow
+            const ready = pending.splice(0)
+            const result = yield* Effect.exit(commit(ready.map((entry) => entry.transition)))
+            yield* Effect.forEach(ready, (entry) => Deferred.done(entry.completed, result), { discard: true })
+          }
+          yield* Deferred.await(completed)
+        }),
+      )
     return yield* Effect.gen(function* () {
       yield* parallel(work, (entry) =>
         Effect.gen(function* () {
           const terminal =
             entry.visualClaim === null ? null : yield* visual(entry, entry.visualClaim, entry.visualRequest)
           const ready = yield* handoff(entry, terminal)
-          yield* commit([{ terminal, successor: { kind: 'HANDOFF', handoff: ready } }])
+          yield* commitReady({ terminal, successor: { kind: 'HANDOFF', handoff: ready } })
           entry.completion = yield* evaluateHandedOffEntry(entry.claim, ready)
         }),
       )

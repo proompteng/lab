@@ -1785,7 +1785,7 @@ integration('committed sequential provider handoff', () => {
             tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
           })
           const partial = yield* runInferenceExpensePass(expenses, client, tariff)
-          expect(partial.transferCount).toBe(2)
+          expect(partial.transferCount).toBe(1)
           expect(partial.gapCount).toBe(
             batch.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
           )
@@ -1805,7 +1805,7 @@ integration('committed sequential provider handoff', () => {
             snapshot,
             expenses.currentSession(snapshot.evidence.sessionDate),
           )
-          expect(ledger.transferCount).toBe(3)
+          expect(ledger.transferCount).toBe(2)
           expect(BigInt(ledger.knownEstimatedCostPicoUsd)).toBe(
             BigInt(partial.estimatedCostPicoUsd) + BigInt(late.estimatedCostPicoUsd),
           )

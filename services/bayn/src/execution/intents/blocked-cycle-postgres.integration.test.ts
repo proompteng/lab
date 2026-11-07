@@ -423,8 +423,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         return { rows, locked }
       }),
     )
-    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v39')
-    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v39')
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe(defaultJevProtocolDocument.schemaVersion)
+    expect(result.locked.history.strategy_parameter_schema_version).toBe(defaultJevProtocolDocument.schemaVersion)
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
