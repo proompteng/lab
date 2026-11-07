@@ -8,7 +8,12 @@ import {
 } from '../../schemas'
 import { WebullSymbolSchema } from '../webull-contract'
 import { marketFeatureClockSkewAllowanceMs } from '../features/contract'
-import { decodeWebullCapture, WebullCaptureKind, type WebullMinuteBar } from './webull-capture'
+import {
+  decodeWebullCapture,
+  WebullCaptureKind,
+  type WebullMinuteBar,
+  type WebullProducerClockDiagnostic,
+} from './webull-capture'
 import type { KafkaMarketRecord, StreamingUniverse } from './raw-events'
 import type { StreamingProjection } from './projection'
 
@@ -46,6 +51,7 @@ interface WebullRejection {
   readonly availableAtMs: number
   readonly sequence: number
   readonly symbols?: readonly string[]
+  readonly producerClock?: WebullProducerClockDiagnostic
 }
 export interface WebullProjection {
   readonly topic?: string
@@ -64,12 +70,9 @@ const reject = (
   state: StreamingProjection,
   availableAtMs: number,
   reason: string,
-  symbols?: readonly string[],
+  details: Pick<WebullRejection, 'symbols' | 'producerClock'> = {},
 ): StreamingProjection => {
-  const rejections = [
-    ...state.webull.rejections,
-    { availableAtMs, sequence: state.sequence, reason, ...(symbols === undefined ? {} : { symbols }) },
-  ]
+  const rejections = [...state.webull.rejections, { availableAtMs, sequence: state.sequence, reason, ...details }]
   return {
     ...state,
     webull: {
@@ -131,10 +134,23 @@ export const incorporateWebullRecord = (
     webull: { ...previous.webull, topic: record.topic },
   }
   const decoded = decodeWebullCapture(record)
-  if (Result.isFailure(decoded)) return reject(state, availableAtMs, decoded.failure.message)
+  if (Result.isFailure(decoded))
+    return reject(
+      state,
+      availableAtMs,
+      decoded.failure.message,
+      decoded.failure._tag === 'WebullProducerClockError' ? { producerClock: decoded.failure.producerClock } : {},
+    )
   const capture = decoded.success
   if (capture.kind === WebullCaptureKind.Gap)
-    return capture.gap.channel === 'bars' ? reject(state, availableAtMs, 'webull-bar-gap', capture.gap.symbols) : state
+    return capture.gap.channel === 'bars'
+      ? reject(
+          state,
+          availableAtMs,
+          'webull-bar-gap',
+          capture.gap.symbols === undefined ? {} : { symbols: capture.gap.symbols },
+        )
+      : state
   if (capture.kind !== WebullCaptureKind.Bars) return state
   const delivery = Schema.decodeUnknownResult(WebullDeliverySchema)({ record, availableAtMs, sequence: state.sequence })
   if (

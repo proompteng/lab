@@ -129,6 +129,12 @@ by primary key inside the same snapshot, preserving PostgreSQL microsecond preci
 ordering. Independent strategy, transaction and receipt reads retain the original scoped selection. Cycle, decision,
 accounting and ledger verification retain their existing checks.
 
+Generation-scoped decision, market-volume and closing-boundary reads also reuse the captured terminal-cycle
+membership through one PostgreSQL array parameter when nonempty; an explicit empty capture uses a bind-free false
+predicate. They retain completed-state filters, reconciliation cutoffs and native timestamp precision, and every
+selected decision still undergoes full verification. Independent reads keep their original scope queries;
+account-history reads add no membership parameter.
+
 Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
 authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
 fees include recorded fill fees and posted broker fee effects; unposted charges and operating expenses remain outside
@@ -155,8 +161,9 @@ the same strict parse options. Immutable historical documents and the decoders
 used to read them remain supported.
 
 Canonical JSON serialization writes finite numbers and strings without JSON escape characters directly. Strings
-that need escaping still use the runtime JSON encoder. Unicode validation, sorted keys, descriptors, dense arrays,
-cycle checks and failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
+that need escaping still use the runtime JSON encoder. Successful traversal keeps diagnostic path segments local to
+the call and renders their text only on failure. Unicode validation, sorted keys, descriptors, dense arrays,
+cycle checks and exact failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
 
 New target planning accepts only quote-bound inputs with an explicit allocation, verified bid/ask prices and
 per-symbol liquidity limits. Retired `bayn.paper-target-planner-input.v1` and `v2` inputs cannot construct new plans;
@@ -588,6 +595,10 @@ Snapshots retain each selected capture once, with native bytes, Kafka coordinate
 Recorded replay verifies that proof again. `Kafka Webull minute bars incorporated` logs measure the real consumer
 arrival delay, including late inputs. The existing streaming diagnostics command also reports Webull coverage.
 Historical diagnostic reads establish arrival at the diagnostic consumer only, not availability to an earlier decision.
+
+Producer-clock rejections include validated collector receipt and Kafka timestamps, their signed difference,
+the permitted 5,000 ms difference and the observed ordering. These diagnostics do not attribute a queue or clock
+cause. The existing clock bound, independent ten-second first-arrival cutoff and context withholding remain enforced.
 
 Protocol v38 carries `webullContext` in numerical input v24 and final proposal evidence v2. It contains one independently
 labeled completed M1 bar for the candidate, with exact native decimal strings and original receipt timing. The
