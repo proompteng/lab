@@ -46,7 +46,7 @@ done
 expect_contains nix "nix (Nix) 2.28." "$(nix --version)"
 expect_eq node v24.22.2 "$(node --version)"
 expect_eq bun 1.4.4 "$(bun --version)"
-expect_eq go go1.27.3 "$(go version | awk '{print $3}')"
+expect_eq go go1.27.3 "$(GOTOOLCHAIN=local go version | awk '{print $3}')"
 expect_eq ruby 3.4.7 "$(ruby --version | awk '{print $2}')"
 expect_contains python3.11 "Python 3.11." "$(python3.11 --version)"
 expect_contains python3.12 "Python 3.12." "$(python3.12 --version)"

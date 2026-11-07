@@ -210,5 +210,6 @@ runs:
           printf '  %s\n' "${missing[@]}"
           nix profile install .#ciToolchain --priority 4
         fi
-        toolchain-doctor
+        # Validate the installed compiler, independent of the checkout's newer Go directive.
+        GOTOOLCHAIN=local toolchain-doctor
         oci-doctor
