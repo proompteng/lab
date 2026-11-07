@@ -3,7 +3,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from './hash'
-import { InferenceCostError, InferenceUsageStatus } from './inference-costs'
+import { InferenceCostError, InferenceStage, InferenceUsageStatus } from './inference-costs'
 import { provideTestLayer } from './effect-test-support'
 import {
   buildInferenceExpensePlan,
@@ -191,6 +191,7 @@ describe('inference expense quote and deterministic plan', () => {
     expect(missing.requestsWithCoverageIssues).toEqual([
       {
         requestId: gap.line.requestId,
+        stage: InferenceStage.Jev,
         model: gap.line.model,
         purpose: gap.line.purpose,
         usageStatus: InferenceUsageStatus.Unknown,

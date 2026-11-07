@@ -1,4 +1,4 @@
-import type { EntryInferenceInput } from './entry-inference-input'
+import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
@@ -256,7 +256,7 @@ export const usableEntryBatchInferences = (
   })
 
 export const jevBatchQuestionSetHash = (
-  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: EntryInferenceInput } }[],
+  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: EntryInferenceMaterial } }[],
 ) =>
   Result.gen(function* () {
     const specifications = []

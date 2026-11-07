@@ -1803,7 +1803,6 @@ describe('closing market-data fallback boundaries', () => {
               restarted,
               { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
               command.controllerKey,
-              restarted.nextDueAt ?? '',
               command.sourceRevision,
             ),
           )._tag,

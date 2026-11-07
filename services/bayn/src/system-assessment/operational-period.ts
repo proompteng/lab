@@ -4,8 +4,13 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
-import { JevProtocolSchema, jevBehaviorHash } from '../jev/protocol'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import {
+  JevProtocolSchema,
+  RetainedJevProtocolV38Schema,
+  defaultJevProtocolDocument,
+  jevBehaviorHash,
+} from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { SystemAssessmentError } from './economics'
 import { PolicyDefinitionSchema, scheduledEvaluationFields, validateRegisteredPolicyIdentity } from './policy'
@@ -45,7 +50,8 @@ export const OperationalRegistrationSchema = Schema.Struct({
 })
 export type OperationalRegistration = typeof OperationalRegistrationSchema.Type
 
-export const validateOperationalRegistration = (input: unknown) =>
+/** Retained periods keep their original strategy binding when receipts are read. */
+export const verifyStoredOperationalRegistration = (input: unknown) =>
   Result.gen(function* () {
     const registration = yield* Schema.decodeUnknownResult(
       OperationalRegistrationSchema,
@@ -63,12 +69,24 @@ export const validateOperationalRegistration = (input: unknown) =>
     if (candidate.policy !== JevResearchPolicy.Candidate || candidate.capitalAuthorization === undefined)
       return yield* invalid('Operational registration requires the existing sealed native capital generation')
     const runtime = registration.obligations.configuration
-    if (!Schema.is(JevProtocolSchema)(runtime.protocol))
-      return yield* invalid('Operational registration requires the current native protocol')
+    if (!Schema.is(JevProtocolSchema)(runtime.protocol) && !Schema.is(RetainedJevProtocolV38Schema)(runtime.protocol))
+      return yield* invalid('Operational registration requires a recognized native protocol')
+    const parameterHash = yield* canonicalHashV1Result(runtime.protocol)
+    const expectedParameterHash = yield* canonicalHashV1Result({
+      ...defaultJevProtocolDocument,
+      schemaVersion: runtime.protocol.schemaVersion,
+    })
+    const protocolHash = yield* makeStrategyProtocolHashResult({
+      name: 'jev',
+      behaviorHash: jevBehaviorHash,
+      parameterHash,
+      parameterSchemaVersion: runtime.protocol.schemaVersion,
+    })
     if (
-      candidate.parametersHash !== (yield* canonicalHashV1Result(runtime.protocol)) ||
+      parameterHash !== expectedParameterHash ||
+      candidate.parametersHash !== parameterHash ||
       candidate.strategyHash !== jevBehaviorHash ||
-      !jevProtocolIdentityMatches(runtime.protocol, candidate.protocolHash) ||
+      candidate.protocolHash !== protocolHash ||
       candidate.executionModelHash !== (yield* canonicalHashV1Result(runtime.protocol.executionModel))
     )
       return yield* invalid('Operational schedule must bind the authorized native strategy')
@@ -115,3 +133,15 @@ export const validateOperationalRegistration = (input: unknown) =>
       return yield* invalid('Operational calendar must cover the complete reporting period')
     return { registration, registrationHash: yield* canonicalHashV1Result(registration) }
   })
+
+/** New periods may only bind the currently executable native protocol. */
+export const validateOperationalRegistration = (input: unknown) =>
+  verifyStoredOperationalRegistration(input).pipe(
+    Result.flatMap((verified) =>
+      Schema.is(JevProtocolSchema)(verified.registration.obligations.configuration.protocol)
+        ? Result.succeed(verified)
+        : Result.fail(
+            new SystemAssessmentError({ message: 'Operational registration requires the current native protocol' }),
+          ),
+    ),
+  )

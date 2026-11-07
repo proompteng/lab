@@ -152,7 +152,6 @@ describe('execution controller decisions', () => {
         state,
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
         controllerKey,
-        '2026-08-13T17:59:00.000Z',
         sourceRevision,
       ),
     )
@@ -162,7 +161,6 @@ describe('execution controller decisions', () => {
         controllerKey,
         epoch: 1,
         sequence: 0,
-        issuedAt: '2026-08-13T17:59:00.000Z',
         sourceRevision,
       },
     })
@@ -172,7 +170,6 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 2, sequence: 0 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
           sourceRevision,
         ),
       ),
@@ -183,7 +180,6 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
           sourceRevision,
         ),
       ),
@@ -194,7 +190,6 @@ describe('execution controller decisions', () => {
           { ...state, active: false },
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
           sourceRevision,
         ),
       ),
@@ -318,7 +313,6 @@ describe('execution controller decisions', () => {
         sequence: Number.MAX_SAFE_INTEGER,
       },
       controllerKey,
-      '2026-08-13T17:59:00.000Z',
       sourceRevision,
     )
 
@@ -416,7 +410,6 @@ describe('execution controller decisions', () => {
             sequence: resumed.nextSequence,
           },
           controllerKey,
-          nextDueAt,
           sourceRevision,
         ),
       ),

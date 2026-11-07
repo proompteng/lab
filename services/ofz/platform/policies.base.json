@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "kind": "tengri.workspace",
+      "nativeType": "workspace",
+      "relations": [],
+      "workspaceScoped": false
+    },
+    {
+      "kind": "platform.workspace",
+      "nativeType": "platform_workspace",
+      "workspaceScoped": false,
+      "relations": [
+        {
+          "name": "member",
+          "subjects": ["human"]
+        },
+        {
+          "name": "administrator",
+          "subjects": ["human"]
+        },
+        {
+          "name": "client",
+          "subjects": ["workload"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "tengri.delegations.manage",
+      "resourceKind": "tengri.workspace",
+      "permission": "manage_grants"
+    }
+  ]
+}

@@ -3542,7 +3542,6 @@ formal('pinned Lean executable conformance', () => {
             : null,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: t.tickEpoch, sequence: t.tickSequence },
           testHash('controller'),
-          '2026-11-02T14:30:00.000Z',
           t.workerSource,
         )
         return Result.isFailure(decision)

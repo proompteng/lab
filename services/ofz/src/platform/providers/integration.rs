@@ -45,6 +45,7 @@ fn operation() -> relay::registered::Operation {
             kind: "kubernetes.namespace".into(),
             id: "galactic/11111111-1111-4111-8111-111111111111".into(),
         },
+        read_only: true,
         input_schema: serde_json::json!({"type":"object","additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"]}),
     }
 }
@@ -981,6 +982,7 @@ async fn drivers(
             authentication: relay::credentials::Authentication::Oauth2 { profile: shared.id },
         },
         vec![relay::mcp::McpOperation {
+            relay_context: false,
             operation: operation(),
             tool: "fixture_read".into(),
         }],
