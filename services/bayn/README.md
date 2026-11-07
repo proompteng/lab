@@ -1631,9 +1631,13 @@ bayn-inference-cost --evidence /private/inference-evidence.json --rate-card /pri
 
 The database mode requires `BAYN_POSTGRES_URL`, `BAYN_ALPACA_ACCOUNT_ID`, and the normal PostgreSQL TLS settings.
 It does not acquire a broker client, inference client, writer fence, or execution authority. The account and session
-filter execute in a repeatable-read, read-only transaction. More than 10,000 claimed requests fails explicitly rather
-than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
-endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
+filter execute in a repeatable-read, read-only transaction. Reports retain the complete request and quote set without
+truncating large sessions. Query, socket and connection deadlines remain enforced. Keep evidence, rate cards, and
+report outputs private; they are not public status endpoints, source fixtures, or CI artifacts.
+`node dist/inference-cost-command.js` is the corresponding compiled entry.
+
+Forward-performance reports discover generation-scoped expense sessions with a direct generation predicate and
+the request generation/cycle index. Account-wide discovery retains all generations and the complete-session limit.
 
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
 most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
@@ -1893,6 +1897,12 @@ removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
+
+Controller completion persists the earlier of the worker's absolute next wake and the ordinary polling deadline.
+Worker completion, persistence and transport time consume that wait instead of restarting it. An elapsed wake runs
+on the next bounded continuation. A failed post-pass projection check discards both earlier scheduling hints and
+uses the failure's retry cadence. These wake times grant no execution authority and retain fresh reconciliation,
+quote, risk and submission checks.
 
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first

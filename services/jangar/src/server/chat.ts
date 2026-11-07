@@ -1238,7 +1238,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         }
 
         const prompt = promptFit.prompt
-        const client = yield* getCodexClient()
+        const client = yield* getCodexClient({ defaultModel: model })
         let clientReleased = false
         const releaseClient = () => {
           if (clientReleased) return
