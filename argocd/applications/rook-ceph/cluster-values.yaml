@@ -85,9 +85,10 @@ cephClusterSpec:
       osd_scrub_auto_repair_num_errors: "5"
       # Catch up with overdue deep scrubs while mClock favors client operations.
       osd_max_scrubs: "3"
-      # Keep both bounds explicit when restoring the measured baseline from a runtime trial.
-      osd_scrub_chunk_min: "5"
-      osd_scrub_chunk_max: "5"
+      # Bound each deep-scrub chunk to one object so shared RBD client writes
+      # can proceed between chunks. Retain three concurrent scrubs per OSD.
+      osd_scrub_chunk_min: "1"
+      osd_scrub_chunk_max: "1"
       # Read common 4 MiB objects in one stride instead of eight separately scheduled reads.
       osd_deep_scrub_stride: "4194304"
       # Recurring backfill must not indefinitely postpone integrity checks.
