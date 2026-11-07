@@ -22,6 +22,12 @@ the checked commit. Pending CI, unresolved threads, drafts, conflicts, and missi
 or stale Codex review evidence block approval. PR edits, completed checks, commit
 statuses, Codex summary updates, submitted reviews, and resolved threads recheck
 readiness. GitHub reviews provide the durable receipt used to reconcile retries.
+Check readiness uses the newest observed execution of each workflow/job for the same
+event, branch and commit. Superseded executions cannot block a passing replacement;
+checks from other workflows or unknown identities remain independent. Failed metadata
+reads block approval. The `ready approval blocked` log records the checked head, delivery,
+CI names/conclusions, unresolved thread count, reaction, draft and merge state; GitHub read
+failures also record the failed stage and HTTP status without credentials or response bodies.
 
 ## Linear webhook secret
 
