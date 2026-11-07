@@ -119,7 +119,7 @@ test.each([
   { name: 'ablation exit', fixture: makeProtectiveStopDocumentFixture('ablation') },
   { name: 'momentum exit', fixture: makeProtectiveStopDocumentFixture('momentum') },
 ])(
-  'fresh v39 $name remains current-only with unchanged raw exit allowances',
+  'fresh v40 $name remains current-only with unchanged raw exit allowances',
   async ({ fixture }) => {
     const document = await Effect.runPromise(fixture)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)

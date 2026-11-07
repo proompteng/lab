@@ -1229,7 +1229,7 @@ export const jevProtocolIdentityMatches = (protocol: JevProtocol, strategyProtoc
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
-// Only the retained document schema can supply v38 here; current admission schemas remain strict v39.
+// Only retained financial schemas supply v38/v39 here; current execution admission is strictly v40.
 const recordedJevProtocolIdentityMatches = (
   protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type,
   strategyProtocolHash: string,
@@ -1327,7 +1327,7 @@ const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): 
       })
     for (const symbol of target.selectedSymbols) {
       const originalAsk = Result.gen(function* () {
-        const source = yield* observation.protocol.schemaVersion === 'bayn.jev.protocol.v38'
+        const source = yield* observation.protocol.schemaVersion !== 'bayn.jev.protocol.v40'
           ? reproduceRetainedJevCandidateObservation(observation)
           : reproduceJevCandidateObservation(observation)
         const quote = source.snapshot.latestQuotes[symbol]
@@ -2163,21 +2163,20 @@ export const RetainedJevExecutionDecisionDocumentSchema = Schema.Struct({
   Schema.makeFilter((document) => {
     const { contentHash, ...material } = document
     const expected = canonicalHashV1Result(material)
-    const protocol = retainedJevProtocolV38Document
     return document.bindings.strategyName === 'jev' &&
-      (recordedJevProtocolIdentityMatches(protocol, document.bindings.strategyProtocolHash) ||
-        ablationProtocolIdentityMatches(makeEntryAblationPolicy(protocol), document.bindings.strategyProtocolHash) ||
-        momentumProtocolIdentityMatches(
-          makeRepeatedMomentumPolicy(protocol),
-          document.bindings.strategyProtocolHash,
-        )) &&
+      [retainedJevProtocolV38Document, retainedJevProtocolV39Document].some(
+        (protocol) =>
+          recordedJevProtocolIdentityMatches(protocol, document.bindings.strategyProtocolHash) ||
+          ablationProtocolIdentityMatches(makeEntryAblationPolicy(protocol), document.bindings.strategyProtocolHash) ||
+          momentumProtocolIdentityMatches(makeRepeatedMomentumPolicy(protocol), document.bindings.strategyProtocolHash),
+      ) &&
       Result.isSuccess(expected) &&
       expected.success === contentHash
       ? []
       : [
           {
             path: ['contentHash'],
-            issue: 'retained v38 execution must preserve its exact protocol and canonical document identity',
+            issue: 'retained Jev execution must preserve its exact protocol and canonical document identity',
           },
         ]
   }),

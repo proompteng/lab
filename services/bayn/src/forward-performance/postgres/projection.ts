@@ -16,7 +16,9 @@ import {
   type VerifiedCycleDecisionRow,
 } from './model'
 
-const RetainedJevProtocolPrefix = Schema.Struct({ schemaVersion: Schema.Literal('bayn.jev.protocol.v38') })
+const RetainedJevProtocolPrefix = Schema.Struct({
+  schemaVersion: Schema.Literals(['bayn.jev.protocol.v38', 'bayn.jev.protocol.v39']),
+})
 const RetainedJevDecisionPrefix = Schema.Struct({
   schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
   mode: Schema.Literal(legacyExecutionAuthorityToken),
