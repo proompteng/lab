@@ -16,17 +16,14 @@ import ./bun-workspace-service.nix {
   };
   installFilters = [
     "@proompteng/agent-contracts"
-    "@proompteng/otel"
     "froussard"
   ];
   sourcePaths = [
     "apps/froussard"
     "packages/agent-contracts"
-    "packages/otel"
   ];
   buildCommands = [
     "bun --cwd=packages/agent-contracts run build"
-    "bun --cwd=packages/otel run build"
     "bun --cwd=apps/froussard run build"
   ];
   command = [
