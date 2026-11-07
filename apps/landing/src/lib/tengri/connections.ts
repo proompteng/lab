@@ -5,6 +5,7 @@ import type { ConnectorOperation } from './generated/proompteng/relay/v1/relay_p
 const generation = z.string().regex(/^[1-9][0-9]{0,18}$/)
 const resource = z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(256) })
 const command = { operationId: z.uuid(), agentId: z.string().min(1).max(128) }
+export const connectionScopeLimit = 16
 export const connectionRequestSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     ...command,
@@ -12,13 +13,52 @@ export const connectionRequestSchema = z.discriminatedUnion('kind', [
     connectionId: z.uuid(),
     expectedVersion: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
     connectorId: z.string().regex(/^[A-Za-z0-9_.-]{1,128}$/),
-    operations: z.array(z.string().min(1).max(128)).min(1).max(16),
-    targets: z.array(resource).min(1).max(16),
+    operations: z.array(z.string().min(1).max(128)).min(1).max(connectionScopeLimit),
+    targets: z.array(resource).min(1).max(connectionScopeLimit),
   }),
   z.strictObject({ agentId: command.agentId, kind: z.literal('reconcile') }),
 ])
 export const disconnectRequestSchema = z.strictObject({ ...command, connectionId: z.uuid() })
 export type SaveConnection = Extract<z.infer<typeof connectionRequestSchema>, { kind: 'save' }>
+
+const pendingConnectionSchema = z.strictObject({
+  request: connectionRequestSchema,
+  resumeAfterSignIn: z.boolean(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
+
+export function pendingConnectionKey(principal: string, workspaceUid: string) {
+  return 'tengri-connection:' + JSON.stringify([principal, workspaceUid])
+}
+
+export function readPendingConnection(storage: Storage, key: string) {
+  const encoded = storage.getItem(key)
+  if (!encoded) return undefined
+  const pending = pendingConnectionSchema.parse(JSON.parse(encoded))
+  if (pending.request.kind !== 'save') throw new Error('The pending connection is invalid')
+  return {
+    request: pending.request,
+    resumeAfterSignIn:
+      pending.resumeAfterSignIn && Date.now() >= pending.updatedAtMs && Date.now() - pending.updatedAtMs <= 300_000,
+  }
+}
+
+export function retainPendingConnection(
+  storage: Storage,
+  key: string,
+  request: SaveConnection,
+  resumeAfterSignIn: boolean,
+) {
+  connectionRequestSchema.options[0].parse(request)
+  const previous = readPendingConnection(storage, key)
+  if (previous && previous.request.operationId !== request.operationId)
+    throw new Error('Finish the pending connection before starting another change.')
+  storage.setItem(key, JSON.stringify({ request, resumeAfterSignIn, updatedAtMs: Date.now() }))
+}
+
+export function completePendingConnection(storage: Storage, key: string, operationId: string) {
+  if (readPendingConnection(storage, key)?.request.operationId === operationId) storage.removeItem(key)
+}
 
 const installation = z.strictObject({
   connectionId: z.uuid(),
@@ -60,10 +100,9 @@ export function selectConnectionScope(operations: ConnectorOperation[], request:
   if (
     selected.length === 0 ||
     selected.length !== request.operations.length ||
-    new Set(request.operations).size !== request.operations.length ||
-    selected.some((operation) => !operation.readOnly)
+    new Set(request.operations).size !== request.operations.length
   )
-    throw new Error('Select registered read-only operations')
+    throw new Error('Select registered operations')
   const resources = request.targets.map((target) => {
     const registered = selected[0]?.targets.find(
       (candidate) => candidate.resource?.kind === target.kind && candidate.resource.id === target.id,
@@ -100,18 +139,16 @@ export function savedConnectionOperations(
   if (
     selected.length === 0 ||
     connection.actions.some((action) => !selected.some((operation) => operation.action === action)) ||
-    selected.some(
-      (operation) =>
-        !operation.readOnly ||
-        connection.resources.some(
-          (resource) =>
-            !operation.targets.some(
-              (target) =>
-                target.resource?.kind === resource.kind &&
-                target.resource.id === resource.id &&
-                target.resource.target === resource.target,
-            ),
-        ),
+    selected.some((operation) =>
+      connection.resources.some(
+        (resource) =>
+          !operation.targets.some(
+            (target) =>
+              target.resource?.kind === resource.kind &&
+              target.resource.id === resource.id &&
+              target.resource.target === resource.target,
+          ),
+      ),
     )
   )
     throw new Error('The saved scope is unavailable. Review this connection before changing it.')
@@ -126,6 +163,7 @@ export function credentialMatchesRuntime(
 ) {
   return (
     connection.enabled &&
+    connection.credentialActive &&
     connection.recoveryGeneration === recoveryGeneration &&
     connection.credentialBinding?.generation === runtimeEpoch &&
     connection.credentialBinding.service === connection.binding?.service &&

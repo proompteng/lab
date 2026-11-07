@@ -50,6 +50,29 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+Automatic image publication follows runtime source, dependency and image-definition inputs. Changes confined to CI
+orchestration, image publishing, cache uploads, timing reports or Kargo control resources run workflow and script
+validation on pull requests and main without rebuilding service images or starting unrelated service test matrices.
+ARC runner and OpenCode still rebuild when their embedded CI tools change. Existing manual workflow dispatch remains
+available for publication diagnostics.
+
+Restate publication watches its Docker build context and application manifests. Its runtime has no Bun dependency,
+so the root lockfile, script helpers and shared ApplicationSet do not create a new Restate image or roll its retained
+members. The Warehouse watches the same owned paths as the publisher.
+
+App dependency-closure checks recompute both native fixed-output hashes when dependency inputs change. App UI source
+edits reuse the qualified dependency closure. A failed or cancelled closure check blocks publication; an unnecessary
+closure check can be skipped without blocking the image build.
+
+Native Nix image jobs retry transient cache downloads up to three times and fail if substitution still fails.
+Cache failures do not trigger compiler or toolchain builds from source. Each image has one 45-minute build deadline;
+compile failures and timeouts are not retried as a second full build. Build timings and logs retain the failing phase.
+
+After a successful main-branch image publication, CI uploads the image derivation's existing build outputs and dependency
+paths to Attic with `cache-push --build`. This includes build-time dependencies that are absent from the compressed image's
+runtime references. Derivation files are excluded. Final image revisions retain their provenance while unchanged compiled
+outputs remain reusable across commits. Upload failures are recorded and alerted through CI observability.
+
 `product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
 Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
 They do not create unused product image archives or PR registry caches.
@@ -111,6 +134,9 @@ are the promotion record. The ApplicationSet points each Kargo-managed Applicati
 overwrite that branch or its managed deployment metadata. If an Application is recreated, re-promote its current
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
+
+Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
+image from `main`. This avoids execution-controller reactivation when production code is unchanged.
 
 Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
 main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings

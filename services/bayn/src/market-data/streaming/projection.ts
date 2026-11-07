@@ -1,4 +1,5 @@
 import { MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import {
   cryptoFeatureDefinitionMaterial,
   decodeCryptoMarketFeature,
@@ -11,6 +12,7 @@ import { Result, Schema } from 'effect'
 import type { RawMarketEvent } from './raw-events'
 import type { TechnicalMarketFeature } from '../features/technical-contract'
 import { incorporateTechnicalRecord, type TechnicalInputRejection } from './technical-projection'
+import { emptyWebullProjection, incorporateWebullRecord, type WebullProjection } from './webull-projection'
 
 import { compareIntradayInstants, intradayInstantNanos } from '../intraday/time'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
@@ -53,6 +55,7 @@ export interface ObservedFeature<A = NativeMarketFeature> extends ObservedMarket
   readonly offset: string
 }
 export interface StreamingProjection {
+  readonly webull: WebullProjection
   readonly availabilityMode: 'observed' | 'simulated'
   readonly epoch: string
   readonly sequence: number
@@ -79,7 +82,12 @@ export interface StreamingProjection {
     readonly { readonly availableAtMs: number; readonly offset: string; readonly reason: string }[]
   >
 }
-export const emptyStreamingProjection = (epoch: string, technicalTopic?: string): StreamingProjection => ({
+export const emptyStreamingProjection = (
+  epoch: string,
+  technicalTopic?: string,
+  webullTopic?: string,
+): StreamingProjection => ({
+  webull: emptyWebullProjection(webullTopic),
   availabilityMode: 'observed',
   epoch,
   sequence: 0,
@@ -120,7 +128,10 @@ export const compareBarRevisions = (a: IntradayBar, b: IntradayBar): number =>
   compareIntradayInstants(a.ingestedAt, b.ingestedAt) ||
   a.sourcePartition - b.sourcePartition ||
   compareOffsets(a.sourceOffset, b.sourceOffset)
-const compareCurrent = (a: IntradayQuote | IntradayTrade, b: IntradayQuote | IntradayTrade): number =>
+export const compareCurrentMarketRecord = (
+  a: IntradayQuote | IntradayTrade,
+  b: IntradayQuote | IntradayTrade,
+): number =>
   compareIntradayInstants(a.eventAt, b.eventAt) ||
   a.sourcePartition - b.sourcePartition ||
   compareOffsets(a.sourceOffset, b.sourceOffset)
@@ -156,6 +167,8 @@ const incorporateDecodedRecord = (
   featureRecordedAtMs = availableAtMs,
   technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
+  if (universe.topics.webullBars !== undefined && record.topic === universe.topics.webullBars)
+    return incorporateWebullRecord(previous, record, universe, availableAtMs)
   if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
     return incorporateTechnicalRecord(previous, record, universe, availableAtMs, technicalRecordedAtMs)
   if (
@@ -316,7 +329,7 @@ const incorporateDecodedRecord = (
         } else break
         // Recorded timestamps may have three fractional digits; raw rows have nine.
         if (previousMinute === undefined || compareIntradayInstants(entry.value.eventAt, previousMinute) !== 0) {
-          if (++minutes > 61) break
+          if (++minutes > (bar.feed === 'us' ? marketHistoryMinutes[MarketKind.Crypto] + 1 : 61)) break
           previousMinute = entry.value.eventAt
           revisions = 0
         }
@@ -329,7 +342,7 @@ const incorporateDecodedRecord = (
     }
     case RawMarketEventKind.Quote: {
       const current = state.quotes.get(event.value.symbol)
-      if (current !== undefined && compareCurrent(event.value, current.value) <= 0) return state
+      if (current !== undefined && compareCurrentMarketRecord(event.value, current.value) <= 0) return state
       const entry = { value: event.value, availableAtMs, sequence, recordHash }
       const previousHistory = state.quoteHistory.get(event.value.symbol) ?? []
       const evicted = previousHistory.length >= 512 ? previousHistory[previousHistory.length - 512] : undefined
@@ -356,7 +369,7 @@ const incorporateDecodedRecord = (
     }
     case RawMarketEventKind.Trade: {
       const current = state.trades.get(event.value.symbol)
-      if (current !== undefined && compareCurrent(event.value, current.value) <= 0) return state
+      if (current !== undefined && compareCurrentMarketRecord(event.value, current.value) <= 0) return state
       const entry = { value: event.value, availableAtMs, sequence, recordHash }
       const history = [...(state.tradeHistory.get(event.value.symbol) ?? []), entry]
       const evicted = history.length > 512 ? history[history.length - 513] : undefined

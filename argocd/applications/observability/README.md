@@ -21,6 +21,13 @@ The topic has three partitions, replication factor three, and minimum ISR two. T
 application; Mimir's bundled Kafka chart is disabled. Increase topic partitions before scaling ingesters above three.
 The [shared Kafka migration runbook](../../../docs/runbooks/mimir-shared-kafka.md) describes the hard cutover,
 offset handling, and verification. Historical Kafka snapshot/restore PVCs remain as retained data without a workload.
+
+Distributors and the ruler's internal distributor use a 15-second downstream budget, allowing Kafka's existing
+10-second write timeout plus two-second overhead to finish within Alloy's 30-second client timeout. The former
+HTTP distributor budget was five seconds; the ruler's was ten. Component arguments limit this change to
+distributor and ruler rollouts. Verify their effective `/config` values and fresh samples after deployment;
+Kafka write failures and stale telemetry remain failures.
+
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
 [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
@@ -70,6 +77,11 @@ failure. These observations do not establish replication correctness or a succes
 The rules use the existing `notify: email` route. Native Prometheus scenarios in [platform-alerts.yaml](tests/platform-alerts.yaml)
 exercise firing delays, recovery, idle promotions and missing observations. Argo health and scrape health remain
 infrastructure evidence; application acceptance still requires actual authorized connector results and durable receipts.
+
+`PlatformApplicationUnhealthy` owns Tengri's Argo health alert too, so one unhealthy application produces one alert.
+Restate replica scrape and failure-detector degradation warn after five minutes, allowing a short single-node
+replacement. Missing metadata quorum still pages after two minutes, including when all metadata telemetry disappears.
+[Restate scenarios](tests/restate-alerts.yaml) exercise both recovery and sustained quorum loss.
 
 ## Required buckets
 
@@ -179,6 +191,23 @@ incomplete ingestion. The shared tenant has a bounded 300,000-series runtime all
 removed to reduce recurring cardinality. See the [alert delivery RCA](../../../docs/incidents/2026-10-26-alert-delivery-and-bayn-projection.md).
 Apply a fallback configuration update before a separately
 reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
+
+Ceph host read-latency incidents have a dedicated route with ten-second first delivery, fifteen-minute updates and
+four-hour repeats. Their stable node identity and ten-minute recovery hold avoid OSD membership churn while the
+annotations retain individual OSD latencies. Other critical Ceph alerts keep the general critical route.
+
+Ceph queue wait, commit latency, health warning and scrub-debt incidents require ten continuous minutes of recovery
+before resolving. Detection thresholds and firing delays are unchanged. The generic health warning excludes
+scrub-only debt, which has its own thirty-minute alert. Any additional active health check keeps the generic warning,
+and missing detail telemetry cannot suppress it. Its notification lists the active check names. Review a retained
+crash with `ceph crash info <id>` before acknowledging that exact report with `ceph crash archive <id>`;
+archiving preserves the crash evidence and leaves new-crash detection enabled.
+
+PVC free-space alerts retain the 15% warning for thirty minutes and 5% critical for ten minutes.
+The critical rule excludes capacity-only block-device observations with both available and used bytes zero.
+Alloy retains kubelet used bytes alongside available and capacity bytes. Missing used-byte telemetry leaves
+critical detection enabled, and any positive used-byte observation preserves detection of a completely full filesystem.
+Raw block-device capacity does not establish free space inside a VM; that requires guest filesystem telemetry.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`

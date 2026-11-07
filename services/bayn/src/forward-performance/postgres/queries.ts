@@ -1,10 +1,41 @@
 import { PgClient } from '@effect/sql-pg'
-import { generationScope, openingSnapshotBoundary } from './scope'
+import { executionDecisionRows } from '../../db/execution-decision-query'
+import { firstCycleQuery } from './cycles'
+import type { TerminalCycleRow } from './model'
+import { capturedCycleScope, generationScope, openingSnapshotBoundary } from './scope'
+
+export const decisionQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
+) => sql<Record<string, unknown>>`
+  WITH latest_reconciliation AS (
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+    LIMIT 1
+  )
+  SELECT decision_rows.cycle_id, decision_rows.decision_hash, decision_rows.document, decision_rows.created_at
+  FROM (
+    ${executionDecisionRows(sql)}
+  ) AS decision_rows
+  JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
+  CROSS JOIN latest_reconciliation
+  WHERE cycle.account_id = ${accountId}
+    AND cycle.state = 'COMPLETED'
+    AND ${capturedCycleScope(sql, accountId, authorityGenerationHash, capturedCycles)}
+    AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+  ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
+`
 
 export const transactionQuery = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) => sql<Record<string, unknown>>`
   WITH latest_reconciliation AS (
     SELECT reconciliation.reconciled_at
@@ -14,23 +45,15 @@ export const transactionQuery = (
     ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   ), first_cycle AS (
-    SELECT cycle.submission_open_at
-    FROM autonomous_cycles AS cycle
-    WHERE cycle.account_id = ${accountId}
-      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-    LIMIT 1
+    ${firstCycleQuery(sql, accountId, authorityGenerationHash, capturedCycles)}
   ), opening_snapshot AS (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
     JOIN broker_events AS event ON event.event_id = snapshot.event_id
-    CROSS JOIN latest_reconciliation
-    CROSS JOIN first_cycle
+      AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
     WHERE snapshot.account_id = ${accountId}
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
       AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-      AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   )
@@ -103,6 +126,7 @@ export const receiptQuery = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) => sql<Record<string, unknown>>`
   WITH latest_reconciliation AS (
     SELECT reconciliation.reconciled_at
@@ -112,23 +136,15 @@ export const receiptQuery = (
     ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   ), first_cycle AS (
-    SELECT cycle.submission_open_at
-    FROM autonomous_cycles AS cycle
-    WHERE cycle.account_id = ${accountId}
-      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-    LIMIT 1
+    ${firstCycleQuery(sql, accountId, authorityGenerationHash, capturedCycles)}
   ), opening_snapshot AS (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
     JOIN broker_events AS event ON event.event_id = snapshot.event_id
-    CROSS JOIN latest_reconciliation
-    CROSS JOIN first_cycle
+      AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
     WHERE snapshot.account_id = ${accountId}
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
       AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-      AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   ), selected_transactions AS (

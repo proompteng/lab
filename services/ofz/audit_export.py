@@ -232,7 +232,17 @@ class Exporter:
 
     def tick(self) -> int:
         try:
-            return self._tick()
+            try:
+                return self._tick()
+            except urllib3.exceptions.HTTPError as failure:
+                # A broken connection can recover on a fresh request. Repeat the
+                # complete verification; uncertain uploads already reuse their key.
+                print(
+                    json.dumps(failure_report(failure, "audit_archive_verify_retry")),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return self._tick()
         except Exception:
             try:
                 self.database.execute(
@@ -320,7 +330,8 @@ def from_environment() -> Exporter:
         keepalives_idle="5",
         keepalives_interval="2",
         keepalives_count="3",
-        options="-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c idle_session_timeout=15000",
+        # A batch can make four sequential S3 requests between SQL statements.
+        options="-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c idle_session_timeout=90000",
     )
     database = psycopg.connect(**config, autocommit=True, row_factory=dict_row)
     storage = CephArchive(
@@ -330,7 +341,7 @@ def from_environment() -> Exporter:
         secure=False,
         region="us-east-1",
         http_client=urllib3.PoolManager(
-            timeout=urllib3.Timeout(total=8, connect=2, read=5),
+            timeout=urllib3.Timeout(total=22, connect=2, read=20),
             retries=False,
             maxsize=2,
         ),

@@ -472,8 +472,10 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       return { stream, verify }
     }
     const preflight = read()
-    yield* Stream.runDrain(preflight.stream)
-    yield* preflight.verify
+    yield* Stream.runDrain(preflight.stream).pipe(
+      Effect.andThen(preflight.verify),
+      Effect.withSpan('bayn.backtest.source-preflight'),
+    )
     yield* snapshot.seek(0n, 'start')
     const replay = read()
     const pull = yield* Stream.toPull(replay.stream)
@@ -498,28 +500,38 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       }
       return pending[pendingIndex]
     })
-    const advanceTo = (atMs: number, publishBroker: boolean) =>
+    const advanceTo = (
+      atMs: number,
+      publishBroker: boolean,
+      readSource: <E>(work: Effect.Effect<void, E>) => Effect.Effect<void, E | ReplaySourceFailure>,
+    ) =>
       permit.withPermit(
         Effect.gen(function* () {
           if (advanceFailure !== undefined) return yield* advanceFailure
           if (!Number.isSafeInteger(atMs) || atMs < advancedToMs)
             return yield* fail('Source clock cannot move backwards')
-          while (true) {
-            const next = yield* peek
-            if (next === undefined || next.availableAtMs > atMs) break
-            const previous = cursor.projection
-            cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, next))
-            pendingIndex++
-            if (publishBroker && brokerObserver !== undefined) {
-              const quote =
-                next.record.topic === marketSourceForTopic(manifest.marketSources, next.record.topic)?.topics.quotes
-                  ? [...cursor.projection.quotes.values()].find(
-                      (entry) => previous.quotes.get(entry.value.symbol) !== entry,
-                    )
-                  : undefined
-              yield* brokerObserver(next.availableAtMs, quote ?? null)
+          const next = pending[pendingIndex]
+          const consumesSource = !ended && (next === undefined || next.availableAtMs <= atMs)
+          const consume = Effect.gen(function* () {
+            while (true) {
+              const next = yield* peek
+              if (next === undefined || next.availableAtMs > atMs) break
+              const previous = cursor.projection
+              cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, next))
+              pendingIndex++
+              if (publishBroker && brokerObserver !== undefined) {
+                const quote =
+                  next.record.topic === marketSourceForTopic(manifest.marketSources, next.record.topic)?.topics.quotes
+                    ? [...cursor.projection.quotes.values()].find(
+                        (entry) => previous.quotes.get(entry.value.symbol) !== entry,
+                      )
+                    : undefined
+                yield* brokerObserver(next.availableAtMs, quote ?? null)
+              }
             }
-          }
+          })
+          // Empty time advances do no fixture I/O. Broker deadline work still runs on the measured clock.
+          yield* consumesSource ? readSource(consume) : consume
           if (publishBroker && brokerObserver !== undefined) yield* brokerObserver(atMs, null)
           advancedToMs = atMs
         }).pipe(
@@ -540,7 +552,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       manifest,
       source,
       cursor: Effect.sync(() => cursor),
-      advanceTo: (atMs: number) => advanceTo(atMs, true),
+      advanceTo: (atMs: number, readSource: Parameters<typeof advanceTo>[2]) => advanceTo(atMs, true, readSource),
       observeBroker: (observer: NonNullable<typeof brokerObserver>) =>
         Effect.acquireRelease(
           Effect.gen(function* () {
@@ -552,10 +564,13 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
               brokerObserver = undefined
             }),
         ),
-      finish: Effect.suspend(() => advanceTo(Math.max(manifest.lastAvailableAtMs, advancedToMs), false)).pipe(
+      finish: Effect.suspend(() =>
+        advanceTo(Math.max(manifest.lastAvailableAtMs, advancedToMs), false, (work) => work),
+      ).pipe(
         Effect.andThen(
           Effect.suspend(() => (ended ? Effect.void : Effect.fail(fail('Source was not fully consumed')))),
         ),
+        Effect.withSpan('bayn.backtest.source-tail'),
       ),
     }
   }).pipe(Effect.mapError((cause) => fail('Cannot open or advance retained replay source', cause)))

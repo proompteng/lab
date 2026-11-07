@@ -43,8 +43,8 @@ describe('bounded native inference stream', () => {
     streamFixture('<alpha_list>alpha001,alpha001</alpha_list>'),
     streamFixture('<alpha_list>alpha002</alpha_list>'),
     streamFixture().replace('"finish_reason":"stop"', '"finish_reason":"length"'),
-    streamFixture().replace('qwen36-flamingo', 'wrong-model'),
-    streamFixture().replaceAll('"model":"qwen36-flamingo",', ''),
+    streamFixture().replace('qwen38-flamingo', 'wrong-model'),
+    streamFixture().replaceAll('"model":"qwen38-flamingo",', ''),
     streamFixture()
       .replace('"completion_tokens":20', '"completion_tokens":4097')
       .replace('"total_tokens":30', '"total_tokens":4107'),

@@ -12,8 +12,8 @@
 
 # Keep all four lanes enabled for each active whole 100G port.
 /interface ethernet set [find where default-name~"^qsfp28-[12]-"] disabled=no mtu=1500
-/interface ethernet set qsfp28-1-1 auto-negotiation=yes advertise=100G-baseCR4 speed=100G-baseCR4 fec-mode=fec91 comment="Altra port 1"
-/interface ethernet set qsfp28-2-1 auto-negotiation=yes advertise=100G-baseCR4 speed=100G-baseCR4 fec-mode=fec91 comment="Turin port 1"
+/interface ethernet set qsfp28-1-1 auto-negotiation=yes advertise=100G-baseCR4 speed=100G-baseCR4 fec-mode=fec91 rx-flow-control=off tx-flow-control=off comment="Turin port 1"
+/interface ethernet set qsfp28-2-1 auto-negotiation=yes advertise=100G-baseCR4 speed=100G-baseCR4 fec-mode=fec91 rx-flow-control=off tx-flow-control=off comment="Altra port 1"
 /interface ethernet set [find where default-name~"^qsfp28-[34]-"] disabled=yes
 /interface ethernet set ether1 comment="Bench management - Mac USB Ethernet"
 

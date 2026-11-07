@@ -56,6 +56,7 @@ const makeAgentRunsService = () => {
     create: [],
     list: [],
     get: [],
+    cancel: [],
     listResources: [],
     getLogs: [],
     listTerminalEvents: [],
@@ -64,6 +65,11 @@ const makeAgentRunsService = () => {
   }
 
   const service: AgentRunsMcpService = {
+    cancel: (input) =>
+      Effect.sync(() => {
+        calls.cancel.push(input)
+        return { ok: true, cancellationRequested: true, agentRun: { id: input.id, status: 'Cancelling' } }
+      }),
     create: (input: AgentsAgentRunSubmitInput) =>
       Effect.sync(() => {
         calls.create.push(input)

@@ -120,7 +120,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, max
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const evidence = {

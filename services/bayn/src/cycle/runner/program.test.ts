@@ -2,10 +2,11 @@ import { strictParseOptions } from '../../schemas'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Option, Result, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../../broker/alpaca/failures'
 import { makeCycleExecutionPolicy, makeCycleIdentity } from '../construction'
 import { CycleState, CycleTerminalReason, type AutonomousCycle, AutonomousCycleSchema } from '../model'
 import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store/model'
@@ -15,6 +16,9 @@ import { continuousMarketHours } from '../../market-hours'
 import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './calendar-decisions'
 import type { CycleRunContext } from './model'
 import { discoverAutonomousCyclePass } from './program'
+import { currentUtcInstant } from '../../time'
+import { retainAutonomousCyclePassObservation } from './pass-decisions'
+import { RetainedAutonomousCyclePassObservationSchema } from './pass-observation'
 
 const forbidden = () => Effect.die(new Error('unexpected discovery side effect'))
 const policy = Result.getOrThrow(
@@ -134,10 +138,164 @@ const fixture = (
         Effect.provide(TestClock.layer()),
       ),
     )
-  return { run, store, cycles, acquisitions: () => acquisitions }
+  return { run, broker, store, cycles, acquisitions: () => acquisitions }
 }
 
 describe('unbound pre-submission cycle recovery', () => {
+  test('retains the original admission clock and actual calendar arrival through a closed-window read', async () => {
+    const f = fixture(null)
+    const start = '2026-09-18T13:30:00.000Z'
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(start))
+        const entered = yield* Deferred.make<void>()
+        const attempt = yield* discoverAutonomousCyclePass(context).pipe(
+          Effect.provideService(BrokerRead, {
+            ...f.broker,
+            marketCalendar: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined)
+                yield* Effect.sleep(3500)
+                return {
+                  value: calendar,
+                  evidence: {
+                    requestId: 'delayed-calendar',
+                    status: 200,
+                    contentHash: '6'.repeat(64),
+                    observedAt: yield* currentUtcInstant,
+                  },
+                }
+              }),
+          }),
+          Effect.provideService(CycleStore, f.store),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(3500)
+        return yield* Fiber.join(attempt)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(result.outcome).toBe('WINDOW_CLOSED')
+    if (result.outcome !== 'WINDOW_CLOSED') throw new Error('Expected closed entry window')
+    expect(result.observedAt).toBe(start)
+    expect(result.closedEntryWindow?.calendarRead.observedAt).toBe('2026-09-18T13:30:03.500Z')
+    expect(result.closedEntryWindow?.decidedAt).toBe('2026-09-18T13:30:03.500Z')
+    const retained = retainAutonomousCyclePassObservation({
+      outcome: 'SUCCEEDED',
+      observedAt: '2026-09-18T13:30:03.501Z',
+      result,
+    })
+    expect(Schema.is(RetainedAutonomousCyclePassObservationSchema)(retained)).toBe(true)
+    expect(retained).toMatchObject({
+      closedEntryWindow: {
+        evaluatedAt: start,
+        accountId: context.accountId,
+        authorityGenerationHash: context.authorityGenerationHash,
+        calendar,
+      },
+    })
+    expect(f.acquisitions()).toBe(0)
+  })
+
+  test.each([
+    BrokerReadErrorKind.Timeout,
+    BrokerReadErrorKind.Transport,
+    BrokerReadErrorKind.RateLimited,
+    BrokerReadErrorKind.Server,
+  ])('retains an equity calendar outage without admitting crypto: %s', async (kind) => {
+    const input = fixture(null)
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(rearmAt))
+        return yield* discoverAutonomousCyclePass(context).pipe(Effect.flip)
+      }).pipe(
+        Effect.provideService(BrokerRead, {
+          ...input.broker,
+          marketCalendar: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation: 'market-calendar',
+                kind,
+                retryable: true,
+                message: 'Calendar unavailable',
+              }),
+            ),
+        }),
+        Effect.provideService(CycleStore, input.store),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(result).toMatchObject({ operation: 'market-calendar', failure: 'calendar-read', cause: { kind } })
+    expect(input.acquisitions()).toBe(0)
+  })
+
+  test.each([
+    BrokerReadErrorKind.Authentication,
+    BrokerReadErrorKind.Forbidden,
+    BrokerReadErrorKind.InvalidResponse,
+    BrokerReadErrorKind.AccountMismatch,
+  ])('retains fatal equity calendar failures without admitting either market: %s', async (kind) => {
+    const input = fixture(null)
+    const failure = await Effect.runPromise(
+      discoverAutonomousCyclePass(context).pipe(
+        Effect.provideService(BrokerRead, {
+          ...input.broker,
+          marketCalendar: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation: 'market-calendar',
+                kind,
+                retryable: false,
+                message: 'Invalid calendar authority',
+              }),
+            ),
+        }),
+        Effect.provideService(CycleStore, input.store),
+        Effect.flip,
+      ),
+    )
+    expect(failure).toMatchObject({ operation: 'market-calendar', failure: 'calendar-read', cause: { kind } })
+    expect(input.acquisitions()).toBe(0)
+  })
+
+  test('cancels a stalled equity calendar read at its original deadline without admitting crypto', async () => {
+    const input = fixture(null)
+    let canceled = false
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(rearmAt))
+        const entered = yield* Deferred.make<void>()
+        const attempt = yield* discoverAutonomousCyclePass(context).pipe(
+          Effect.provideService(BrokerRead, {
+            ...input.broker,
+            marketCalendar: () =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    canceled = true
+                  }),
+                ),
+              ),
+          }),
+          Effect.provideService(CycleStore, input.store),
+          Effect.flip,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(5_000)
+        return yield* Fiber.join(attempt)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(canceled).toBe(true)
+    expect(result).toMatchObject({
+      operation: 'market-calendar',
+      failure: 'calendar-read',
+      cause: { kind: BrokerReadErrorKind.Timeout },
+    })
+    expect(input.acquisitions()).toBe(0)
+  })
+
   test.each([
     { at: '2026-09-18T13:29:59.999Z', equityReady: false },
     { at: '2026-09-18T13:30:00.000Z', equityReady: false },
@@ -146,15 +304,19 @@ describe('unbound pre-submission cycle recovery', () => {
     { at: '2026-09-18T13:31:02.000Z', equityReady: true },
   ])('starts the equity entry lease only when a completed minute can be observed: $at', async ({ at, equityReady }) => {
     const result = await fixture(null).run(context, at)
+    if (!equityReady) {
+      expect(result.outcome).toBe('WINDOW_CLOSED')
+      return
+    }
     expect(result.outcome).toBe('ACQUIRED')
     if (result.outcome !== 'ACQUIRED') throw new Error('entry cycle not acquired')
     expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe(
-      equityReady ? 'bayn.alpaca-market-calendar-observation.v2' : 'bayn.continuous-market-hours.v1',
+      'bayn.alpaca-market-calendar-observation.v2',
     )
     expect(unusedEntryExpiresAt(result.receipt.cycle)).toBe(Date.parse(at) + 60_000)
   })
 
-  test('keeps continuous admission available at equity open after a settled crypto attempt', async () => {
+  test('starts only equity after a settled historical crypto attempt', async () => {
     const createdAt = '2026-09-18T13:28:00.000Z'
     const previousSession = selectIntradayExecutionSession(continuousMarketHours, policy, createdAt)
     if (previousSession === undefined) throw new Error('continuous fixture session missing')
@@ -169,19 +331,19 @@ describe('unbound pre-submission cycle recovery', () => {
       stateVersion: 4,
       updatedAt: '2026-09-18T13:28:05.000Z',
       terminalAt: '2026-09-18T13:28:05.000Z',
-    }).run(context, session.openAt)
+    }).run(context, '2026-09-18T13:31:02.000Z')
     expect(result).toMatchObject({
       outcome: 'ACQUIRED',
       receipt: {
         cycle: {
           identity: { entryAttemptOrdinal: 3 },
-          window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
+          window: { executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2' },
         },
       },
     })
   })
 
-  test('completed attempts alternate markets even when lease and cooldown return to the same UTC minute parity', async () => {
+  test('completed attempts remain in the equity market regardless of ordinal parity', async () => {
     const { terminalReason: _, ...prior } = blockedCycle(1, {
       bindings: { snapshotId: '7'.repeat(64), decisionHash: '8'.repeat(64) },
       terminalAt: '2026-09-18T14:05:00.000Z',
@@ -193,7 +355,7 @@ describe('unbound pre-submission cycle recovery', () => {
       receipt: {
         cycle: {
           identity: { entryAttemptOrdinal: 2 },
-          window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
+          window: { executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2' },
         },
       },
     })
@@ -222,7 +384,9 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(result.receipt.cycle.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: session.date })
     expect(result.receipt.cycle.identity.cycleId).not.toBe(prior.identity.cycleId)
     expect(result.receipt.cycle.bindings).toEqual({})
-    expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
+    expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe(
+      'bayn.alpaca-market-calendar-observation.v2',
+    )
     expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
     expect((await f.run()).outcome).toBe('ALREADY_ACQUIRED')
     expect(f.acquisitions()).toBe(1)
@@ -235,15 +399,11 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(result.receipt.cycle.identity).toMatchObject({ entryAttemptOrdinal: 4 })
   })
 
-  test('retains the rearm cooldown and hands the closing equity session to continuous markets', async () => {
+  test('keeps equity closed before its first usable bar and at its entry cutoff without switching to crypto', async () => {
     const f = fixture()
-    expect((await f.run(context, '2026-09-18T13:05:59.999Z')).outcome).toBe('ALREADY_TERMINAL')
-    const cutoffResult = await f.run(context, '2026-09-18T19:55:00.000Z').catch((cause: unknown) => cause)
-    expect(cutoffResult).toMatchObject({
-      outcome: 'ACQUIRED',
-      receipt: { cycle: { window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' } } },
-    })
-    expect(f.acquisitions()).toBe(1)
+    expect((await f.run(context, '2026-09-18T13:05:59.999Z')).outcome).toBe('WINDOW_CLOSED')
+    expect((await f.run(context, '2026-09-18T19:55:00.000Z')).outcome).toBe('WINDOW_CLOSED')
+    expect(f.acquisitions()).toBe(0)
   })
 
   test('cannot recover without current execution authority', async () => {
@@ -293,7 +453,7 @@ describe('unbound pre-submission cycle recovery', () => {
 
   test('does not reinterpret a provenance block applied at or after submission open', async () => {
     const f = fixture(blockedCycle(1, { terminalAt: session.openAt, updatedAt: session.openAt }))
-    expect((await f.run(context, '2026-09-18T13:31:00.000Z')).outcome).toBe('ALREADY_TERMINAL')
+    expect((await f.run(context, '2026-09-18T13:31:02.000Z')).outcome).toBe('ALREADY_TERMINAL')
     expect(f.acquisitions()).toBe(0)
   })
 

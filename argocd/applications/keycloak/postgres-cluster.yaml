@@ -54,6 +54,7 @@ spec:
       dataDurability: required
     parameters:
       archive_timeout: 60s
+      wal_buffers: 16MB
       max_connections: "100"
       max_slot_wal_keep_size: 4096MB
       password_encryption: scram-sha-256

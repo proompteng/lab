@@ -1,21 +1,19 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { Effect } from 'effect'
 import { postgresWallClock, type DatabaseClock } from '../../db/clock'
 
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
+import { isChartEntryTarget } from '../../strategy/runtime-decision'
 import {
-  CycleDecisionDocumentSchema,
+  decodeCycleDecisionDocument,
   type CycleDecisionDocument,
   type ExecutionDecisionDocument,
 } from '../../shadow-decision-contract'
-import { strictParseOptions } from '../../schemas'
-import { canonicalJsonV1Result } from '../../hash'
 import { withObservedStage } from '../../telemetry'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
 import {
   DecisionEvidenceMismatch,
-  cycleStoreError,
   type CycleAuthoritySlot,
   type CycleRecoveryScope,
   type CycleStoreInternalError,
@@ -28,8 +26,6 @@ import {
 } from './rows'
 
 export interface CycleQueries {
-  /** Accepts only a complete document validated by binding or a durable read. */
-  readonly retainValidatedDecision: (document: CycleDecisionDocument) => Effect.Effect<void, CycleStoreInternalError>
   readonly selectCycle: (
     cycleId: string,
     locked: boolean,
@@ -59,31 +55,11 @@ export const makeCycleQueries = (
   sql: PgClient.PgClient,
   clock: DatabaseClock = postgresWallClock(sql),
 ): CycleQueries => {
-  // This is a pure decoding receipt, never proof that a decision committed. Every
-  // reuse still needs a fresh row and PostgreSQL equality against its whole JSON.
+  // A receipt binds a verified body to a digest computed by PostgreSQL from the
+  // actual row, never its claimed contentHash. Every read refreshes live guards.
   let retainedDecision:
-    | { readonly document: CycleDecisionDocument; readonly json: string; readonly bytes: number }
+    | { readonly document: CycleDecisionDocument; readonly digest: string; readonly bytes: number }
     | undefined
-  const retainValidatedDecision: CycleQueries['retainValidatedDecision'] = (document) =>
-    Effect.gen(function* () {
-      const json = yield* Effect.fromResult(canonicalJsonV1Result(document))
-      yield* Effect.try(() => {
-        // Retain one bounded wire document, detached from all caller-owned objects.
-        // JSON round-tripping matches PostgreSQL's wire values (including -0).
-        const bytes = Buffer.byteLength(json, 'utf8')
-        retainedDecision =
-          bytes <= 8 * 1024 * 1024 ? { document: JSON.parse(json) as CycleDecisionDocument, json, bytes } : undefined
-      })
-    }).pipe(
-      Effect.mapError((cause) =>
-        cycleStoreError({
-          operation: 'bind-decision',
-          failure: 'decode',
-          message: 'validated decision could not be retained as wire JSON',
-          cause,
-        }),
-      ),
-    )
 
   const selectCycle: CycleQueries['selectCycle'] = (cycleId, locked) => {
     const rows = locked
@@ -164,7 +140,7 @@ export const makeCycleQueries = (
       WITH decision_read AS MATERIALIZED (
         SELECT
           document,
-          COALESCE(document = ${retained?.json ?? null}::jsonb, false) AS matches_retained_document,
+          encode(sha256(convert_to(document::text, 'UTF8')), 'hex') AS document_digest,
           paper_cycle_completion_evidence_matches(
             cycle_id,
             decision_hash,
@@ -178,8 +154,9 @@ export const makeCycleQueries = (
         WHERE cycle_id = ${cycleId}
       )
       SELECT
-        CASE WHEN matches_retained_document THEN NULL ELSE document END AS document,
-        matches_retained_document,
+        CASE WHEN document_digest = ${retained?.digest ?? null} THEN NULL ELSE document END AS document,
+        COALESCE(document_digest = ${retained?.digest ?? null}, false) AS matches_retained_document,
+        document_digest,
         execution_completion_evidence_matches,
         execution_generation_is_superseded
       FROM decision_read
@@ -192,9 +169,12 @@ export const makeCycleQueries = (
         Effect.gen(function* () {
           const document =
             retained !== undefined && row.matches_retained_document
-              ? structuredClone(retained.document)
-              : yield* Schema.decodeUnknownEffect(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
-          if (!row.matches_retained_document) yield* retainValidatedDecision(document)
+              ? retained.document
+              : yield* Effect.fromResult(decodeCycleDecisionDocument(row.document))
+          if (!row.matches_retained_document) {
+            const bytes = Buffer.byteLength(JSON.stringify(document), 'utf8')
+            retainedDecision = bytes <= 8 * 1024 * 1024 ? { document, digest: row.document_digest, bytes } : undefined
+          }
           return attachCycleDecisionStoreEvidence(document, {
             executionCompletionEvidenceMatches: row.execution_completion_evidence_matches,
             executionGenerationIsSuperseded: row.execution_generation_is_superseded,
@@ -446,13 +426,27 @@ export const makeCycleQueries = (
             AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
         : sql`true`
     const jev =
-      document.mode === legacyExecutionAuthorityToken &&
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7'
+      document.mode === legacyExecutionAuthorityToken && isChartEntryTarget(document.strategyDecision)
         ? document.strategyDecision.evidence
         : undefined
+    const momentum =
+      document.mode === legacyExecutionAuthorityToken &&
+      document.strategyDecision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+        ? document.strategyDecision.evidence.observation
+        : undefined
+    const momentumEvidence =
+      momentum === undefined
+        ? sql`true`
+        : sql`EXISTS (
+      SELECT 1 FROM intraday_candidate_observations AS observation
+      WHERE observation.cycle_id = ${document.bindings.cycleId}
+        AND observation.payload = ${sql.json(momentum)}
+        AND observation.observed_at = ${momentum.observedAt}::timestamptz
+        AND observation.payload #>> '{portfolio,brokerState,account,accountId}' = ${document.bindings.accountId}
+    )`
     const jevEvidence =
       jev === undefined
-        ? sql`true`
+        ? momentumEvidence
         : sql`EXISTS (
       SELECT 1 FROM jev_batch_plans AS plan
       JOIN jev_batch_results AS result USING (batch_id)
@@ -513,7 +507,6 @@ export const makeCycleQueries = (
     )
 
   return {
-    retainValidatedDecision,
     selectCycle,
     selectCycleByAuthoritySlot,
     selectDecisionDocuments,

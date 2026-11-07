@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 
 import { GitSourceRevisionSchema, ImageDigestSchema, ImageRepositorySchema, Sha256Schema } from '../schemas'
 import { JevInstructionsSchema } from './instructions-contract'
+import { NativeReplayIdentitySchema } from '../intraday-replay/native-policy'
 
 export const JevInstructionVariantSpecSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-instruction-variant.v1'),
@@ -31,10 +32,11 @@ export const JevInstructionVariantBuildSchema = Schema.Struct({
 })
 
 export const JevCompilerDependencyReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v4'),
   sourceRevision: GitSourceRevisionSchema,
   bunVersion: Schema.Literal('1.4.2'),
   files: Schema.Record(Schema.String, Sha256Schema),
   controlFiles: Schema.Record(Schema.String, Sha256Schema),
   compilerFiles: Schema.Record(Schema.String, Sha256Schema),
+  nativeReplayPolicies: Schema.Array(NativeReplayIdentitySchema).check(Schema.isMinLength(3), Schema.isMaxLength(3)),
 })

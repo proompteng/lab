@@ -31,6 +31,11 @@ type ControlPlaneRuntimeOptions = {
 
 const routeSources: RouteSourceSpec[] = [
   {
+    file: 'src/routes/mcp/relay/$target.ts',
+    sourceUrl: new URL('../routes/mcp/relay/$target.ts', import.meta.url),
+    load: () => import('../routes/mcp/relay/$target'),
+  },
+  {
     file: 'src/routes/mcp.ts',
     sourceUrl: new URL('../routes/mcp.ts', import.meta.url),
     load: () => import('../routes/mcp'),
@@ -362,6 +367,7 @@ const configureRuntimeDependencies = () => {
     runRead: {
       storeFactory: createPrimitivesStore,
       kubeClientFactory: createKubernetesClient,
+      requireLeaderForMutation: requireLeaderForMutationHttp,
     },
   })
 }

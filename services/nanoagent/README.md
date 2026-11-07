@@ -5,9 +5,10 @@ Relay client installation is an authenticated guest-control operation. It uses t
 installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The Relay MCP bridge uses the platform proxy's required execute-or-lookup envelope. Each request has its own proof
-over the exact body. After a lost execution response, the bridge requests receipt metadata without resending the
-operation. It returns an MCP error with the known outcome or `unknown`; it cannot recover the original result body.
-Successful calls and recovery responses include operation and receipt IDs in `_meta.relay`.
+over the exact body. After a failed call or an unusable response, including Kubernetes RBAC and missing-resource failures,
+the bridge requests receipt metadata without resending the operation. It returns an MCP error with the known
+outcome or `unknown` if lookup is denied or unavailable; it cannot recover the original result body.
+Successful calls and confirmed recovery responses include operation and receipt IDs in `_meta.relay`.
 
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
@@ -54,6 +55,12 @@ a user terminal session. Native acceptance still exercises real guest files, the
 The Chrome display reconnects a dropped VNC transport against the same authenticated preview origin, with eight
 backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
 failures stop immediately; closing the viewer cancels any retry without reporting an application error.
+
+The browser's stdio and authenticated HTTP MCP transports share one `computer` implementation and exclusive agent
+driver. Human takeover blocks screenshots and input and invalidates requests still awaiting browser startup.
+[Private ChatGPT connection](../../docs/tengri/browser.md#private-chatgpt-connection) documents the owner-approved
+connection download, bounded preview grant and local OpenAI tunnel helper. Run its validation with
+`python3 -m unittest discover -s services/nanoagent -p browser_mcp_tunnel_test.py` from the repository root.
 
 ## Current API
 
@@ -139,6 +146,10 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Desktop replay replaces inline MCP, dynamic-tool and native image-generation bytes with an image marker before
+applying its event-size limit. Generated-image completion keeps its status, saved path and prompt. The native image
+and conversation remain unchanged; omitting binary data from replay does not mean generation failed.
 
 Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
 start or resume, including automatic recovery after a native process restart. This excludes remote execution apps

@@ -5,6 +5,8 @@ import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } f
 import type { ForwardPerformanceEvidenceInput, ForwardPerformanceReceipt } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
+import type { SystemAssessment } from '../system-assessment/assessment'
+import { forwardCostDiagnostics } from './cost-diagnostics'
 
 export enum ForwardPerformanceScopeKind {
   Account = 'ACCOUNT',
@@ -19,13 +21,22 @@ export type ForwardPerformanceReportScope =
     }
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v5'
+  readonly schemaVersion: 'bayn.forward-performance-report.v7'
   /** Requested query scope; this does not supply missing financial source or strategy evidence. */
   readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
+  /** A read-only report does not inspect persistence or certify that its generation has ended. */
+  readonly receiptPersistence: 'NOT_CHECKED' | 'PERSISTED_TERMINAL'
+  readonly costDiagnostics: ReturnType<typeof forwardCostDiagnostics>
   readonly positionEpisodes: PositionEpisodeEvidence
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
-  readonly operatingCostCoverage: 'INCOMPLETE'
+  readonly operatingCostCoverage: 'COMPLETE' | 'INCOMPLETE'
+  readonly operatingCostScope: {
+    readonly registrationHash: string
+    readonly sourceCutHash: string
+    readonly asOf: string
+  } | null
+  readonly systemAssessment: SystemAssessment | null
   readonly reportHash: string
 }
 
@@ -33,6 +44,7 @@ export const makeForwardPerformanceReport = (
   input: ForwardPerformanceEvidenceInput,
   inferenceExpenses: readonly ForwardInferenceExpenseSession[],
   authorityGenerationHash?: string,
+  systemAssessment: SystemAssessment | null = null,
 ): Result.Result<ForwardPerformanceReport, ForwardPerformanceDomainFailure> =>
   Result.gen(function* () {
     const receipt = yield* makeForwardPerformanceReceipt(input)
@@ -49,13 +61,28 @@ export const makeForwardPerformanceReport = (
       authorityGenerationHash === undefined
         ? { kind: ForwardPerformanceScopeKind.Account }
         : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
+    const costDiagnostics = forwardCostDiagnostics(receipt, inferenceExpenses, systemAssessment)
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v5' as const,
+      schemaVersion: 'bayn.forward-performance-report.v7' as const,
       scope,
       receipt,
+      receiptPersistence: 'NOT_CHECKED' as const,
+      costDiagnostics,
       positionEpisodes,
       inferenceExpenses,
-      operatingCostCoverage: 'INCOMPLETE' as const,
+      operatingCostCoverage:
+        costDiagnostics.assessmentOperatingCosts.coverage === 'COMPLETE'
+          ? ('COMPLETE' as const)
+          : ('INCOMPLETE' as const),
+      operatingCostScope:
+        systemAssessment === null
+          ? null
+          : {
+              registrationHash: systemAssessment.registrationHash,
+              sourceCutHash: systemAssessment.sourceCutHash,
+              asOf: systemAssessment.asOf,
+            },
+      systemAssessment,
     }
     const reportHash = yield* canonicalHashV1Result(material).pipe(
       Result.mapError(
@@ -68,3 +95,21 @@ export const makeForwardPerformanceReport = (
     )
     return { ...material, reportHash }
   })
+
+/** Call only after the terminal-generation append has committed successfully. */
+export const recordForwardPerformancePersistence = (
+  report: ForwardPerformanceReport,
+): Result.Result<ForwardPerformanceReport, ForwardPerformanceDomainFailure> => {
+  const { reportHash: _reportHash, ...previous } = report
+  const material = { ...previous, receiptPersistence: 'PERSISTED_TERMINAL' as const }
+  return canonicalHashV1Result(material).pipe(
+    Result.map((reportHash) => ({ ...material, reportHash })),
+    Result.mapError(
+      (cause): ForwardPerformanceDomainFailure => ({
+        _tag: 'ForwardPerformanceDomainFailure',
+        operation: 'hash-report',
+        cause,
+      }),
+    ),
+  )
+}

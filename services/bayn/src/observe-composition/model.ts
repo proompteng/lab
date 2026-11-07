@@ -27,7 +27,6 @@ import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevPositionStore } from '../jev/portfolio'
 
@@ -47,7 +46,6 @@ export type ObserveDecisionRuntime =
   | JevBatchStore
   | JevEvaluationStore
   | JevClient
-  | DecisionsClient
   | EntryInferenceJournal
   | JevPositionStore
 
@@ -80,10 +78,6 @@ export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
   /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
 }
-
-export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
-  driver: RecoveryFirstCycleDriver<R>,
-) => Effect.Effect<void, never, R>
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
@@ -137,6 +131,8 @@ export type PostMutationReconciliation = {
   readonly delayMs: number
   readonly logContext: ExecutionMutationLogContext
   readonly observedAt: string
+  /** Only ordinary durable cancel intents support lookup-only confirmation before reconciliation. */
+  readonly cancellationConfirmationIntentId?: string | undefined
 }
 
 export type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation

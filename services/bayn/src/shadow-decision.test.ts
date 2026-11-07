@@ -23,11 +23,12 @@ import { PgClient } from '@effect/sql-pg'
 import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
-import { CycleStore } from './cycle/store/model'
+import { CycleStore, type CycleStoreShape } from './cycle/store/model'
 import { CycleStoreLive, makeCycleStore, withWriterFenceCycleStore } from './cycle/store/postgres'
 import { makeCycleQueries } from './cycle/store/queries'
+import { decodeDecisionInput } from './cycle/store/rows'
 import { DecisionEvidenceMismatch, cycleStoreError, runCycleStore } from './cycle/store/model'
-import { WriterFence, WriterFenceLive } from './execution/writer-fence'
+import { WriterFence, WriterFenceLive, type WriterFenceService } from './execution/writer-fence'
 import { unusedEntryExpiresAt } from './cycle/entry-admission'
 import { makeCycleReadPrograms } from './cycle/store/read-program'
 import { cycleDecisionStoreEvidence } from './cycle/store/decision-contract'
@@ -52,7 +53,7 @@ import {
   type Reconciliation,
 } from './execution/contracts'
 import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
-import { IntentStore, planExecutionIntent, type StoredIntent } from './execution/intents/domain'
+import { IntentStore, IntentStoreError, planExecutionIntent, type StoredIntent } from './execution/intents/domain'
 import {
   MutationEventType,
   MutationStore,
@@ -64,7 +65,7 @@ import { prepareMutationIntent } from './observe-composition/mutation-intent-int
 import type { ReconciliationPassResult } from './reconciler'
 
 import { bindCycleExecutionSession } from './execution-session'
-import { canonicalHashV1Result } from './hash'
+import { canonicalHashV1Result, sha256 } from './hash'
 import { CycleDecisionRow } from './forward-performance/postgres/model'
 import { verifyPerformanceDecisions } from './forward-performance/postgres/projection'
 import { IntradaySnapshotPurpose, type IntradaySnapshotRequest } from './market-data/intraday/model'
@@ -609,6 +610,36 @@ describe('intraday shadow decision', () => {
       }),
     )
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+    const bound = await Effect.runPromise(
+      decodeDecisionInput({
+        cycleId: document.bindings.cycleId,
+        document,
+        observedAt: document.createdAt,
+      }),
+    )
+    expect(bound.document).toBe(document)
+    expect(Object.isFrozen(document)).toBe(true)
+    expect(Object.isFrozen(document.bindings)).toBe(true)
+    expect(Object.isFrozen(document.plannerInput?.brokerState.account)).toBe(true)
+    expect(Object.isFrozen(input.plannerInput.brokerState.account)).toBe(false)
+    expect(document.plannerInput?.brokerState.account).not.toBe(input.plannerInput.brokerState.account)
+    expect(() => Object.assign(document.bindings, { accountId: 'mutated' })).toThrow()
+    const copy = structuredClone(document)
+    Object.assign(copy.bindings, { accountId: 'mutated' })
+    expect(
+      Result.isFailure(
+        await Effect.runPromise(
+          Effect.result(
+            decodeDecisionInput({
+              cycleId: document.bindings.cycleId,
+              document: copy,
+              observedAt: document.createdAt,
+            }),
+          ),
+        ),
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(makeExecutionDecisionDocument(document))).toBe(true)
   })
 
   test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
@@ -662,7 +693,7 @@ describe('intraday shadow decision', () => {
     },
   )
 
-  test('decision rereads reuse only exact fresh JSON and retain current database evidence', async () => {
+  test('decision rereads reuse only the actual stored digest and retain current database evidence', async () => {
     const original = await Effect.runPromise(buildObserveShadowDecision(fixture()))
     const alternate = await Effect.runPromise(buildObserveShadowDecision(fixture({}, false, 'another-account')))
     const persisted = structuredClone(original)
@@ -692,13 +723,13 @@ describe('intraday shadow decision', () => {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
               const [query, parameters] = statement.compile()
               if (query === 'clock_timestamp()') return statement
-              expect(query).toContain('document = $1::jsonb')
+              expect(query).toContain("sha256(convert_to(document::text, 'UTF8'))")
               expect(query).toContain('paper_cycle_completion_evidence_matches')
               expect(query).toContain('paper_cycle_generation_is_superseded')
-              const supplied: unknown = typeof parameters[0] === 'string' ? JSON.parse(parameters[0]) : parameters[0]
+              const supplied = parameters[1]
               suppliedDocuments.push(supplied)
-              const matches =
-                Result.getOrThrow(canonicalHashV1Result(supplied)) === Result.getOrThrow(canonicalHashV1Result(stored))
+              const digest = sha256(JSON.stringify(stored))
+              const matches = supplied === digest
               queries += 1
               const result = Effect.succeed(
                 missing
@@ -709,6 +740,7 @@ describe('intraday shadow decision', () => {
                         // mismatch must decode the complete newly read document.
                         document: matches ? null : stored,
                         matches_retained_document: matches,
+                        document_digest: digest,
                         execution_completion_evidence_matches: completion,
                         execution_generation_is_superseded: superseded,
                       },
@@ -728,16 +760,17 @@ describe('intraday shadow decision', () => {
           expect(cold).toEqual(original)
           if (cold === undefined) throw new Error('Expected cold document')
           expect(suppliedDocuments).toEqual([null])
-          Object.defineProperty(cold.bindings, 'accountId', { value: 'caller-poison' })
+          expect(() => Object.defineProperty(cold.bindings, 'accountId', { value: 'caller-poison' })).toThrow()
           const first = (yield* read())[0]
-          expect(suppliedDocuments[1]).toEqual(persisted)
+          expect(suppliedDocuments[1]).toEqual(sha256(JSON.stringify(persisted)))
           expect(first).toEqual(persisted)
           if (first === undefined) throw new Error('Expected retained document')
           expect(cycleDecisionStoreEvidence(first)).toEqual({
             executionCompletionEvidenceMatches: false,
             executionGenerationIsSuperseded: false,
           })
-          Object.defineProperty(first.bindings, 'accountId', { value: 'return-poison' })
+          expect(first.bindings).toBe(cold.bindings)
+          expect(() => Object.defineProperty(first.bindings, 'accountId', { value: 'return-poison' })).toThrow()
           completion = true
           superseded = true
           const second = (yield* read())[0]
@@ -751,23 +784,22 @@ describe('intraday shadow decision', () => {
           expect(Result.isFailure(yield* Effect.result(read()))).toBe(true)
           stored = alternate
           expect(yield* read()).toEqual([alternate])
-          // A seed (including one from a subsequently failed bind) cannot create a row.
+          // A retained read cannot create a missing row.
           missing = true
           expect(yield* read()).toEqual([])
-          expect(suppliedDocuments[5]).toEqual(alternate)
+          expect(suppliedDocuments[5]).toEqual(sha256(JSON.stringify(alternate)))
           expect(queries).toBe(6)
           missing = false
           stored = persisted
-          yield* store.retainValidatedDecision(persisted)
+          expect(yield* read()).toEqual([persisted])
           pauseNext = true
           const pending = yield* Effect.forkChild(read())
           yield* Deferred.await(started)
-          yield* store.retainValidatedDecision(alternate)
           stored = alternate
           expect(yield* read()).toEqual([alternate])
           yield* Deferred.succeed(released, undefined)
           expect(yield* Fiber.join(pending)).toEqual([persisted])
-          expect(queries).toBe(8)
+          expect(queries).toBe(9)
           const exotic = structuredClone(persisted)
           const alteredJson = new Proxy(exotic.bindings, {
             get(target, key, receiver) {
@@ -776,7 +808,6 @@ describe('intraday shadow decision', () => {
             },
           })
           Object.defineProperty(exotic, 'bindings', { value: alteredJson })
-          yield* store.retainValidatedDecision(exotic)
           stored = JSON.parse(JSON.stringify(exotic))
           expect(Result.isFailure(yield* Effect.result(read()))).toBe(true)
         }),
@@ -811,12 +842,13 @@ describe('intraday shadow decision', () => {
                 const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
                 const [query, parameters] = statement.compile()
                 if (query === 'clock_timestamp()') return statement
-                const supplied = parameters[0]
+                const supplied = parameters[1]
                 hasRetainedBody.push(supplied !== null)
                 return Effect.succeed([
                   {
                     document: supplied === null ? document : null,
                     matches_retained_document: supplied !== null,
+                    document_digest: sha256(JSON.stringify(document)),
                     execution_completion_evidence_matches: false,
                     execution_generation_is_superseded: false,
                   },
@@ -865,8 +897,9 @@ describe('intraday shadow decision', () => {
               if (mode === 'defect') return Effect.die(defect)
               if (mode === 'wait') return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
               const row = {
-                document: parameters[0] === null ? document : null,
-                matches_retained_document: parameters[0] !== null,
+                document: parameters[1] === null ? document : null,
+                matches_retained_document: parameters[1] !== null,
+                document_digest: sha256(JSON.stringify(document)),
                 execution_completion_evidence_matches: false,
                 execution_generation_is_superseded: false,
               }
@@ -978,7 +1011,13 @@ describe('intraday shadow decision', () => {
                 }),
               ),
             )
-            const fenced = withWriterFenceCycleStore({ ...cycles, bindDecision: () => binding }, fence)
+            const fenced = withWriterFenceCycleStore({ ...cycles, bindDecision: () => binding }, fence, {
+              commit: (intent, decision) =>
+                Effect.succeed({
+                  record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
+                  deduplicated: false,
+                }),
+            })
             const result = yield* fenced
               .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
               .pipe(Effect.result)
@@ -1071,7 +1110,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v24', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v37', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
@@ -2221,3 +2260,193 @@ describe('intraday shadow decision', () => {
     ).toBeTrue()
   })
 })
+
+const bindingOnlyCycleStore = (bindDecision: CycleStoreShape['bindDecision']): CycleStoreShape => {
+  const unexpected = () => Effect.die('unexpected cycle operation during atomic binding')
+  return {
+    acquire: unexpected,
+    read: unexpected,
+    readAuthoritySlot: unexpected,
+    readDecisionDocument: unexpected,
+    readOldestUnfinished: unexpected,
+    activate: unexpected,
+    bindDecision,
+    finish: unexpected,
+    block: unexpected,
+  }
+}
+
+test.each(['committed', 'intent-failed', 'caller-mutated'] as const)(
+  'entry decision binding and approval share the writer transaction when %s',
+  async (scenario) => {
+    const input = fixture({ AAPL: 0.02 })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }),
+    )
+    expect(document.orderedIntentIds).toHaveLength(1)
+    const expectedIds = [...document.orderedIntentIds]
+    const expectedRisk = structuredClone(document.deltaRisk[0])
+    const events: string[] = []
+    let transactionActive = false
+    const commitFailure = new IntentStoreError({
+      operation: 'commit',
+      failure: 'conflict',
+      message: 'approval rejected by durable risk guard',
+    })
+    const fence: WriterFenceService = {
+      check: Effect.void,
+      transaction: (effect) =>
+        Effect.gen(function* () {
+          expect(transactionActive).toBe(false)
+          transactionActive = true
+          events.push('BEGIN')
+          const exit = yield* Effect.exit(effect)
+          events.push(Exit.isSuccess(exit) ? 'COMMIT' : 'ROLLBACK')
+          transactionActive = false
+          return yield* exit
+        }),
+    }
+    const store = withWriterFenceCycleStore(
+      bindingOnlyCycleStore((_cycleId, retained) =>
+        Effect.sync(() => {
+          expect(transactionActive).toBe(true)
+          events.push('BIND')
+          if (scenario === 'caller-mutated') Reflect.set(document, 'orderedIntentIds', [])
+          return {
+            changed: true,
+            cycle: { ...input.cycle, bindings: { decisionHash: retained.contentHash } },
+          }
+        }),
+      ),
+      fence,
+      {
+        commit: (intent, decision) =>
+          Effect.gen(function* () {
+            expect(transactionActive).toBe(true)
+            expect(intent.intentId).toBe(expectedIds[0])
+            expect(intent.protection).toEqual(expectedRisk?.protection)
+            expect(decision).toEqual(expectedRisk?.evaluation.decision)
+            events.push('INTENT')
+            if (scenario === 'intent-failed') return yield* commitFailure
+            return {
+              record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
+              deduplicated: false,
+            }
+          }),
+      },
+    )
+    const result = await Effect.runPromise(
+      store.bindDecision(input.cycle.identity.cycleId, document, document.createdAt).pipe(Effect.result),
+    )
+    expect(events).toEqual(['BEGIN', 'BIND', 'INTENT', scenario === 'intent-failed' ? 'ROLLBACK' : 'COMMIT'])
+    expect(transactionActive).toBe(false)
+    if (scenario === 'intent-failed') {
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isSuccess(result)) throw new Error('rejected approval must reject the decision binding')
+      expect(result.failure.cause).toBe(commitFailure)
+    } else {
+      expect(Result.isSuccess(result)).toBe(true)
+    }
+  },
+)
+
+const atomicBindingPostgresTest = baynTestPostgresUrl === undefined ? test.skip : test
+atomicBindingPostgresTest.each([false, true])(
+  'PostgreSQL entry binding and nested intent approval are atomic with rejection=%s',
+  async (rejectIntent) => {
+    if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
+    const url = new URL(baynTestPostgresUrl)
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
+      throw new Error('atomic binding regression requires a disposable local test database')
+    const input = fixture({ AAPL: 0.02 })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }),
+    )
+    const runtime = ManagedRuntime.make(
+      WriterFenceLive.pipe(
+        Layer.provideMerge(
+          PostgresClientLive({
+            operationTimeoutMs: 10_000,
+            postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    )
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const fence = yield* WriterFence
+          yield* sql`CREATE TABLE test_atomic_entry_binding (kind text PRIMARY KEY, transaction_id xid8 NOT NULL)`
+          const store = withWriterFenceCycleStore(
+            bindingOnlyCycleStore((_cycleId, retained) =>
+              runCycleStore(
+                'bind-decision',
+                sql.withTransaction(
+                  sql`INSERT INTO test_atomic_entry_binding VALUES ('BIND', pg_current_xact_id())`.pipe(
+                    Effect.as({
+                      changed: true,
+                      cycle: { ...input.cycle, bindings: { decisionHash: retained.contentHash } },
+                    }),
+                  ),
+                ),
+              ),
+            ),
+            fence,
+            {
+              commit: (intent, decision) =>
+                fence.transaction(
+                  Effect.gen(function* () {
+                    yield* sql`INSERT INTO test_atomic_entry_binding VALUES ('INTENT', pg_current_xact_id())`.pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new IntentStoreError({
+                            operation: 'commit',
+                            failure: 'query',
+                            message: 'test approval write failed',
+                            cause,
+                          }),
+                      ),
+                    )
+                    if (rejectIntent)
+                      return yield* new IntentStoreError({
+                        operation: 'commit',
+                        failure: 'conflict',
+                        message: 'reject nested approval',
+                      })
+                    return {
+                      record: { intent, decision, stateVersion: 2, updatedAt: document.createdAt },
+                      deduplicated: false,
+                    }
+                  }),
+                ),
+            },
+          )
+          const result = yield* store
+            .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+            .pipe(Effect.result)
+          expect(Result.isFailure(result)).toBe(rejectIntent)
+          const rows = yield* sql`SELECT kind, transaction_id::text FROM test_atomic_entry_binding ORDER BY kind`
+          expect(rows.map((row) => row['kind'])).toEqual(rejectIntent ? [] : ['BIND', 'INTENT'])
+          expect(new Set(rows.map((row) => row['transaction_id'])).size).toBe(rejectIntent ? 0 : 1)
+        }),
+      )
+    } finally {
+      await runtime.runPromise(
+        Effect.flatMap(PgClient.PgClient, (sql) => sql`DROP TABLE IF EXISTS test_atomic_entry_binding`),
+      )
+      await runtime.dispose()
+    }
+  },
+)

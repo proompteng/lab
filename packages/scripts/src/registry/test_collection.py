@@ -2,11 +2,11 @@ import copy
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
@@ -132,6 +132,53 @@ class FakeCollection(collect.Collection):
 
 
 class CollectionTest(unittest.TestCase):
+    def test_restoration_uses_shared_hold_helper_and_write_restoration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "recovery.json"
+            plan.write_text(
+                '{"version":1,"operation":"restore","pvcUid":"claim","pv":"volume"}'
+            )
+            operation = FakeCollection()
+            with patch.object(
+                collect.subprocess,
+                "run",
+                return_value=SimpleNamespace(
+                    returncode=0, stdout='{"restoredBlobs":1}', stderr=""
+                ),
+            ) as run:
+                self.assertEqual(
+                    operation.run(plan, plan, restoring=True), {"restoredBlobs": 1}
+                )
+            self.assertIn("/dev/shm/recover.py", run.call_args.args[0])
+            self.assertNotIn("--references", run.call_args.args[0])
+            self.assertLess(
+                operation.actions.index("delete-helper"),
+                operation.actions.index("restore-writes"),
+            )
+            self.assertIn("release-hold", operation.actions)
+
+    def test_interrupted_restoration_restores_writes_without_inventing_purge_receipt(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "recovery.json"
+            plan.write_text(
+                '{"version":1,"operation":"restore","pvcUid":"claim","pv":"volume"}'
+            )
+            operation = FakeCollection()
+            with (
+                patch.object(
+                    collect.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired("restore", 240),
+                ),
+                self.assertRaisesRegex(TimeoutError, "resume the same plan"),
+            ):
+                operation.run(plan, plan, restoring=True)
+            self.assertIn("restore-writes", operation.actions)
+            self.assertIn("release-hold", operation.actions)
+            self.assertNotIn("read-receipt", operation.actions)
+
     def test_cooperative_collector_deadline_is_preserved_in_the_result(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / "plan.json"
@@ -163,15 +210,19 @@ class CollectionTest(unittest.TestCase):
                 operation = FakeCollection()
                 operation.receipt = receipt
                 with self.subTest(receipt=receipt):
-                    with patch.object(
-                        collect.subprocess,
-                        "run",
-                        side_effect=subprocess.TimeoutExpired("remote collector", 240),
-                    ):
-                        with self.assertRaisesRegex(
+                    with (
+                        patch.object(
+                            collect.subprocess,
+                            "run",
+                            side_effect=subprocess.TimeoutExpired(
+                                "remote collector", 240
+                            ),
+                        ),
+                        self.assertRaisesRegex(
                             ValueError, "Invalid quarantine receipt"
-                        ):
-                            operation.run(plan, refs)
+                        ),
+                    ):
+                        operation.run(plan, refs)
                     self.assertIn("release-hold", operation.actions)
 
     def test_recovery_failure_keeps_the_collection_timeout_as_its_cause(self):
@@ -182,15 +233,15 @@ class CollectionTest(unittest.TestCase):
             refs.write_text('["fixture"]')
             operation = FakeCollection()
             operation.fail_delete = True
-            with patch.object(
-                collect.subprocess,
-                "run",
-                side_effect=subprocess.TimeoutExpired("remote collector", 240),
+            with (
+                patch.object(
+                    collect.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired("remote collector", 240),
+                ),
+                self.assertRaisesRegex(RuntimeError, "deletion unconfirmed") as raised,
             ):
-                with self.assertRaisesRegex(
-                    RuntimeError, "deletion unconfirmed"
-                ) as raised:
-                    operation.run(plan, refs)
+                operation.run(plan, refs)
             self.assertIsInstance(raised.exception.__cause__, subprocess.TimeoutExpired)
             self.assertNotIn("restore-writes", operation.actions)
             self.assertNotIn("read-receipt", operation.actions)
@@ -204,7 +255,14 @@ class CollectionTest(unittest.TestCase):
             refs = Path(directory) / "refs.json"
             refs.write_text('["fixture"]')
             operation = FakeCollection()
-            operation.receipt = {"version": 2, "blobs": [], "tags": []}
+            operation.receipt = {
+                "version": 3,
+                "batch": operation.name,
+                "storage": {"pvcUid": "claim", "pv": "volume"},
+                "inode": 1,
+                "blobs": [],
+                "tags": [],
+            }
             with patch.object(
                 collect.subprocess,
                 "run",
@@ -281,13 +339,15 @@ class CollectionTest(unittest.TestCase):
             refs = Path(directory) / "refs.json"
             refs.write_text('["fixture"]')
             operation = FakeCollection()
-            with patch.object(
-                collect.subprocess,
-                "run",
-                side_effect=subprocess.TimeoutExpired("remote collector", 240),
+            with (
+                patch.object(
+                    collect.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired("remote collector", 240),
+                ),
+                self.assertRaises(subprocess.TimeoutExpired),
             ):
-                with self.assertRaises(subprocess.TimeoutExpired):
-                    operation.run(plan, refs)
+                operation.run(plan, refs)
             actions = operation.actions
             self.assertLess(
                 actions.index("delete-helper"), actions.index("restore-writes")

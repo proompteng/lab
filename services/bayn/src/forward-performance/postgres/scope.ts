@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { DiscrepancyKind } from '../../execution/contracts'
-import { ReconciliationRow } from './model'
+import { ReconciliationRow, type TerminalCycleRow } from './model'
 import type { ForwardPerformanceCashYieldEvidence } from '../model'
 import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 
@@ -186,14 +186,32 @@ export const generationScope = (
   }
 }
 
+// Captured terminal cycles must belong to this account/generation in the same snapshot. Reuse only
+// membership: callers retain their state and native timestamp cutoffs. One array also keeps the
+// parameter count independent of history size, and an empty capture cannot widen the scope.
+export const capturedCycleScope = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
+) => {
+  if (capturedCycles === undefined) return generationScope(sql, accountId, authorityGenerationHash, 'cycle')
+  // The PostgreSQL codec cannot infer an empty array's type from the SQL cast.
+  if (capturedCycles.length === 0) return sql`FALSE`
+  return sql`cycle.cycle_id = ANY(${capturedCycles.map((cycle) => cycle.cycle_id)}::text[])`
+}
+
+// A scalar cut lets PostgreSQL constrain the ordered snapshot index before joining payloads.
 export const openingSnapshotBoundary = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
-) =>
-  authorityGenerationHash === undefined
-    ? sql`first_cycle.submission_open_at`
-    : sql`GREATEST(
+) => sql`(
+  SELECT LEAST(
+    ${
+      authorityGenerationHash === undefined
+        ? sql`first_cycle.submission_open_at`
+        : sql`GREATEST(
         first_cycle.submission_open_at,
         (
           SELECT scope_generation.activated_at
@@ -203,15 +221,22 @@ export const openingSnapshotBoundary = (
             AND scope_generation.account_id = ${accountId}
         )
       )`
+    },
+    latest_reconciliation.reconciled_at
+  )
+  FROM latest_reconciliation CROSS JOIN first_cycle
+)`
 
 export const closingSnapshotBoundary = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
-) =>
-  authorityGenerationHash === undefined
-    ? sql`latest_reconciliation.reconciled_at`
-    : sql`LEAST(
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
+) => sql`(
+  SELECT ${
+    authorityGenerationHash === undefined
+      ? sql`latest_reconciliation.reconciled_at`
+      : sql`LEAST(
         latest_reconciliation.reconciled_at,
         COALESCE(
           (
@@ -219,7 +244,7 @@ export const closingSnapshotBoundary = (
             FROM autonomous_cycles AS cycle
             WHERE cycle.account_id = ${accountId}
               AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+              AND ${capturedCycleScope(sql, accountId, authorityGenerationHash, capturedCycles)}
           ),
           latest_reconciliation.reconciled_at
         ),
@@ -247,6 +272,9 @@ export const closingSnapshotBoundary = (
           latest_reconciliation.reconciled_at
         )
       )`
+  }
+  FROM latest_reconciliation
+)`
 
 export const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined

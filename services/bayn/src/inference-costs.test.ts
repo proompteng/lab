@@ -2,11 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { parseInferenceCostArgs } from './inference-cost-command'
+import { makeInferenceExpenseSessionReport, parseInferenceCostArgs } from './inference-cost-command'
 import { researchReaderConfig } from './db/research-reader-config'
-import { InferenceCostCoverage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
+import { InferenceCostCoverage, InferenceUsageStatus } from './inference-costs'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
-import { expenseSourceFixture } from './inference-expense.test-support'
+import {
+  costReportFromEvidence,
+  expenseCoverageFromEvidence,
+  expenseSourceFixture,
+} from './inference-expense.test-support'
+import { makeInferenceExpenseQuote } from './inference-expense'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
 import { responseFixture } from './jev/test-support'
 import { decodeJevEvaluationRequest } from './jev/evidence'
@@ -56,15 +61,83 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test.each([true, false])(
+    'versions ledger-session coverage without changing posted totals (missing usage: %s)',
+    (missing) => {
+      const source = expenseSourceFixture({ missing })
+      const quote = Result.getOrThrow(makeInferenceExpenseQuote(source, rateCard))
+      const { accountId, sessionDate, asOf, ...request } = source
+      const coverage = Result.getOrThrow(
+        expenseCoverageFromEvidence(
+          {
+            schemaVersion: 'bayn.inference-cost-evidence.v2',
+            accountBindingHash: quote.accountBindingHash,
+            sessionDate,
+            asOf,
+            requests: [request],
+          },
+          accountId,
+          [{ quote, verifiedAt: missing ? asOf : null }],
+        ),
+      )
+      const ledger = {
+        schemaVersion: 'bayn.inference-expense-ledger-report.v2',
+        accountBindingHash: quote.accountBindingHash,
+        sessionDate,
+        sourceAsOf: asOf,
+        ledgerTimestampMax: '1',
+        verifiedSessionTransferCount: 0,
+        ledger: 7002,
+        unit: 'USD_PICO',
+        invoiceReconciled: false,
+        exactLedgerPrefix: true,
+        quotedRequestCount: 1,
+        claimedRequestCount: 1,
+        pricedRequestCount: missing ? 0 : 1,
+        gapRequestCount: missing ? 1 : 0,
+        transferCount: 0,
+        knownEstimatedCostPicoUsd: '0',
+      } as const
+      const report = makeInferenceExpenseSessionReport(ledger, coverage, asOf)
+      expect(report.schemaVersion).toBe('bayn.inference-expense-ledger-report.v3')
+      expect(ledger.schemaVersion).toBe('bayn.inference-expense-ledger-report.v2')
+      expect(report.ledgerObservedAt).toBe(asOf)
+      expect(report.coverage).toMatchObject({
+        knownEstimatedCostPicoUsd: missing ? '0' : '42000',
+        matchedQuoteHashes: [quote.quoteHash],
+        completeMeteredCoverage: false,
+        requestsWithCoverageIssues: [
+          { requestId: request.requestId, stage: 'JEV', issues: [missing ? 'UNKNOWN_USAGE' : 'UNVERIFIED_LEDGER'] },
+        ],
+      })
+      expect(report.knownEstimatedCostPicoUsd).toBe('0')
+      expect(report.invoiceReconciled).toBe(false)
+      expect(JSON.stringify(report)).not.toContain(accountId)
+      expect(JSON.stringify(report)).not.toContain('requestHash')
+      expect(JSON.stringify(report)).not.toContain('rejectedResponse')
+    },
+  )
+
+  test.each([
+    { options: {}, startedAt: '1970-01-01T00:00:00.000Z', cost: '10500000' },
+    { options: { rejected: true }, startedAt: null, cost: '10500000' },
+    { options: { notDispatched: true }, startedAt: null, cost: '0' },
+    { options: { missing: true }, startedAt: null, cost: null },
+  ])('historical timing uses provider evidence without changing costs: %j', ({ options, startedAt, cost }) => {
+    const source = row(options)
+    const result = Result.getOrThrow(costReportFromEvidence(evidence([source]), rateCard))
+    expect(result.requestTimings).toEqual([{ requestKey: source.requestId, startedAt, estimatedCostPicoUsd: cost }])
+  })
+
   test('reads retained v1 financial evidence without accepting a retired request for execution', () => {
     const { handoff: _, ...retained } = row()
     const historical = { ...evidence([]), schemaVersion: 'bayn.inference-cost-evidence.v1', requests: [retained] }
-    expect(Result.getOrThrow(makeInferenceCostReport(historical, rateCard)).knownEstimatedCostPicoUsd).toBe('10500000')
+    expect(Result.getOrThrow(costReportFromEvidence(historical, rateCard)).knownEstimatedCostPicoUsd).toBe('10500000')
     expect(Result.isFailure(decodeJevEvaluationRequest(retained.request))).toBe(true)
   })
   test('uses positive undispatched receipts for zero cost without inventing provider usage or a tariff', () => {
     const result = Result.getOrThrow(
-      makeInferenceCostReport(evidence([row({ notDispatched: true })]), { ...rateCard, rates: [] }),
+      costReportFromEvidence(evidence([row({ notDispatched: true })]), { ...rateCard, rates: [] }),
     )
     expect(result.notDispatchedRequestCount).toBe(1)
     expect(result.meteredRequestCount).toBe(0)
@@ -120,7 +193,7 @@ describe('inference operating-cost evidence', () => {
   })
 
   test('prices metered usage without adding output charges or rounding each call', () => {
-    const result = Result.getOrThrow(makeInferenceCostReport(evidence([row()]), rateCard))
+    const result = Result.getOrThrow(costReportFromEvidence(evidence([row()]), rateCard))
     expect(result.coverage).toBe(InferenceCostCoverage.Estimated)
     expect(result.invoiceReconciled).toBe(false)
     expect(result.inputTokens).toBe('250')
@@ -128,7 +201,7 @@ describe('inference operating-cost evidence', () => {
     expect(result.knownEstimatedCostPicoUsd).toBe('10500000')
     expect(result.estimatedTotalCostMicros).toBe('11')
     const fractional = Result.getOrThrow(
-      makeInferenceCostReport(evidence([row({ inputTokens: 1 }), row({ inputTokens: 1, cycle: 'b' })]), rateCard),
+      costReportFromEvidence(evidence([row({ inputTokens: 1 }), row({ inputTokens: 1, cycle: 'b' })]), rateCard),
     )
     expect(fractional.knownEstimatedCostPicoUsd).toBe('84000')
     expect(fractional.estimatedTotalCostMicros).toBe('1')
@@ -136,7 +209,7 @@ describe('inference operating-cost evidence', () => {
 
   test('includes rejected response usage and keeps missing receipts explicitly unknown', () => {
     const result = Result.getOrThrow(
-      makeInferenceCostReport(
+      costReportFromEvidence(
         evidence([row(), row({ rejected: true, cycle: 'b' }), row({ missing: true, cycle: 'c' })]),
         rateCard,
       ),
@@ -163,7 +236,7 @@ describe('inference operating-cost evidence', () => {
       }),
     )
     const result = Result.getOrThrow(
-      makeInferenceCostReport({ ...evidence([]), requests: [{ ...source, resolution }] }, rateCard),
+      costReportFromEvidence({ ...evidence([]), requests: [{ ...source, resolution }] }, rateCard),
     )
     expect(result.meteredRequestCount).toBe(1)
     expect(result.estimatedTotalCostMicros).toBe('11')
@@ -171,12 +244,10 @@ describe('inference operating-cost evidence', () => {
 
   test('deduplicates identical evidence and rejects conflicting duplicate receipts', () => {
     const source = row()
-    const result = Result.getOrThrow(makeInferenceCostReport(evidence([source, source]), rateCard))
+    const result = Result.getOrThrow(costReportFromEvidence(evidence([source, source]), rateCard))
     expect(result.requestCount).toBe(1)
     expect(result.inputTokens).toBe('250')
-    expect(Result.isFailure(makeInferenceCostReport(evidence([source, row({ inputTokens: 251 })]), rateCard))).toBe(
-      true,
-    )
+    expect(Result.isFailure(costReportFromEvidence(evidence([source, row({ inputTokens: 251 })]), rateCard))).toBe(true)
   })
 
   test('missing model prices and uncovered effective dates never become zero cost', () => {
@@ -185,7 +256,7 @@ describe('inference operating-cost evidence', () => {
       [{ ...rateCard.rates[0], model: 'other' }],
       [{ ...rateCard.rates[0], effectiveFrom: '1970-01-01T00:00:01.000Z' }],
     ]) {
-      const result = Result.getOrThrow(makeInferenceCostReport(evidence([row()]), { ...rateCard, rates }))
+      const result = Result.getOrThrow(costReportFromEvidence(evidence([row()]), { ...rateCard, rates }))
       expect(result.unpricedUsageCount).toBe(1)
       expect(result.estimatedTotalCostMicros).toBeNull()
       expect(result.requests[0]?.estimatedCostPicoUsd).toBeNull()
@@ -198,28 +269,28 @@ describe('inference operating-cost evidence', () => {
       [{ ...rateCard.rates[0], effectiveUntil: rateCard.rates[0].effectiveFrom }],
       [{ ...rateCard.rates[0], inputMicrosPerMillionTokens: '-1' }],
     ])
-      expect(Result.isFailure(makeInferenceCostReport(evidence([row()]), { ...rateCard, rates }))).toBe(true)
+      expect(Result.isFailure(costReportFromEvidence(evidence([row()]), { ...rateCard, rates }))).toBe(true)
     const source = row()
     for (const bad of [
       { ...source, cycleId: 'f'.repeat(64) },
       { ...source, request: { ...source.request, symbol: 'INVALID' } },
       { ...source, receipt: { ...source.receipt, receiptHash: 'f'.repeat(64) } },
     ])
-      expect(Result.isFailure(makeInferenceCostReport({ ...evidence([]), requests: [bad] }, rateCard))).toBe(true)
+      expect(Result.isFailure(costReportFromEvidence({ ...evidence([]), requests: [bad] }, rateCard))).toBe(true)
   })
 
   test('rejects evidence beyond its as-of cut', () => {
     const before = { ...evidence([row()]), asOf: '1969-12-31T23:59:59.000Z' }
-    expect(Result.isFailure(makeInferenceCostReport(before, rateCard))).toBe(true)
+    expect(Result.isFailure(costReportFromEvidence(before, rateCard))).toBe(true)
   })
 
   test('report identity is stable under reordering and includes the supplied rate card identity', () => {
     const rows = [row(), row({ cycle: 'b' })]
-    const one = Result.getOrThrow(makeInferenceCostReport(evidence(rows), rateCard))
-    const two = Result.getOrThrow(makeInferenceCostReport(evidence([...rows].reverse()), rateCard))
+    const one = Result.getOrThrow(costReportFromEvidence(evidence(rows), rateCard))
+    const two = Result.getOrThrow(costReportFromEvidence(evidence([...rows].reverse()), rateCard))
     expect(one.reportHash).toBe(two.reportHash)
     const changed = Result.getOrThrow(
-      makeInferenceCostReport(evidence(rows), {
+      costReportFromEvidence(evidence(rows), {
         ...rateCard,
         rates: [{ ...rateCard.rates[0], source: 'another fixture' }],
       }),
@@ -229,7 +300,7 @@ describe('inference operating-cost evidence', () => {
 
   test('explicit zero prices are valid estimates but never imply invoice reconciliation', () => {
     const result = Result.getOrThrow(
-      makeInferenceCostReport(evidence([row()]), {
+      costReportFromEvidence(evidence([row()]), {
         ...rateCard,
         rates: [{ ...rateCard.rates[0], inputMicrosPerMillionTokens: '0' }],
       }),

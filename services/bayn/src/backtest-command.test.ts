@@ -1,19 +1,69 @@
+import { validateReplayDatabaseTargets } from './intraday-replay/database-targets'
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem, Redacted } from 'effect'
+import { ConfigProvider, Effect, FileSystem, Layer, Redacted, Result } from 'effect'
+import { HttpClient } from 'effect/http'
 import {
   compressBacktestPass,
   hashBacktestPassLog,
   parseBacktestArgs,
-  validateReplayDatabaseTargets,
+  measuredReplayProviderLayer,
 } from './backtest-command'
+import { JevResearchPolicy } from './jev/acceptance'
+import { JevClient } from './jev/client'
 const config = {
   operationTimeoutMs: 1000,
   postgres: { url: Redacted.make('postgresql://test:test@127.0.0.1:55432/bayn_replay'), tls: false, caPath: '/unused' },
   tigerBeetle: { clusterId: 20912n, ledger: 70912, replicaAddresses: ['127.0.0.1:53000'] },
 }
+
+test('candidate and ablation acquire only the existing Jev credential', async () => {
+  const environment = ConfigProvider.fromUnknown({ BAYN_JEV_API_KEY: 'synthetic-never-dispatched-key' })
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => Effect.die('This test must not dispatch a provider request')),
+  )
+  for (const policy of [JevResearchPolicy.Ablation, JevResearchPolicy.Candidate] as const) {
+    const acquired = await Effect.runPromise(
+      JevClient.pipe(
+        Effect.provide(measuredReplayProviderLayer(policy, 1000).pipe(Layer.provide(transport))),
+        Effect.provideService(ConfigProvider.ConfigProvider, environment),
+      ),
+    )
+    expect(typeof acquired.evaluate).toBe('function')
+  }
+  const missing = await Effect.runPromiseExit(
+    JevClient.pipe(
+      Effect.provide(measuredReplayProviderLayer(JevResearchPolicy.Candidate, 1000).pipe(Layer.provide(transport))),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    ),
+  )
+  expect(missing._tag).toBe('Failure')
+})
+test('momentum acquires no provider credential and rejects all inference', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* (yield* JevClient).evaluate({}, 1000).pipe(Effect.result)
+    }).pipe(
+      Effect.provide(
+        measuredReplayProviderLayer(JevResearchPolicy.Momentum, 1000).pipe(
+          Layer.provide(
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die('Momentum cannot dispatch HTTP')),
+            ),
+          ),
+        ),
+      ),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    ),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) expect(result.failure.message).toContain('forbidden by the momentum policy')
+})
+
 test('concatenated compressed passes reproduce every original JSON byte and record boundary', async () => {
   const lines = [
     JSON.stringify({ state: 'é'.repeat(65537), fills: ['a', 'b'] }),

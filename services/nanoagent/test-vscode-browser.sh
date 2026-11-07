@@ -138,9 +138,9 @@ fixture_pids="$fixture_pids $!"
   export TENGRI_PUBLIC_URL=https://gateway.tengri.localhost:3443
   export TENGRI_PREVIEW_FRAME_SOURCE='https://*.tengri.localhost:3443'
   printf '%s' 'isolated-playwright-client-secret-not-production' > "$fixture_root/oidc-secret"
-  export TENGRI_DESKTOP_ORIGIN="$TENGRI_PLAYWRIGHT_BASE_URL"
-  export TENGRI_OIDC_CLIENT_SECRET_FILE="$fixture_root/oidc-secret"
-  export TENGRI_DATABASE_DSN="${TENGRI_BFF_DATABASE_DSN:?Disposable BFF database required}"
+  export PLATFORM_WEB_ORIGIN="$TENGRI_PLAYWRIGHT_BASE_URL"
+  export PLATFORM_OIDC_CLIENT_SECRET_FILE="$fixture_root/oidc-secret"
+  export PLATFORM_OIDC_CLIENT_ID=tengri-bff
   export OFZ_GRPC_ENDPOINT=localhost:65535
   export TENGRI_GRPC_ENDPOINT=localhost:65535
   export SPIFFE_ENDPOINT_SOCKET="unix://$fixture_root/workload-api.sock"

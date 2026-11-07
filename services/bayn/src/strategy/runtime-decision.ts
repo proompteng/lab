@@ -1,8 +1,12 @@
 import { Schema } from 'effect'
 import { IsoDateSchema, StrictNonEmptyStringSchema, SymbolSchema } from '../schemas'
 import { IntradayMomentumTargetPortfolioSchema } from './intraday-momentum/model'
+import { EntryAblationTargetSchema } from '../jev/entry-ablation'
 import { JevEntryTargetSchema } from '../jev/decision'
 import { JevExitTargetSchema } from '../jev/exit'
+import { RepeatedMomentumTargetSchema } from './repeated-momentum/decision'
+import type { RetainedJevV38EntryTarget, RetainedJevV38ExitTarget } from '../jev/retained-v38-targets'
+import type { RetainedJevV38AblationTarget, RetainedJevV38MomentumTarget } from '../jev/retained-v38-control-targets'
 
 const FlatExecutionTargetBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-flat-target.v1'),
@@ -26,16 +30,30 @@ export const FlatExecutionTargetSchema = FlatExecutionTargetBase.check(
 
 export const RuntimeStrategyDecisionSchema = Schema.Union([
   JevEntryTargetSchema,
+  EntryAblationTargetSchema,
+  RepeatedMomentumTargetSchema,
   JevExitTargetSchema,
   IntradayMomentumTargetPortfolioSchema,
   FlatExecutionTargetSchema,
 ])
 
 export type RuntimeStrategyDecision = typeof RuntimeStrategyDecisionSchema.Type
+/** Read-only evidence may carry an exact retained target; the runtime schema above remains current-only. */
+export type RecordedRuntimeStrategyDecision =
+  | RuntimeStrategyDecision
+  | RetainedJevV38EntryTarget
+  | RetainedJevV38ExitTarget
+  | RetainedJevV38AblationTarget
+  | RetainedJevV38MomentumTarget
 
-export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision, strategyName: string): boolean => {
+export const runtimeDecisionMatchesStrategy = (
+  decision: RecordedRuntimeStrategyDecision,
+  strategyName: string,
+): boolean => {
   switch (decision.schemaVersion) {
     case 'bayn.jev-entry-target.v7':
+    case 'bayn.entry-ablation-target.v1':
+    case 'bayn.repeated-momentum-target.v1':
     case 'bayn.jev-exit-target.v5':
       return strategyName === 'jev'
     case 'bayn.intraday-momentum.target.v3':
@@ -45,10 +63,61 @@ export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision
   }
 }
 
-export const isFlatExecutionTarget = (
-  decision: RuntimeStrategyDecision | undefined,
+export const isFlatExecutionTarget = <Decision extends RecordedRuntimeStrategyDecision | undefined>(
+  decision: Decision,
 ): decision is Extract<
-  RuntimeStrategyDecision,
+  Decision,
   { readonly schemaVersion: 'bayn.execution-flat-target.v1' | 'bayn.jev-exit-target.v5' }
 > =>
   decision?.schemaVersion === 'bayn.execution-flat-target.v1' || decision?.schemaVersion === 'bayn.jev-exit-target.v5'
+
+export type ChartEntryTarget = Extract<
+  RuntimeStrategyDecision,
+  {
+    readonly schemaVersion: 'bayn.jev-entry-target.v7' | 'bayn.entry-ablation-target.v1'
+  }
+>
+
+export const isChartEntryTarget = <Decision extends RecordedRuntimeStrategyDecision | undefined>(
+  decision: Decision,
+): decision is Extract<
+  Decision,
+  { readonly schemaVersion: 'bayn.jev-entry-target.v7' | 'bayn.entry-ablation-target.v1' }
+> =>
+  decision?.schemaVersion === 'bayn.jev-entry-target.v7' || decision?.schemaVersion === 'bayn.entry-ablation-target.v1'
+
+export type ProtectedEntryTarget = ChartEntryTarget | typeof RepeatedMomentumTargetSchema.Type
+export type RecordedProtectedEntryTarget =
+  | ProtectedEntryTarget
+  | RetainedJevV38EntryTarget
+  | RetainedJevV38AblationTarget
+  | RetainedJevV38MomentumTarget
+
+export const isProtectedEntryTarget = <Decision extends RecordedRuntimeStrategyDecision | undefined>(
+  decision: Decision,
+): decision is Extract<
+  Decision,
+  {
+    readonly schemaVersion:
+      | 'bayn.jev-entry-target.v7'
+      | 'bayn.entry-ablation-target.v1'
+      | 'bayn.repeated-momentum-target.v1'
+  }
+> => isChartEntryTarget(decision) || decision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
+
+export const protectedEntryBuyPriceCeilings = (
+  decision: RecordedRuntimeStrategyDecision | undefined,
+): Readonly<Record<string, bigint>> =>
+  isProtectedEntryTarget(decision)
+    ? Object.fromEntries(
+        Object.entries(decision.exitPolicy.plans).map(([symbol, plan]) => [
+          symbol,
+          BigInt(plan.levels.maximumEntryPriceMicros),
+        ]),
+      )
+    : {}
+
+export const protectedEntryExpiresAtMs = (target: RecordedProtectedEntryTarget): number =>
+  isChartEntryTarget(target)
+    ? Date.parse(target.evidence.batchPlan.expiresAt)
+    : Date.parse(target.evidence.observation.observedAt) + target.policy.sharedProtocol.inferenceValidityMs

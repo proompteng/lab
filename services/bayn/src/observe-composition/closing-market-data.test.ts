@@ -1,3 +1,4 @@
+import { entryProviderFixture } from '../jev/entry-inference.test-support'
 import { entryInferenceFixtureLayer } from '../jev/entry-inference.test-support'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -252,17 +253,19 @@ const fixture = async (source = native) => {
               ),
             })),
           ),
+        complete: () => unused,
         finish: () => unused,
       }),
       Effect.provideService(JevEvaluationStore, {
         read: () => unused,
 
-        record: () => unused,
+        recordAll: () => unused,
         abandon: () => unused,
       }),
-      Effect.provideService(JevClient, { evaluate: () => unused }),
-      Effect.provideService(JevPositionStore, { read: () => unused }),
       Effect.provide(entryInferenceFixtureLayer),
+      Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => unused })),
+      Effect.provideService(JevPositionStore, { read: () => unused }),
+
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -1585,6 +1588,7 @@ describe('closing market-data fallback boundaries', () => {
           observedAt: at,
         } as const,
         nextDelayMs: 1_000,
+        nextWakeAt: new Date(Date.parse(at) + 1_000).toISOString(),
       }
       let checks = 0
       const checked = checkAdvancedMarketProjection(
@@ -1624,6 +1628,7 @@ describe('closing market-data fallback boundaries', () => {
         nextDelayMs: failureDelay ?? 30_000,
         observation: { result: 'FAILURE', failure: 'market-data' },
       })
+      expect(outcome).not.toHaveProperty('nextWakeAt')
     },
   )
 
@@ -1800,7 +1805,6 @@ describe('closing market-data fallback boundaries', () => {
               restarted,
               { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
               command.controllerKey,
-              restarted.nextDueAt ?? '',
               command.sourceRevision,
             ),
           )._tag,

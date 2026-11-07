@@ -93,6 +93,23 @@ describePostgres('Durable per-account broker observations', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
 
+  test('consecutive poll tickets share a generation boundary until a durable invalidation', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first), 0)
+        const second = yield* claim(store)
+        expect(second.generation).toBe(first.generation + 1)
+        yield* advanceToTicket(second)
+        yield* store.publish(second, snapshot(second), 0)
+        yield* store.invalidate
+        const next = yield* claim(store)
+        expect(next.generation).toBeGreaterThan(second.generation + 1)
+      }),
+    ))
+
   test('hard migration removes the database payload and compact reads retain the exact parent snapshot', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
@@ -109,6 +126,65 @@ describePostgres('Durable per-account broker observations', () => {
         expect(Result.isFailure(yield* store.readState.pipe(Effect.result))).toBe(true)
       }),
     ))
+
+  test.each([60_000, 60_001])('expired available metadata at %sms fails before reading cache bytes', async (ageMs) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        const value = snapshot(ticket)
+        yield* store.publish(ticket, value, 0)
+        let reads = 0
+        const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
+          ...cacheFixture.cache,
+          get: (key) => Effect.sync(() => reads++).pipe(Effect.andThen(cacheFixture.cache.get(key))),
+        })
+        yield* advanceToTicket(ticket, 59_999)
+        expect(yield* measured.read).toEqual(value)
+        expect(yield* measured.readState).toEqual(observedBrokerState(value))
+        expect(reads).toBe(2)
+        reads = 0
+        yield* advanceToTicket(ticket, ageMs)
+        for (const read of [measured.read, measured.readState]) {
+          const failure = yield* Effect.flip(read)
+          expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(failure.retryable).toBe(true)
+          expect(failure.observationFailure).toBeUndefined()
+        }
+        expect(reads).toBe(0)
+      }),
+    ),
+  )
+
+  test.each([60_000, 60_001])('expired available submission metadata at %sms skips cache bytes', async (ageMs) =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const ticket = yield* claim(store)
+        yield* advanceToTicket(ticket)
+        const value = snapshot(ticket)
+        yield* store.publish(ticket, value, 0)
+        const intentId = 'd'.repeat(64)
+        yield* reserve(sql, intentId, utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 1))
+        let reads = 0
+        const measured = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
+          ...cacheFixture.cache,
+          get: (key) => Effect.sync(() => reads++).pipe(Effect.andThen(cacheFixture.cache.get(key))),
+        })
+        yield* advanceToTicket(ticket, 59_999)
+        expect(yield* measured.readForSubmit(intentId)).toEqual(observedBrokerState(value))
+        expect(reads).toBe(1)
+        reads = 0
+        yield* advanceToTicket(ticket, ageMs)
+        const failure = yield* Effect.flip(measured.readForSubmit(intentId))
+        expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(failure.retryable).toBe(true)
+        expect(failure.observationFailure).toBeUndefined()
+        expect(reads).toBe(0)
+      }),
+    ),
+  )
 
   test('missing or corrupt Valkey bytes fail without a database payload fallback', async () =>
     run((_sql, store) =>
@@ -135,7 +211,7 @@ describePostgres('Durable per-account broker observations', () => {
         yield* advanceToTicket(ticket)
         const failed = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
           ...cacheFixture.cache,
-          put: () => Effect.fail(new ValkeyCacheError({ operation: 'put', message: 'replica unavailable' })),
+          putAll: () => Effect.fail(new ValkeyCacheError({ operation: 'put', message: 'replica unavailable' })),
         })
         expect(Result.isFailure(yield* failed.publish(ticket, snapshot(ticket), 0).pipe(Effect.result))).toBe(true)
         const rows =

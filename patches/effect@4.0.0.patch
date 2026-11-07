@@ -1,3 +1,25 @@
+diff --git a/dist/observability/PrometheusMetrics.js b/dist/observability/PrometheusMetrics.js
+--- a/dist/observability/PrometheusMetrics.js
++++ b/dist/observability/PrometheusMetrics.js
+@@ -298,6 +298,7 @@
+   // Effect buckets are [boundary, cumulativeCount] pairs
+   for (let i = 0; i < state.buckets.length; i++) {
+     const [boundary, cumulativeCount] = state.buckets[i];
++    if (boundary === Infinity) continue;
+     const bucketLabels = formatLabels(metric.attributes, [["le", boundary.toString()]]);
+     lines.push(`${name}_bucket${bucketLabels} ${cumulativeCount}`);
+   }
+diff --git a/src/observability/PrometheusMetrics.ts b/src/observability/PrometheusMetrics.ts
+--- a/src/observability/PrometheusMetrics.ts
++++ b/src/observability/PrometheusMetrics.ts
+@@ -425,6 +425,7 @@
+   // Effect buckets are [boundary, cumulativeCount] pairs
+   for (let i = 0; i < state.buckets.length; i++) {
+     const [boundary, cumulativeCount] = state.buckets[i]
++    if (boundary === Infinity) continue
+     const bucketLabels = formatLabels(metric.attributes, [["le", boundary.toString()]])
+     lines.push(`${name}_bucket${bucketLabels} ${cumulativeCount}`)
+   }
 diff --git a/dist/sql/SqlClient.d.ts b/dist/sql/SqlClient.d.ts
 index 15ecc056e80bbc296a818988567d0eb0f5f48135..ad44f39dcff8ab58616f0851eaa0472b4f8735ad 100644
 --- a/dist/sql/SqlClient.d.ts

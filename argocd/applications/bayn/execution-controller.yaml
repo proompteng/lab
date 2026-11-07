@@ -84,24 +84,15 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
+              value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "a78704828c7a35005ea20f4c1d20d4b318f26df292d5f39f1ab22c2ddd7f23f7"
+              value: "a03aad6fdf2c2f9d958f5922e69da57fbd2b6e3575941840076b20cebd5a0c54"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"15449657ab84a1322bb94f53ac1fba9a26b994e5881726aa3b72d05842c24720","authoredActivation":{"sourceRevision":"788008ed66d47f9dd39decebb084b5ab225b197a","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:cb5c2b93f19aa37ea798be981dfeba55ceadb0553e8a158994a0f34f77ce0c7c"},"activation":{"sourceRevision":"788008ed66d47f9dd39decebb084b5ab225b197a","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:cb5c2b93f19aa37ea798be981dfeba55ceadb0553e8a158994a0f34f77ce0c7c"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "0496265d4a4014357cfe8d7e5b42891c294c18e07bf9517279019a6304b4ac27"
+              value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -152,6 +143,11 @@ spec:
               value: "true"
             - name: BAYN_POSTGRES_CA_PATH
               value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_NATIVE_ARRIVAL_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-native-arrival-db-app
+                  key: fqdn-uri
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -182,6 +178,8 @@ spec:
                   key: password
             - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
               value: torghut.technical-features.v1
+            - name: BAYN_KAFKA_WEBULL_BARS_TOPIC
+              value: dorvud.webull.raw.v1
             - name: BAYN_KAFKA_TIMESTAMP_POLICY
               value: dorvud.producer-clock.v1
             - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
@@ -190,12 +188,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: bayn-jev-auth
-                  key: api-key
-                  optional: true
-            - name: BAYN_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-openai-auth
                   key: api-key
                   optional: true
             - name: VALKEY_PASSWORD
@@ -211,8 +203,20 @@ spec:
             periodSeconds: 2
             failureThreshold: 600
           readinessProbe:
-            tcpSocket:
-              port: restate
+            exec:
+              command:
+                - node
+                - -e
+                - |
+                  const session = require('node:http2').connect('http://127.0.0.1:9080');
+                  const fail = () => { session.destroy(); process.exitCode = 1; };
+                  session.on('error', fail);
+                  const request = session.request({ ':method': 'GET', ':path': '/startup-ready' });
+                  request.on('response', headers => { process.exitCode = headers[':status'] === 200 ? 0 : 1; });
+                  request.on('error', fail);
+                  request.on('end', () => session.close());
+                  request.resume(); request.end();
+                  session.setTimeout(1000, fail);
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 2
@@ -248,17 +252,27 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
+            - name: native-arrival-postgres-ca
+              mountPath: /var/run/secrets/bayn/native-arrival-postgres
+              readOnly: true
       volumes:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
-            defaultMode: 0440
+            defaultMode: 288
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
+            defaultMode: 444
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: native-arrival-postgres-ca
+          secret:
+            secretName: bayn-native-arrival-db-ca
             defaultMode: 444
             items:
               - key: ca.crt

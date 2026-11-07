@@ -8,7 +8,7 @@ import {
   inferenceExpenseBatchSize,
   inferenceExpenseCoverageFrom,
   InferenceExpenseSourceSchema,
-  verifyInferenceExpenseQuote,
+  verifyPendingInferenceExpenses,
   type InferenceExpenseQuote,
 } from './inference-expense'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
@@ -27,8 +27,6 @@ const ReportRowSchema = Schema.Struct({
 export const decodeInferenceExpenseSessionRows = (input: unknown, sessionDate: string) =>
   Effect.gen(function* () {
     const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ReportRowSchema), strictParseOptions)(input)
-    if (rows.length > 10_000)
-      return yield* new InferenceCostError({ message: 'Inference expense session exceeds the complete-report limit' })
     return yield* Effect.forEach(rows, (row) =>
       Effect.gen(function* () {
         const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
@@ -50,31 +48,59 @@ export const makeInferenceExpenseStore = (
     'requestId', request.request_id, 'cycleId', request.cycle_id,
     'authorityGenerationHash', request.authority_generation_hash,
     'request', request.payload, 'receipt', receipt.payload, 'resolution', resolution.payload, 'handoff', handoff.payload
-  )`)
-  const newSources = sql<Record<string, unknown>>`
+  ) || CASE WHEN chart_claim.request_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object(
+    'chartCheckpoint', jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload)) END ||
+    CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3' THEN jsonb_build_object('stagedCheckpoint',jsonb_build_object(
+      'claims',COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb),
+      'terminals',COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb),
+      'skips',COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb)
+    )) ELSE '{}'::jsonb END`)
+  const retireCoveredSources = (requestIds?: readonly string[]) =>
+    sql`
+    WITH covered AS MATERIALIZED (
+      SELECT pending.request_id, pending.revision
+      FROM inference_expense_source_pending AS pending
+      JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
+      JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+      WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
+        AND ${requestIds === undefined ? sql.literal('TRUE') : sql`pending.request_id = ANY(${requestIds}::text[])`}
+        AND NOT inference_expense_source_needs_quotes(pending.request_id)
+    )
+    DELETE FROM inference_expense_source_pending AS pending USING covered
+    WHERE pending.request_id = covered.request_id AND pending.revision = covered.revision
+  `.pipe(Effect.asVoid)
+  const newSources = Effect.andThen(
+    retireCoveredSources(),
+    sql<Record<string, unknown>>`
+    WITH changed_sources AS MATERIALIZED (
+      SELECT request.request_id
+      FROM inference_expense_source_pending AS pending
+      JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
+      JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+      WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
+    ), pending_requests AS MATERIALIZED (
+      SELECT request_id FROM changed_sources WHERE inference_expense_source_needs_quotes(request_id)
+      ORDER BY request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
+    )
     SELECT ${source} AS source
-    FROM autonomous_cycles AS cycle
-    JOIN jev_evaluation_requests AS request ON request.cycle_id = cycle.cycle_id
-    JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+    FROM pending_requests AS pending
+    JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
+    JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+    LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
     LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
     LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
-    WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date AND (
-      SELECT count(*) FROM inference_expense_quotes AS quote WHERE quote.request_id = request.request_id
-        AND quote.handoff_hash IS NOT DISTINCT FROM handoff.handoff_hash
-        AND quote.receipt_hash IS NOT DISTINCT FROM CASE
-          WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
-          WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.payload #>> '{disposition,status}' <> 'READY' THEN NULL
-          ELSE receipt.receipt_hash END
-    ) < CASE WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
-    ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
+    LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+    LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
+    ORDER BY request.request_id COLLATE "C"
   `.pipe(
-    Effect.flatMap(
-      Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ source: InferenceExpenseSourceSchema })),
-        strictParseOptions,
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ source: InferenceExpenseSourceSchema })),
+          strictParseOptions,
+        ),
       ),
+      Effect.map((rows) => rows.map((row) => row.source)),
     ),
-    Effect.map((rows) => rows.map((row) => row.source)),
   )
   const freeze = (quotes: readonly InferenceExpenseQuote[]) =>
     Effect.gen(function* () {
@@ -117,30 +143,24 @@ export const makeInferenceExpenseStore = (
         if (row.quoteHash !== quote.quoteHash || !expected.has(quote.quoteHash))
           return yield* new InferenceCostError({ message: 'Persisted inference expense quote differs' })
       }
+      yield* retireCoveredSources([...new Set(quotes.map((quote) => quote.line.requestId))])
     }).pipe(Effect.asVoid)
   const pending = sql<Record<string, unknown>>`
     SELECT quote.quote_hash AS "quoteHash", quote.payload, ${source} AS source
     FROM inference_expense_quotes AS quote
     JOIN jev_evaluation_requests AS request ON request.request_id = quote.request_id
     JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
-    JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+    LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
     LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
     LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+    LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+    LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
     WHERE quote.account_id = ${accountId} AND cycle.account_id = ${accountId}
       AND quote.session_date = cycle.execution_session_date AND quote.verified_at IS NULL
     ORDER BY quote.quote_hash COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
   `.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(FrozenRowSchema), strictParseOptions)),
-    Effect.flatMap((rows) =>
-      Effect.forEach(rows, (row) =>
-        Effect.gen(function* () {
-          const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
-          if (quote.quoteHash !== row.quoteHash)
-            return yield* new InferenceCostError({ message: 'Pending inference expense quote identity differs' })
-          return yield* Effect.fromResult(verifyInferenceExpenseQuote(row.source, quote))
-        }),
-      ),
-    ),
+    Effect.flatMap((rows) => Effect.fromResult(verifyPendingInferenceExpenses(rows))),
   )
   const acknowledge = (quotes: readonly InferenceExpenseQuote[]) =>
     quotes.length === 0
@@ -157,7 +177,7 @@ export const makeInferenceExpenseStore = (
       SELECT quote_hash AS "quoteHash", payload,
         to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
       FROM inference_expense_quotes WHERE account_id = ${accountId} AND session_date = ${sessionDate}::date
-      ORDER BY quote_hash COLLATE "C" LIMIT 10001
+      ORDER BY quote_hash COLLATE "C"
     `
       return yield* decodeInferenceExpenseSessionRows(rows, sessionDate)
     })

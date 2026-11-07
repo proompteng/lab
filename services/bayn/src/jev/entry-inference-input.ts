@@ -1,15 +1,17 @@
 import { Result, Schema } from 'effect'
 
 import { CryptoFeeTierSchema } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
-import { JevProtocolSchema } from './protocol'
+import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
+import { WebullEntryContextSchema, verifyWebullEntryContext } from './webull-entry-context'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
-export const EntryInferenceInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.entry-inference-input.v3'),
+export const CandidateEntryInferenceInputSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v8'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
   protocol: JevProtocolSchema,
@@ -20,19 +22,42 @@ export const EntryInferenceInputSchema = Schema.Struct({
     cryptoFeeTier: Schema.NullOr(CryptoFeeTierSchema),
   }),
 })
-export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
-export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion'> & {
-  readonly schemaVersion:
-    | 'bayn.entry-inference-input.v1'
-    | 'bayn.entry-inference-input.v2'
-    | 'bayn.entry-inference-input.v3'
+export enum EntryAblationSelection {
+  LowestModeledLoss = 'LOWEST_MODELED_LOSS_THEN_SOURCE_ID',
 }
+export const AblationEntryInferenceInputSchema = Schema.Struct({
+  ...CandidateEntryInferenceInputSchema.fields,
+  schemaVersion: Schema.Literal('bayn.entry-ablation-input.v1'),
+  selectionPolicy: Schema.Enum(EntryAblationSelection),
+})
+export const EntryInferenceInputSchema = Schema.Union([
+  CandidateEntryInferenceInputSchema,
+  AblationEntryInferenceInputSchema,
+])
+export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
+export type EntryInferenceMaterial =
+  | EntryInferenceInput
+  | (Omit<typeof CandidateEntryInferenceInputSchema.Type, 'schemaVersion' | 'protocol'> & {
+      readonly schemaVersion:
+        | 'bayn.entry-inference-input.v1'
+        | 'bayn.entry-inference-input.v2'
+        | 'bayn.entry-inference-input.v3'
+        | 'bayn.entry-inference-input.v4'
+        | 'bayn.entry-inference-input.v5'
+        | 'bayn.entry-inference-input.v6'
+        | 'bayn.entry-inference-input.v7'
+        | 'bayn.entry-inference-input.v8'
+      readonly protocol: JevProtocolMaterial
+    })
+  | (Omit<typeof AblationEntryInferenceInputSchema.Type, 'protocol'> & {
+      readonly protocol: JevProtocolMaterial
+    })
 
 export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
   Result.gen(function* () {
     yield* Schema.decodeUnknownResult(
       Schema.Struct({
-        schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
+        schemaVersion: Schema.Literal(value.protocol.inputDefinition),
         task: Schema.Struct({ decisionPurpose: Schema.Literal('ENTRY') }),
       }),
     )(value.numericalState)
@@ -57,6 +82,31 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Chart and numerical evidence must contain the same source bars' }),
       )
+    if (value.protocol.inputDefinition === 'bayn.jev-entry-state.v24') {
+      const context = yield* Schema.decodeUnknownResult(
+        WebullEntryContextSchema,
+        strictParseOptions,
+      )(value.numericalState['webullContext'])
+      const timing = yield* Schema.decodeUnknownResult(
+        Schema.Struct({ observedAt: Schema.optionalKey(UtcInstantSchema) }),
+      )(value.numericalState['session'])
+      if (!verifyWebullEntryContext(context, candidate.symbol, source.windowEndAt, timing.observedAt))
+        return yield* Result.fail(
+          new JevContractError({
+            message: 'Supplemental Webull context differs from the candidate or point-in-time source cut',
+          }),
+        )
+    }
+    if (value.protocol.schemaVersion === 'bayn.jev.protocol.v39') {
+      yield* Schema.decodeUnknownResult(
+        Schema.NullOr(
+          Schema.Struct({
+            maximumEntryQuoteDriftBps: Schema.Literal(0),
+            maximumEntryLimitSlippageBps: Schema.Literal(0),
+          }),
+        ),
+      )(value.numericalState['entryEconomics'])
+    }
     const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(value)
     if (Buffer.byteLength(body) > 128_000)
       return yield* Result.fail(
@@ -68,6 +118,8 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
 export const prepareEntryInferenceInput = (input: unknown) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(EntryInferenceInputSchema, strictParseOptions)(input)
+    if (instrumentMarket(value.chartSource.symbol) === MarketKind.Equity && value.funding.cryptoFeeTier !== null)
+      return yield* Result.fail(new JevContractError({ message: 'Equity funding cannot carry a crypto fee tier' }))
     const prepared = yield* verifyEntryInferenceSource(value)
     const detached = yield* Schema.decodeUnknownResult(Schema.fromJsonString(EntryInferenceInputSchema))(prepared.body)
     return { input: detached, ...prepared }

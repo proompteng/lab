@@ -44,7 +44,9 @@ export type EffectTool<I = any, O = any> = {
   title: string
   description: string
   inputSchema: Schema.Schema<I, any, never>
+  inputJsonSchema?: Record<string, unknown>
   outputSchema?: Schema.Schema<O, any, never>
+  auditResult?: boolean
   annotations: ToolAnnotations
   scopes: string[]
   securitySchemes: OAuth2SecurityScheme[]
@@ -125,6 +127,9 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
       structuredContent: {
         code: error.code,
         message: error.message,
+        ...(error.code === 'KUBECTL_REQUIRES_ADMIN'
+          ? { layer: 'tool-policy', requiredTool: 'kubectl_admin', executionStarted: false }
+          : {}),
         ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
       },
     }
@@ -153,7 +158,7 @@ export const installEffectToolHandlers = (
     name: tool.name,
     title: tool.title,
     description: tool.description,
-    inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
+    inputSchema: tool.inputJsonSchema ?? effectSchemaToJsonSchema(tool.inputSchema),
     annotations: tool.annotations,
     securitySchemes: tool.securitySchemes,
     _meta: tool._meta,
@@ -210,7 +215,7 @@ export const installEffectToolHandlers = (
         const finishedAuditErrors = runner.audit('tool_call_finished', auth, {
           durationMs: performance.now() - startedAt,
           outcome: toolOutcome(tool?.name, result),
-          ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
+          ...(authorized && tool?.auditResult !== false ? { result: content ?? result.content } : {}),
         })
         const auditSink = await runner.flushAudit()
         return {

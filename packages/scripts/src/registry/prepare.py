@@ -1,12 +1,12 @@
-#!/usr/bin/env python3
 """Prepare retention online through the registry Pod's read-only maintenance mount."""
 
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import subprocess
+import time
 import uuid
+from pathlib import Path
 
 from collect import Collection
 from protected_references import references
@@ -15,6 +15,7 @@ CONTAINER = "registry-maintenance"
 
 
 def maintenance_pod(client):
+    client.rollout(time.monotonic() + 300)
     pods = json.loads(
         client.command(
             ["-n", "registry", "get", "pods", "-l", "app=registry", "-o", "json"]
@@ -23,7 +24,9 @@ def maintenance_pod(client):
     if (
         len(pods) != 1
         or pods[0]["metadata"].get("deletionTimestamp")
-        or not all(c["ready"] for c in pods[0]["status"]["containerStatuses"])
+        or len(pods[0].get("status", {}).get("containerStatuses", []))
+        != len(pods[0]["spec"]["containers"])
+        or not all(c.get("ready") for c in pods[0]["status"]["containerStatuses"])
     ):
         raise RuntimeError("Require exactly one ready registry Pod")
     container = next(
@@ -119,6 +122,7 @@ def run(context, plan_path, reference_path):
                     "--workers",
                     "32",
                 ],
+                check=False,
                 stdout=output,
                 stderr=errors,
                 timeout=2760,

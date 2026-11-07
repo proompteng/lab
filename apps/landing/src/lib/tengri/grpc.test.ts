@@ -1,7 +1,8 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
-import type { TengriIdentity } from './auth'
+import { RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { SessionSchema } from './generated/proompteng/authz/v1/platform_pb'
+import type { PlatformIdentity } from '../platform/auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
@@ -29,7 +30,8 @@ let removalCheck: (() => void) | undefined
 const removalOperations = new Set<string>()
 let loseCommandResponse = false
 let supersedeRuntimeCommand = false
-const identity: TengriIdentity = {
+let conflictedConversationResumes = 0
+const identity: PlatformIdentity = {
   subject: 'github:42',
   user: { id: '42', name: 'Fixture', email: '', image: null },
   session: create(SessionSchema, {
@@ -101,7 +103,24 @@ let catalogRequestStarted: (() => void) | null = null
 let catalogRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
+let codexRunReadStarted: (() => void) | null = null
+let codexRunReadCancelled: (() => void) | null = null
 let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
+
+function waitForCodexRunReadCancellation(
+  call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+  callback: grpc.sendUnaryData<Record<string, unknown>>,
+) {
+  codexRunReadStarted?.()
+  const timer = setTimeout(
+    () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'test run read was not cancelled'), null),
+    2_000,
+  )
+  call.on('cancelled', () => {
+    clearTimeout(timer)
+    codexRunReadCancelled?.()
+  })
+}
 
 beforeAll(async () => {
   fixture = await createSpiffeFixture()
@@ -220,7 +239,7 @@ beforeAll(async () => {
     ),
   )
   process.env.OFZ_GRPC_ENDPOINT = `localhost:${ofzPort}`
-  process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
+  process.env.PLATFORM_WEB_ORIGIN = 'https://proompteng.ai'
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     getRequestAudience(
@@ -493,6 +512,10 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.id === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -509,10 +532,22 @@ beforeAll(async () => {
               ],
       })
     },
+    recoverCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.agentId === 'codex-run-read-cancel') {
+        waitForCodexRunReadCancellation(call, callback)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, {
@@ -704,6 +739,10 @@ beforeAll(async () => {
         call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
+      if (threadId === 'conflicted-conversation' && conflictedConversationResumes++ === 0) {
+        call.emit('error', serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'))
+        return
+      }
       call.write({
         part: 'CODEX_HISTORY_PART_THREAD',
         rawJson: JSON.stringify({
@@ -771,6 +810,15 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('recovers the exact accepted run through the current signed session without sending input', async () => {
+    const { recoverCodexRun } = await import('./grpc')
+    const runId = '11111111-1111-4111-8111-111111111111'
+    const operationId = '22222222-2222-4222-8222-222222222222'
+    await recoverCodexRun(identity, 'agent-test', runId, operationId)
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', runId, operationId })
+    expect(receivedMetadata?.get('x-tengri-signature')).toHaveLength(1)
+  })
+
   test('identifies a recorded control that was rejected before native dispatch', async () => {
     const { steerCodexTurn } = await import('./grpc')
     expect(
@@ -797,8 +845,25 @@ describe('Tengri gRPC BFF transport', () => {
         state: { phase: 'running', turnId: 'turn-selected' },
       },
     ])
-    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: '' })
     expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
+  })
+  test('carries the selected conversation in the signed active-run request', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    const runs = await getActiveCodexRuns(identity, 'agent-test', 'thread-selected')
+    expect(receivedRequest).toEqual({ id: 'agent-test', threadId: 'thread-selected' })
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.threadId).toBe('thread-selected')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.GetActiveCodexRuns
+    expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+    expect(metadataValue('x-tengri-signature')).not.toBe(expectedSignature(method, { id: 'agent-test' }))
+  })
+  test('rejects an out-of-scope active-run response instead of treating the selected conversation as idle', async () => {
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await rejection(getActiveCodexRuns(identity, 'agent-test', 'thread-another'))).toMatchObject({
+      message: 'Invalid active run scope',
+      status: 503,
+    })
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
@@ -1709,6 +1774,41 @@ describe('Tengri gRPC BFF transport', () => {
     codexAccountRequestCancelled = null
   })
 
+  test.each(['active runs', 'run status'] as const)('cancels %s gRPC when the browser request aborts', async (kind) => {
+    const { getActiveCodexRuns, getCodexRun } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      codexRunReadStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      codexRunReadCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = (
+      kind === 'active runs'
+        ? getActiveCodexRuns(identity, 'codex-run-read-cancel', 'thread-selected', controller.signal)
+        : getCodexRun(identity, 'codex-run-read-cancel', '11111111-1111-4111-8111-111111111111', controller.signal)
+    ).catch((error: unknown) => error)
+    try {
+      await started
+      controller.abort()
+      expect(
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Run read cancellation timed out')), 500),
+          ),
+        ]),
+      ).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+      await Promise.race([
+        cancelled,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Run read gRPC was not cancelled')), 500)),
+      ])
+    } finally {
+      codexRunReadStarted = null
+      codexRunReadCancelled = null
+    }
+  })
+
   test('cancels the model catalog gRPC when the browser request aborts', async () => {
     const { listCodexModels } = await import('./grpc')
     const started = new Promise<void>((resolve) => {
@@ -1895,6 +1995,18 @@ describe('Tengri gRPC BFF transport', () => {
       status: 503,
       code: undefined,
     })
+  })
+
+  test('keeps a conversation resume conflict retryable without exposing guest details', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread(identity, 'agent-test', 'conflicted-conversation'))).toMatchObject({
+      message: 'The conversation changed while loading. Reconnecting…',
+      status: 503,
+      code: undefined,
+    })
+    expect(await restoredThread('conflicted-conversation')).toMatchObject({ id: 'conflicted-conversation' })
+    expect(conflictedConversationResumes).toBe(2)
   })
 
   test('sanitizes upstream failures and treats verifier failures as service errors', async () => {

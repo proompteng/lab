@@ -18,7 +18,7 @@ import {
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
-import type { JevFundedExitPlan } from './strategy-exit-plan'
+import type { FundedEntryExitPlan } from '../strategy/funded-exit-plan'
 
 export enum JevPurpose {
   Entry = 'ENTRY',
@@ -191,7 +191,7 @@ export type JevManagedPortfolio = Extract<JevPortfolio, { readonly purpose: JevP
 
 export const jevManagedExitPlan = (
   portfolio: JevManagedPortfolio,
-): Result.Result<JevFundedExitPlan, JevContractError> => {
+): Result.Result<FundedEntryExitPlan, JevContractError> => {
   const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
   const plan = position === undefined ? undefined : portfolio.exitPolicy.plans[position.symbol]
   return plan === undefined

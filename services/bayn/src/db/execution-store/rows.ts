@@ -43,15 +43,6 @@ export const HistoryEventRow = Schema.Struct({
 })
 export type HistoryEventRow = typeof HistoryEventRow.Type
 
-export const CompletedAccountingRow = Schema.Struct({
-  ...AccountingTransactionRowSchema.fields,
-  source_event_id: NonEmptyString,
-  event_content_hash: Sha256,
-  prior_quantity_atoms: Schema.String,
-  prior_cost_micros: Schema.String,
-})
-export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
-
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
   Schema.Struct({ quantity_atoms: Schema.String, cost_micros: Schema.String }),
@@ -191,6 +182,23 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v22',
       'bayn.jev.protocol.v23',
       'bayn.jev.protocol.v24',
+      'bayn.jev.protocol.v25',
+      'bayn.jev.protocol.v26',
+      'bayn.jev.protocol.v27',
+      'bayn.jev.protocol.v28',
+      'bayn.jev.protocol.v29',
+      'bayn.jev.protocol.v30',
+      'bayn.jev.protocol.v31',
+      'bayn.jev.protocol.v32',
+      'bayn.jev.protocol.v33',
+      'bayn.jev.protocol.v34',
+      'bayn.jev.protocol.v35',
+      'bayn.jev.protocol.v36',
+      'bayn.jev.protocol.v37',
+      'bayn.jev.protocol.v38',
+      'bayn.jev.protocol.v39',
+      'bayn.entry-ablation-policy.v1',
+      'bayn.repeated-momentum-policy.v1',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
@@ -235,11 +243,6 @@ export const decodeValuationInput = Schema.decodeUnknownEffect(ValuationInputSch
 export const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
 export const decodeHistoryEventRows = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
-
-export const decodeCompletedAccountingRows = Schema.decodeUnknownEffect(
-  Schema.Array(CompletedAccountingRow),
-  strictParseOptions,
-)
 
 export const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 

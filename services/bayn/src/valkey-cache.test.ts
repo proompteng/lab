@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { NodeRedis } from '@effect/platform-node'
 import { ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
+import { TestClock } from 'effect/testing'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 
 import {
@@ -25,12 +26,14 @@ const transportFixture = async (
     | 'replica-timeout'
     | 'first-wait-timeout'
     | 'set-timeout'
+    | 'partial-write-error'
     | 'disconnect',
 ) => {
   const { createServer } = await import('node:net')
   const outerDeadline = ['replica-timeout', 'unreplicated', 'first-wait-timeout', 'set-timeout'].includes(mode)
   let response = mode
   const received = Promise.withResolvers<void>()
+  const secondWriteReceived = Promise.withResolvers<void>()
   let closed = Promise.withResolvers<void>()
   let closes = 0
   let writes = 0
@@ -71,8 +74,11 @@ const transportFixture = async (
           if (response === 'disconnect') socket.end()
         } else if (args[0]?.toUpperCase() === 'SET') {
           writes++
+          if (writes === 2) secondWriteReceived.resolve()
           values.set(args[1] ?? '', args[2] ?? '')
-          if (response !== 'set-timeout') socket.write('+OK\r\n')
+          if (response === 'error' || (response === 'partial-write-error' && writes === 2))
+            socket.write('-WRONGTYPE fixture\r\n')
+          else if (response !== 'set-timeout') socket.write('+OK\r\n')
         } else if (args[0]?.toUpperCase() === 'DEL') {
           values.delete(args[1] ?? '')
           socket.write(':1\r\n')
@@ -108,6 +114,7 @@ const transportFixture = async (
   if (address === null || typeof address === 'string') throw new Error('Expected a TCP test listener')
   return {
     received: received.promise,
+    secondWriteReceived: secondWriteReceived.promise,
     closed: () => closed.promise,
     closes: () => closes,
     writes: () => writes,
@@ -201,6 +208,104 @@ describe('required native Effect Valkey binding', () => {
       expect(result.success).toMatch(/bayn_valkey_reads_total\{[^\n]*outcome="miss"[^\n]*\} 1/)
       expect(result.success).not.toContain('bayn:large')
       expect(result.success).not.toContain('x'.repeat(100))
+      expect(result.success).not.toContain('bayn_valkey_last_failure_timestamp_seconds')
+    }
+  })
+  test.each(['write', 'delayed-replica'] as const)(
+    'a payload pair shares the native %s acknowledgement without replaying either SET',
+    async (mode) => {
+      const fixture = await transportFixture(mode)
+      try {
+        await operation((cache) =>
+          Effect.gen(function* () {
+            yield* cache.putAll([
+              { key: 'bayn:snapshot', value: 'snapshot', ttlMs: 60_000 },
+              { key: 'bayn:state', value: 'state', ttlMs: 60_000 },
+            ])
+            expect(Option.getOrNull(yield* cache.get('bayn:snapshot'))).toBe('snapshot')
+            expect(Option.getOrNull(yield* cache.get('bayn:state'))).toBe('state')
+          }),
+        ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+        expect(fixture.writes()).toBe(2)
+        expect(fixture.waits()).toHaveLength(mode === 'write' ? 1 : 3)
+        expect(fixture.waits().every((args) => args[0] === '1' && args[1] === '250')).toBe(true)
+        await fixture.closed()
+        expect(fixture.closes()).toBe(1)
+      } finally {
+        await fixture.stop()
+      }
+    },
+  )
+  test('a failed batch cannot acknowledge or replay uncertain writes when the next command reconnects', async () => {
+    const fixture = await transportFixture('partial-write-error')
+    try {
+      await operation((cache) =>
+        Effect.gen(function* () {
+          const result = yield* cache
+            .putAll([
+              { key: 'bayn:snapshot', value: 'snapshot', ttlMs: 60_000 },
+              { key: 'bayn:state', value: 'state', ttlMs: 60_000 },
+            ])
+            .pipe(Effect.result)
+          expect(Result.isFailure(result)).toBe(true)
+          fixture.resumeReads()
+          expect(Option.isNone(yield* cache.get('bayn:next'))).toBe(true)
+        }),
+      ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+      expect(fixture.writes()).toBe(2)
+      expect(fixture.waits()).toHaveLength(0)
+      await fixture.closed()
+      expect(fixture.closes()).toBe(2)
+    } finally {
+      await fixture.stop()
+    }
+  })
+  test('interrupting a batch cancels both native SET requests without acknowledging partial publication', async () => {
+    const fixture = await transportFixture('set-timeout')
+    try {
+      await operation((cache) =>
+        Effect.gen(function* () {
+          const fiber = yield* cache
+            .putAll([
+              { key: 'bayn:snapshot', value: 'snapshot', ttlMs: 60_000 },
+              { key: 'bayn:state', value: 'state', ttlMs: 60_000 },
+            ])
+            .pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Effect.promise(() => fixture.secondWriteReceived)
+          expect(fixture.writes()).toBe(2)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+      expect(fixture.waits()).toHaveLength(0)
+      await fixture.closed()
+      expect(fixture.closes()).toBe(1)
+    } finally {
+      await fixture.stop()
+    }
+  })
+  test('the first put failure exports its event time without a prior counter sample', async () => {
+    const result = await runTransport(
+      'error',
+      operation((cache) =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(60_000)
+          expect(yield* PrometheusMetrics.format()).not.toContain('bayn_valkey_last_failure_timestamp_seconds')
+          yield* cache.put({ key: 'invalid', value: 'value', ttlMs: 1000 }).pipe(Effect.exit)
+          expect(yield* PrometheusMetrics.format()).not.toContain('bayn_valkey_last_failure_timestamp_seconds')
+          yield* cache.put({ key: 'bayn:private-key', value: 'value', ttlMs: 1000 }).pipe(Effect.exit)
+          yield* TestClock.setTime(120_000)
+          return yield* PrometheusMetrics.format()
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success).toMatch(
+        /bayn_valkey_last_failure_timestamp_seconds\{(?=[^\n]*category="command_failed")(?=[^\n]*cause_category="command_failed")(?=[^\n]*operation="put")[^\n]*\} 60/,
+      )
+      expect(result.success).toMatch(/bayn_valkey_failures_total\{[^\n]*operation="put"[^\n]*\} 1/)
+      expect(result.success).not.toContain('bayn:private-key')
+      expect(result.success).not.toContain('WRONGTYPE')
     }
   })
   test('exports bounded failure categories without keys or native error text', async () => {
@@ -469,6 +574,7 @@ describe('required native Effect Valkey binding', () => {
         Effect.provideService(ValkeyCache, {
           get: () => Effect.die('startup must fail'),
           put: () => Effect.die('startup must fail'),
+          putAll: () => Effect.die('startup must fail'),
           remove: () => Effect.die('startup must fail'),
         }),
       ),
@@ -584,5 +690,32 @@ describe('Valkey command boundary', () => {
   })
   test('bounds actual broker-sized payloads without raising memory without limit', async () => {
     await rejected((cache) => cache.put({ key: 'bayn:test', value: 'x'.repeat(4_194_305), ttlMs: 1000 }))
+  })
+  test('validates every bounded batch member before issuing any write', async () => {
+    const fixture = await transportFixture('write')
+    const valid = { key: 'bayn:valid', value: 'value', ttlMs: 1000 }
+    try {
+      await operation((cache) =>
+        Effect.gen(function* () {
+          for (const writes of [
+            [],
+            [valid, valid, valid],
+            [valid, { ...valid, key: 'foreign:key' }],
+            [valid, { ...valid, ttlMs: 0 }],
+            [valid, { ...valid, value: 'x'.repeat(4_194_305) }],
+          ]) {
+            const result = yield* cache.putAll(writes).pipe(Effect.result)
+            expect(Result.isFailure(result)).toBe(true)
+            if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(ValkeyCacheInputError)
+          }
+        }),
+      ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+      expect(fixture.writes()).toBe(0)
+      expect(fixture.waits()).toHaveLength(0)
+      await fixture.closed()
+      expect(fixture.closes()).toBe(1)
+    } finally {
+      await fixture.stop()
+    }
   })
 })

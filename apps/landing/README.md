@@ -39,18 +39,66 @@ The homepage shows a “convex backend” badge once it can reach the Convex hea
 
 ## Tengri BFF development
 
+Browser identity lives in `src/lib/platform/auth.ts` and uses the platform authorization API. Each web deployment sets
+`PLATFORM_WEB_ORIGIN`, `PLATFORM_OIDC_CLIENT_ID`, `PLATFORM_OIDC_ISSUER` and `PLATFORM_OIDC_CLIENT_SECRET_FILE`, with
+its own SPIFFE identity. The deployed host-only cookie names remain stable, preserving active browser sessions during the move. Cookies
+remain isolated between origins, and Ofz binds each session to its gateway. The retired session RPCs are removed.
+
 The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and required verified passkeys. Ofz
 verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
 
-The BFF's SQL pool serves only OAuth attempt creation and consumption. Five-minute attempts use one shared unlogged
-PostgreSQL table, so sign-in does not wait for WAL or synchronous replication. Consumption remains atomic across BFF
-replicas. A database crash or failover discards unfinished attempts and requires a fresh sign-in; it cannot authorize
-a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
-query deadline, verified database TLS, and existing attempt expiry and capacity limits.
+Ofz owns five-minute PKCE attempts as well as sessions. Attempts are gateway-scoped and consumed atomically through
+SPIFFE mTLS. Their unlogged table tolerates database failover by discarding unfinished sign-ins; established sessions,
+policies and audits remain durable. The web application holds no database password or database connection.
 
-`/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+`admin.proompteng.ai` hosts workspace administration. It uses the same web image with `PLATFORM_PORTAL=admin`,
+its own service account, SPIFFE identity, confidential OIDC client and host-only session. It has no Tengri controller,
+Relay executor, database, HMAC or guest credential. The issuer can reuse existing verified passkey SSO across clients;
+Ofz keeps their session authority separate. Step-up returns to the same local page.
+
+The administration console has addressable Overview, People & access, Integrations, Resource access, Connections,
+Access requests, Activity and Settings pages under `/workspaces/<id>/<section>`. The responsive shadcn sidebar and
+workspace switcher preserve the selected area while resetting workspace-specific query state. Search, filters,
+collection pages and detail selections use URL state; reads are cancelled or superseded on context changes.
+Ofz separately checks current authority on every request. The initial directory and workspace reads run concurrently
+on the server, and heavy panels load only when selected.
+
+Membership uses admitted GitHub identities, not email invitations, and preserves the last-active-administrator
+invariant. Registered clients can be enrolled or disabled; enrollment is not a health check or a resource grant.
+Resource grants cover named operations for members, individual people and clients. The editor shows direct grants,
+not an unsupported effective-access calculation. Provider connections record consent and never add permissions.
+Destructive changes require confirmation, and access changes require reasons and contextual fresh verification.
+Unconfirmed changes retain their original operation ID and exact payload across reload and authentication; a
+permission failure does not discard an uncertain operation. Renewed sessions can reconcile the original Ofz intent.
+
+Access requests have a bounded pending queue, cursor-paginated decided history and workspace-scoped detail lookup.
+Activity filters exact action, actor and allowed/denied outcome **before** the 100-receipt cursor page. Successful
+administration reads are excluded. Receipt IDs and technical fields stay inside details; historical serialized
+command receipts render only known resource/grant fields, never an arbitrary request dump.
+Administration workspace names, registered identities, resource ceilings and provider destinations remain reviewed
+Ofz registry configuration, not editable VM or global-policy controls. See the
+[capability matrix and acceptance evidence](../../docs/platform/admin-portal-acceptance.md).
+
+Run the real Chromium/axe platform fixture separately from the Tengri Playwright test directory:
+
+```sh
+node .github/scripts/install-tengri-chromium.mjs
+PLATFORM_UI_SCREENSHOT_DIR=/tmp/admin-portal-screenshots bun run --cwd apps/landing test:admin
+```
+
+`test:admin` also runs the isolated admin/provider BFF contract tests. The PR landing gate invokes it and uploads
+synthetic screenshots. `PLATFORM_UI_CHROMIUM` optionally selects an already-installed compatible Chromium executable.
+Fixture proof does not replace `bash services/ofz/test-control.sh platform`, policy qualification or authorized live
+portal acceptance. No production account, grant, provider consent or credential needs to be changed to run these tests.
+
+Settings → Privacy & Security contains personal workspace sharing, scoped diagnostics, ownership transfer and passkey
+management. `/access` opens the administration portal. Product policy/quota/global-audit editors and their replaced
+handlers are removed. Settings → Connections records consent to already-approved resource access; it never grants
+permissions. Forms use the shared design components, and dropdowns use `components/platform/settings-select.tsx`.
+Kubernetes resources use readable service names with their exact namespace and purpose, including **Ofz infrastructure**
+and **OpenCode infrastructure**. Their listed actions remain the authority for what access is being requested.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
@@ -107,6 +155,11 @@ loads behind a message-shaped skeleton instead of flashing the empty-conversatio
 reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs or its submission is pending. Late thread creation and send replies
 cannot replace the selected conversation or its draft; Stop remains bound to the selected conversation's run.
+Active-run recovery filters the authoritative claims by the selected conversation before reading snapshots. An unreadable
+unrelated run cannot block that conversation. Initial discovery can recover a running conversation in a new browser,
+but a new submission takes precedence over a delayed discovery response. New drafts do not wait for unrelated status.
+Navigation cancels outstanding status reads through the BFF and gRPC transport. A known nonterminal task remains
+stoppable while status or history observation is unavailable; cancellation still waits for confirmed cleanup.
 Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
@@ -117,9 +170,11 @@ Chat and Finder recreate a permanently closed event stream with an exponential r
 A replacement chat stream starts at the latest received event cursor. Native browser reconnection remains active for
 transient connection errors; closing the view cancels pending retries and ignores callbacks from retired streams.
 The model catalog and saved-conversation startup retry temporary HTTP and network failures, with a delay capped at thirty seconds.
+An existing-conversation resume conflict follows that read-recovery path instead of showing a permanent resource-exists error.
 Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
 an explicit retry; recovery never submits or retries a turn. Closing chat or choosing another conversation cancels
 the pending startup retry. Manual conversation recovery cancels the automatic request before taking over.
+Run-status recovery also clears its own reconnect notice after turn changes; unrelated errors remain visible.
 Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
 Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
@@ -162,8 +217,8 @@ The conversation follows new events while the reader is at the bottom. Reading e
 position until the reader chooses **Jump to latest**.
 
 1. Set the Ofz endpoint, exact SPIFFE identity, TLS control database files and OIDC client secret file from `.env.example`.
-2. Set `TENGRI_DESKTOP_ORIGIN` to the HTTPS desktop origin and `TENGRI_OIDC_ISSUER` to the dedicated realm. The issuer
-   registers the exact `${TENGRI_DESKTOP_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
+2. Set `PLATFORM_WEB_ORIGIN` to the HTTPS desktop origin and `PLATFORM_OIDC_ISSUER` to the dedicated realm. The issuer
+   registers the exact `${PLATFORM_WEB_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
    broker callback documented in [`keycloak/tengri`](../../argocd/applications/keycloak/tengri/README.md).
 3. Keep `TENGRI_PUBLIC_URL` as the separate browser/preview gateway origin. It is not the desktop authentication origin.
 4. Start the Rust Tengri service against the isolated migrated control plane. Direct GitHub/Better Auth cookies and
@@ -210,6 +265,8 @@ Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has i
 The agent's computer tool operates the same browser, with a human takeover control.
 Browser approvals use a compact "Allow browser control?" card with request details available on demand. One-use,
 session, and deny choices retain the scopes advertised by the request.
+Questions and approvals compose the shared design controls in bounded cards. The desktop and portaled conversation
+menus use the same neutral theme and Geist typography; chat rows remain 32 px tall and menu items use 12 px text.
 See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
@@ -248,6 +305,7 @@ Design references: Apple [windows](https://developer.apple.com/design/human-inte
 `bun run test:e2e` covers toolbar alignment, narrow layouts, all resize corners, drag continuity, Dock magnification,
 minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
 with the pinned Playwright browser on both macOS and Linux.
+Phone layout and focus follow the [mobile interface contract](../../docs/tengri/mobile-interface.md).
 
 The mocked desktop tests run independently with four workers in CI and two locally. CI builds the production desktop
 once and serves it for both the mocked browser suite and real acceptance fixtures, avoiding a second development
@@ -284,10 +342,9 @@ Resolved approvals and answers stay retired for the open workspace, including ac
 run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
 navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
-Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
-stay out of these activity labels. Brief event-stream or run-status interruptions retry quietly. A connection warning
-appears after three seconds of continuous interruption and clears after recovery. Authentication and permission
-failures keep their original errors. A follow-up confirmed undispatched because its previous turn finished waits for
+Brief event-stream interruptions retry quietly. A connection warning appears after three seconds of continuous
+interruption and clears after recovery. Authentication and permission failures keep their original errors.
+A follow-up confirmed undispatched because its previous turn finished waits for
 that exact run's terminal state, then submits the message once with a fresh operation identity. Uncertain dispatches
 retain their original identity. An approval confirmed undispatched after its exact run finishes is removed without
 approving another turn.
@@ -367,3 +424,10 @@ refetching; reopening an existing file preserves tab order. A failed inline imag
 Desktop preview startup and lease renewal keep retrying transient network, timeout, rate-limit and server failures,
 with a maximum 30-second backoff. Authentication and authorization failures stop retries. The Chrome display
 reconnects its own transport without reloading the retained browser document.
+
+## Runtime image cache
+
+The standalone Next server resolves inside the immutable Nix runtime. Its packaged `.next/cache` is a symlink to
+`/var/cache/proompteng`, where both the desktop and administration deployments mount a bounded writable cache volume.
+The root filesystem stays read-only. Image publication verifies the cache link at the actual standalone server path
+inside the built archive; rollout verification also checks writes through that resolved path in the deployed container.

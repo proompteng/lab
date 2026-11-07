@@ -19,7 +19,10 @@ build without a root daemon. Project files, sessions and credentials persist on 
 additional tools built into the container layer reset on rollout. The research container
 keeps its read-only root filesystem.
 
-Flamingo (`flamingo/qwen36-flamingo`) is the default. Native tools remain enabled.
+Flamingo (`flamingo/qwen38-flamingo`) is the default. Native tools remain enabled.
+Its reasoning picker uses Qwen3.8's native `low`, `medium`, and `xhigh` efforts.
+The generic OpenAI-compatible `high` effort is invalid for this checkpoint.
+After refreshing an existing browser session, select `Medium` or `Xhigh`.
 The full native integration catalog remains available through Connect and Models.
 For remote sign-in, choose OpenAI > Codex device code (legacy) to use a supported ChatGPT plan. Other
 providers need their own credentials or credits; a catalog entry does not grant
@@ -55,6 +58,13 @@ Tools come from Relay's registered operation catalog. Kubernetes pod status, bou
 Relay and Ofz; the OpenCode container receives no cluster credential. An Ofz administrator must explicitly assign
 namespace relationships to the workload before tools can succeed. Each invocation checks current authority and
 returns durable authorization/execution receipts. It does not impersonate a Tengri workspace or browser user.
+
+The `agents` connector uses this same bridge for scoped start, list, status, logs, result and cancel operations.
+Ofz grants on `agents/lab` are separate from namespace read permissions. OpenCode's configured permissions ask
+before `relay_agents__start_run` and `relay_agents__cancel_run`, using the
+[pinned native MCP permission action](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/core/src/tool/mcp.ts#L20-L23).
+Read/write annotations describe the operation; they do not replace Ofz checks or the client's approval rules.
+An uncertain start is recovered with `get_run` using the original Relay operation ID, never by starting another run.
 
 The research pod has no Relay workload identity, socket mount, MCP configuration or allowed network path. Personal
 sessions and provider credentials remain in the existing development PVC. See

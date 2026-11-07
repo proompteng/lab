@@ -74,6 +74,7 @@ spec:
   postgresql:
     parameters:
       archive_mode: "on"
+      wal_buffers: 16MB
       archive_timeout: 5min
       dynamic_shared_memory_type: posix
       full_page_writes: "on"

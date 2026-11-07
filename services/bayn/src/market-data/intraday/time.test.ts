@@ -24,6 +24,7 @@ test('canonical timestamps retain exact nanoseconds across epoch, calendar and p
           expected: start + BigInt(millis) * 1_000_000n,
         })),
       )
+      .concat([{ text: `${second}Z`, expected: start }])
   })
   for (const left of instants) {
     expect(intradayInstantNanos(left.text)).toBe(left.expected)

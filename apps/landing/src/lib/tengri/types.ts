@@ -13,6 +13,9 @@ export type TengriErrorCode =
   | 'lifecycle_superseded'
   | 'model_catalog_invalid'
   | 'runtime_upgrade_required'
+  | 'connection_access_denied'
+  | 'connection_scope_changed'
+  | 'provider_reconnect_required'
 
 export type TengriCondition = {
   type: string
@@ -185,6 +188,7 @@ export type TengriAction =
   | { action: 'codex-models'; agentId: string; cursor?: string }
   | { action: 'active-codex-runs'; agentId: string }
   | { action: 'codex-run'; agentId: string; runId: string }
+  | { action: 'recover-run'; agentId: string; runId: string; operationId: string }
   | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
   | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)

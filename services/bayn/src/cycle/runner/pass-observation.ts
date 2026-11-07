@@ -1,7 +1,22 @@
 import { Schema } from 'effect'
 
-import { IsoDateSchema, Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema } from '../../schemas'
+import { ExecutionBuildSchema } from '../../build'
+
+import {
+  IsoDateSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UtcDatabaseInstantSchema,
+  UtcInstantSchema,
+} from '../../schemas'
+import { MarketCalendarObservationSchema } from '../../broker/alpaca/model'
+import { CycleExecutionPolicySchema } from '../model'
 import { CycleWaitReasonSchema, DecisionReadinessReason, DecisionReadinessSchema } from './readiness'
+import { JevPositionHoldSchema } from '../../jev/hold'
+import { JevEntryTargetSchema } from '../../jev/decision'
+import { EntryAblationTargetSchema } from '../../jev/entry-ablation'
+import { RepeatedMomentumTargetSchema } from '../../strategy/repeated-momentum/decision'
+import { AccountProtectionInputsSchema } from '../../jev/account-protection'
 
 export const AdmissionProtectionEvidenceSchema = Schema.Struct({
   authorityGenerationHash: Sha256Schema,
@@ -9,9 +24,28 @@ export const AdmissionProtectionEvidenceSchema = Schema.Struct({
   reconciliationId: Sha256Schema,
   tradingDate: IsoDateSchema,
   validUntil: UtcInstantSchema,
+  inputs: Schema.optionalKey(AccountProtectionInputsSchema),
 })
 
 export type AdmissionProtectionEvidence = typeof AdmissionProtectionEvidenceSchema.Type
+
+export const ClosedEntryWindowSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.closed-entry-window.v1'),
+  accountId: StrictNonEmptyStringSchema,
+  authorityGenerationHash: Schema.NullOr(Sha256Schema),
+  strategyProtocolHash: Sha256Schema,
+  evaluatedAt: UtcInstantSchema,
+  decidedAt: UtcInstantSchema,
+  executionPolicy: CycleExecutionPolicySchema,
+  calendar: MarketCalendarObservationSchema,
+  calendarRead: Schema.Struct({
+    requestId: StrictNonEmptyStringSchema,
+    status: Schema.Int,
+    contentHash: Sha256Schema,
+    observedAt: UtcInstantSchema,
+  }),
+})
+export type ClosedEntryWindow = typeof ClosedEntryWindowSchema.Type
 
 export const maximumRetainedJevObservationReferences = 16
 export const JevObservationReferencesSchema = Schema.Struct({
@@ -27,6 +61,8 @@ export const JevObservationReferencesSchema = Schema.Struct({
 export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   Schema.Struct({
     result: Schema.Literal('SUCCESS'),
+    executionIssuedAt: Schema.optionalKey(UtcInstantSchema),
+    executionBuild: Schema.optionalKey(ExecutionBuildSchema),
     observedAt: UtcInstantSchema,
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     outcome: Schema.Literals([
@@ -39,16 +75,42 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
       'ACQUIRED',
       'REACQUIRED',
     ]),
+    closedEntryWindow: Schema.optionalKey(ClosedEntryWindowSchema),
     recoveryAction: Schema.optionalKey(
       Schema.Literals(['ACTIVATED', 'BLOCKED', 'BOUND_DECISION', 'COMPLETED', 'NO_TRADE', 'WAITING']),
     ),
     waitReason: Schema.optionalKey(CycleWaitReasonSchema),
+    positionHold: Schema.optionalKey(JevPositionHoldSchema),
+    entryAbstention: Schema.optionalKey(
+      Schema.Union([JevEntryTargetSchema, EntryAblationTargetSchema, RepeatedMomentumTargetSchema]).check(
+        Schema.makeFilter((target) => target.selectedSymbols.length === 0, {
+          expected: 'a reproduced decision with no selected entries',
+        }),
+      ),
+    ),
     readiness: Schema.optionalKey(DecisionReadinessSchema),
     admissionProtection: Schema.optionalKey(AdmissionProtectionEvidenceSchema),
     nextWakeAt: Schema.optionalKey(UtcInstantSchema),
   }).check(
     Schema.makeFilter(
       (observation) => {
+        if (observation.closedEntryWindow !== undefined && observation.outcome !== 'WINDOW_CLOSED') return false
+        if (
+          observation.entryAbstention !== undefined &&
+          (observation.outcome !== 'RECOVERED' ||
+            observation.recoveryAction !== 'WAITING' ||
+            observation.readiness?.reason !== DecisionReadinessReason.NoEligibleCandidate ||
+            observation.entryAbstention.evidence.decidedAt > observation.observedAt)
+        )
+          return false
+        if (
+          observation.positionHold !== undefined &&
+          (observation.outcome !== 'RECOVERED' ||
+            observation.recoveryAction !== 'WAITING' ||
+            observation.waitReason !== 'JEV_POSITION_HELD' ||
+            observation.positionHold.evidence.observedAt > observation.observedAt)
+        )
+          return false
         if (observation.recoveryAction !== undefined && observation.outcome !== 'RECOVERED') return false
         if (observation.outcome === 'ADMISSION_WAITING')
           return (
@@ -70,6 +132,8 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   ),
   Schema.Struct({
     result: Schema.Literal('FAILURE'),
+    executionIssuedAt: Schema.optionalKey(UtcInstantSchema),
+    executionBuild: Schema.optionalKey(ExecutionBuildSchema),
     observedAt: UtcInstantSchema,
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     operation: Schema.Literals([

@@ -18,7 +18,12 @@ import { defaultJevProtocolDocument } from './protocol'
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
   '%s take-profit break-even uses its actual limit and preserves exit fees',
   (symbol) => {
-    const input = { protocol: defaultJevProtocolDocument, symbol, quantityAtoms: 100_000_000_000n }
+    const input = {
+      feeAt: '2026-09-04T14:15:00.000Z',
+      protocol: defaultJevProtocolDocument,
+      symbol,
+      quantityAtoms: 100_000_000_000n,
+    }
     const acquisitionCostMicros = 10_000_000_000n
     const limit = Result.getOrThrow(
       jevBreakEvenExitLimitPrice({ ...input, acquisitionCostMicros, upperLimitPriceMicros: 200_000_000n }),
@@ -31,6 +36,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
         input.protocol.executionModel,
         1_000_000n,
         cryptoMaximumTakerFeeBps,
+        '2026-09-04T14:15:00.000Z',
       ),
     )
     expect(value.proceedsMicros).toBe(proceeds)
@@ -54,7 +60,13 @@ test('an exit limit rejects a nonpositive price or quantity', () => {
   ]) {
     expect(
       Result.isFailure(
-        jevExitLimitValue({ protocol: defaultJevProtocolDocument, symbol: 'NVDA', limitPriceMicros, quantityAtoms }),
+        jevExitLimitValue({
+          feeAt: '2026-09-04T14:15:00.000Z',
+          protocol: defaultJevProtocolDocument,
+          symbol: 'NVDA',
+          limitPriceMicros,
+          quantityAtoms,
+        }),
       ),
     ).toBe(true)
   }
@@ -66,7 +78,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
     const protocol = defaultJevProtocolDocument
     const quantityAtoms = 100_000_000_000n
     const acquisitionCostMicros = 10_000_000_000n
-    const input = { protocol, symbol, quantityAtoms }
+    const input = { feeAt: '2026-09-04T14:15:00.000Z', protocol, symbol, quantityAtoms }
     const bid = Result.getOrThrow(
       jevBreakEvenExitBid({ ...input, acquisitionCostMicros, upperBidMicros: 200_000_000n }),
     )
@@ -89,6 +101,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
           protocol.executionModel,
           1_000_000n,
           cryptoMaximumTakerFeeBps,
+          '2026-09-04T14:15:00.000Z',
         ),
       )
       return proceeds - fees.cashMicros
@@ -110,6 +123,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
 
 test('an inadequate price bound cannot produce a break-even estimate', () => {
   const result = jevBreakEvenExitBid({
+    feeAt: '2026-09-04T14:15:00.000Z',
     protocol: defaultJevProtocolDocument,
     symbol: 'BTC/USD',
     quantityAtoms: 1_000_000_000n,
@@ -122,6 +136,7 @@ test('an inadequate price bound cannot produce a break-even estimate', () => {
 
 test('invalid native sell terms retain the pricing failure', () => {
   const result = jevLiquidationValue({
+    feeAt: '2026-09-04T14:15:00.000Z',
     protocol: defaultJevProtocolDocument,
     symbol: 'NVDA',
     quantityAtoms: 0n,
@@ -135,7 +150,7 @@ test('a cent-rounded fee jump above the break-even bid remains funded', () => {
   const protocol = defaultJevProtocolDocument
   const quantityAtoms = 59_468_593_953n
   const acquisitionCostMicros = 128_059_041_016n
-  const input = { protocol, symbol: 'BTC/USD', quantityAtoms }
+  const input = { feeAt: '2026-09-04T14:15:00.000Z', protocol, symbol: 'BTC/USD', quantityAtoms }
   expect(Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 2_160_947_485n })).netMicros).toBe(
     acquisitionCostMicros - 957n,
   )
@@ -149,7 +164,12 @@ test('a cent-rounded fee jump above the break-even bid remains funded', () => {
 })
 
 test('the conservative cash floor remains monotone across an actual cent fee jump', () => {
-  const input = { protocol: defaultJevProtocolDocument, symbol: 'BTC/USD', quantityAtoms: 1_000_000_000n }
+  const input = {
+    feeAt: '2026-09-04T14:15:00.000Z',
+    protocol: defaultJevProtocolDocument,
+    symbol: 'BTC/USD',
+    quantityAtoms: 1_000_000_000n,
+  }
   const before = Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 92_092_092n }))
   const after = Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 92_092_093n }))
   expect(before.netMicros).toBeGreaterThanOrEqual(91_770_000n)
@@ -161,7 +181,13 @@ test('the conservative cash floor remains monotone across an actual cent fee jum
 
 test('fractional equity liquidation uses the same explicit LIMIT/DAY pricing', () => {
   const protocol = defaultJevProtocolDocument
-  const input = { protocol, symbol: 'NVDA', quantityAtoms: 250_000_000n, bidMicros: 100_000_000n }
+  const input = {
+    feeAt: '2026-09-04T14:15:00.000Z',
+    protocol,
+    symbol: 'NVDA',
+    quantityAtoms: 250_000_000n,
+    bidMicros: 100_000_000n,
+  }
   const pricing = Result.getOrThrow(
     deriveExecutionIntentPricing({
       symbol: input.symbol,

@@ -11,22 +11,27 @@ import {
   type JevContractError,
 } from '../jev/contract'
 import {
-  DecisionsClient,
-  DecisionsError,
   DecisionsInferenceSchema,
   DecisionsRequestSchema,
   DecisionsUsageSchema,
-  prepareDecisionsRequest,
-  type DecisionsInference,
   type DecisionsRequest,
 } from '../jev/decisions'
-import { PositiveIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
+import { PositiveIntegerSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 
+/** Momentum owns no provider capability, including in measured replay mode. */
+export const momentumReplayProviders = {
+  jev: {
+    evaluate: () =>
+      Effect.fail(
+        new JevError({ failure: JevFailure.Request, message: 'Jev dispatch is forbidden by the momentum policy' }),
+      ),
+  },
+} satisfies ReplayInferenceProviders
+
 export interface ReplayInferenceProviders {
   readonly jev: JevClient['Service']
-  readonly chart: DecisionsClient['Service']
 }
 
 export const makeReplayInferenceBudget = (maximumCalls: number) => {
@@ -44,7 +49,6 @@ export const makeReplayInferenceBudget = (maximumCalls: number) => {
 export type ReplayInferenceBudget = ReturnType<typeof makeReplayInferenceBudget>
 
 const callFields = {
-  schemaVersion: Schema.Literal('bayn.replay-inference-call.v2'),
   requestHash: Sha256Schema,
   budgetMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
   simulatedStartedAt: UtcInstantSchema,
@@ -52,9 +56,43 @@ const callFields = {
   providerCompletedAt: UtcInstantSchema,
 }
 const terminalOutcome = Schema.Struct({ status: Schema.Literals(['INTERRUPTED', 'DEFECT']) })
+const visualCallFields = {
+  ...callFields,
+  request: DecisionsRequestSchema,
+  outcome: Schema.Union([
+    Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
+    Schema.Struct({
+      status: Schema.Literal('FAILED'),
+      category: Schema.Literals(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE']),
+      httpStatus: Schema.NullOr(Schema.Int),
+      responseHash: Schema.NullOr(Sha256Schema),
+      usage: Schema.NullOr(DecisionsUsageSchema),
+    }),
+    terminalOutcome,
+  ]),
+}
+const JevReplayOutcomeSchema = Schema.Union([
+  Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: JevInferenceSchema }),
+  Schema.Struct({
+    status: Schema.Literal('FAILED'),
+    failure: Schema.Enum(JevFailure),
+    httpStatus: Schema.NullOr(Schema.Int),
+    responseHash: Schema.NullOr(Sha256Schema),
+    rejectedResponse: Schema.Unknown,
+  }),
+  terminalOutcome,
+])
 export const ReplayInferenceCallSchema = Schema.Union([
   Schema.Struct({
     ...callFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v4'),
+    stage: Schema.Literals(['CHART', 'BASE_START', 'JEV']),
+    request: JevRequestSchema,
+    outcome: JevReplayOutcomeSchema,
+  }),
+  Schema.Struct({
+    ...callFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v2'),
     stage: Schema.Literal('JEV'),
     request: JevRequestSchema,
     outcome: Schema.Union([
@@ -70,26 +108,59 @@ export const ReplayInferenceCallSchema = Schema.Union([
     ]),
   }),
   Schema.Struct({
-    ...callFields,
+    ...visualCallFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v2'),
     stage: Schema.Literal('CHART'),
-    request: DecisionsRequestSchema,
-    outcome: Schema.Union([
-      Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
-      Schema.Struct({
-        status: Schema.Literal('FAILED'),
-        category: Schema.Literals(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE']),
-        httpStatus: Schema.NullOr(Schema.Int),
-        responseHash: Schema.NullOr(Sha256Schema),
-        usage: Schema.NullOr(DecisionsUsageSchema),
-      }),
-      terminalOutcome,
-    ]),
+  }),
+  Schema.Struct({
+    ...visualCallFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v3'),
+    stage: Schema.Literal('BASE_START'),
   }),
 ])
 export type ReplayInferenceCall = typeof ReplayInferenceCallSchema.Type
 type JevCall = Extract<ReplayInferenceCall, { readonly stage: 'JEV' }>
-type ChartCall = Extract<ReplayInferenceCall, { readonly stage: 'CHART' }>
 type MeasuredTimes = Pick<ReplayInferenceCall, keyof typeof callFields>
+
+// This labels a measured call; the journal independently verifies the complete
+// predecessor graph and exact provider request hash before dispatch admission.
+export const replayVisualStage = (request: JevRequest | DecisionsRequest) =>
+  request.model === 'gpt-6-luna'
+    ? request.questions.length === 1 && request.questions[0]?.name.startsWith('base_first_bar_ending_') === true
+      ? ('BASE_START' as const)
+      : ('CHART' as const)
+    : Object.keys(request.questions).length === 1 &&
+        Object.keys(request.questions)[0]?.startsWith('base_first_bar_ending_') === true
+      ? ('BASE_START' as const)
+      : ('CHART' as const)
+export const replayInferenceStage = (request: JevRequest) =>
+  request.assets === undefined ? ('JEV' as const) : replayVisualStage(request)
+
+const prepareReplayRequest = (raw: unknown) =>
+  Result.gen(function* () {
+    const prepared = yield* prepareJevRequest(raw)
+    if (prepared.request.assets === undefined) return prepared
+    const state = prepared.request.state
+    const staged = state !== null && typeof state === 'object' && ('predecessor' in state || 'selectedEnd' in state)
+    if (replayVisualStage(prepared.request) === 'BASE_START') {
+      const source = Schema.decodeUnknownResult(
+        Schema.Struct({
+          source: Schema.Unknown,
+          predecessor: Schema.Struct({ requestHash: Sha256Schema, responseHash: Sha256Schema }),
+          selectedEnd: Schema.NonEmptyString,
+        }),
+        strictParseOptions,
+      )(state)
+      if (Result.isFailure(source))
+        return yield* Result.fail(
+          new ReplayBrokerFailure({ message: 'Base start replay requires its bound source and predecessor' }),
+        )
+    } else if (staged)
+      return yield* Result.fail(
+        new ReplayBrokerFailure({ message: 'Staged replay source does not match its question stage' }),
+      )
+    return prepared
+  })
 
 const jevOutcome = (exit: Exit.Exit<JevInference, JevError>): JevCall['outcome'] => {
   if (Exit.isSuccess(exit)) return { status: 'RECEIVED', inference: exit.value }
@@ -102,21 +173,6 @@ const jevOutcome = (exit: Exit.Exit<JevInference, JevError>): JevCall['outcome']
     responseHash: error.success.responseHash ?? null,
     rejectedResponse:
       error.success.rejectedResponse === undefined ? null : Redacted.value(error.success.rejectedResponse),
-  }
-}
-const chartOutcome = (
-  exit: Exit.Exit<DecisionsInference, DecisionsError>,
-  requestHash: string,
-): ChartCall['outcome'] => {
-  if (Exit.isSuccess(exit)) return { status: 'RECEIVED', inference: exit.value }
-  const error = Cause.findError(exit.cause)
-  if (Result.isFailure(error)) return { status: Cause.hasInterruptsOnly(exit.cause) ? 'INTERRUPTED' : 'DEFECT' }
-  return {
-    status: 'FAILED',
-    category: error.success.category,
-    httpStatus: error.success.status ?? null,
-    responseHash: error.success.requestHash === requestHash ? (error.success.responseHash ?? null) : null,
-    usage: error.success.requestHash === requestHash ? (error.success.usage ?? null) : null,
   }
 }
 
@@ -181,8 +237,8 @@ export const makeReplayInferenceTiming = (input: {
     const measure =
       <
         Request,
-        Inference extends JevInference | DecisionsInference,
-        Error extends JevError | DecisionsError,
+        Inference extends JevInference,
+        Error extends JevError,
         PreparationError extends { readonly message: string },
       >(
         prepare: (
@@ -230,7 +286,6 @@ export const makeReplayInferenceTiming = (input: {
                   const call = record(
                     prepared.request,
                     {
-                      schemaVersion: 'bayn.replay-inference-call.v2',
                       requestHash: prepared.requestHash,
                       budgetMs: remainingMs,
                       simulatedStartedAt: utcInstantFromEpochMillis(simulatedStartedAt),
@@ -282,10 +337,16 @@ export const makeReplayInferenceTiming = (input: {
     const clients: ReplayInferenceProviders = {
       jev: {
         evaluate: (raw, budgetMs) =>
-          measure<JevRequest, JevInference, JevError, JevContractError>(
-            prepareJevRequest,
+          measure<JevRequest, JevInference, JevError, JevContractError | ReplayBrokerFailure>(
+            prepareReplayRequest,
             input.providers.jev.evaluate,
-            (request, times, exit) => ({ ...times, stage: 'JEV', request, outcome: jevOutcome(exit) }),
+            (request, times, exit) => ({
+              ...times,
+              schemaVersion: 'bayn.replay-inference-call.v4',
+              stage: replayInferenceStage(request),
+              request,
+              outcome: jevOutcome(exit),
+            }),
             () => new JevError({ failure: JevFailure.Timeout, message: 'Original replay inference deadline elapsed' }),
           )(raw, budgetMs).pipe(
             Effect.catchTag('ReplayBrokerFailure', (cause) =>
@@ -293,30 +354,6 @@ export const makeReplayInferenceTiming = (input: {
                 Effect.andThen(
                   Effect.fail(
                     new JevError({ failure: JevFailure.Request, message: cause.message, cause: Redacted.make(cause) }),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      },
-      chart: {
-        evaluate: (raw, budgetMs) =>
-          measure<DecisionsRequest, DecisionsInference, DecisionsError, DecisionsError>(
-            prepareDecisionsRequest,
-            input.providers.chart.evaluate,
-            (request, times, exit) => ({
-              ...times,
-              stage: 'CHART',
-              request,
-              outcome: chartOutcome(exit, times.requestHash),
-            }),
-            () => new DecisionsError({ category: 'DEADLINE', message: 'Original replay inference deadline elapsed' }),
-          )(raw, budgetMs).pipe(
-            Effect.catchTag('ReplayBrokerFailure', (cause) =>
-              Ref.set(failure, cause).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new DecisionsError({ category: 'REQUEST', message: cause.message, cause: Redacted.make(cause) }),
                   ),
                 ),
               ),

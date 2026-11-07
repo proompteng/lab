@@ -1,18 +1,25 @@
+import { makeMomentumEntryQuery } from '../jev/observation-query'
+import { evaluateRepeatedMomentumFromSnapshot } from '../strategy/repeated-momentum/runtime'
+import { JevBatchPlanVersion } from '../jev/batch'
+import {
+  isProtectedEntryTarget,
+  protectedEntryExpiresAtMs,
+  protectedEntryBuyPriceCeilings,
+  type ProtectedEntryTarget,
+} from '../strategy/runtime-decision'
+import { jevEntryPriceAllowances } from '../jev/entry-economics'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
-import { BrokerEnvironment } from '../broker/identity'
 import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
-import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { decideJevEntry } from '../jev/decision'
 import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
-import { decodeJevProtocol } from '../jev/protocol'
+import { JevDecisionEvidenceSchema } from '../jev/decision'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -25,8 +32,8 @@ import {
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
-import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
-import type { AutonomousCycleStartup } from '../app'
+import { Clock, Context, Data, Duration, Effect, Option, Result, Schema } from 'effect'
+import type { AutonomousCycleStartupInput } from '../app'
 import { BrokerRead, type MarketCalendarQuery } from '../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
@@ -53,28 +60,13 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import {
-  Authority,
-  OrderType,
-  ReconciliationStatus,
-  TimeInForce,
-  type AuthorityState,
-  type Position,
-} from '../execution/contracts'
+import { Authority, OrderType, ReconciliationStatus, type AuthorityState, type Position } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
-import {
-  accountEntryProtectionReasons,
-  BrokerMode,
-  decodePolicy,
-  executionRiskPolicySchemaVersion,
-  type Policy,
-  type State,
-  type EntryQuoteFreshness,
-} from '../risk'
+import { accountEntryProtectionReasons, BrokerMode, type Policy, type State, type EntryQuoteFreshness } from '../risk'
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
@@ -105,7 +97,12 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner/index'
-import { strategyDefinition, type StrategyRuntime } from '../strategy'
+import {
+  loadStrategyTradingProtocol,
+  strategyDefinition,
+  isRepeatedMomentumRuntime,
+  type StrategyRuntime,
+} from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
@@ -117,49 +114,6 @@ import {
 } from './intraday-market-data'
 
 import type { ObserveAutonomousCycleInput, ObserveStartupPreparation } from './model'
-
-const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
-
-const observeRiskLimits = {
-  maxOrderNotionalMicros: dollarsToMicros(40_000n),
-  maxSymbolExposureMicros: dollarsToMicros(40_000n),
-  maxGrossExposureMicros: dollarsToMicros(100_000n),
-  maxNetExposureMicros: dollarsToMicros(100_000n),
-  maxDailyTradedNotionalMicros: dollarsToMicros(200_000n),
-  maxDailyLossMicros: dollarsToMicros(5_000n),
-  maxDrawdownMicros: dollarsToMicros(5_000n),
-  maxIntentAgeMs: 300_000,
-  maxBrokerStateAgeMs: 300_000,
-  maxMarketDataAgeMs: 300_000,
-  maxAdverseSlippageBps: 10,
-  decisionTtlMs: 300_000,
-} as const
-
-const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
-  ...observeRiskLimits,
-  maxDailyTradedNotionalMicros:
-    brokerEnvironment === BrokerEnvironment.Sandbox
-      ? dollarsToMicros(1_000_000n)
-      : observeRiskLimits.maxDailyTradedNotionalMicros,
-  maxDrawdownMicros:
-    brokerEnvironment === BrokerEnvironment.Sandbox ? dollarsToMicros(10_000n) : observeRiskLimits.maxDrawdownMicros,
-})
-
-export const loadExecutionRiskPolicy = (
-  accountId: string,
-  allowedSymbols: readonly string[],
-  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
-) =>
-  decodePolicy({
-    schemaVersion: executionRiskPolicySchemaVersion,
-    accountId,
-    brokerMode: BrokerMode.Execution,
-    allowedSymbols: [...allowedSymbols].sort(),
-    allowedOrderTypes: [OrderType.Limit, OrderType.StopLimit],
-    allowedTimeInForce: [TimeInForce.Day, TimeInForce.GoodUntilCanceled, TimeInForce.ImmediateOrCancel],
-    maxOpenOrders: allowedSymbols.length,
-    ...executionRiskLimits(brokerEnvironment),
-  })
 
 type ObserveStrategy = StrategyRuntime
 
@@ -272,6 +226,7 @@ export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDeci
   readonly readiness: DecisionReadiness
   readonly observedAt: string
   readonly submissionCutoffAt: string
+  readonly entryAbstention?: ProtectedEntryTarget
 }> {}
 
 export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('ExecutionCloseAwaitingMarketData')<{
@@ -471,6 +426,7 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
         failure: 'not-ready',
         message: cause.message,
         readiness: cause.readiness,
+        ...(cause.entryAbstention === undefined ? {} : { entryAbstention: cause.entryAbstention }),
         cause,
       })
     case 'ObserveDecisionCompositionFailure':
@@ -862,7 +818,7 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
         message: 'Native execution requires the Jev intraday strategy',
       }),
     )
-  return decodeJevProtocol(definition.parameters).pipe(
+  return loadStrategyTradingProtocol(strategy).pipe(
     Result.mapError((cause) =>
       operationalError({
         component: 'strategy',
@@ -879,7 +835,6 @@ type JevDecisionServices =
   | JevBatchStore
   | JevEvaluationStore
   | JevClient
-  | DecisionsClient
   | EntryInferenceJournal
 
 const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
@@ -893,17 +848,28 @@ const classifyIntradayEntrySnapshotFailure = (
   observedAt: string,
   submissionCutoffAt: string,
   query: IntradaySnapshotQuery,
-): OperationalError | ObserveDecisionAwaitingSignal => {
-  const snapshotFailure = cause.cause
-  return isIntradaySnapshotPending(snapshotFailure)
-    ? new ObserveDecisionAwaitingSignal({
-        message: snapshotFailure.message,
-        readiness: { ...snapshotReadiness(snapshotFailure), snapshotQuery: snapshotQueryReadiness(query) },
-        observedAt,
-        submissionCutoffAt,
-      })
-    : cause
-}
+  cycleId: string,
+) =>
+  Effect.gen(function* () {
+    const snapshotFailure = cause.cause
+    if (!isIntradaySnapshotPending(snapshotFailure)) return cause
+    const previous = yield* (yield* CandidateObservationStore).latestJevWindowEnd({
+      cycleId,
+      purpose: JevPurpose.Entry,
+    })
+    return new ObserveDecisionAwaitingSignal({
+      message: snapshotFailure.message,
+      readiness: {
+        ...snapshotReadiness(snapshotFailure),
+        snapshotQuery: {
+          ...snapshotQueryReadiness(query),
+          ...(Option.isSome(previous) ? { previousWindowEndAt: previous.value } : {}),
+        },
+      },
+      observedAt,
+      submissionCutoffAt,
+    })
+  })
 
 const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
@@ -925,42 +891,73 @@ const compileObserveStrategyDecision = <R>(
         message: 'Jev requires the native market-data reader',
       })
     const protocol = yield* Effect.fromResult(nativeJevProtocol(input.strategy))
-    const query = yield* Effect.fromResult(
+    const candidateQuery = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
-    const { snapshot, evidence } = yield* evaluateJevObservationFromSnapshot(
-      {
-        cycleId: input.cycle.identity.cycleId,
-        authorityGenerationHash: input.authorityGenerationHash,
-        protocol,
-        portfolio,
-      },
-      query.rangeEndAt,
-      Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
-        Effect.mapError((cause) =>
-          classifyIntradayEntrySnapshotFailure(
-            cause,
-            initialFacts.evaluatedAt,
-            input.cycle.window.submissionCutoffAt,
-            query,
-          ),
-        ),
+    const strategy = input.strategy
+    const query = isRepeatedMomentumRuntime(strategy)
+      ? makeMomentumEntryQuery({
+          protocol,
+          calendar: executionSession.calendar,
+          sessionDate: input.cycle.identity.executionSessionDate,
+          observedAtMs: Date.parse(initialFacts.evaluatedAt),
+          candidates: candidateQuery.candidateSymbols ?? [],
+        })
+      : candidateQuery
+    const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
+    const observationInput = {
+      cycleId: input.cycle.identity.cycleId,
+      authorityGenerationHash: input.authorityGenerationHash,
+      protocol,
+      portfolio,
+    }
+    const loadSnapshot = Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
+      Effect.catch((cause) =>
+        classifyIntradayEntrySnapshotFailure(
+          cause,
+          initialFacts.evaluatedAt,
+          input.cycle.window.submissionCutoffAt,
+          query,
+          input.cycle.identity.cycleId,
+        ).pipe(Effect.flatMap(Effect.fail)),
       ),
     )
-    const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
-    if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
-      return yield* new JevAwaitingEvidence({
-        message: 'Jev entry admission expired before its model evidence completed',
-        readiness: DecisionReadinessReason.NoEligibleCandidate,
-      })
-    const decision = yield* Effect.fromResult(decideJevEntry(evidence))
+    const { snapshot, decision } = yield* Effect.gen(function* () {
+      if (isRepeatedMomentumRuntime(strategy))
+        return yield* evaluateRepeatedMomentumFromSnapshot(
+          observationInput,
+          query.rangeEndAt,
+          loadSnapshot,
+          strategy.definition.parameters,
+          admissionExpiresAt,
+        )
+      const evaluated = yield* evaluateJevObservationFromSnapshot(
+        observationInput,
+        query.rangeEndAt,
+        loadSnapshot,
+        strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
+          ? JevBatchPlanVersion.Ablation
+          : JevBatchPlanVersion.V8,
+      )
+      const evidence = yield* Effect.fromResult(
+        Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
+      )
+      if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission expired before its decision evidence completed',
+          readiness: DecisionReadinessReason.NoEligibleCandidate,
+        })
+      const decision = yield* Effect.fromResult(strategy.definition.decide({ market: evidence }))
+      return { snapshot: evaluated.snapshot, decision }
+    })
     if (
       decision.selectedSymbols.length === 0 &&
-      admissionExpiresAt - Date.parse(evidence.decidedAt) > (input.decisionFinalizationHeadroomMs ?? 0)
+      admissionExpiresAt - Date.parse(decision.decidedAt) > (input.decisionFinalizationHeadroomMs ?? 0)
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev entry remains armed for a qualifying fresh signal',
         readiness: DecisionReadinessReason.NoEligibleCandidate,
+        entryAbstention: decision,
       })
     const pricingReconciliation =
       decision.selectedSymbols.length === 0 || input.reconcileForPricing === undefined
@@ -987,14 +984,22 @@ const compileObserveStrategyDecision = <R>(
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingAt = yield* currentUtcInstant
+    const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
+    const brokerHeadroomExhaustedAt = (at: number) =>
+      pricingReconciliation?.freshUntil !== undefined &&
+      at + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil
     if (
-      Date.parse(pricingAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt) ||
-      (pricingReconciliation?.freshUntil !== undefined &&
-        Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
+      Date.parse(pricingAt) >= Math.min(sourceExpiresAt, admissionExpiresAt) ||
+      brokerHeadroomExhaustedAt(Date.parse(pricingAt))
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        readiness:
+          Date.parse(pricingAt) >= sourceExpiresAt &&
+          Date.parse(pricingAt) < admissionExpiresAt &&
+          !brokerHeadroomExhaustedAt(Date.parse(pricingAt))
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingQuery =
       decision.selectedSymbols.length === 0
@@ -1006,20 +1011,26 @@ const compileObserveStrategyDecision = <R>(
       pricingQuery === undefined
         ? snapshot
         : yield* loadIntradaySnapshot(marketData, pricingQuery).pipe(
-            Effect.mapError((cause) =>
+            Effect.catch((cause) =>
               classifyIntradayEntrySnapshotFailure(
                 cause,
                 pricingAt,
                 input.cycle.window.submissionCutoffAt,
                 pricingQuery,
-              ),
+                input.cycle.identity.cycleId,
+              ).pipe(Effect.flatMap(Effect.fail)),
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
-    if (Date.parse(evaluatedAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt))
+    if (Date.parse(evaluatedAt) >= Math.min(sourceExpiresAt, admissionExpiresAt))
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        readiness:
+          Date.parse(evaluatedAt) >= sourceExpiresAt &&
+          Date.parse(evaluatedAt) < admissionExpiresAt &&
+          !brokerHeadroomExhaustedAt(Date.parse(evaluatedAt))
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
     return {
@@ -1042,6 +1053,7 @@ const compileObserveStrategyDecision = <R>(
         : cause instanceof JevAwaitingEvidence
           ? new ObserveDecisionAwaitingSignal({
               message: cause.message,
+              ...(cause.entryAbstention === undefined ? {} : { entryAbstention: cause.entryAbstention }),
               observedAt: initialFacts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
               readiness: {
@@ -1163,6 +1175,7 @@ const executionRiskContext = (
 
 type RiskInputPreparation = {
   readonly limitSlippageBps: number
+  readonly maximumBuyPriceMicros?: Readonly<Record<string, bigint>>
   readonly minimumSellPriceMicros?: Readonly<Record<string, bigint>>
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
@@ -1207,6 +1220,7 @@ const reduceRiskInputs = (
         }
         const referencePrice = BigInt(referencePriceMicros)
         const minimumSellPriceMicros = input.minimumSellPriceMicros?.[target.symbol]
+        const maximumBuyPriceMicros = input.maximumBuyPriceMicros?.[target.symbol]
         return Result.map(
           deriveExecutionIntentPricing({
             symbol: target.symbol,
@@ -1217,6 +1231,7 @@ const reduceRiskInputs = (
             referencePriceMicros: referencePrice,
             limitSlippageBps: BigInt(input.limitSlippageBps),
             ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+            ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1266,6 +1281,7 @@ const reduceRiskInputs = (
 
 const reduceObserveRiskInputs = <R>(
   input: ObserveDecisionInput<R>,
+  entryLimitSlippageBps: number,
   facts: ObserveDecisionFacts,
   authorityObservation: ObserveAuthorityObservation,
   executionSession: ExecutionSessionBinding,
@@ -1277,13 +1293,12 @@ const reduceObserveRiskInputs = <R>(
   >,
   closeOnlyExpiresAt?: string,
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
+  maximumBuyPriceMicros?: Readonly<Record<string, bigint>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
-    limitSlippageBps:
-      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
-        ? input.policy.maxAdverseSlippageBps
-        : 0,
+    limitSlippageBps: entryLimitSlippageBps,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
+    ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1400,9 +1415,23 @@ function buildCycleDecision<R>(
         compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
       )
     }
+    const entryDecision = compiled.decision
+    const entryLimitSlippageBps =
+      requirements.documentMode === Authority.Execution
+        ? isProtectedEntryTarget(entryDecision)
+          ? Math.min(
+              input.policy.maxAdverseSlippageBps,
+              ...entryDecision.selectedSymbols.map(
+                (symbol) =>
+                  jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
+              ),
+            )
+          : input.policy.maxAdverseSlippageBps
+        : 0
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
         input,
+        entryLimitSlippageBps,
         facts,
         executionAuthority,
         executionSession,
@@ -1411,6 +1440,7 @@ function buildCycleDecision<R>(
         compiled.executionMarketData,
         undefined,
         compiled.entryQuotes,
+        protectedEntryBuyPriceCeilings(entryDecision),
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
@@ -1453,7 +1483,7 @@ function buildCycleDecision<R>(
       : yield* buildExecutionDecision({
           ...decisionInput,
           riskContext: executionRiskContext(facts.reconciliation, executionAuthority),
-          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
+          entryLimitSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })
@@ -1926,7 +1956,7 @@ export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExe
   )
 
 export const observePass = (
-  recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
+  recordPass: AutonomousCycleStartupInput['recordPass'],
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const retained = retainAutonomousCyclePassObservation(observation)

@@ -9,7 +9,7 @@ const collaborator = {
   expectedVersion: '1',
   reason: 'Review workspace diagnostics',
   workspaceUid: '22222222-2222-4222-8222-222222222222',
-  login: 'diagnostic-viewer',
+  recipient: { kind: 'github-login', login: 'diagnostic-viewer' },
   role: 'viewer',
   enabled: true,
 } satisfies AccessCommand
@@ -23,6 +23,19 @@ const scope = {
 }
 
 describe('workspace collaborator command boundary', () => {
+  test('uses immutable roster identities and rejects the retired or ambiguous recipient shape', () => {
+    expect(
+      accessCommandSchema.parse({ ...collaborator, recipient: { kind: 'github-id', githubId: '12027037' } }),
+    ).toMatchObject({ recipient: { kind: 'github-id', githubId: '12027037' } })
+    const { recipient: _recipient, ...legacy } = collaborator
+    expect(accessCommandSchema.safeParse({ ...legacy, login: 'diagnostic-viewer' }).success).toBe(false)
+    expect(
+      accessCommandSchema.safeParse({
+        ...collaborator,
+        recipient: { kind: 'github-id', githubId: '12027037', login: 'another-account' },
+      }).success,
+    ).toBe(false)
+  })
   test('Viewer content is opt-in and preserves the approved scope exactly', () => {
     expect(accessCommandSchema.parse(collaborator)).not.toHaveProperty('scope')
     expect(accessCommandSchema.parse({ ...collaborator, scope })).toEqual({ ...collaborator, scope })

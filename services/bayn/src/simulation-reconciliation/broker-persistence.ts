@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationReport, ReconciliationWriteResult } from '../db/reconciliation'
@@ -9,8 +9,19 @@ import {
   type ReconciliationError,
   type ReconciliationWriteDecision,
   type StableBrokerSnapshot,
+  snapshotFailure,
 } from './broker-reconciler-model'
 import { prepareNormalizedSnapshot } from './broker-normalization'
+import { accountTradingDate } from '../time'
+
+const requireSnapshotTradingDate = (snapshot: BrokerSnapshot, checkedAt: string) => {
+  const tradingDate = accountTradingDate(checkedAt)
+  return [snapshot.account.observedAt, snapshot.positionsObservedAt, snapshot.valuation.asOf].every(
+    (at) => accountTradingDate(at) === tradingDate,
+  )
+    ? Result.succeed(undefined)
+    : Result.fail(snapshotFailure('TradingDayChanged', 'Broker snapshot no longer covers the current trading day'))
+}
 
 const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: NormalizedBrokerSnapshot) =>
   Effect.gen(function* () {
@@ -24,22 +35,23 @@ const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: Normal
     })
     const positionsReceipt = yield* store.events.ingestPositions(normalized.positions)
     const complete = yield* store.events.completeHistory([...normalized.orderEvents, ...normalized.fillEvents])
-    yield* store.accounting.verifyCompleted(normalized.fillEvents.filter((event) => complete.has(event.sourceEventId)))
     yield* Effect.forEach(
       normalized.orderEvents.filter((event) => !complete.has(event.sourceEventId)),
       store.events.ingest,
       { discard: true },
     )
-    yield* Effect.forEach(
-      normalized.fillEvents.filter((event) => !complete.has(event.sourceEventId)),
-      store.accounting.account,
-      { discard: true },
-    )
+    const incompleteFills = normalized.fillEvents.filter((event) => !complete.has(event.sourceEventId))
+    yield* Effect.forEach(incompleteFills, store.accounting.account, { discard: true })
     const valuation = yield* store.valuation.value({
       accountEventId: accountReceipt.eventId,
       positionSnapshotId: positionsReceipt.snapshotId,
     })
-    return { valuation, positionSnapshotId: positionsReceipt.snapshotId, accountEventId: accountReceipt.eventId }
+    return {
+      valuation,
+      positionSnapshotId: positionsReceipt.snapshotId,
+      accountEventId: accountReceipt.eventId,
+      ledgerPostingRequired: incompleteFills.length > 0,
+    }
   })
 
 const makeReconciliationDecision = (
@@ -128,17 +140,23 @@ const writeReconciliation = (
     const { snapshot, persisted } = yield* store.reconciliation.reconcile(
       normalized.account.accountId,
       Effect.gen(function* () {
-        const { valuation, positionSnapshotId, accountEventId } = yield* ingestBrokerEvents(store, normalized)
-        return makeReconciliationDecision(
+        const { valuation, positionSnapshotId, accountEventId, ledgerPostingRequired } = yield* ingestBrokerEvents(
+          store,
+          normalized,
+        )
+        const decision = makeReconciliationDecision(
           normalized,
           ordersObservedAt,
           valuation,
           yield* now,
           positionSnapshotId,
           accountEventId,
-        ).snapshot
+        )
+        yield* Effect.fromResult(requireSnapshotTradingDate(decision.snapshot, decision.snapshot.reconciledAt))
+        return { ...decision.snapshot, ledgerPostingRequired }
       }),
     )
+    yield* Effect.fromResult(requireSnapshotTradingDate(snapshot, yield* now))
     const decision: ReconciliationWriteDecision = {
       snapshot,
       unknownOrderCount: snapshot.orders.filter((order) => order.intentId === undefined).length,

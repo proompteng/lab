@@ -67,6 +67,8 @@ cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
 research_wrapper="$(resolve_image_entry /bin/bayn-research)"
 research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
+webull_research_wrapper="$(resolve_image_entry /bin/bayn-webull-research)"
+webull_research_command="$(resolve_image_entry /app/services/bayn/dist/webull-research-command.js)"
 gepa_wrapper="$(resolve_image_entry /bin/bayn-gepa)"
 gepa_runner="$(resolve_image_entry /app/services/bayn/gepa/runner.py)"
 evaluation_wrapper="$(resolve_image_entry /bin/bayn-jev-evaluate)"
@@ -75,8 +77,14 @@ gepa_native_wrapper="$(resolve_image_entry /bin/bayn-gepa-native)"
 gepa_native_runner="$(resolve_image_entry /app/services/bayn/gepa/native.py)"
 backtest_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
 backtest_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
+frozen_control_wrapper="$(resolve_image_entry /bin/bayn-frozen-control-backtest)"
+frozen_control_command="$(resolve_image_entry /app/services/bayn/dist/frozen-control-command.js)"
+frozen_control_receipt="$(resolve_image_entry /app/services/bayn/dist/frozen-control-compiler.json)"
 research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
+market_projection_worker="$(resolve_image_entry /app/services/bayn/dist/market-projection-worker.js)"
+controller_command="$(resolve_image_entry /app/services/bayn/dist/index.js)"
+valkey_command="$(resolve_image_entry /app/services/bayn/dist/valkey-command.js)"
 image_node="$(resolve_image_entry /bin/node)"
 streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
@@ -86,6 +94,8 @@ test -x "${cost_wrapper}"
 test -f "${cost_command}"
 test -x "${research_wrapper}"
 test -f "${research_command}"
+test -x "${webull_research_wrapper}"
+test -f "${webull_research_command}"
 test -x "${gepa_wrapper}"
 test -f "${gepa_runner}"
 test -x "${gepa_native_wrapper}"
@@ -94,9 +104,25 @@ test -x "${evaluation_wrapper}"
 test -f "${evaluation_command}"
 test -x "${backtest_wrapper}"
 test -f "${backtest_command}"
+test -x "${frozen_control_wrapper}"
+test -f "${frozen_control_command}"
+test -f "${frozen_control_receipt}"
 test -f "${research_server}"
 test -f "${execution_server}"
+test -f "${market_projection_worker}"
 test -x "${image_node}"
 test -f "${streaming_diagnostics}"
 
+# Redis is bundled into these entrypoints. Inspect the archive contents so an
+# unchanged fixed-output dependency hash cannot silently package the old client.
+for bundle in "${controller_command}" "${execution_server}" "${valkey_command}"; do
+  if ! grep -Fq 'this.#connectController?.abort()' "${bundle}" ||
+    ! grep -Fq 'this.#connectWithSignal(retries, controller.signal)' "${bundle}" ||
+    ! grep -Fq 'AbortSignal.any([withDefaults.signal, signal])' "${bundle}"; then
+    echo "Bayn image bundle is missing native Redis connection cancellation: ${bundle##*/}" >&2
+    exit 1
+  fi
+done
+
 printf 'Bayn image command files verified in archive.\n'
+printf 'Bayn image native Redis cancellation verified in controller, execution server, and Valkey command.\n'

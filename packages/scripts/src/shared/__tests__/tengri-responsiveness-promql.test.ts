@@ -7,10 +7,11 @@ import { expect, test } from 'bun:test'
 import YAML from 'yaml'
 
 const alertNames = [
-  'CephOsdReadLatencyHigh',
   'CephOsdQueueWaitHigh',
   'TengriTerminalHeartbeatLatencyHigh',
   'TengriGuestConnectLatencyHigh',
+  'TengriRunStatusFailures',
+  'TengriRunRecoveryBlocked',
 ]
 
 const stringMap = (value: unknown): Record<string, string> => {
@@ -73,7 +74,7 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       step: 0.1,
       recovered: false,
       namespace: 'tengri',
-      firing: alertNames.slice(0, 2),
+      firing: alertNames.filter((name) => name.startsWith('Ceph')),
     },
     {
       name: 'recovery after sustained latency',
@@ -90,7 +91,6 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       recovered: false,
       namespace: 'tengri',
       firing: [],
-      read: 0.5,
       queue: 0.1,
     },
     {
@@ -99,7 +99,7 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       step: 10,
       recovered: false,
       namespace: 'other',
-      firing: alertNames.slice(0, 2),
+      firing: alertNames.filter((name) => name.startsWith('Ceph')),
     },
   ]
   const cases = scenarios.map((scenario) => {
@@ -120,12 +120,6 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
     }
     const input_series = [
       {
-        series: 'ceph_storage:osd_read_latency_seconds:mean5m{node="turin",ceph_daemon="osd.1"}',
-        values: values((index) =>
-          scenario.recovered && index >= 30 ? 0.01 : (scenario.read ?? (scenario.slow ? 0.6 : 0.01)),
-        ),
-      },
-      {
         series: 'ceph_storage:osd_queue_wait_seconds:estimated_mean5m{node="turin",ceph_daemon="osd.1"}',
         values: values((index) =>
           scenario.recovered && index >= 30 ? 0.01 : (scenario.queue ?? (scenario.slow ? 0.2 : 0.01)),
@@ -133,6 +127,15 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
       },
       ...counters('tengri_terminal_heartbeat_seconds'),
       ...counters('tengri_guest_connect_seconds'),
+      ...[
+        ['tengri_run_read_failures_total', 'tengri', ''],
+        ['tengri_run_recovery_observations_total', 'tengri-run-worker', ',phase="authorization_required"'],
+      ].map(([metric, job, phase]) => ({
+        series: `${metric}{job="${job}",namespace="${scenario.namespace}"${phase}}`,
+        values: values((index) =>
+          scenario.slow && scenario.step >= 1 ? Math.max(0, Math.min(index, scenario.recovered ? 30 : 90) - 6) : 0,
+        ),
+      })),
     ]
     return {
       name: scenario.name,
@@ -157,7 +160,11 @@ test('responsiveness rules fire, recover, retain OSD identity, and reject idle o
             exp_alerts: firing
               ? [
                   {
-                    exp_labels: { ...rule.labels, ...(ceph ? { node: 'turin', ceph_daemon: 'osd.1' } : {}) },
+                    exp_labels: {
+                      ...rule.labels,
+                      ...(ceph ? { node: 'turin', ceph_daemon: 'osd.1' } : {}),
+                      ...(rule.alert === 'TengriRunRecoveryBlocked' ? { phase: 'authorization_required' } : {}),
+                    },
                     exp_annotations: annotations,
                   },
                 ]

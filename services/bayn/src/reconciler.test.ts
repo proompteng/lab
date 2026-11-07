@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from './effect-test-support'
-import { utcInstantFromEpochMillis } from './time'
+import { accountTradingDate, currentUtcInstant, utcInstantFromEpochMillis } from './time'
+import { IsoDateSchema } from './schemas'
 
 import {
   AccountStatus as BrokerAccountStatus,
@@ -59,11 +60,11 @@ const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '1970-01-01T00:00:00.000Z'
 const hash = (value: unknown): string => Result.getOrThrow(canonicalHashV1Result(value))
 
-const evidence = (identity: string): ReadEvidence => ({
+const evidence = (identity: string, at = observedAt): ReadEvidence => ({
   requestId: `request-${identity}`,
   status: 200,
   contentHash: hash(identity),
-  observedAt,
+  observedAt: at,
 })
 
 const account: BrokerAccount = {
@@ -183,7 +184,9 @@ const report = (snapshot: BrokerSnapshot): ReconciliationWriteResult => {
     },
     accountingHash,
     riskContext: {
-      tradingDate: '1969-12-31',
+      tradingDate: Result.getOrThrow(
+        Schema.decodeUnknownResult(IsoDateSchema)(accountTradingDate(snapshot.valuation.asOf)),
+      ),
       authority: null,
       authorityObservedAt: null,
       unknownMutationCount: 0,
@@ -207,7 +210,7 @@ type TestStore = BrokerEventStoreShape &
   ReconciliationStoreShape &
   AuthorityRestrictionStoreShape
 
-const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore => ({
+const makeStore = (control: StoreControl, hasAccountBaseline = true, at = observedAt): TestStore => ({
   completeHistory: (inputs) =>
     Effect.succeed(new Set(control.recordedHistory === true ? inputs.map((input) => input.sourceEventId) : [])),
   ingest: (input) =>
@@ -225,11 +228,11 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
       control.writes += 1
       return receipt
     }),
-  verifyCompleted: () => Effect.void,
+
   value: () =>
     Effect.sync(() => {
       control.writes += 1
-      return valuation
+      return { ...valuation, asOf: at }
     }),
   hasAccountBaseline: () => Effect.succeed(hasAccountBaseline),
   retainCashReporting: () => Effect.void,
@@ -248,11 +251,11 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
     }),
 })
 
-const emptyRead = (): BrokerReadShape => ({
-  account: Effect.succeed({ value: account, evidence: evidence('account') }),
+const emptyRead = (at = observedAt): BrokerReadShape => ({
+  account: Effect.succeed({ value: { ...account, observedAt: at }, evidence: evidence('account', at) }),
   accountConfiguration: Effect.die(new Error('unexpected account configuration read')),
   assetBySymbol: unusedAssetBySymbol,
-  positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
+  positions: Effect.succeed({ value: [], evidence: evidence('positions', at) }),
   orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
   feeActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fees') }),
   fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fills') }),
@@ -281,7 +284,12 @@ const fence: WriterFenceService = {
   transaction: (effect) => effect,
 }
 
-const provide = (read: BrokerReadShape, store: TestStore, writerFence = fence) =>
+const provide = (
+  read: BrokerReadShape,
+  store: TestStore,
+  writerFence = fence,
+  clock: Effect.Effect<string, ReconciliationError> = Effect.succeed(observedAt),
+) =>
   runOnce.pipe(
     Effect.provideService(BrokerRead, read),
     Effect.provideService(BrokerEventStore, store),
@@ -290,6 +298,7 @@ const provide = (read: BrokerReadShape, store: TestStore, writerFence = fence) =
     Effect.provideService(ReconciliationStore, store),
     Effect.provideService(AuthorityRestrictionStore, store),
     Effect.provideService(WriterFence, writerFence),
+    Effect.provideService(ReconciliationClock, clock),
   )
 
 describe('reconciliation pure decisions', () => {
@@ -470,7 +479,7 @@ describe('reconciliation pure decisions', () => {
     })
   })
 
-  test('validates the entire order page against the row budget before deferring its boundary', () => {
+  test('paginates orders beyond ten thousand without weakening timestamp boundaries', () => {
     const pageEvidence = evidence('order-row-budget')
     const existing = Array.from({ length: 9_999 }, (_, index) => ({
       ...order(index),
@@ -486,12 +495,14 @@ describe('reconciliation pure decisions', () => {
     const lastAllowed = { ...order(9_999), submittedAt: utcInstantFromEpochMillis(1) }
     const excess = { ...order(10_000), submittedAt: utcInstantFromEpochMillis(0) }
     const complete = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed], evidence: pageEvidence }))
-    if (complete._tag !== 'Complete') throw new Error('A short in-budget page completes the history')
+    if (complete._tag !== 'Complete') throw new Error('A short page completes the history')
     expect(complete.read.rows).toHaveLength(10_000)
-    expect(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence })).toMatchObject({
-      _tag: 'Failure',
-      failure: { failure: { _tag: 'Pagination', reason: 'OrderHistoryTooLarge' } },
-    })
+    const next = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence }))
+    expect(next._tag).toBe('Continue')
+    if (next._tag !== 'Continue') throw new Error('A full page retains its boundary for the next request')
+    const final = Result.getOrThrow(decideOrderPage(next.state, 2, { value: [excess], evidence: pageEvidence }))
+    if (final._tag !== 'Complete') throw new Error('The final short page must complete')
+    expect(final.read.rows).toHaveLength(10_001)
   })
 
   test('bracket history stays stable across reads while retaining child execution changes', () => {
@@ -722,16 +733,15 @@ describe('execution reconciliation loop', () => {
     let reads = 0
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     const failed = await Effect.runPromise(
-      provide(emptyRead(), makeStore(control)).pipe(
-        Effect.provideService(
-          ReconciliationClock,
-          Effect.suspend(() => {
-            reads += 1
-            return persistent || reads === 1 ? Effect.fail(clockFailure) : Effect.succeed(observedAt)
-          }),
-        ),
-        Effect.flip,
-      ),
+      provide(
+        emptyRead(),
+        makeStore(control),
+        fence,
+        Effect.suspend(() => {
+          reads += 1
+          return persistent || reads === 1 ? Effect.fail(clockFailure) : Effect.succeed(observedAt)
+        }),
+      ).pipe(Effect.flip),
     )
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])
@@ -916,9 +926,7 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
-    const result = await Effect.runPromise(
-      provide(read, makeStore(control)).pipe(Effect.provideService(ReconciliationClock, Effect.succeed(cut))),
-    )
+    const result = await Effect.runPromise(provide(read, makeStore(control), fence, Effect.succeed(cut)))
 
     expect(orderCursors).toEqual([cut, allOrders[2].submittedAt, cut, allOrders[2].submittedAt])
     expect(fillCursors).toEqual([undefined, allFills[99].activityId, undefined, allFills[99].activityId])
@@ -995,7 +1003,9 @@ describe('execution reconciliation loop', () => {
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
     const result = await Effect.runPromise(
-      provide(read, makeStore(control)).pipe((self) => provideTestLayer(self, TestClock.layer())),
+      provide(read, makeStore(control), fence, currentUtcInstant).pipe((self) =>
+        provideTestLayer(self, TestClock.layer()),
+      ),
     )
 
     expect(orderCutoffs).toEqual(['1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.100Z'])
@@ -1176,9 +1186,11 @@ describe('execution reconciliation loop', () => {
     expect(control.writes - firstPassWrites).toBe(4)
     expect(control.reconciliations).toHaveLength(2)
     expect(control.reconciliations[1].fills).toEqual(control.reconciliations[0].fills)
+    expect(control.reconciliations[0]).toHaveProperty('ledgerPostingRequired', true)
+    expect(control.reconciliations[1]).toHaveProperty('ledgerPostingRequired', false)
   })
 
-  test('does not reconcile or reuse a completed fill when its accounting verification fails', async () => {
+  test('does not report a completed reconciliation when accounting verification fails', async () => {
     const brokerOrder = order(0)
     const read: BrokerReadShape = {
       ...emptyRead(),
@@ -1193,7 +1205,7 @@ describe('execution reconciliation loop', () => {
     })
     const store: TestStore = {
       ...makeStore(control),
-      verifyCompleted: (inputs) => (inputs.length > 0 ? Effect.fail(failure) : Effect.void),
+      reconcile: (_, snapshot) => snapshot.pipe(Effect.andThen(Effect.fail(failure))),
     }
 
     const exit = await Effect.runPromiseExit(provide(read, store))
@@ -1252,7 +1264,7 @@ describe('execution reconciliation loop', () => {
     ] as const
     let reads = 0
     const read: BrokerReadShape = {
-      ...emptyRead(),
+      ...emptyRead(cut),
       feeActivities: (query) => {
         reads += 1
         // Observed PAPER behavior: timestamp-bounded non-trade reads omit current-day CFEE receipts.
@@ -1267,9 +1279,7 @@ describe('execution reconciliation loop', () => {
       },
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-    await Effect.runPromise(
-      provide(read, makeStore(control)).pipe(Effect.provideService(ReconciliationClock, Effect.succeed(cut))),
-    )
+    await Effect.runPromise(provide(read, makeStore(control, true, cut), fence, Effect.succeed(cut)))
     expect(control.reconciliations[0]?.fees.map((row) => row.value)).toEqual([...fees])
     expect(reads).toBe(4)
     expect(control.restrictions).toEqual([])
@@ -1277,9 +1287,10 @@ describe('execution reconciliation loop', () => {
 
   test('recaptures late fee postings before persisting an account snapshot', async () => {
     let reads = 0
+    const cut = '2026-07-22T12:00:00.000Z'
     const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
     const read: BrokerReadShape = {
-      ...emptyRead(),
+      ...emptyRead(cut),
       feeActivities: () => {
         reads += 1
         return Effect.succeed({
@@ -1292,8 +1303,10 @@ describe('execution reconciliation loop', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse('2026-07-22T12:00:00.000Z'))
-          const fiber = yield* provide(read, makeStore(control)).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* TestClock.setTime(Date.parse(cut))
+          const fiber = yield* provide(read, makeStore(control, true, cut), fence, currentUtcInstant).pipe(
+            Effect.forkScoped({ startImmediately: true }),
+          )
           yield* TestClock.adjust(500)
           yield* Fiber.join(fiber)
         }),
@@ -1304,7 +1317,7 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
-  test.each([1, 101])(
+  test.each([1, 101, 10_001])(
     'retains %d available fee settlements excluded by the provider creation-time filter',
     async (count) => {
       const cut = '2026-10-15T08:00:00.000Z'
@@ -1318,7 +1331,8 @@ describe('execution reconciliation loop', () => {
       const read: BrokerReadShape = {
         ...emptyRead(),
         feeActivities: (query) => {
-          const start = query?.pageToken === undefined ? 0 : 100
+          const start =
+            query?.pageToken === undefined ? 0 : fees.findIndex((fee) => fee.activityId === query.pageToken) + 1
           const items = Object.hasOwn(query ?? {}, 'until') ? [] : fees.slice(start, start + 100)
           const last = items.at(-1)
           return Effect.succeed({
@@ -1360,10 +1374,7 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     const failure = await Effect.runPromise(
-      provide(read, makeStore(control)).pipe(
-        Effect.provideService(ReconciliationClock, Effect.succeed('2026-10-15T23:59:59.999Z')),
-        Effect.flip,
-      ),
+      provide(read, makeStore(control), fence, Effect.succeed('2026-10-15T23:59:59.999Z')).pipe(Effect.flip),
     )
     expect(failure).toMatchObject({ failure: { _tag: 'Pagination', reason: 'InvalidFeeHistory' } })
     expect(control.writes).toBe(0)
@@ -1517,35 +1528,26 @@ describe('execution reconciliation loop', () => {
     }
   })
 
-  test('rejects broker history beyond the hard row limit before persisting', async () => {
-    let offset = 0
+  test('reads complete fill history beyond ten thousand rows', async () => {
+    const fills = Array.from({ length: 10_001 }, (_, index) => fill(index))
     const read: BrokerReadShape = {
       ...emptyRead(),
       fillActivities: (query = {}) => {
-        const pageSize = query.pageSize ?? 100
-        const items = Array.from({ length: pageSize }, (_, index) => fill(offset + index))
-        offset += items.length
+        const offset =
+          query.pageToken === undefined ? 0 : fills.findIndex((row) => row.activityId === query.pageToken) + 1
+        const items = fills.slice(offset, offset + (query.pageSize ?? 100))
+        const last = items.at(-1)
         return Effect.succeed({
-          value: { items, nextPageToken: items[items.length - 1]?.activityId },
+          value: {
+            items,
+            ...(offset + items.length < fills.length && last !== undefined ? { nextPageToken: last.activityId } : {}),
+          },
           evidence: evidence(`fill-page-${offset}`),
         })
       },
     }
-    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-
-    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
-    expect(failure).toMatchObject({
-      _tag: 'ReconciliationError',
-      operation: 'pagination',
-      message: 'Alpaca fill history exceeds 10000 rows',
-      failure: {
-        _tag: 'Pagination',
-        reason: 'FillHistoryTooLarge',
-      },
-    })
-    expect(offset).toBe(10_001)
-    expect(control.writes).toBe(0)
-    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(observedAt)))
+    expect(snapshot.history.fills.map(({ value }) => value)).toEqual(fills)
   })
 
   test('keeps persistence and containment in distinct writer-fence transactions', async () => {
@@ -1585,7 +1587,6 @@ describe('execution reconciliation loop', () => {
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
       completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
-      verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
       hasAccountBaseline: (id) =>
         Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),

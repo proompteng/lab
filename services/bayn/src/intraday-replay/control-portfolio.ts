@@ -1,7 +1,7 @@
 import { jevLiquidationValue } from '../jev/liquidation-economics'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
-import { momentumControlCandidates } from './momentum-control'
+import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { replayInstrument, type ReplayInstrumentsSchema } from './execution-core'
 import { quantityFromNumber } from '../quantity'
 import { equityMarketProfile, jevMarketForSymbol } from '../jev/markets'
@@ -18,7 +18,7 @@ import {
 } from '../execution/mandate'
 import { MICROS } from '../strategy/execution-model/model'
 import { notionalMicros, numberToMicros } from '../strategy/execution-model/fixed-point'
-import type { JevProtocol } from '../jev/protocol'
+import type { JevProtocol, RetainedJevProtocolV38Schema } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
@@ -31,7 +31,7 @@ import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type Repl
 import { studyOrder } from './signal-study'
 import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
 
-export const controlExitDefinition = { protectiveStopBps: 50, profitTargetNetBps: 100 } as const
+import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 
 export enum ControlPolicy {
   RetainedBreakout = 'RETAINED_BREAKOUT_CLOSE',
@@ -138,7 +138,7 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
 export const controlEntryQuantity = (input: {
   readonly portfolio: ControlPortfolio
   readonly policy: Policy
-  readonly protocol: JevProtocol
+  readonly protocol: Pick<JevProtocol, 'maximumGrossWeight' | 'maximumSymbolWeight' | 'executionModel'>
   readonly targetWeight: number
   readonly symbol: string
   readonly referencePriceMicros: bigint
@@ -260,7 +260,7 @@ export const triggerControlExit = (input: {
   readonly portfolio: ControlPortfolio
   readonly policy: ControlPolicy
   readonly feeMultiplierPpm: number
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
   readonly atMs: number
   readonly cutoffMs: number
   readonly quote: ControlQuote
@@ -285,11 +285,12 @@ export const triggerControlExit = (input: {
         const bid = yield* numberToMicros(quote.value.bidPrice)
         if (
           bid * BigInt(position.quantityAtoms) * 10_000n <=
-          BigInt(position.costBasisMicros) * 1_000_000_000n * BigInt(10_000 - controlExitDefinition.protectiveStopBps)
+          BigInt(position.costBasisMicros) * 1_000_000_000n * BigInt(10_000 - momentumExitDefinition.protectiveStopBps)
         )
           reason = ControlExit.ProtectiveStop
         else if (input.policy !== ControlPolicy.ResidualShock) {
           const liquidation = yield* jevLiquidationValue({
+            feeAt: new Date(atMs).toISOString(),
             protocol,
             symbol: position.symbol,
             quantityAtoms: BigInt(position.quantityAtoms),
@@ -299,7 +300,7 @@ export const triggerControlExit = (input: {
           const acquisition = BigInt(portfolio.inventory.openingCashMicros) - BigInt(portfolio.ledger.cashMicros)
           if (
             liquidation.conservativeNetMicros >=
-            (acquisition * BigInt(10_000 + controlExitDefinition.profitTargetNetBps) + 9_999n) / 10_000n
+            (acquisition * BigInt(10_000 + momentumExitDefinition.profitTargetNetBps) + 9_999n) / 10_000n
           )
             reason = ControlExit.ProfitTarget
         }

@@ -74,7 +74,9 @@ export const makeBrokerObservationStore = (
   cache: ValkeyCache['Service'],
 ) => {
   const decodeProjectionRows = Schema.decodeUnknownEffect(
-    Schema.Array(Schema.Struct({ snapshot_hash: Schema.String, state_hash: Schema.String })),
+    Schema.Array(
+      Schema.Struct({ snapshot_hash: Schema.String, state_hash: Schema.String, observedAt: UtcInstantSchema }),
+    ),
     strictParseOptions,
   )
   const run = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, BrokerReadError, R> =>
@@ -223,13 +225,10 @@ export const makeBrokerObservationStore = (
         // Publish acknowledged immutable payloads before exposing their durable fenced references.
         const snapshotKey = yield* Effect.fromResult(payloadKey('snapshot', snapshotHash))
         const stateKey = yield* Effect.fromResult(payloadKey('state', stateHash))
-        yield* Effect.all(
-          [
-            cache.put({ key: snapshotKey, value: snapshotJson, ttlMs }),
-            cache.put({ key: stateKey, value: stateJson, ttlMs }),
-          ],
-          { concurrency: 2 },
-        )
+        yield* cache.putAll([
+          { key: snapshotKey, value: snapshotJson, ttlMs },
+          { key: stateKey, value: stateJson, ttlMs },
+        ])
         const rows = yield* sql`
       WITH published AS (
       UPDATE broker_observations SET available = true, poll_started_at = ${value.startedAt}::timestamptz,
@@ -275,7 +274,9 @@ export const makeBrokerObservationStore = (
     run(
       Effect.gen(function* () {
         const rows = yield* sql`
-      SELECT snapshot_hash, state_hash FROM broker_observations
+      SELECT snapshot_hash, state_hash,
+        to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
+      FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND available
         AND NOT EXISTS (
           SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
@@ -308,7 +309,9 @@ export const makeBrokerObservationStore = (
         if (row === undefined) {
           const now = yield* currentUtcInstant
           const awaiting = yield* sql`
-        SELECT snapshot_hash, state_hash FROM broker_observations
+        SELECT snapshot_hash, state_hash,
+          to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
+        FROM broker_observations
         WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
           AND observed_at > ${now}::timestamptz - ${maximumAgeMs} * interval '1 millisecond'
           AND completed_at <= ${now}::timestamptz AND completed_at >= poll_started_at
@@ -330,6 +333,12 @@ export const makeBrokerObservationStore = (
           if (pending === undefined) return yield* observationUnavailable('Broker observation metadata is absent')
           return { ...pending, pending: true }
         }
+        // Keep an expired available cut distinct from NO_ADMISSIBLE_CUT: recovery
+        // uses that marker to retain its post-mutation cadence. Its cache TTL has
+        // already elapsed, so reject before attempting either materialization.
+        const now = yield* currentUtcInstant
+        if (Date.parse(now) - Date.parse(row.observedAt) >= maximumAgeMs)
+          return yield* observationUnavailable('Broker observation rejected: stale-observation')
         return { ...row, pending: false }
       }).pipe(withObservedStage('bayn.broker.observation.fence', { dependency: 'postgresql' })),
     )

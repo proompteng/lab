@@ -12,6 +12,7 @@ let
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+  runnerTools = import ./agentrun-tools.nix { inherit pkgs lib; };
   pstackVersion = "0.9.30";
   pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
 
@@ -279,8 +280,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-PJrwaZJ85F4d2yuNpXwh6fY74/pTaJUzuOAeMQSRm2Y=";
-    aarch64-linux = "sha256-Hqwak/lLZpO7BbCFuHFTu0KiRqXXztNmS/YFBT2FKBk=";
+    x86_64-linux = "sha256-jkdKdmU2rDhHmEyjR05JMYYYeGdt4OHrccxXbnEgsHA=";
+    aarch64-linux = "sha256-VZzr7AWwIGHMHLI1Qvh7N71C7TIGsFyEktZqfNCvY+Y=";
   };
 
   installFilters = [
@@ -307,10 +308,15 @@ let
     "services/agents/package.json"
     "services/agents/scripts/codex"
     "services/agents/scripts/codex-config-container.toml"
+    "services/agents/scripts/apply_patch.py"
     "services/agents/src/linear-mcp/bridge-auth.ts"
     "services/agents/src/linear-mcp/config.ts"
     "services/agents/src/linear-mcp/contract.ts"
     "services/agents/src/runner"
+    "services/agents/src/runner-result.ts"
+    "services/agents/src/runner-status.ts"
+    "services/agents/src/runner-telemetry.ts"
+    "services/agents/src/artifact-storage.ts"
     "services/agents/tsconfig.json"
   ];
 
@@ -331,6 +337,7 @@ let
   serviceRuntimeSourceFilter = rel: type:
     runtimeSourceFilter rel type
     && !(lib.hasPrefix "services/agents/scripts/codex/" rel
+      || rel == "services/agents/scripts/runner-acceptance.sh"
       || lib.hasPrefix "services/agents/src/runner/" rel);
 
   serviceBuildCommands = [
@@ -430,6 +437,10 @@ let
     exec ${pkgs.python3}/bin/python3 /app/services/agents/scripts/apply_patch.py "$@"
   '';
 
+  runnerAcceptance = pkgs.writeShellScriptBin "agentrun-acceptance" (
+    builtins.readFile (repoRoot + "/services/agents/scripts/runner-acceptance.sh")
+  );
+
   commonContents = [
     kubectl
     nodejs
@@ -449,7 +460,23 @@ let
     "$out/usr/bin/env" --version >/dev/null
   '';
 
+  runnerIdentity = pkgs.runCommand "agentrun-fixture-identity" { } ''
+    mkdir -p "$out/etc"
+    printf 'root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534:Disposable fixture:/tmp:/bin/sh\n' > "$out/etc/passwd"
+    printf 'root:x:0:\nnobody:x:65534:\n' > "$out/etc/group"
+  '';
+
+  agentsShellIdentity = pkgs.runCommand "agents-shell-identity" { } ''
+    mkdir -p "$out/etc"
+    printf 'agents-shell:x:1000:1000:Agent Shell:/workspace/.agents-shell/home:/bin/bash\n' > "$out/etc/passwd"
+    printf 'agents-shell:x:1000:\n' > "$out/etc/group"
+  '';
+
   agentsShellContents = commonContents ++ [
+    agentsShellIdentity
+    exact.talosctl
+    exact.omnictl
+    pkgs.ipmitool
     agentsShellInterpreterCompat
     applyPatch
     pstackBundle
@@ -463,7 +490,11 @@ let
     pkgs.wget
   ];
 
-  runnerRuntimeContents = [
+  runnerRuntimeContents = runnerTools.contents ++ [
+    runnerAcceptance
+    agentsShellInterpreterCompat
+    runnerIdentity
+    applyPatch
     bun
     nodejs
     openaiCodexCli
@@ -543,6 +574,7 @@ let
     mkdir -p \
       "$out/app/node_modules/@proompteng/codex" \
       "$out/app/services/agents/scripts/codex" \
+      "$out/app/services/agents/scripts" \
       "$out/root/.codex" \
       "$out/workspace" \
       "$out/usr/bin" \
@@ -554,6 +586,7 @@ let
     cp "$TMPDIR/agents-runner/linear-mcp-bridge.js" "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
+    cp "$TMPDIR/work/services/agents/scripts/apply_patch.py" "$out/app/services/agents/scripts/apply_patch.py"
     printf '{}\n' > "$out/root/.codex/auth.json"
     printf '%s\n' unspecified > "$out/root/.codex/auth.checksum"
 
@@ -629,6 +662,13 @@ let
         "BUN_INSTALL=/usr/local"
         "BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache"
         "BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache"
+        "PLAYWRIGHT_BROWSERS_PATH=${runnerTools.browser}/opt/playwright-browsers"
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1"
+        "AGENTRUN_PLAYWRIGHT_VERSION=${runnerTools.playwrightVersion}"
+        "PLATFORM_UI_CHROMIUM=${runnerTools.browser}/bin/agentrun-chromium"
+        "FONTCONFIG_FILE=${runnerTools.fontConfig}"
+        "CC=${pkgs.stdenv.cc}/bin/cc"
+        "CXX=${pkgs.stdenv.cc}/bin/c++"
       ];
     };
 in
@@ -701,4 +741,8 @@ in
   };
 
   "agents-codex-runner-image" = mkRunnerImage;
+  "ofz-fixture-tools" = pkgs.buildEnv {
+    name = "ofz-fixture-tools";
+    paths = [ runnerTools.postgres runnerTools.spicedb pkgs.openssl ];
+  };
 }

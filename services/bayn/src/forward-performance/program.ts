@@ -1,3 +1,7 @@
+import { rebuildAccountingLedger } from '../accounting/domain'
+import type { AccountingTransaction } from '../accounting/schema'
+import type { AccountingReceipt } from '../execution/contracts'
+import type { PreparedAccounting } from '../accounting/model'
 import { feeAccrualCohortSettled, verifyFeeAccrualRecord } from '../db/fee-accruals'
 import { quantityFromDecimal } from '../quantity'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -36,7 +40,9 @@ import type {
   ForwardPerformanceMarketVolumeRequest,
   ForwardPerformanceEvidenceInput,
 } from './model'
-import { readForwardInferenceExpenses } from './inference-expenses'
+import { readForwardInferenceExpenses, readForwardInferenceExpenseSnapshots } from './inference-expenses'
+import { readPersistedSystemAssessment, readSystemRegistration } from '../system-assessment/postgres'
+import { JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceCostError } from '../inference-costs'
 import { forwardPerformanceSnapshot } from './postgres/snapshot'
 import { postgresError } from './postgres/model'
@@ -83,6 +89,7 @@ type BoundForwardPerformanceConfig = ForwardPerformanceConfig & {
 }
 
 export interface ForwardPerformanceReaders {
+  readonly inferenceExpenseSnapshots: typeof readForwardInferenceExpenseSnapshots
   readonly inferenceExpenses: typeof readForwardInferenceExpenses
   readonly postgres: (
     sql: PgClient.PgClient,
@@ -104,6 +111,7 @@ export interface ForwardPerformanceReaders {
 }
 
 export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
+  inferenceExpenseSnapshots: readForwardInferenceExpenseSnapshots,
   inferenceExpenses: readForwardInferenceExpenses,
   postgres: readForwardPerformancePostgres,
   ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
@@ -566,7 +574,29 @@ const requireBrokerIdentity = (
     : Effect.succeed(config as BoundForwardPerformanceConfig)
 }
 
-const readForwardPerformanceInput = (
+const verifyRetainedAccounting = (
+  transactions: readonly AccountingTransaction[],
+  receipts: readonly AccountingReceipt[],
+  config: ForwardPerformanceConfig,
+) =>
+  Result.gen(function* () {
+    const prepared: PreparedAccounting[] = []
+    for (const transaction of transactions) {
+      const ledger = yield* Result.mapError(
+        rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
+        (cause): ReconciliationAlgebraFailure => ({
+          _tag: 'AccountingPlanFailed',
+          transactionId: transaction.transactionId,
+          brokerEventId: transaction.brokerEventId,
+          cause,
+        }),
+      )
+      prepared.push({ transaction, ledger })
+    }
+    return yield* verifyAccountingReceipts(prepared, receipts, config)
+  })
+
+export const readForwardPerformanceInput = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
@@ -589,7 +619,7 @@ const readForwardPerformanceInput = (
       ),
     )
 
-    const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
+    const accountingVerification = verifyRetainedAccounting(postgres.transactions, postgres.receipts, config)
     const feeRecords = postgres.brokerFeeRecords ?? []
     const feeLedgerEvidence = yield* Effect.forEach(feeRecords, (record) =>
       Effect.fromResult(verifyBrokerFeeRecord(record, identity.accountId, config.tigerBeetle)).pipe(
@@ -639,7 +669,7 @@ const readForwardPerformanceInput = (
         .filter((settlement) => generationTransactionIds.has(settlement.data.transactionId))
         .map((settlement) => settlement.plan),
     ]
-    const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
+    const ledgerVerification = verifyRetainedAccounting(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
     const accountPlans = [
       ...(Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []),
       ...feePlans.flat(),
@@ -694,6 +724,7 @@ const readForwardPerformanceInput = (
         : { startingCapitalMicros: postgres.startingCapitalMicros }),
       transactions: postgres.transactionEvidence,
       accountFeeAccruals: postgres.brokerFeeAccrualRecords,
+      accountCashSettlements: postgres.cashSettlementRecords,
       ...(postgres.brokerFeeRecords === undefined ? {} : { accountBrokerFees: feeRecords }),
       ...(postgres.accountReconciliation === undefined
         ? {}
@@ -743,31 +774,48 @@ const readForwardPerformanceInput = (
 export const runForwardPerformanceReport = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
+  options: {
+    readonly authorityGenerationHash?: string
+    readonly writerFence?: WriterFenceService
+    readonly assessmentHash?: string
+  } = {},
 ): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
     const identity = yield* requireBrokerIdentity(loadedConfig)
     const sql = yield* PgClient.PgClient
-    return yield* forwardPerformanceSnapshot(sql, options.writerFence)
+    const captured = yield* forwardPerformanceSnapshot(sql, options.writerFence)
       .withTransaction(
         Effect.gen(function* () {
           const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
-          const expenses = yield* readers
-            .inferenceExpenses(
-              loadedConfig,
+          const assessment =
+            options.assessmentHash === undefined ? null : yield* readPersistedSystemAssessment(options.assessmentHash)
+          if (assessment !== null) {
+            const registration = yield* readSystemRegistration(assessment.registrationHash)
+            const candidate = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+            const accountHash = yield* Effect.fromResult(
+              canonicalHashV1Result({
+                schemaVersion: 'bayn.inference-cost-account.v1',
+                accountId: input.account.accountId,
+              }),
+            )
+            if (
+              candidate?.authorityGenerationHash !== options.authorityGenerationHash ||
+              candidate?.accountBindingHash !== accountHash
+            )
+              return yield* programError(
+                'account-binding',
+                'System assessment belongs to another account or authority generation',
+              )
+          }
+          const expenseSnapshots = yield* readers
+            .inferenceExpenseSnapshots(
               sql,
               identity.execution.brokerIdentity.accountId,
               options.authorityGenerationHash,
               options.writerFence,
             )
             .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
-          return yield* Effect.fromResult(
-            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash),
-          ).pipe(
-            Effect.mapError((cause) =>
-              programError('construct-receipt', 'forward-performance report construction failed', cause),
-            ),
-          )
+          return { input, assessment, expenseSnapshots }
         }),
       )
       .pipe(
@@ -777,4 +825,20 @@ export const runForwardPerformanceReport = (
             : programError('postgres-read', 'forward-performance report snapshot failed', postgresError(cause)),
         ),
       )
+    const expenses = yield* readers
+      .inferenceExpenses(
+        loadedConfig,
+        sql,
+        identity.execution.brokerIdentity.accountId,
+        captured.expenseSnapshots,
+        options.authorityGenerationHash,
+      )
+      .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+    return yield* Effect.fromResult(
+      makeForwardPerformanceReport(captured.input, expenses, options.authorityGenerationHash, captured.assessment),
+    ).pipe(
+      Effect.mapError((cause) =>
+        programError('construct-receipt', 'forward-performance report construction failed', cause),
+      ),
+    )
   })

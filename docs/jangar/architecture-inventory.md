@@ -18,15 +18,15 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | ----------- | ----------------------------------------------------------------------------------------------------------------- | ----------: | ----: | ------------: | --------: |
 | Jangar HTTP | `services/jangar/src/server/app.ts` import globs (`api/**`, `openai/**`, `health.tsx`, `ready.tsx`, and `mcp.ts`) |          74 |     0 |            74 |         0 |
 | Jangar UI   | `services/jangar/src/routes/**` TanStack file-route declarations                                                  |          96 |    19 |            74 |         3 |
-| Agents HTTP | `services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`                  |          46 |     0 |            46 |         0 |
-| Agents UI   | `services/agents/src/app-routes/**` TanStack Start control-plane UI route declarations                            |          14 |     5 |             9 |         0 |
+| Agents HTTP | `services/agents/src/server/control-plane.ts` routeSources under `services/agents/src/routes/**`                  |          47 |     0 |            47 |         0 |
+| Agents UI   | `services/agents/src/app-routes/**` TanStack Start control-plane UI route declarations                            |          15 |     5 |            10 |         0 |
 
 ## Top 20 Largest Jangar App Modules
 
 | Rank | Module                                                                  |  LOC |
 | ---- | ----------------------------------------------------------------------- | ---: |
 | 1    | `services/jangar/src/server/control-plane-status-types.ts`              | 2611 |
-| 2    | `services/jangar/src/server/chat-completion-encoder.ts`                 | 2074 |
+| 2    | `services/jangar/src/server/chat-completion-encoder.ts`                 | 2073 |
 | 3    | `services/jangar/src/server/torghut-market-context-agents.ts`           | 2002 |
 | 4    | `services/jangar/src/server/atlas-store.ts`                             | 1826 |
 | 5    | `services/jangar/src/server/torghut-simulation-control-plane.ts`        | 1724 |
@@ -36,8 +36,8 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | 9    | `services/jangar/src/routes/github/pulls/$owner/$repo/$number.tsx`      | 1027 |
 | 10   | `services/jangar/src/server/torghut-trading.ts`                         | 1000 |
 | 11   | `services/jangar/src/routes/torghut/trading.tsx`                        |  952 |
-| 12   | `services/jangar/src/server/github-client.ts`                           |  941 |
-| 13   | `services/jangar/src/server/torghut-quant-metrics.ts`                   |  933 |
+| 12   | `services/jangar/src/server/torghut-quant-metrics.ts`                   |  933 |
+| 13   | `services/jangar/src/server/github-client.ts`                           |  931 |
 | 14   | `services/jangar/src/server/github-review-actions.ts`                   |  928 |
 | 15   | `services/jangar/src/routes/atlas/search.tsx`                           |  893 |
 | 16   | `services/jangar/src/server/torghut-quant-runtime.ts`                   |  842 |
@@ -48,7 +48,7 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 
 ## Control-Plane Route Surface
 
-Summary: 40 route declarations, 7 pages, 33 HTTP handlers, and 0 redirect-only stubs.
+Summary: 41 route declarations, 7 pages, 34 HTTP handlers, and 0 redirect-only stubs.
 
 Routes are read from current `createFileRoute(...)` declarations. Agents UI routes are included because the Agents Start bundle is the control-plane web surface; direct `/health` and `/ready` handlers are represented in the source-boundary inventory below.
 
@@ -111,6 +111,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 | `/api/primitives/$kind/resources`    | `handler` | `services/agents/src/app-routes/api.primitives.$kind.resources.ts`     |
 | `/health`                            | `handler` | `services/agents/src/app-routes/health.ts`                             |
 | `/mcp`                               | `handler` | `services/agents/src/app-routes/mcp.ts`                                |
+| `/mcp/relay/$target`                 | `handler` | `services/agents/src/app-routes/mcp/relay/$target.ts`                  |
 | `/metrics`                           | `handler` | `services/agents/src/app-routes/metrics.ts`                            |
 | `/primitives`                        | `page`    | `services/agents/src/app-routes/primitives.tsx`                        |
 | `/primitives/$kind`                  | `page`    | `services/agents/src/app-routes/primitives.$kind.tsx`                  |
@@ -122,7 +123,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 163 control-plane source files, 50184 LOC across 6 current boundaries.
+Summary: 164 control-plane source files, 50293 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -225,7 +226,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/immutable-spec.ts`          |   27 |
 | `services/agents/src/server/agents-controller/implementation-contract.ts` |  265 |
 | `services/agents/src/server/agents-controller/index.ts`                   | 1624 |
-| `services/agents/src/server/agents-controller/job-runtime.ts`             | 1089 |
+| `services/agents/src/server/agents-controller/job-runtime.ts`             | 1111 |
 | `services/agents/src/server/agents-controller/job-status.ts`              |   31 |
 | `services/agents/src/server/agents-controller/lifecycle-machine.ts`       |   69 |
 | `services/agents/src/server/agents-controller/mutable-state.ts`           |   95 |
@@ -237,7 +238,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/agents-controller/rate-limits.ts`             |   97 |
 | `services/agents/src/server/agents-controller/resource-reconcilers.ts`    |  763 |
 | `services/agents/src/server/agents-controller/run-utils.ts`               |  153 |
-| `services/agents/src/server/agents-controller/runner-status.ts`           |  223 |
+| `services/agents/src/server/agents-controller/runner-status.ts`           |  293 |
 | `services/agents/src/server/agents-controller/runtime-config.ts`          |  265 |
 | `services/agents/src/server/agents-controller/runtime-debris.ts`          |  160 |
 | `services/agents/src/server/agents-controller/runtime-resources.ts`       |   84 |
@@ -262,7 +263,7 @@ Boundary: `services/agents/src/server/control-plane*`, health/readiness/runtime 
 | `services/agents/src/server/control-plane-status.ts`                      |  500 |
 | `services/agents/src/server/control-plane-ui-api.ts`                      |  112 |
 | `services/agents/src/server/control-plane-watch-reliability.ts`           |  298 |
-| `services/agents/src/server/control-plane.ts`                             |  456 |
+| `services/agents/src/server/control-plane.ts`                             |  462 |
 | `services/agents/src/server/health.ts`                                    |   39 |
 | `services/agents/src/server/metrics.ts`                                   |  395 |
 | `services/agents/src/server/orchestration-controller.ts`                  | 2213 |
@@ -301,6 +302,7 @@ Boundary: `services/agents/src/app-routes/**` control-plane web entry and primit
 | `services/agents/src/app-routes/health.ts`                             |  12 |
 | `services/agents/src/app-routes/index.tsx`                             |   8 |
 | `services/agents/src/app-routes/mcp.ts`                                |  13 |
+| `services/agents/src/app-routes/mcp/relay/$target.ts`                  |  11 |
 | `services/agents/src/app-routes/metrics.ts`                            |  12 |
 | `services/agents/src/app-routes/primitives.$kind.$namespace.$name.tsx` | 113 |
 | `services/agents/src/app-routes/primitives.$kind.new.tsx`              |  50 |

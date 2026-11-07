@@ -19,6 +19,9 @@ import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 import { measurePositionEpisodes, PositionEpisodeEvidenceSchema, PositionEpisodeReason } from './position-episodes'
 import { EpisodeCostReason } from './position-outcomes'
+import { supportedAssessmentFixture } from '../system-assessment/fixtures.test-support'
+import { evaluateSystemAssessment } from '../system-assessment/assessment'
+import { JevResearchPolicy } from '../jev/acceptance'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
@@ -1029,6 +1032,8 @@ describe('position episodes', () => {
       missingQuoteCount: 0,
       unverifiedRequestCount: 0,
       gapRequestCount: 0,
+      matchedQuoteHashes: ['c'.repeat(64)],
+      requestsWithCoverageIssues: [],
       completeMeteredCoverage: true,
       exactSessionLedger: true,
       ledgerTimestampMax: '1791050000000000000',
@@ -1083,7 +1088,7 @@ describe('position episodes', () => {
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v7')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
@@ -1124,4 +1129,70 @@ describe('position episodes', () => {
       ),
     ).toBe(true)
   })
+})
+
+test('exposes complete operating costs only for the attached registered assessment scope', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, assessment))
+  expect(report.operatingCostCoverage).toBe('COMPLETE')
+  expect(report.operatingCostScope).toEqual({
+    registrationHash: assessment.registrationHash,
+    sourceCutHash: assessment.sourceCutHash,
+    asOf: assessment.asOf,
+  })
+  expect(report.systemAssessment?.profitability.netEconomicPnlMicros).toBe('20000000000')
+  expect(Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [])).operatingCostScope).toBeNull()
+})
+
+test('keeps operating cost coverage incomplete without candidate session evidence', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const missingCandidate = {
+    ...assessment,
+    policies: assessment.policies.filter((policy) => policy.policy !== JevResearchPolicy.Candidate),
+  }
+  const emptyCandidate = {
+    ...assessment,
+    policies: assessment.policies.map((policy) =>
+      policy.policy === JevResearchPolicy.Candidate ? { ...policy, sessions: [] } : policy,
+    ),
+  }
+
+  for (const attached of [null, missingCandidate, emptyCandidate]) {
+    const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, attached))
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+    const { reportHash, ...material } = report
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
+  }
+})
+
+test('requires complete costs for every candidate session', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  const candidate = assessment.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+  expect(candidate?.sessions.length).toBeGreaterThan(1)
+
+  for (const missingCosts of [true, false]) {
+    const incomplete = {
+      ...assessment,
+      policies: assessment.policies.map((policy) =>
+        policy.policy !== JevResearchPolicy.Candidate
+          ? policy
+          : {
+              ...policy,
+              sessions: policy.sessions.map((session, index) =>
+                index !== 0
+                  ? session
+                  : {
+                      ...session,
+                      costs: missingCosts || session.costs === null ? null : { ...session.costs, fullyCosted: false },
+                    },
+              ),
+            },
+      ),
+    }
+    const report = Result.getOrThrow(makeForwardPerformanceReport(evidence([]), [], undefined, incomplete))
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  }
 })

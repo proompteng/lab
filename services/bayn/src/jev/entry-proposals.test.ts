@@ -3,7 +3,6 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
 import { jevEntryEconomics } from './entry-economics'
 import { EntrySetup, makeEntryProposals, ProposalRejection } from './entry-proposals'
 import { defaultJevProtocolDocument } from './protocol'
@@ -22,39 +21,33 @@ const source = {
 }
 const fixture = (input = source) => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(input))
-  const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
-  const anchors: Readonly<Record<string, number>> = {
-    support_anchor: 0,
-    resistance_anchor: 4,
-    base_last_bar: 2,
+  const first = chart.bars[0],
+    resistance = chart.bars[4],
+    last = chart.bars[2]
+  if (first === undefined || resistance === undefined || last === undefined) throw new Error('Missing fixture anchors')
+  const assessments = {
+    schemaVersion: 'bayn.chart-assessments.v3' as const,
+    symbol: chart.symbol,
+    windowEndAt: chart.windowEndAt,
+    barsHash: chart.barsHash,
+    pngHash: chart.pngHash,
+    support: {
+      presence: { status: 'ASSESSED' as const, probability: 0.8 },
+      anchor: { status: 'ASSESSED' as const, barId: first.id, probability: 0.8 },
+    },
+    resistance: {
+      presence: { status: 'ASSESSED' as const, probability: 0.8 },
+      anchor: { status: 'ASSESSED' as const, barId: resistance.id, probability: 0.8 },
+    },
+    base: {
+      presence: { status: 'ASSESSED' as const, probability: 0.8 },
+      first: { status: 'ASSESSED' as const, barId: first.id, probability: 0.8 },
+      last: { status: 'ASSESSED' as const, barId: last.id, probability: 0.8 },
+    },
   }
-  const assessments = Result.getOrThrow(
-    chartAssessments(chart, {
-      model: 'gpt-6-luna',
-      answers: request.questions.map((question) =>
-        question.type === 'predicate'
-          ? { type: 'predicate', name: question.name, probability: 0.8 }
-          : {
-              type: 'choice',
-              name: question.name,
-              choice: question.choices[anchors[question.name] ?? 0]?.value,
-              confidence: 0.8,
-              probabilities: question.choices.map((choice, index) => ({
-                value: choice.value,
-                probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
-              })),
-            },
-      ),
-      usage: {
-        input_tokens: 100,
-        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-        output_tokens: 0,
-        total_tokens: 100,
-      },
-    }),
-  )
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      feeAt: '2026-09-04T14:15:00.000Z',
       protocol: defaultJevProtocolDocument,
       symbol: chart.symbol,
       bidMicros: 104_000_000n,
@@ -68,6 +61,46 @@ const fixture = (input = source) => {
 }
 
 describe('source-anchored complete entry proposals', () => {
+  for (const structure of ['support', 'resistance', 'base'] as const) {
+    for (const probability of [0, 0.1, 0.3]) {
+      test(`negative ${structure} presence ${probability} blocks only its dependent setup`, () => {
+        const input = fixture()
+        input.assessments[structure].presence.probability = probability
+        const result = Result.getOrThrow(makeEntryProposals(input))
+        const rejected = structure === 'base' ? EntrySetup.BaseBreakout : EntrySetup.SupportRecovery
+        const surviving = structure === 'base' ? EntrySetup.SupportRecovery : EntrySetup.BaseBreakout
+        expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([surviving])
+        expect(result.rejections).toEqual([{ setup: rejected, reason: ProposalRejection.NoStructure }])
+      })
+    }
+    for (const probability of [0.30000000000000004, 0.5, 0.7, 1]) {
+      test(`uncertain or positive ${structure} presence ${probability} retains its anchored proposal`, () => {
+        const input = fixture()
+        input.assessments[structure].presence.probability = probability
+        const result = Result.getOrThrow(makeEntryProposals(input))
+        expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([
+          EntrySetup.SupportRecovery,
+          EntrySetup.BaseBreakout,
+        ])
+        expect(result.rejections).toEqual([])
+      })
+    }
+  }
+
+  test('retained v38 proposals preserve negative presence and selected anchors as original evidence', () => {
+    const input = fixture()
+    input.assessments.support.presence.probability = 0.1
+    input.assessments.resistance.presence.probability = 0.25
+    input.assessments.base.presence.probability = 0.1
+    const result = Result.getOrThrow(
+      makeEntryProposals({ ...input, protocol: { ...input.protocol, schemaVersion: 'bayn.jev.protocol.v38' } }),
+    )
+    expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([
+      EntrySetup.SupportRecovery,
+      EntrySetup.BaseBreakout,
+    ])
+  })
+
   test('an unidentified base cannot remove an independently funded recovery', () => {
     const input = fixture()
     const result = Result.getOrThrow(
@@ -169,7 +202,7 @@ describe('source-anchored complete entry proposals', () => {
         ...input.assessments,
         support: {
           ...input.assessments.support,
-          anchor: { status: 'SOURCE_SINGLETON', barId: 'invented_bar' } as const,
+          anchor: { status: 'ASSESSED', barId: 'invented_bar', probability: 0.8 } as const,
         },
       },
     ])

@@ -1,5 +1,24 @@
 # Tengri control plane
 
+The controller exports process-local metrics without querying Kubernetes or PostgreSQL during a scrape. Successful
+readiness checks refresh guest and ticket inventory; their last-success timestamp and age identify stale gauges.
+Readiness still checks current Ofz authority, SQL access, and Kubernetes within the existing two-second deadline,
+with separate dependency error/timeout counters. Alloy discovers each controller Pod rather than combining independent
+counters behind a load-balanced Service.
+
+Boot/resume histograms measure successful CR creation or persisted resume intent through guest readiness, including
+reconciliation retries. They exclude BFF admission and are not a browser end-to-end SLO. Recovering a failed readiness
+probe is not another boot. Lifecycle identity is recorded with the running-intent CAS, so a failed resume cannot become
+a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
+The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
+or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The signed `GetActiveCodexRuns` and `GetCodexRun` methods reuse an exact committed observation receipt while
+calling Ofz for a fresh, fully consistent decision on every read. Their permission remains `control_codex`, including
+its MFA and session checks. This classification is never serialized into workflow authority; input, recovery and
+other control submissions still obtain distinct durable audits.
+The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
+Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
+
 Relay client installation is an authenticated guest-control operation. It uses the shared
 [Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
 installation acknowledgement before activation. The former dormant connector gate and contract are removed.
@@ -127,8 +146,9 @@ Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared 
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
-The host runner reserves 9 GiB, including 1 GiB beyond guest RAM for preparation and VMM overhead, matching the native
-acceptance fixture. Artifact staging has a separate 3 GiB limit so copying the boot disk does not exhaust a 128 MiB
+The host runner reserves 12 GiB, including 4 GiB beyond guest RAM for VMM overhead and charged disk/snapshot cache.
+An awake production guest exhausted the former 9 GiB limit with 2.1 GiB of file cache. Artifact staging has a separate
+3 GiB limit so copying the boot disk does not exhaust a 128 MiB
 container through charged file pages. The namespace quota covers all six runners, supervisors, and the controller.
 
 Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
@@ -428,8 +448,11 @@ Codex is idle across all conversations. Active turns, pending starts/steering an
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
 unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
 activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
-is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
-each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+is serialized per workspace across clients in the same guest pool. Conflicts with other controller replicas and
+reconcilers use exponential backoff with jitter, capped at 100 ms, within a one-second retry budget. Each attempt
+reads current lifecycle state and must win its own CAS, so parallel browser module requests can recover from a busy
+replica while a sleep reservation still rejects control. Other workspaces remain independent; no policy decision or
+admission result is cached.
 Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
 reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
 admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
@@ -515,25 +538,46 @@ retained home.
 `SendCodexInput` returns a
 durable run, and `GetActiveCodexRuns` recovers the workspace's active runs without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
-after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
+after Restate accepts the signed admission under its stable workflow key. The accepted snapshot is persisted before waiting for the workspace claim, so a slow claim remains observable
+without sending the input again. A conflicting claim still produces a rejected run. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
 
 `TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
 execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
 and release handlers are
-private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
-control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
+private to Restate service calls. Admission and control signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
 before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
 a newly signed attempt can use the same operation UUID. Accepted workflows use private Restate calls and the workspace
 records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
+Status reads use the private `run-reader` role in the Restate namespace. It exposes only `/status` and `/active`,
+reading fixed state keys through Restate's query API without invoking or journaling a workflow. There is no cache or
+second state store. Canonical UUIDs constrain the fixed SQL; responses are bounded to 16 MiB. Snapshots must match the
+owner, immutable workspace UID, run ID and optional input digest. The controller still obtains fresh Ofz authority
+before each public read. Workspace claims preserve collaborator activity for the archive guard; public active-run
+results remain owner-filtered. Strict mesh authentication and NetworkPolicy admit only controller Pods; controllers cannot
+reach Restate's admin API. The reader has its own proxy identity, no Kubernetes token, RBAC or application secrets.
+
+Reads share a pooled HTTP client and one fifteen-second recovery budget. The private reader admits each query within
+two seconds; an admitted response may finish later. Pending responses continue under that deadline. Only returned
+transient failures trigger bounded retries. An uncertain admission acknowledgement is reconciled through this reader
+using the original operation UUID and input digest. It never submits another admission or native turn.
+
 Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
 RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
 Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
 observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
 access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
+
+Recovery preserves the accepted turn ID. Expired authority produces `authorization_required`; **Resume recovery**
+hands the workflow the current authenticated session through `RecoverCodexRun`, without sending another turn.
+Execution reconciliation backs off from two seconds to one minute. An authorization wait checks once a minute;
+a fresh recovery or Stop control wakes it immediately. Stop retains authorization and reconciliation states instead
+of masking them as cancellation. Neither action releases a conversation whose effects remain unknown.
+This changes the workflow journal and snapshot contract. Drain old active workflows before registration; do not
+move their journals onto the new worker or invent native terminal receipts to finish them.
 
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
@@ -572,19 +616,16 @@ using MicroVM UID and resource-version preconditions.
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
 terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
-Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
-the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
-Each response has a five-second budget. Read recovery has a total fifteen-second budget, shared by the active claim
-and its snapshot. Transport failures, HTTP 5xx, response timeouts and explicit HTTP 408 admission expiry can issue a
-fresh signed read with exponential backoff capped at one second. Each request retains its two-second admission
-window. Signature and authority denials, missing or conflicting runs and invalid responses fail immediately.
-Run submissions and controls are not replayed by this read recovery.
+Read-only queries do not enter the durable journal. Read recovery has a total fifteen-second budget, shared by the
+active claim and its snapshots. Transport failures, HTTP 5xx and explicit HTTP 408 admission expiry can issue a fresh
+read with exponential backoff capped at one second. Authority denials, missing or conflicting runs and malformed
+responses fail closed. Run submissions and controls are not replayed by this read recovery.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
 Stop after preparation and immediately before dispatch. The conversation-concurrency migration changes workspace state
 from a single claim to a map and changes the sleep pin to a JSON set. Drain active run and control invocations before
 registering this worker version, verify that the old sleep pin has cleared, and retain earlier versions for pinned history.
 The controller and BFF must use the plural active-run RPC together; the singular RPC is removed.
-Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
+Unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
 before another effect. These rules do not make arbitrary shell, browser, or external service effects transactional.
@@ -594,6 +635,9 @@ the release ConfigMap, network policies, quota, and controller. Admission fails 
 their retained invocations, before deletion; `revisionHistoryLimit` is a rollback setting, not permission to destroy
 pinned work. The namespace budget allows eight worker Pods across active, retained, and overlapping versions. A full
 budget blocks another rollout until versions drain. Never force-delete a worker with pending work to make capacity.
+Workers expose HTTP `/healthz` and `/metrics` on port 8080. Kubernetes probes use this listener instead of opening
+incomplete HTTP/2 connections on the Restate endpoint. Alloy scrapes actual recovery observations and exhausted
+run-read budgets; Mimir alerts on sustained recovery or failed reads. Labels contain no run, session or turn IDs.
 The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks evidence and delivery gates.
 
 Run the native correlation and interruption contract with an isolated pinned binary:

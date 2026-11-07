@@ -95,6 +95,9 @@ admin_api:
 
 distributor:
   replicas: 2
+  extraArgs:
+    # Allow Kafka's existing 10s write budget and 2s overhead to complete before the caller expires.
+    distributor.remote-timeout: 15s
   resources:
     requests:
       cpu: 200m
@@ -122,6 +125,8 @@ query_scheduler:
 
 ruler:
   replicas: 1
+  extraArgs:
+    distributor.remote-timeout: 15s
 
 store_gateway:
   replicas: 1

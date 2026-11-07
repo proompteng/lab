@@ -1,6 +1,6 @@
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
-import { makeJevEntryQuery } from '../jev/observation-query'
+import { makeMomentumEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -80,7 +80,7 @@ export const scanControlInputs = (input: {
         continue
       }
       yield* market.advanceTo(atMs)
-      const query = makeJevEntryQuery({
+      const query = makeMomentumEntryQuery({
         protocol,
         sessionDate,
         calendar: input.calendar,
@@ -161,7 +161,7 @@ export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt:
     const market: Pick<ControlMarket, 'advanceTo' | 'snapshot'> = {
       advanceTo: (atMs) =>
         source
-          .advanceTo(atMs)
+          .advanceTo(atMs, (work) => work)
           .pipe(
             Effect.mapError((cause) => new ControlStudyFailure({ message: 'Cannot advance preflight source', cause })),
           ),

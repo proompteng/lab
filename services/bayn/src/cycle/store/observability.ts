@@ -10,6 +10,7 @@ import {
   type CycleOperationsSnapshot,
   type DurableAuthorityObservation,
   type ReconciliationObservation,
+  ForwardPerformanceUnavailableReason,
 } from '../observability'
 import { CycleState, CycleTerminalReason, ExecutionCalendarObservationMaterialSchema } from '../model'
 import { describeEntryAllocation, EntryAllocationFactsSchema } from '../entry-allocation-observation'
@@ -20,6 +21,7 @@ import {
   NonNegativeIntegerSchema,
   Sha256Schema,
   SignedMicrosSchema,
+  SourceRevisionSchema,
   StrictNonEmptyStringSchema,
   UtcInstantSchema,
   UtcDatabaseInstantSchema,
@@ -191,6 +193,10 @@ const ProjectionRowSchema = Schema.Struct({
   accounting_execution_fees_micros: SignedMicrosSchema,
   accounting_net_realized_pnl_after_execution_fees_micros: SignedMicrosSchema,
   performance_receipt_created_at: NullableDate,
+  performance_authority_generation_hash: NullableSha256,
+  performance_source_revision: Schema.NullOr(SourceRevisionSchema),
+  performance_window_opened_at: Schema.NullOr(UtcInstantSchema),
+  performance_window_closed_at: Schema.NullOr(UtcInstantSchema),
   performance_evidence_status: NullableForwardPerformanceEvidenceStatus,
   performance_profitability: NullableForwardPerformanceProfitability,
   performance_gross_realized_pnl_micros: NullableSignedMicros,
@@ -337,13 +343,18 @@ const reconciliationFromRow = (
 
 const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObservation, CycleObservabilityError> => {
   const receiptCreatedAt = row.performance_receipt_created_at
+  const authorityGenerationHash = row.performance_authority_generation_hash
   const evidenceStatus = row.performance_evidence_status
   const profitability = row.performance_profitability
   const completedExecutionCount = row.performance_completed_execution_count
   const realizedCloseCount = row.performance_realized_close_count
   const accountingReceiptsExact = row.performance_accounting_receipts_exact
   const ledgerExact = row.performance_ledger_exact
-  const receiptRequiredFields = [
+  const receiptFields = [
+    authorityGenerationHash,
+    row.performance_source_revision,
+    row.performance_window_opened_at,
+    row.performance_window_closed_at,
     evidenceStatus,
     profitability,
     completedExecutionCount,
@@ -351,7 +362,7 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
     accountingReceiptsExact,
     ledgerExact,
   ] as const
-  const hasReceiptFields = receiptRequiredFields.some((field) => field !== null)
+  const hasReceiptFields = receiptFields.some((field) => field !== null)
   if (receiptCreatedAt === null && hasReceiptFields) {
     return Result.fail(readError('invariant', 'forward-performance economics projection is incomplete'))
   }
@@ -359,6 +370,7 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
   let forwardPerformance: CycleEconomicsObservation['forwardPerformance'] = null
   if (receiptCreatedAt !== null) {
     if (
+      authorityGenerationHash === null ||
       evidenceStatus === null ||
       profitability === null ||
       completedExecutionCount === null ||
@@ -370,6 +382,10 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
     }
     forwardPerformance = {
       createdAt: receiptCreatedAt.toISOString(),
+      authorityGenerationHash,
+      sourceRevision: row.performance_source_revision,
+      windowOpenedAt: row.performance_window_opened_at,
+      windowClosedAt: row.performance_window_closed_at,
       evidenceStatus,
       profitability,
       grossRealizedPnlMicros: row.performance_gross_realized_pnl_micros,
@@ -386,6 +402,7 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
 
   return Result.succeed({
     accounting: {
+      scope: 'ACCOUNT_HISTORY',
       fillCount: row.accounting_fill_count,
       transactionCount: row.accounting_transaction_count,
       receiptCount: row.accounting_receipt_count,
@@ -397,6 +414,8 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
       netRealizedPnlAfterExecutionFeesMicros: row.accounting_net_realized_pnl_after_execution_fees_micros,
     },
     forwardPerformance,
+    forwardPerformanceUnavailableReason:
+      forwardPerformance === null ? ForwardPerformanceUnavailableReason.NoPersistedReceipt : null,
   })
 }
 
@@ -680,7 +699,7 @@ const makeCycleObservability = Effect.gen(function* () {
               ON transaction.broker_event_id = receipt.broker_event_id
           ),
           latest_performance_receipt AS (
-            SELECT receipt.created_at, receipt.document -> 'receipt' AS document
+            SELECT receipt.authority_generation_hash, receipt.created_at, receipt.document -> 'receipt' AS document
             FROM autonomous_forward_performance_receipts AS receipt
             JOIN authority_generations AS generation
               ON generation.generation_hash = receipt.authority_generation_hash
@@ -867,7 +886,7 @@ const makeCycleObservability = Effect.gen(function* () {
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
                   'targetPlanReason', CASE
                     WHEN decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
-                      AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v6', 'bayn.jev-entry-target.v7')
+                      AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v6', 'bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1')
                       AND decision.document #> '{strategyDecision,entryPlanRejections}' <> '{}'::jsonb
                     THEN CASE
                       WHEN EXISTS (
@@ -1024,6 +1043,13 @@ const makeCycleObservability = Effect.gen(function* () {
               + (SELECT net_amount_micros FROM selected_broker_fee_cash) - (SELECT coin_cost_micros FROM selected_broker_fee_cash))::text
               AS accounting_net_realized_pnl_after_execution_fees_micros,
             (SELECT created_at FROM latest_performance_receipt) AS performance_receipt_created_at,
+            (SELECT authority_generation_hash FROM latest_performance_receipt) AS performance_authority_generation_hash,
+            (SELECT document -> 'bindings' -> 'source' ->> 'sourceRevision' FROM latest_performance_receipt)
+              AS performance_source_revision,
+            (SELECT document -> 'window' ->> 'openedAt' FROM latest_performance_receipt)
+              AS performance_window_opened_at,
+            (SELECT document -> 'window' ->> 'closedAt' FROM latest_performance_receipt)
+              AS performance_window_closed_at,
             (SELECT document -> 'evidence' ->> 'status' FROM latest_performance_receipt)
               AS performance_evidence_status,
             (SELECT document ->> 'profitability' FROM latest_performance_receipt)
