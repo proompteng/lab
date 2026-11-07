@@ -155,8 +155,9 @@ the same strict parse options. Immutable historical documents and the decoders
 used to read them remain supported.
 
 Canonical JSON serialization writes finite numbers and strings without JSON escape characters directly. Strings
-that need escaping still use the runtime JSON encoder. Unicode validation, sorted keys, descriptors, dense arrays,
-cycle checks and failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
+that need escaping still use the runtime JSON encoder. Successful traversal keeps diagnostic path segments local to
+the call and renders their text only on failure. Unicode validation, sorted keys, descriptors, dense arrays,
+cycle checks and exact failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
 
 New target planning accepts only quote-bound inputs with an explicit allocation, verified bid/ask prices and
 per-symbol liquidity limits. Retired `bayn.paper-target-planner-input.v1` and `v2` inputs cannot construct new plans;
