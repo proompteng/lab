@@ -92,10 +92,10 @@ go test ./... # Run tests
 ### Key Technologies
 
 - **Frontend**: Next.js 15, React 19, TanStack Router, tRPC, Tailwind CSS
-- **Backend**: Go 1.25.5 for repo parity, Node.js 24.11.1, Python 3.9-3.12 for alchimie, Python 3.11-3.12 for Torghut, Ruby 3.4.7, and Kotlin services under Dorvud
+- **Backend**: Go 1.27.3 for repo parity, Node.js 24.22.2, Python 3.9-3.12 for alchimie, Python 3.11-3.12 for Torghut, Ruby 3.4.7, and Kotlin services under Dorvud
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes, Argo CD, OpenTofu, Ansible, Talos/device manifests, and GitOps ApplicationSets
-- **Tooling**: Nix dev shell, Node 24.11.1, Bun 1.4.2, Oxfmt, Oxlint, Turbo, Docker, UV
+- **Tooling**: Nix dev shell, Node 24.22.2, Bun 1.4.4, Oxfmt, Oxlint, Turbo, Docker, UV
 
 ### Application Patterns
 

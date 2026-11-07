@@ -90,7 +90,7 @@ nativeTest(
                 '-v',
                 `${result}:/result:rw`,
                 ...(scratch ? ['-e', 'TMPDIR=/result'] : []),
-                process.env['BAYN_TEST_REPLAY_RUNTIME_IMAGE'] ?? 'node:24.11.1-slim',
+                process.env['BAYN_TEST_REPLAY_RUNTIME_IMAGE'] ?? 'node:24.22.2-slim',
                 '/evidence/bin/source-snapshot.js',
                 sha256(receipt),
               ]),
@@ -166,7 +166,7 @@ nativeTest.each([JevResearchPolicy.Candidate, JevResearchPolicy.Ablation, JevRes
           JSON.stringify({
             schemaVersion: 'bayn.jev-compiler-dependencies.v4',
             sourceRevision: base.sourceRevision,
-            bunVersion: '1.4.2',
+            bunVersion: '1.4.4',
             files: { 'node_modules/observer-fixture/index.js': testHash('fixture dependency') },
             controlFiles: {},
             compilerFiles: {},

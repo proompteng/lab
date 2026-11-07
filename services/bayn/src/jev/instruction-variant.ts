@@ -22,7 +22,7 @@ export const JevInstructionVariantBuildSchema = Schema.Struct({
   strategyBehaviorHash: Sha256Schema,
   strategyParameterHash: Sha256Schema,
   executableSha256: Sha256Schema,
-  bunVersion: Schema.Literal('1.4.2'),
+  bunVersion: Schema.Literal('1.4.4'),
   replacedSourceModule: Schema.Literal('services/bayn/src/jev/instructions.ts'),
   sourceVerification: Schema.Literal('CLEAN_COMMITTED_BUILD_INPUTS'),
   dependencyVerification: Schema.Literal('PINNED_IMAGE_INPUT_BYTES'),
@@ -34,7 +34,7 @@ export const JevInstructionVariantBuildSchema = Schema.Struct({
 export const JevCompilerDependencyReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v4'),
   sourceRevision: GitSourceRevisionSchema,
-  bunVersion: Schema.Literal('1.4.2'),
+  bunVersion: Schema.Literal('1.4.4'),
   files: Schema.Record(Schema.String, Sha256Schema),
   controlFiles: Schema.Record(Schema.String, Sha256Schema),
   compilerFiles: Schema.Record(Schema.String, Sha256Schema),

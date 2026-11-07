@@ -17,12 +17,12 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
         with:
-          node-version: '24.11.1'
+          node-version: '24.22.2'
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install Buf CLI
         uses: bufbuild/buf-action@v1.5.0

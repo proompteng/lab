@@ -16,10 +16,10 @@ check_tool_version() {
   fi
 }
 
-check_tool_version node v24.11.1 "$toolchain_bin/node" --version
-check_tool_version bun 1.4.2 "$toolchain_bin/bun" --version
-check_tool_version bunx 1.4.2 "$toolchain_bin/bunx" --version
-check_tool_version go 'go version go1.25.5 linux/amd64' "$toolchain_bin/go" version
+check_tool_version node v24.22.2 "$toolchain_bin/node" --version
+check_tool_version bun 1.4.4 "$toolchain_bin/bun" --version
+check_tool_version bunx 1.4.4 "$toolchain_bin/bunx" --version
+check_tool_version go 'go version go1.27.3 linux/amd64' "$toolchain_bin/go" version
 check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template '{{.Version}}'
 check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version
 check_tool_version kustomize v5.8.0 "$toolchain_bin/kustomize" version

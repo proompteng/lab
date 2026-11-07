@@ -20,8 +20,8 @@ let
     inherit pkgs lib bun nodejs dependencySource;
     repoRoot = sourcePath;
     depsHash = {
-      x86_64-linux = "sha256-FuqmA70RC42dNRBV2FpRJabKeqSlZYHufoPTsmcvFg8=";
-      aarch64-linux = "sha256-pHVdxmH4to7vBaN0aixOH+YCb4qdH/+VmnkFfb8rcH8=";
+      x86_64-linux = "sha256-ymXeBDuFi213DigrSlllGw6lXpg4p39js/4Vq9eUwpE=";
+      aarch64-linux = "sha256-ZBZ69sdBKG9G1mtxXfWvHABslELgHeakYNkkdvLyS+s=";
     };
     buildCommands = [ ];
     runtimeInstallPhase = ''

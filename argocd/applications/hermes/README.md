@@ -16,7 +16,7 @@ NetworkPolicy enforcement probe. Hermes and OpenClaw must never use the Discord 
 - Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
 - Lab toolchain: the dedicated multi-architecture Nix OCI image is pinned by index digest in the Kargo-managed StatefulSet reference;
-  it is restricted to Node `24.11.1`, Bun/Bunx `1.4.2`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
+  it is restricted to Node `24.22.2`, Bun/Bunx `1.4.4`, Go `1.27.3`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
   ShellCheck `0.11.0`, jq `1.8.1`, and yq `4.49.2`.
 
 The pinned upstream release is mirrored by the dispatchable `hermes-agent-mirror` workflow. That workflow runs only from
@@ -70,7 +70,7 @@ validating a rollout.
 - The gateway process keeps the upstream `/usr/local/bin/node` `v26.5.1` ahead of the Lab toolchain so Hermes runs with its
   release-pinned Node major. The immutable `/etc/profile.d/hermes-tools.sh` deliberately restores `/opt/tools`,
   `/opt/lab-toolchain/bin`, and the pinned Hermes paths after Debian's login profile resets `PATH`; Hermes explicitly
-  sources it while capturing each terminal session, so model-authored terminals retain repository-pinned Node `24.11.1`
+  sources it while capturing each terminal session, so model-authored terminals retain repository-pinned Node `24.22.2`
   and bare `gh` and `kubectl` resolve consistently from API and Discord terminals.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is available through the cluster-local Service and the private tailnet URL

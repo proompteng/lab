@@ -9,7 +9,7 @@ const repository = resolve(import.meta.dir, '../../..')
 const postgres = process.env['BAYN_TEST_POSTGRES_URL']
 const tigerbeetle = process.env['BAYN_TEST_TIGERBEETLE_ADDRESS']
 if (
-  Bun.version !== '1.4.2' ||
+  Bun.version !== '1.4.4' ||
   postgres === undefined ||
   tigerbeetle === undefined ||
   !/\/[^/?]+_test$/.test(postgres) ||

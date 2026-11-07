@@ -186,6 +186,7 @@ test.each([
   const tempDir = mkdtempSync('/tmp/restate-follower-snapshot-gate-')
   const restatectl = `${tempDir}/restatectl`
   const sleep = `${tempDir}/sleep`
+  const seq = `${tempDir}/seq`
   const calls = `${tempDir}/calls`
   const dataDir = `${tempDir}/data`
 
@@ -214,8 +215,11 @@ esac
 `,
     )
     writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    // Exercise initial and exhausted retries; fixtures change only when the seed creates snapshots.
+    writeFileSync(seq, '#!/bin/sh\nprintf "%s\\n" "$1" "$2"\n')
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
+    chmodSync(seq, 0o755)
 
     if (scenario.snapshots) {
       writeFileSync(`${tempDir}/p0`, '')

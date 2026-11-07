@@ -6,11 +6,11 @@ on:
       node-version:
         required: false
         type: string
-        default: '24.11.1'
+        default: '24.22.2'
       bun-version:
         required: false
         type: string
-        default: '1.4.2'
+        default: '1.4.4'
       install-command:
         required: true
         type: string

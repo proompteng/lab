@@ -4,9 +4,9 @@
 # This is intentionally separate from the domain services so the Agents release
 # owns its build graph. The control-plane and controller targets both run
 # @proompteng/agents entrypoints.
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG NODE24_VERSION=24.11.1
+ARG NODE24_VERSION=24.22.2
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
 ARG UV_VERSION=0.11.14

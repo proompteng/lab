@@ -1,6 +1,6 @@
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 
-FROM node:lts-alpine AS deps
+FROM node:24.22.2-alpine AS deps
 ARG BUN_VERSION
 ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
@@ -22,7 +22,7 @@ COPY . .
 RUN bun install --filter synthesis --frozen-lockfile
 RUN bun run build:synthesis
 
-FROM node:lts-alpine AS runner
+FROM node:24.22.2-alpine AS runner
 WORKDIR /app/apps/synthesis
 
 ENV NODE_ENV=production

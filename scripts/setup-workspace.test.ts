@@ -14,7 +14,7 @@ const runBootstrap = async (initialVersion: string, installedVersion: string) =>
   const curlCalled = join(dir, 'curl-called')
   const harness = `
     set -u
-    BUN_VERSION="1.4.2"
+    BUN_VERSION="1.4.4"
     bun() {
       if [ "\${1:-}" = "--version" ]; then
         if [ -f "$TEST_INSTALL_STATE" ]; then
@@ -56,20 +56,20 @@ const runBootstrap = async (initialVersion: string, installedVersion: string) =>
 }
 
 test('setup workspace upgrades an existing stale Bun runtime', async () => {
-  const result = await runBootstrap('1.4.0', '1.4.2')
+  const result = await runBootstrap('1.4.0', '1.4.4')
 
   expect(result.exitCode).toBe(0)
   expect(result.installerCalled).toBeTrue()
-  expect(result.stdout).toContain('Upgrading Bun from 1.4.0 to 1.4.2')
-  expect(result.stdout).toContain('Bun 1.4.2 ready')
+  expect(result.stdout).toContain('Upgrading Bun from 1.4.0 to 1.4.4')
+  expect(result.stdout).toContain('Bun 1.4.4 ready')
 })
 
 test('setup workspace leaves the pinned Bun runtime in place', async () => {
-  const result = await runBootstrap('1.4.2', '1.4.2')
+  const result = await runBootstrap('1.4.4', '1.4.4')
 
   expect(result.exitCode).toBe(0)
   expect(result.installerCalled).toBeFalse()
-  expect(result.stdout).toContain('Bun 1.4.2 ready')
+  expect(result.stdout).toContain('Bun 1.4.4 ready')
 })
 
 test('setup workspace fails when installation does not produce the pinned Bun runtime', async () => {
@@ -77,5 +77,5 @@ test('setup workspace fails when installation does not produce the pinned Bun ru
 
   expect(result.exitCode).toBe(1)
   expect(result.installerCalled).toBeTrue()
-  expect(result.stderr).toContain('Bun version mismatch after install: expected 1.4.2, got 1.3.14')
+  expect(result.stderr).toContain('Bun version mismatch after install: expected 1.4.4, got 1.3.14')
 })

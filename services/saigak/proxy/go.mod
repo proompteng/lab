@@ -1,6 +1,6 @@
 module saigak/ollama-proxy
 
-go 1.25.5
+go 1.27.3
 
 require (
   go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.55.0

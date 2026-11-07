@@ -1,28 +1,15 @@
 {
   pkgs,
   lib,
+  nodejs,
+  go,
   repoRevision ? "dirty",
 }:
 
 let
   version = "0.45.0";
   headlampSha = "0e9fe810cb618964172f420666727c9a67fd6ebf";
-  headlampNixpkgsRevision = "dc5d91f840324650bac8c379428c7037a416959a";
-
-  headlampNixpkgs = builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/${headlampNixpkgsRevision}.tar.gz";
-    sha256 = "sha256-VaWGJ6+cIYN2erfSecbRV+4ljI185Ty2wUrXyvQbgOw=";
-  };
-  headlampPkgs = import headlampNixpkgs {
-    system = pkgs.stdenv.hostPlatform.system;
-    config.allowUnfree = false;
-  };
-  headlampGo =
-    if headlampPkgs.go.version == "1.26.7" then
-      headlampPkgs.go
-    else
-      throw "expected Headlamp Go 1.26.7, got ${headlampPkgs.go.version}";
-  headlampBuildGoModule = headlampPkgs.buildGoModule.override { go = headlampGo; };
+  headlampBuildGoModule = pkgs.buildGoModule.override { inherit go; };
 
   upstreamSrc = pkgs.fetchFromGitHub {
     owner = "kubernetes-sigs";
@@ -85,7 +72,7 @@ let
   };
 
   buildNpmPackage = pkgs.buildNpmPackage.override {
-    nodejs = pkgs.nodejs_22;
+    inherit nodejs;
   };
 
   frontend = buildNpmPackage {

@@ -1,11 +1,11 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1.7
 
 ARG GO_BASE_IMAGE=mirror.gcr.io/golang
-ARG GO_VERSION=1.25.5
+ARG GO_VERSION=1.27.3
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 ARG NODE_BASE_IMAGE=mirror.gcr.io/node
-ARG NODE_VERSION=24.11.1
+ARG NODE_VERSION=24.22.2
 ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
 ARG RUST_VERSION=1.90.0
 ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu
@@ -404,13 +404,13 @@ RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
     python3 -B -c 'import json, sqlite3, ssl, venv; assert sqlite3.connect(":memory:").execute("SELECT 42").fetchone() == (42,); assert ssl.create_default_context(); assert json.loads("42") == 42' && \
     test "$(command -v bwrap)" = '/usr/bin/bwrap' && \
-    test "$(node --version)" = 'v24.11.1' && \
+    test "$(node --version)" = 'v24.22.2' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
-    test "$(bun --version)" = '1.4.2' && \
-    test "$(bunx --version)" = '1.4.2' && \
+    test "$(bun --version)" = '1.4.4' && \
+    test "$(bunx --version)" = '1.4.4' && \
     test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
-    test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
+    test "$(go version | cut -d' ' -f3)" = 'go1.27.3' && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
     test "$(go env CGO_ENABLED)" = '1' && \
     test "$(gcc -dumpfullversion)" = '13.3.0' && \
@@ -476,7 +476,7 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
     tree-sitter --version && \
     test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
-    test "$(node --version)" = v24.11.1 && \
+    test "$(node --version)" = v24.22.2 && \
     test "$(gcc -dumpfullversion)" = 13.3.0 && \
     gh --version && fd --version && fzf --version && lazygit --version && gdu --version && btm --version && tmux -V && \
     kubectl version --client=true && \

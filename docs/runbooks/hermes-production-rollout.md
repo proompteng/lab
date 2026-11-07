@@ -128,9 +128,9 @@ toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
 test "$toolchain_platforms" = linux/amd64,linux/arm64
 for platform in linux/amd64 linux/arm64; do
   crane config --platform "$platform" "$toolchain_ref" | jq -e '
-    .config.Labels["proompteng.ai/toolchain.node"] == "24.11.1" and
-    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.2" and
-    .config.Labels["proompteng.ai/toolchain.go"] == "1.25.5" and
+    .config.Labels["proompteng.ai/toolchain.node"] == "24.22.2" and
+    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.4" and
+    .config.Labels["proompteng.ai/toolchain.go"] == "1.27.3" and
     .config.Labels["proompteng.ai/toolchain.helm"] == "3.19.1" and
     .config.Labels["proompteng.ai/toolchain.kustomize"] == "5.8.0" and
     .config.Labels["proompteng.ai/toolchain.kubeconform"] == "0.7.0" and
@@ -370,10 +370,10 @@ digest and platform labels from that reference.
      test "$(command -v kubeconform)" = /opt/lab-toolchain/bin/kubeconform
      test "$(command -v shellcheck)" = /opt/lab-toolchain/bin/shellcheck
      test "$(command -v yq)" = /opt/lab-toolchain/bin/yq
-     test "$(node --version)" = v24.11.1
-     test "$(bun --version)" = 1.4.2
-     test "$(bunx --version)" = 1.4.2
-     test "$(go version)" = "go version go1.25.5 linux/amd64"
+     test "$(node --version)" = v24.22.2
+     test "$(bun --version)" = 1.4.4
+     test "$(bunx --version)" = 1.4.4
+     test "$(go version)" = "go version go1.27.3 linux/amd64"
      test "$(helm version --template "{{.Version}}")" = v3.19.1
      test "$(jq --version)" = jq-1.8.1
      test "$(kustomize version)" = v5.8.0

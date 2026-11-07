@@ -154,7 +154,7 @@ jobs:
         run: bash services/tengri/test-database-failover.sh
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

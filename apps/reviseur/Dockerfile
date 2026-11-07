@@ -1,6 +1,6 @@
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 
-FROM node:lts-alpine AS deps
+FROM node:24.22.2-alpine AS deps
 ARG BUN_VERSION
 
 WORKDIR /app
@@ -23,7 +23,7 @@ WORKDIR /app
 COPY . .
 RUN bun run build:reviseur
 
-FROM node:lts-alpine AS runner
+FROM node:24.22.2-alpine AS runner
 WORKDIR /app
 
 COPY --from=builder /app/apps/reviseur/.mastra/output ./apps/reviseur
