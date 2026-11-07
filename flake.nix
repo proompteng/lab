@@ -41,12 +41,15 @@
             url = "https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}.tar.xz";
             hash = "sha256-j+LsFyO7n40LaDkHyCcI3rvtpkryHLKqIUxCQe7QoGE=";
           };
-          # Node needs libuv's new statfs fields. Use its authenticated upstream sources without changing other tools.
+          # Node needs libuv's new statfs fields. Keep its full upstream tests without changing other tools.
           nodePackages = pkgs.extend (_final: prev: {
             libuv = prev.libuv.overrideAttrs {
               version = "1.52.1";
-              src = nodeSource;
-              sourceRoot = "node-v${nodeVersion}/deps/uv";
+              src = pkgs.fetchurl {
+                url = "https://dist.libuv.org/dist/v1.52.1/libuv-v1.52.1.tar.gz";
+                hash = "sha256-ZtURuebjNMDmInnrI0+/srMRCxR5wJuVtEx6/KjP+ec=";
+              };
+              sourceRoot = "libuv-v1.52.1";
             };
           });
           # Preserve the shared zlib build so retained Bayn chart bytes still replay.
