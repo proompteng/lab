@@ -2,19 +2,64 @@ import { describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Schema } from 'effect'
 import { PostgresClientLive } from '../../db/postgres-client'
+import { openSnapshotRows } from '../../db/snapshot-rows'
+import { strictParseOptions } from '../../schemas'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
+import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { firstCycleQuery, readForwardPerformanceCycles } from './cycles'
-import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
-import { readForwardPerformanceStrategyRows } from './read'
+import { CycleDecisionRow, type TerminalCycleRow } from './model'
+import { verifyPerformanceDecisions } from './projection'
+import { decisionQuery, ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
+import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceStrategyRows } from './read'
+import { closingSnapshotBoundary, generationScope } from './scope'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const hash = (value: number) => value.toString(16).padStart(64, '0')
 const preciseTime = (micros: string) => '2026-09-04T14:00:00.' + micros + 'Z'
 
+const readDecisions = (
+  sql: PgClient.PgClient,
+  account: string,
+  generation: string | undefined,
+  captured?: readonly (typeof TerminalCycleRow.Type)[],
+) =>
+  Effect.gen(function* () {
+    const rows: (typeof CycleDecisionRow.Type)[] = []
+    const consume = yield* openSnapshotRows(sql, decisionQuery(sql, account, generation, captured))
+    yield* consume((input) =>
+      Schema.decodeUnknownEffect(
+        CycleDecisionRow,
+        strictParseOptions,
+      )(input).pipe(
+        Effect.tap((row) => Effect.sync(() => rows.push(row))),
+        Effect.asVoid,
+      ),
+    )
+    return rows
+  })
+
+const readClosingBoundary = (
+  sql: PgClient.PgClient,
+  account: string,
+  generation: string | undefined,
+  captured?: readonly (typeof TerminalCycleRow.Type)[],
+) => sql<{ boundary: string | null }>`
+  WITH latest_reconciliation AS (
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${account}
+      AND ${generationScope(sql, account, generation, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+    LIMIT 1
+  )
+  SELECT to_char(${closingSnapshotBoundary(sql, account, generation, captured)} AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS boundary
+`
+
 describePostgres('Forward-performance captured cycle query boundaries', () => {
-  test('preserves independent strategy and accounting reads while eliminating repeated scoped selection', async () => {
+  test('preserves independent evidence reads while eliminating repeated scoped selection', async () => {
     const url = baynTestPostgresUrl ?? ''
     const parsed = new URL(url)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
@@ -37,7 +82,8 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
             cycle_id text PRIMARY KEY, account_id text, qualification_run_id text, strategy_name text,
             strategy_protocol_hash text, execution_policy_hash text, strategy_execution_model_hash text,
             decision_hash text, state text, submission_open_at timestamptz, terminal_at timestamptz,
-            created_at timestamptz
+            created_at timestamptz, snapshot_id text, execution_session_date date,
+            execution_open_at timestamptz, execution_close_at timestamptz
           )`
           yield* sql`CREATE TEMP TABLE authority_generations (
             generation_hash text PRIMARY KEY, account_id text, qualification_run_id text, research_plan_hash text,
@@ -47,10 +93,20 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
             activation_schema_version text, maximum text, activated_at timestamptz, previous_generation_hash text
           )`
           yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
-            cycle_id text, decision_hash text, schema_version text, document jsonb
+            cycle_id text, decision_hash text, schema_version text, document jsonb, created_at timestamptz
           )`
+          yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_closures (cycle_id text, document jsonb)`
+          yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_close_replans (cycle_id text, document jsonb)`
           yield* sql`CREATE TEMP TABLE intents (
-            intent_id text PRIMARY KEY, cycle_id text, account_id text, authority_generation_hash text
+            intent_id text PRIMARY KEY, cycle_id text, account_id text, authority_generation_hash text,
+            created_at timestamptz
+          )`
+          yield* sql`CREATE TEMP TABLE snapshot_references (snapshot_id text, manifest jsonb)`
+          yield* sql`CREATE TEMP TABLE intraday_snapshot_references (snapshot_id text, manifest jsonb)`
+          yield* sql`CREATE TEMP TABLE streaming_snapshot_references (snapshot_id text, manifest jsonb)`
+          const { snapshot } = streamingFixture()
+          yield* sql`INSERT INTO streaming_snapshot_references VALUES (
+            ${snapshot.manifest.snapshotId}, ${sql.json(snapshot.manifest)}
           )`
           yield* sql`CREATE TEMP TABLE qualification_results (run_id text, verdict text, lock_id text)`
           yield* sql`CREATE TEMP TABLE qualification_locks (
@@ -104,6 +160,8 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
             { id: 2, generation: 100, state: 'PENDING', at: '2026-09-04T12:01:00Z', plan: 200 },
             { id: 3, generation: 100, state: 'BLOCKED', at: '2026-09-04T12:02:00Z', plan: 200 },
             { id: 70, generation: 100, state: 'COMPLETED', at: '2026-09-04T13:00:00Z', plan: 201 },
+            { id: 76, generation: 100, state: 'COMPLETED', at: preciseTime('000003'), plan: 200 },
+            { id: 77, generation: 100, state: 'COMPLETED', at: preciseTime('000004'), plan: 200 },
             { id: 9, generation: 102, state: 'COMPLETED', at: '2026-09-04T13:08:00Z', plan: 200 },
             { id: 10, generation: 103, state: 'COMPLETED', at: '2026-09-04T16:01:00Z', plan: 200 },
           ] as const
@@ -113,7 +171,8 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
               ${hash(fixture.id)}, ${account}, ${hash(fixture.plan)}, 'research', ${hash(400)},
               ${hash(401)}, ${hash(402)}, ${hash(500 + fixture.id)}, ${fixture.state},
               ${fixture.at}::timestamptz, ${fixture.at}::timestamptz + INTERVAL '1 minute',
-              '2026-09-03T12:00:00Z'
+              '2026-09-03T12:00:00Z', ${snapshot.manifest.snapshotId}, ${snapshot.manifest.sessionDate}::date,
+              ${fixture.at}::timestamptz, ${fixture.at}::timestamptz + INTERVAL '1 minute'
             )`
             yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
               ${hash(fixture.id)}, ${hash(500 + fixture.id)}, 'bayn.paper-cycle-decision.v2',
@@ -122,11 +181,35 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
                 bindings: {
                   accountId: account,
                   qualificationRunId: hash(fixture.plan),
-                  authorityGenerationHash: hash(fixture.generation),
+                  authorityGenerationHash: hash(fixture.id === 76 || fixture.id === 77 ? 999 : fixture.generation),
                 },
-              })}
+              })}, ${fixture.at}::timestamptz
             )`
+            // Membership evidence is deliberately incomplete as a decision. The final strict verifier
+            // must still see and reject it, including closures and residual-close instructions.
+            for (const [table, offset] of [
+              ['autonomous_cycle_paper_closures', 5000],
+              ['autonomous_cycle_paper_close_replans', 6000],
+            ] as const)
+              yield* sql`INSERT INTO ${sql(table)} VALUES (${hash(fixture.id)}, ${sql.json({
+                createdAt: fixture.at,
+                document: {
+                  schemaVersion: 'bayn.paper-cycle-decision.v2',
+                  contentHash: hash(offset + fixture.id),
+                },
+              })})`
           }
+          // Durable intent binding retains a cycle even when its decision cannot prove membership.
+          yield* sql`INSERT INTO intents VALUES (${hash(1076)}, ${hash(76)}, 'account', ${hash(100)},
+            '2026-09-04T14:00:00Z')`
+          yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-04T14:15:00.000000Z'
+            WHERE cycle_id = ${hash(50)}`
+          yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-04T14:15:00.000001Z'
+            WHERE cycle_id = ${hash(1)}`
+          yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-04T14:32:00.000001Z'
+            WHERE cycle_id = ${hash(61)}`
+          yield* sql`UPDATE autonomous_cycles SET execution_close_at = '2026-09-04T15:00:00.000001Z'
+            WHERE cycle_id = ${hash(60)}`
           yield* sql`INSERT INTO qualification_results VALUES (${hash(201)}, 'QUALIFIED', ${hash(202)})`
           yield* sql`INSERT INTO qualification_locks VALUES (
             ${hash(202)}, ${hash(400)}, 'qualified-source', 'registry/bayn', ${'sha256:' + hash(404)}
@@ -176,7 +259,7 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
           for (const transaction of transactions) {
             yield* sql`INSERT INTO intents VALUES (
               ${hash(1000 + transaction.id)}, ${hash(transaction.cycle)}, ${transaction.account},
-              ${hash(transaction.generation)}
+              ${hash(transaction.generation)}, ${transaction.at}::timestamptz
             )`
             yield* sql`INSERT INTO accounting_transactions VALUES (
               'bayn.accounting-transaction.v1', ${hash(transaction.id)}, ${hash(2000 + transaction.id)},
@@ -239,6 +322,24 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
                     captured,
                   )
                   const [afterStrategy] = yield* readCount
+                  const independentDecisions = yield* readDecisions(sql, scope.account, scope.generation)
+                  const independentVolume = yield* readForwardPerformanceMarketVolumeBindings(
+                    sql,
+                    scope.account,
+                    scope.generation,
+                  )
+                  const independentClosing = yield* readClosingBoundary(sql, scope.account, scope.generation)
+                  const [beforeCapturedCompleted] = yield* readCount
+                  const capturedDecisions = yield* readDecisions(sql, scope.account, scope.generation, captured)
+                  const [beforeCapturedBoundaries] = yield* readCount
+                  const capturedVolume = yield* readForwardPerformanceMarketVolumeBindings(
+                    sql,
+                    scope.account,
+                    scope.generation,
+                    captured,
+                  )
+                  const capturedClosing = yield* readClosingBoundary(sql, scope.account, scope.generation, captured)
+                  const [afterCapturedCompleted] = yield* readCount
                   return {
                     ...scope,
                     captured,
@@ -250,10 +351,21 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
                     capturedReceipts,
                     independentStrategy,
                     capturedStrategy,
+                    independentDecisions,
+                    capturedDecisions,
+                    independentVolume,
+                    capturedVolume,
+                    independentClosing,
+                    capturedClosing,
                     independentReads: Number(beforeCaptured?.count) - Number(beforeIndependent?.count),
                     capturedReads: Number(afterCaptured?.count) - Number(beforeCaptured?.count),
                     independentStrategyReads: Number(beforeIndependent?.count) - Number(beforeStrategy?.count),
                     capturedStrategyReads: Number(afterStrategy?.count) - Number(afterCaptured?.count),
+                    independentCompletedReads: Number(beforeCapturedCompleted?.count) - Number(afterStrategy?.count),
+                    capturedCompletedReads:
+                      Number(afterCapturedCompleted?.count) - Number(beforeCapturedCompleted?.count),
+                    capturedBoundaryReads:
+                      Number(afterCapturedCompleted?.count) - Number(beforeCapturedBoundaries?.count),
                   }
                 }),
               )
@@ -261,6 +373,9 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
                 strategy: yield* readForwardPerformanceStrategyRows(sql, 'account', hash(100), []),
                 transactions: yield* transactionQuery(sql, 'account', hash(100), []),
                 receipts: yield* receiptQuery(sql, 'account', hash(100), []),
+                decisions: yield* readDecisions(sql, 'account', hash(100), []),
+                volume: yield* readForwardPerformanceMarketVolumeBindings(sql, 'account', hash(100), []),
+                closing: yield* readClosingBoundary(sql, 'account', hash(101), []),
               }
               const accountCut = new Date('2026-09-04T15:00:00Z')
               const ledgerTransactions = yield* ledgerTransactionQuery(sql, 'account', accountCut)
@@ -276,17 +391,49 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
         expect(scope.capturedTransactions).toEqual(scope.independentTransactions)
         expect(scope.capturedReceipts).toEqual(scope.independentReceipts)
         expect(scope.capturedReads).toBe(0)
+        expect(scope.capturedDecisions).toEqual(scope.independentDecisions)
+        expect(scope.capturedVolume).toEqual(scope.independentVolume)
+        expect(scope.capturedClosing).toEqual(scope.independentClosing)
+        expect(scope.capturedBoundaryReads).toBe(0)
+        expect(verifyPerformanceDecisions(scope.capturedDecisions)).toEqual({
+          verifiedRows: [],
+          unverifiedDecisionHashes: scope.capturedDecisions.map((row) => row.decision_hash).sort(),
+        })
       }
       const retained = result.cases.find((scope) => scope.name === 'retained')
-      expect(retained?.captured.map((cycle) => cycle.cycle_id)).toEqual([hash(40), hash(50), hash(1)])
+      expect(retained?.captured.map((cycle) => cycle.cycle_id)).toEqual([hash(40), hash(50), hash(1), hash(76)])
       expect(retained?.captured.map((cycle) => cycle.submission_open_at.getTime())).toEqual(
-        Array.from({ length: 3 }, () => Date.parse(preciseTime('000000'))),
+        Array.from({ length: 4 }, () => Date.parse(preciseTime('000000'))),
       )
       expect(retained?.capturedBoundary).toEqual([{ cycle_id: hash(40), boundary: preciseTime('000001') }])
       expect(retained?.independentReads).toBeGreaterThan(0)
       expect(retained?.capturedStrategyReads).toBeGreaterThan(0)
       expect(retained?.capturedStrategyReads).toBeLessThan(retained?.independentStrategyReads ?? 0)
       expect(retained?.capturedStrategy[0]?.strategy_name).toBe('research')
+      expect(retained?.capturedCompletedReads).toBeGreaterThan(0)
+      expect(retained?.capturedCompletedReads).toBeLessThan(retained?.independentCompletedReads ?? 0)
+      const expectedDecisionCycles = {
+        retained: [50, 76],
+        current: [60],
+        unscoped: [1, 50, 60, 70, 76, 77],
+        foreign: [9],
+        'wrong-account': [],
+        'missing-generation': [],
+        'observe-generation': [],
+        'empty-account': [],
+      }
+      for (const scope of result.cases) {
+        expect(scope.capturedDecisions.map((row) => row.cycle_id)).toEqual(
+          expectedDecisionCycles[scope.name].flatMap((id) => [hash(id), hash(id), hash(id)]),
+        )
+        // Closing one microsecond after reconciliation excludes market volume, but not the decision.
+        const expectedVolume = expectedDecisionCycles[scope.name].filter((id) => id !== 60)
+        expect(scope.capturedVolume.map((row) => row.cycle_id).sort()).toEqual(expectedVolume.map(hash).sort())
+      }
+      expect(retained?.capturedClosing).toEqual([{ boundary: '2026-09-04T14:15:00.000000Z' }])
+      expect(result.cases.find((scope) => scope.name === 'current')?.capturedClosing).toEqual([
+        { boundary: '2026-09-04T14:32:00.000001Z' },
+      ])
       const expectedTransactions = {
         retained: [302, 303, 304],
         current: [311, 312],
@@ -320,7 +467,14 @@ describePostgres('Forward-performance captured cycle query boundaries', () => {
       expect(result.cases.find((scope) => scope.name === 'foreign')?.capturedStrategy[0]?.strategy_name).toBe(
         'research',
       )
-      expect(result.explicitlyEmpty).toEqual({ strategy: [], transactions: [], receipts: [] })
+      expect(result.explicitlyEmpty).toEqual({
+        strategy: [],
+        transactions: [],
+        receipts: [],
+        decisions: [],
+        volume: [],
+        closing: [{ boundary: '2026-09-04T15:00:00.000000Z' }],
+      })
       expect(result.ledgerTransactions.map((transaction) => transaction['transaction_id'])).toEqual(
         expectedTransactions.unscoped.map(hash),
       )
