@@ -667,7 +667,7 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('download-attempts = 3')
     expect(nixOciWorkflow).toContain('stalled-download-timeout = 60')
     expect(nixOciWorkflow).not.toContain('image_build_timeout:')
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_TIMEOUT: 45m')
+    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_TIMEOUT: 120m')
     expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_TIMEOUT}"')
     expect(nixOciWorkflow).not.toContain('build-image-${ARCH}-cache-nixos-fallback')
     expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
