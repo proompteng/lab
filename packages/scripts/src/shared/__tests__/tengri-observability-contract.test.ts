@@ -103,7 +103,6 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
 
   expect(rules.map(({ record, alert }) => record ?? alert)).toEqual([
     'tengri_rollout_enabled',
-    'TengriArgoApplicationDegraded',
     'TengriMetricsUnavailable',
     'TengriSlotPodsMissing',
     'TengriSlotPoolUnavailable',
@@ -127,7 +126,6 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
   expect(alerts.every((rule) => rule.annotations?.runbook_url === 'docs/tengri/operations.md')).toBe(true)
 
   const expressions = Object.fromEntries(alerts.map((rule) => [rule.alert, rule.expr]))
-  expect(expressions.TengriArgoApplicationDegraded).toContain('argocd_app_info')
   expect(expressions.TengriMetricsUnavailable).toContain('tengri_rollout_enabled == 1')
   expect(expressions.TengriSlotPodsMissing).toContain('kube_pod_info')
   expect(expressions.TengriSlotPoolUnavailable).toContain('kube_pod_status_ready')
