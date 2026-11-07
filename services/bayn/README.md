@@ -1948,6 +1948,28 @@ configured runtime:
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
 
+For an explicit aggregate deadline on the read-only report, append `--deadline-ms <milliseconds>` after the generation
+and optional assessment arguments:
+
+```sh
+node dist/forward-performance-command.js --authority-generation <generation-hash> --deadline-ms 30000
+```
+
+The value must be a decimal integer from 1 to 2147483647. This opt-in supervises the unchanged report command in a
+separate process, so CPU-bound work cannot prevent the supervisor's timer from cancelling it. The budget covers worker
+startup, configuration, evidence reads, validation, encoding, private streaming capture, worker cleanup and removal of
+the named capture file. The capture directory is mode `0700` and its file is mode `0600`. On deadline, cancellation sends
+TERM and escalates to KILL after one second through the native process scope; scheduling and process reaping can add
+time, so this is not an exact final-exit deadline. Worker failure, timeout or failure to remove named capture data publishes
+no report stdout. Only a successful worker whose capture and cleanup finish within the budget publishes the exact original bytes,
+including the terminal newline, from its still-open file descriptor. That final stdout transfer and descriptor close
+follow the budget; downstream backpressure, a broken pipe or external termination can interrupt publication. Stdout
+publication is not atomic. The deployed Linux runtime supports reading the capture after unlinking it.
+
+`--deadline-ms` cannot be combined with `--persist-receipt` or any `--system-*` operation; invalid combinations fail
+before configuration or evidence access. Without the flag, command behavior and timeout policy are unchanged. External
+supervisors should allow cancellation and reaping time before killing this supervisor itself.
+
 That invocation remains read-only. To append the generation report to the durable forward-performance receipt table,
 opt in explicitly after the evidence window has closed:
 
