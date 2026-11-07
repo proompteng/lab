@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 
+import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AppRuntime } from '@/effect/runtime'
@@ -145,7 +146,7 @@ const makeHarness = (
       published.push(message)
     })
   const handler = createLinearWebhookHandler({
-    runtime: {} as AppRuntime,
+    runtime: { runSync: Effect.runSync } as AppRuntime,
     config: options.config ?? config,
     idempotencyStore: createIdempotencyStore(config.idempotency),
     now: () => NOW,
