@@ -33,7 +33,29 @@ export const firstCapturedCycleQuery = (
   sql: PgClient.PgClient,
   cycles: readonly (typeof TerminalCycleRow.Type)[],
 ) => sql`
-  SELECT cycle.submission_open_at
+  SELECT cycle.cycle_id, cycle.account_id, cycle.qualification_run_id,
+    cycle.strategy_protocol_hash, cycle.decision_hash, cycle.submission_open_at
   FROM autonomous_cycles AS cycle
   WHERE cycle.cycle_id = ${cycles[0]?.cycle_id ?? null}
 `
+
+// Captured rows must come from this account/generation in the same snapshot. An empty capture stays empty;
+// independent callers retain the original scoped selection when no capture is supplied.
+export const firstCycleQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
+) =>
+  capturedCycles === undefined
+    ? sql`
+      SELECT cycle.cycle_id, cycle.account_id, cycle.qualification_run_id,
+        cycle.strategy_protocol_hash, cycle.decision_hash, cycle.submission_open_at
+      FROM autonomous_cycles AS cycle
+      WHERE cycle.account_id = ${accountId}
+        AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+        AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+      ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+      LIMIT 1
+    `
+    : firstCapturedCycleQuery(sql, capturedCycles)

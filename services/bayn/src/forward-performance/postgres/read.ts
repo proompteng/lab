@@ -25,6 +25,7 @@ import {
   CycleDecisionRow,
   ReconciliationRow,
   type ForwardPerformancePostgresEvidence,
+  type TerminalCycleRow,
   decodeCashYieldSnapshots,
   decodeCount,
   decodeDurableExecutions,
@@ -47,7 +48,7 @@ import {
   reconciliationExactness,
 } from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
-import { firstCapturedCycleQuery, readForwardPerformanceCycles } from './cycles'
+import { firstCapturedCycleQuery, firstCycleQuery, readForwardPerformanceCycles } from './cycles'
 import {
   executionEvidenceFromRows,
   indexExecutionEvidence,
@@ -140,16 +141,11 @@ export const readForwardPerformanceStrategyRows = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) =>
   sql<Record<string, unknown>>`
   WITH first_cycle AS (
-    SELECT cycle_id, account_id, qualification_run_id, strategy_protocol_hash, decision_hash
-    FROM autonomous_cycles AS cycle
-    WHERE cycle.account_id = ${accountId}
-      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-    LIMIT 1
+    ${firstCycleQuery(sql, accountId, authorityGenerationHash, capturedCycles)}
   ), qualified_strategy AS (
     SELECT
       evaluation.run_id AS qualification_run_id,
@@ -212,7 +208,12 @@ export const readForwardPerformancePostgres = (
       Effect.gen(function* () {
         const cycleRows = yield* readForwardPerformanceCycles(sql, accountId, authorityGenerationHash)
 
-        const strategyRows = yield* readForwardPerformanceStrategyRows(sql, accountId, authorityGenerationHash)
+        const strategyRows = yield* readForwardPerformanceStrategyRows(
+          sql,
+          accountId,
+          authorityGenerationHash,
+          cycleRows,
+        )
 
         const reconciliationRows = yield* sql<Record<string, unknown>>`
           SELECT reconciliation_id, content_hash, status, discrepancies, reconciled_at
@@ -361,7 +362,7 @@ export const readForwardPerformancePostgres = (
         )
         const accountReconciliationRow = accountReconciliationRows[0]
         const accountReconciledAt = accountReconciliationRow?.reconciled_at
-        const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
+        const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash, cycleRows).pipe(
           Effect.flatMap(decodeTransactions),
         )
         const brokerFeeRows = yield* sql<Record<string, unknown>>`
@@ -427,7 +428,7 @@ export const readForwardPerformancePostgres = (
           accountId,
           accountReconciledAt,
         )
-        const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
+        const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash, cycleRows).pipe(
           Effect.flatMap(decodeReceipts),
         )
         const ledgerReceiptRows = yield* ledgerReceiptQuery(sql, accountId, accountReconciledAt).pipe(
