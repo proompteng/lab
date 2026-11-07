@@ -13,7 +13,7 @@ import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
-import { JevObservationSchema } from './observation-contract'
+import { JevObservationSchema, RetainedJevV38ObservationSchema } from './observation-contract'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
@@ -31,12 +31,12 @@ const invalidObservation = (
     ...(cause === undefined ? {} : { cause }),
   })
 
-export const reproduceJevCandidateObservation = (input: unknown) =>
+const reproduceObservation = <
+  Observation extends typeof JevObservationSchema.Type | typeof RetainedJevV38ObservationSchema.Type,
+>(
+  observation: Observation,
+) =>
   Result.gen(function* () {
-    const observation = yield* Schema.decodeUnknownResult(
-      JevObservationSchema,
-      strictParseOptions,
-    )(input).pipe(Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)))
     const candidates =
       observation.portfolio.purpose === 'ENTRY'
         ? []
@@ -166,6 +166,25 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         ? cause
         : invalidObservation(JevObservationCheck.Identity, cause),
     ),
+  )
+
+export const reproduceJevCandidateObservation = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    JevObservationSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    Result.flatMap(reproduceObservation),
+  )
+
+// Financial evidence reader only; current observation and execution admission remain strict.
+export const reproduceRetainedJevV38CandidateObservation = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    RetainedJevV38ObservationSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => invalidObservation(JevObservationCheck.Schema, cause)),
+    Result.flatMap(reproduceObservation),
   )
 
 export const makeJevObservation = (input: {

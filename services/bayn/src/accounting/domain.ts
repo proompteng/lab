@@ -45,6 +45,13 @@ interface AccountingLeg {
   readonly code: TransferCodeValue
 }
 
+interface AccountIdentity {
+  readonly accountId: string
+  readonly ledger: number
+  readonly runKey: bigint
+  readonly runTag: bigint
+}
+
 type ParsedAccountingInput = {
   readonly quantity: bigint
   readonly price: bigint
@@ -167,45 +174,45 @@ const calculateAmounts = (fill: Fill, prior: PositionCost): Result.Result<Accoun
     ),
   )
 
-const makeAccount = (brokerAccountId: string, ledger: number, spec: AccountSpec): LedgerAccountRecord => ({
-  id: stableU128('bayn-paper-ledger-account-v1', brokerAccountId, spec.name),
+const makeAccount = (identity: AccountIdentity, spec: AccountSpec): LedgerAccountRecord => ({
+  id: stableU128('bayn-paper-ledger-account-v1', identity.accountId, spec.name),
   debits_pending: 0n,
   debits_posted: 0n,
   credits_pending: 0n,
   credits_posted: 0n,
-  user_data_128: stableU128('bayn-paper-account-v1', brokerAccountId),
-  user_data_64: stableU64('bayn-paper-account-v1', brokerAccountId),
+  user_data_128: identity.runKey,
+  user_data_64: identity.runTag,
   user_data_32: LEDGER_SCHEMA_VERSION,
   reserved: 0,
-  ledger,
+  ledger: identity.ledger,
   code: spec.code,
   flags: LEDGER_ACCOUNT_HISTORY_FLAG,
   timestamp: 0n,
 })
 
 const makeTransfer = (
-  transactionId: string,
   brokerEventId: string,
-  brokerAccountId: string,
-  ledger: number,
+  transactionKey: bigint,
+  identity: AccountIdentity,
   accountingLeg: AccountingLeg,
+  account: (spec: AccountSpec) => LedgerAccountRecord,
 ): LedgerTransferRecord => ({
   id: stableU128('bayn-paper-transfer-v1', brokerEventId, accountingLeg.leg),
-  debit_account_id: makeAccount(brokerAccountId, ledger, {
+  debit_account_id: account({
     name: accountingLeg.debitName,
     code: accountingLeg.debitCode,
   }).id,
-  credit_account_id: makeAccount(brokerAccountId, ledger, {
+  credit_account_id: account({
     name: accountingLeg.creditName,
     code: accountingLeg.creditCode,
   }).id,
   amount: accountingLeg.amount,
   pending_id: 0n,
-  user_data_128: stableU128('bayn-paper-transaction-v1', transactionId),
-  user_data_64: stableU64('bayn-paper-account-v1', brokerAccountId),
+  user_data_128: transactionKey,
+  user_data_64: identity.runTag,
   user_data_32: LEDGER_SCHEMA_VERSION,
   timeout: 0,
-  ledger,
+  ledger: identity.ledger,
   code: accountingLeg.code,
   flags: 0,
   timestamp: 0n,
@@ -286,16 +293,40 @@ const ledgerLegs = (fill: LedgerFill, amounts: AccountingAmounts): readonly Acco
       : losingSaleLegs(fill.symbol, amounts)
   ).filter(({ amount }) => amount !== 0n)
 
-const uniqueAccountSpecs = (legs: readonly AccountingLeg[]): readonly AccountSpec[] =>
-  legs
-    .flatMap((leg) => [
-      { name: leg.debitName, code: leg.debitCode },
-      { name: leg.creditName, code: leg.creditCode },
-    ])
-    .reduce<readonly AccountSpec[]>(
-      (specs, candidate) => (specs.some(({ name }) => name === candidate.name) ? specs : [...specs, candidate]),
-      [],
-    )
+const makeLegPlan = (
+  transactionId: string,
+  brokerEventId: string,
+  accountId: string,
+  legs: readonly AccountingLeg[],
+  ledger: number,
+): LedgerPlan => {
+  const identity = {
+    accountId,
+    ledger,
+    runKey: stableU128('bayn-paper-account-v1', accountId),
+    runTag: stableU64('bayn-paper-account-v1', accountId),
+  }
+  const transactionKey = stableU128('bayn-paper-transaction-v1', transactionId)
+  // Reuse deterministic identities only within this construction. Every reconciliation still
+  // reconstructs and verifies the complete plan, and independent plans never share mutable records.
+  const accounts = new Map<string, LedgerAccountRecord>()
+  const account = (spec: AccountSpec): LedgerAccountRecord => {
+    const existing = accounts.get(spec.name)
+    if (existing !== undefined) return existing
+    const created = makeAccount(identity, spec)
+    accounts.set(spec.name, created)
+    return created
+  }
+  const transfers = legs
+    .map((leg) => makeTransfer(brokerEventId, transactionKey, identity, leg, account))
+    .toSorted((left, right) => (left.id < right.id ? -1 : 1))
+  return {
+    runKey: identity.runKey,
+    runTag: identity.runTag,
+    accounts: [...accounts.values()].toSorted((left, right) => (left.id < right.id ? -1 : 1)),
+    transfers,
+  }
+}
 
 const makeLedgerPlan = (
   transactionId: string,
@@ -303,19 +334,7 @@ const makeLedgerPlan = (
   fill: LedgerFill,
   amounts: AccountingAmounts,
   ledger: number,
-): LedgerPlan => {
-  const legs = ledgerLegs(fill, amounts)
-  return {
-    runKey: stableU128('bayn-paper-account-v1', fill.accountId),
-    runTag: stableU64('bayn-paper-account-v1', fill.accountId),
-    accounts: uniqueAccountSpecs(legs)
-      .map((spec) => makeAccount(fill.accountId, ledger, spec))
-      .toSorted((left, right) => (left.id < right.id ? -1 : 1)),
-    transfers: legs
-      .map((leg) => makeTransfer(transactionId, brokerEventId, fill.accountId, ledger, leg))
-      .toSorted((left, right) => (left.id < right.id ? -1 : 1)),
-  }
-}
+): LedgerPlan => makeLegPlan(transactionId, brokerEventId, fill.accountId, ledgerLegs(fill, amounts), ledger)
 
 const hashAccountingMaterial = (
   operation: AccountingHashOperation,
@@ -473,30 +492,25 @@ export const brokerFeeLedgerPlan = (
     net < 0n ? { name: 'fee-expense', code: AccountCode.feeExpense } : { name: 'cash', code: AccountCode.cash }
   const credit =
     net < 0n ? { name: 'cash', code: AccountCode.cash } : { name: 'fee-expense', code: AccountCode.feeExpense }
-  return {
-    runKey: stableU128('bayn-paper-account-v1', accountId),
-    runTag: stableU64('bayn-paper-account-v1', accountId),
-    accounts:
-      net === 0n
-        ? []
-        : [makeAccount(accountId, ledger, debit), makeAccount(accountId, ledger, credit)].toSorted((a, b) =>
-            a.id < b.id ? -1 : 1,
-          ),
-    transfers:
-      net === 0n
-        ? []
-        : [
-            makeTransfer(transactionId, eventId, accountId, ledger, {
-              leg: 'broker-fee',
-              debitName: debit.name,
-              debitCode: debit.code,
-              creditName: credit.name,
-              creditCode: credit.code,
-              amount: net < 0n ? -net : net,
-              code: TransferCode.fee,
-            }),
-          ],
-  }
+  return makeLegPlan(
+    transactionId,
+    eventId,
+    accountId,
+    net === 0n
+      ? []
+      : [
+          {
+            leg: 'broker-fee',
+            debitName: debit.name,
+            debitCode: debit.code,
+            creditName: credit.name,
+            creditCode: credit.code,
+            amount: net < 0n ? -net : net,
+            code: TransferCode.fee,
+          },
+        ],
+    ledger,
+  )
 }
 
 export const cashSettlementLedgerPlan = (
@@ -528,14 +542,7 @@ export const cashSettlementLedgerPlan = (
           code: TransferCode.cashRoundingExpense,
         }
   const legs = net === 0n ? [] : [leg]
-  return {
-    runKey: stableU128('bayn-paper-account-v1', accountId),
-    runTag: stableU64('bayn-paper-account-v1', accountId),
-    accounts: uniqueAccountSpecs(legs)
-      .map((spec) => makeAccount(accountId, ledger, spec))
-      .toSorted((a, b) => (a.id < b.id ? -1 : 1)),
-    transfers: legs.map((value) => makeTransfer(eventId, eventId, accountId, ledger, value)),
-  }
+  return makeLegPlan(eventId, eventId, accountId, legs, ledger)
 }
 
 export const coinFeeLedgerPlan = (
@@ -557,12 +564,5 @@ export const coinFeeLedgerPlan = (
     code: TransferCode.fee,
   }
   const legs = amount === 0n ? [] : [leg]
-  return {
-    runKey: stableU128('bayn-paper-account-v1', accountId),
-    runTag: stableU64('bayn-paper-account-v1', accountId),
-    accounts: uniqueAccountSpecs(legs)
-      .map((spec) => makeAccount(accountId, ledger, spec))
-      .toSorted((a, b) => (a.id < b.id ? -1 : 1)),
-    transfers: legs.map((value) => makeTransfer(eventId, eventId, accountId, ledger, value)),
-  }
+  return makeLegPlan(eventId, eventId, accountId, legs, ledger)
 }

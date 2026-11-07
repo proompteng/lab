@@ -181,6 +181,87 @@ test.each([
 )
 
 describe('native Restate execution controller', () => {
+  test('journals time with advance, waits for its durable result, and replays without resampling receipt time', async () => {
+    const initial: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    let state = initial
+    const deliveries: Delivery[] = []
+    const commands: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
+    const advanced = Promise.withResolvers<void>()
+    const durable = Promise.withResolvers<void>()
+    let now = Date.parse('2026-08-13T18:00:00.000Z')
+    let recorded: unknown
+    let replay = false
+    let runCount = 0
+    const object = handlers(
+      makeBaynExecutionController(
+        config,
+        {
+          advance: async (command) => {
+            commands.push(command)
+            advanced.resolve()
+            return {
+              completedAt: command.issuedAt,
+              outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 1_000 },
+            }
+          },
+          log: async () => undefined,
+          prepareActivation: async () => undefined,
+          projectState: async () => undefined,
+        },
+        [],
+        { currentTimeMillisUnsafe: () => now },
+      ),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, value: ExecutionControllerState) => {
+        state = value
+      },
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      run: async (_name: string, action: () => Promise<unknown>) => {
+        runCount += 1
+        if (!replay) recorded = JSON.parse(JSON.stringify(await action()))
+        await durable.promise
+        return recorded
+      },
+      date: {
+        toJSON: async () => {
+          throw new Error('A separate durable clock boundary is forbidden')
+        },
+      },
+      request: () => ({ id: 'combined-clock-advance', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 4 }
+    const first = object.tick(context, tick)
+    await advanced.promise
+    expect(state).toEqual(initial)
+    expect(deliveries).toHaveLength(0)
+    now += 19_000
+    durable.resolve()
+    await first
+    const completed = state
+    expect(commands).toHaveLength(1)
+    expect(commands[0]?.issuedAt).toBe('2026-08-13T18:00:00.000Z')
+    expect(runCount).toBe(1)
+    expect(deliveries[0]).toMatchObject({ delay: 1, idempotencyKey: executionControllerTickIdempotencyKey(1, 5, 0) })
+    state = initial
+    replay = true
+    now += 60_000
+    await object.tick(context, tick)
+    expect(commands).toHaveLength(1)
+    expect(state).toEqual(completed)
+    expect(deliveries[1]).toEqual(deliveries[0])
+  })
+
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerRecoveryTickDelayMs).toBe(30_000)
@@ -1699,8 +1780,16 @@ describe('native Restate execution controller', () => {
         failureCauseTag: 'CapitalActivationPreparationRejected',
       },
     },
+    {
+      failure: new Error('database-secret-must-not-be-logged'),
+      expected: { failureTag: 'Error', failureOperation: 'unclassified' },
+    },
+    {
+      failure: new TerminalError('database-secret-must-not-be-logged', { errorCode: 409 }),
+      expected: { failureTag: 'TerminalError', failureOperation: 'unclassified' },
+    },
   ])(
-    'retains $expected.failureTag diagnostics across the durable run boundary and replay',
+    'retains $expected.failureTag diagnostics and first receipt time across the durable run boundary and replay',
     async ({ failure, expected }) => {
       const state: ExecutionControllerState = {
         schemaVersion: 1,
@@ -1714,6 +1803,7 @@ describe('native Restate execution controller', () => {
       const deliveries: Delivery[] = []
       const logged: Array<Readonly<Record<string, string | number | boolean>>> = []
       let advances = 0
+      let now = Date.parse('2026-08-13T18:00:00.000Z')
       let recorded: { message: string; code: number; metadata: Record<string, string> } | undefined
       const context = {
         key: controllerKey,
@@ -1742,24 +1832,33 @@ describe('native Restate execution controller', () => {
         request: () => ({ id: 'diagnostic-replay', attemptCompletedSignal: new AbortController().signal }),
       } as unknown as TestContext
       const object = handlers(
-        makeBaynExecutionController(config, {
-          advance: () => {
-            advances += 1
-            return Promise.reject(failure)
+        makeBaynExecutionController(
+          config,
+          {
+            advance: () => {
+              advances += 1
+              return Promise.reject(failure)
+            },
+            log: (_level, _message, annotations) => {
+              logged.push(annotations)
+              return Promise.resolve()
+            },
+            prepareActivation: () => Promise.resolve(),
+            projectState: () => Promise.resolve(),
           },
-          log: (_level, _message, annotations) => {
-            logged.push(annotations)
-            return Promise.resolve()
-          },
-          prepareActivation: () => Promise.resolve(),
-          projectState: () => Promise.resolve(),
-        }),
+          [],
+          { currentTimeMillisUnsafe: () => now },
+        ),
       )
       const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 7, sequence: 12 }
       await object.tick(context, tick)
+      now += 60_000
       await object.tick(context, tick)
       expect(advances).toBe(1)
       expect(deliveries).toHaveLength(2)
+      expect(deliveries[0]).toMatchObject({ parameter: { issuedAt: '2026-08-13T18:00:00.000Z' } })
+      expect(deliveries[1]).toEqual(deliveries[0])
+      expect(recorded?.code).toBe(failure instanceof TerminalError ? failure.code : 500)
       expect(logged).toHaveLength(2)
       for (const annotations of logged) {
         expect(annotations).toMatchObject(expected)

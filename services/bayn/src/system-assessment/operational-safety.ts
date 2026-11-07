@@ -30,7 +30,7 @@ import { resolveExecutionOrderTerms, nativeOrderEvidenceAssumptions } from './ex
 import type { ExecutionOrderPlan } from './execution-plans'
 import type { OperationalRegistration } from './operational-period'
 import type { OperationalSourceCut } from './operational-source-cut'
-import type { SystemSourceCut } from './source-cut'
+import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
 import { OperationalSafetySourceSchema, SafetyAuthorityStateSchema } from './operational-safety-source'
 import { BrokerIdentitySchema } from '../broker/identity'
 import { UtcInstantSchema } from '../schemas'

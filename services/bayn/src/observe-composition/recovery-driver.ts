@@ -3,7 +3,7 @@ import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
-import type { AutonomousCycleStartup } from '../app'
+import type { AutonomousCycleStartupInput } from '../app'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import {
@@ -34,7 +34,12 @@ import { OrderStatus, ReconciliationStatus, type AuthorityState } from '../execu
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
-import { restrictMutationLoopFailure, shouldRestrictMutationLoopFailure } from './mutation-interpreter'
+import {
+  confirmAcceptedCancellation,
+  restrictMutationLoopFailure,
+  shouldRestrictMutationLoopFailure,
+} from './mutation-interpreter'
+import { recover as recoverMutation } from '../execution/coordinator'
 import type {
   ExecutionCapability,
   ObserveAutonomousCycleInput,
@@ -43,6 +48,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleAdvance,
   RecoveryFirstRuntime,
+  PostMutationReconciliation,
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
 import {
@@ -252,7 +258,7 @@ const verifyDecisionBindingEvidence = (
 }
 
 const observeMutationPass = (
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const facts = cyclePassLogFacts(observation)
@@ -282,7 +288,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
     const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
     let interruptionRequestedAt = startedAt
     return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
-      withObservedStage(stage),
+      withObservedStage(stage, { slowAfterMs: null }),
       Effect.provideService(ActiveExecutionStages, activeStages),
       operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
@@ -388,7 +394,7 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
   })
 
 const observeMutationCycleResult = (
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   cadence: Ref.Ref<MutationReconciliationCadenceState>,
   result: CycleRunResult,
 ): Effect.Effect<AutonomousCyclePassObservation> =>
@@ -563,7 +569,7 @@ export const checkAdvancedMarketProjection = <R>(
 
 const makeRecoveryFirstCycleDriverEffect = (
   input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   capability: ExecutionCapability,
@@ -573,6 +579,8 @@ const makeRecoveryFirstCycleDriverEffect = (
     const cadence = yield* Ref.make<MutationReconciliationCadenceState>({})
     // A local continuation hint, not evidence or mutation authority. Restarting loses only acceleration.
     const postExitCloseAt = yield* Ref.make<string | undefined>(undefined)
+    // This hint only accelerates lookup-only confirmation. A restart retains normal durable recovery.
+    const cancellationContinuation = yield* Ref.make<PostMutationReconciliation | undefined>(undefined)
     // The generation deadline can interrupt reconciliation before its own timeout is reported.
     // Clear this marker before entering any cycle work; only the serialized preflight may retry without restriction.
     const preflightOnly = yield* Ref.make(false)
@@ -699,6 +707,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           cyclePassTimeoutMs,
         )
         if (isPostMutationReconciliation(result)) {
+          yield* Ref.set(
+            cancellationContinuation,
+            result.cancellationConfirmationIntentId !== undefined ? result : undefined,
+          )
           // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
           // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
           // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
@@ -733,7 +745,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       cadence,
       reconcile,
     )
-    const runCycleAdvance = Ref.set(preflightOnly, true).pipe(
+    const reconcileAndAdvance = Ref.set(preflightOnly, true).pipe(
       Effect.andThen(reconciliationPreflight),
       Effect.matchEffect({
         onFailure: observeReconciliationFailure,
@@ -749,17 +761,44 @@ const makeRecoveryFirstCycleDriverEffect = (
             ),
           ),
       }),
+    )
+    const runCycleAdvance = Effect.gen(function* () {
+      // Confirmation can persist recovery evidence, so its failures keep the cycle-phase restriction policy.
+      yield* Ref.set(preflightOnly, false)
+      const pending = yield* Ref.getAndSet(cancellationContinuation, undefined)
+      if (pending?.cancellationConfirmationIntentId !== undefined) {
+        const confirmation = yield* confirmAcceptedCancellation(pending.cancellationConfirmationIntentId, {
+          recover: capability._tag === 'RecoveryOnly' ? recoverMutation : capability.executionProgram.recover,
+        }).pipe(Effect.result)
+        if (Result.isFailure(confirmation)) return yield* observeCycleFailure(confirmation.failure)
+        if (confirmation.success.delayMs > 0) {
+          yield* Ref.set(cancellationContinuation, pending)
+          const result = deferPostMutationReconciliation(pending)
+          const observation = yield* observeMutationPass(startup, {
+            outcome: 'SUCCEEDED',
+            observedAt: yield* currentUtcInstant,
+            result,
+          })
+          return { observation, result, nextDelayMs: Math.min(nextDelayMs, confirmation.success.delayMs) }
+        }
+        // Confirmation never replaces fresh, post-recovery reconciliation or grants submission authority.
+        yield* Ref.set(cadence, {})
+      }
+      return yield* reconcileAndAdvance
+    }).pipe(
+      Effect.map((advanced): RecoveryFirstCycleAdvance => advanced),
       Effect.flatMap((advanced) => {
         if (advanced.observation.result === 'FAILURE' || !('result' in advanced) || advanced.result === undefined)
           return Effect.succeed(advanced)
+        const result = advanced.result
         return currentUtcInstant.pipe(
           Effect.map((observedAt) => {
             const cadence = advanced.nextDelayMs ?? nextDelayMs
             const continuation =
-              unusedEntryHandoffDelayMs(advanced.result, cadence, observedAt) ??
-              executionEvidenceContinuationDelayMs(advanced.result, cadence, observedAt) ??
-              decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
-            const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
+              unusedEntryHandoffDelayMs(result, cadence, observedAt) ??
+              executionEvidenceContinuationDelayMs(result, cadence, observedAt) ??
+              decisionReadinessContinuationDelayMs(result, cadence, observedAt)
+            const maximumHold = maximumHoldContinuationDelayMs(result, cadence, observedAt)
             if (maximumHold !== undefined) {
               const delay = Math.min(continuation ?? cadence, maximumHold)
               return {
@@ -822,7 +861,7 @@ const makeRecoveryFirstCycleDriverEffect = (
 
 export const makeRecoveryFirstCycleDriver = (
   input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
+  startup: AutonomousCycleStartupInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   capability: ExecutionCapability,

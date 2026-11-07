@@ -29,6 +29,9 @@ Runtime expectations:
 - a valid release must include both artifacts; a client-only Vite build is not sufficient
 - the application runs without a Docker daemon, Docker socket mounts, or runtime Docker/Buildx clients
 - the workspace bootstrap init container exits after preparing the persistent `/workspace`; it is not a sidecar
+- Jangar uses Effect 4.1.2, including the shared Agents client, service layers and core Schema APIs
+- `bun run --cwd services/jangar test:production-runtime` starts the built server and checks health, model discovery
+  and chat input validation plus a completion using the built-in mock Codex backend; CI and the Nix runtime assembly both run it before release
 
 ## Image Build
 

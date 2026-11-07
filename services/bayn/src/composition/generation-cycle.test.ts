@@ -1,15 +1,14 @@
 import { expect, test } from 'bun:test'
-import { Deferred, Effect, Exit, Fiber, Ref, Semaphore } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Ref, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
-import type { RecoveryFirstCycleDriver } from '../observe-composition/model'
 import type { TerminalGenerationRolloverReceipt } from '../blocked-generation-recovery'
+import { OperationalError } from '../errors'
 import { CycleRunnerError } from '../cycle/runner/model'
-import type { AutonomousRuntime } from '../app'
 import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
 import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
-import { makeGenerationCycleDriver, ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
+import { makeGenerationCycleDriver, makeRebindingCycleDriver } from './generation-cycle'
 
 const generationHash = 'a'.repeat(64)
 const deadline = { timeoutMs: 30_000, onTimeout: (error: CycleRunnerError) => Effect.fail(error) }
@@ -94,7 +93,6 @@ test.each(['authority', 'cycle', 'settlement'] as const)(
     const exit = await Effect.runPromise(
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>()
-        const published = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
         const stalled = Deferred.succeed(entered, undefined).pipe(
           Effect.andThen(Effect.never),
           Effect.ensuring(
@@ -103,30 +101,31 @@ test.each(['authority', 'cycle', 'settlement'] as const)(
             }),
           ),
         )
-        const owner = yield* ownGenerationCycleDriver<never>({
-          generationHash,
-          mode: stage === 'settlement' ? 'CloseOnly' : 'Mutation',
-          readAuthority:
-            stage === 'authority' ? stalled : Effect.succeed(stage === 'settlement' ? restriction : authority),
-          reconcileWhenHeld: Effect.die('not held'),
-          settle: stage === 'settlement' ? stalled : Effect.die('not settling'),
-          owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
-        })({
-          timeoutMs: 100,
-          nextDelayMs: 100,
-          onTimeout: () =>
-            Effect.sync(() => {
-              cycleTimeouts += 1
-              return advanced
-            }),
-          advance: stage === 'cycle' ? stalled : Effect.succeed(advanced),
-        }).pipe(Effect.forkChild({ startImmediately: true }))
-        const driver = yield* Deferred.await(published)
+        const owned = yield* makeGenerationCycleDriver(
+          {
+            generationHash,
+            mode: stage === 'settlement' ? 'CloseOnly' : 'Mutation',
+            readAuthority:
+              stage === 'authority' ? stalled : Effect.succeed(stage === 'settlement' ? restriction : authority),
+            reconcileWhenHeld: Effect.die('not held'),
+            settle: stage === 'settlement' ? stalled : Effect.die('not settling'),
+          },
+          {
+            timeoutMs: 100,
+            nextDelayMs: 100,
+            onTimeout: () =>
+              Effect.sync(() => {
+                cycleTimeouts += 1
+                return advanced
+              }),
+            advance: stage === 'cycle' ? stalled : Effect.succeed(advanced),
+          },
+        )
+        const driver = owned.driver
         const attempt = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(entered)
         yield* TestClock.adjust(stage === 'authority' ? 16 : 100)
         const result = yield* Fiber.await(attempt)
-        yield* Fiber.interrupt(owner)
         return result
       }).pipe(Effect.provide(TestClock.layer())),
     )
@@ -140,25 +139,23 @@ test('a healthy driver hands off when its pass restricts the generation', async 
   const completed = await Effect.runPromise(
     Effect.gen(function* () {
       const state = yield* Ref.make(authority)
-      const published = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
-      const owner = yield* ownGenerationCycleDriver<never>({
-        generationHash,
-        mode: 'Mutation',
-        readAuthority: Ref.get(state),
-        reconcileWhenHeld: Effect.die('unexpected operator hold'),
-        settle: Effect.die('healthy driver must rebind before settlement'),
-        owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
-      })({
-        advance: Ref.set(state, restriction).pipe(Effect.as(advanced)),
-        ...deadline,
-        nextDelayMs: 30_000,
-      }).pipe(Effect.forkChild({ startImmediately: true }))
-      const driver = yield* Deferred.await(published)
+      const owned = yield* makeGenerationCycleDriver(
+        {
+          generationHash,
+          mode: 'Mutation',
+          readAuthority: Ref.get(state),
+          reconcileWhenHeld: Effect.die('unexpected operator hold'),
+          settle: Effect.die('healthy driver must rebind before settlement'),
+        },
+        {
+          advance: Ref.set(state, restriction).pipe(Effect.as(advanced)),
+          ...deadline,
+          nextDelayMs: 30_000,
+        },
+      )
+      const driver = owned.driver
       expect(yield* driver.advance).toEqual(advanced)
-      yield* Effect.yieldNow
-      const result = owner.pollUnsafe()
-      yield* Fiber.interrupt(owner)
-      return result !== undefined && Exit.isSuccess(result)
+      return yield* owned.needsRebind
     }),
   )
   expect(completed).toBe(true)
@@ -188,25 +185,22 @@ test.each([
   let reconciled = false
   await Effect.runPromise(
     Effect.gen(function* () {
-      const published = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
-      const owner = yield* ownGenerationCycleDriver<never>({
-        generationHash,
-        mode,
-        readAuthority: Effect.succeed(state),
-        reconcileWhenHeld: Effect.sync(() => {
-          reconciled = true
-        }),
-        settle: Effect.die('must not settle changed or operator-restricted authority'),
-        owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
-      })({ advance: Effect.die('must not advance the stale driver'), ...deadline, nextDelayMs: 30_000 }).pipe(
-        Effect.forkChild({ startImmediately: true }),
+      const owned = yield* makeGenerationCycleDriver(
+        {
+          generationHash,
+          mode,
+          readAuthority: Effect.succeed(state),
+          reconcileWhenHeld: Effect.sync(() => {
+            reconciled = true
+          }),
+          settle: Effect.die('must not settle changed or operator-restricted authority'),
+        },
+        { advance: Effect.die('must not advance the stale driver'), ...deadline, nextDelayMs: 30_000 },
       )
-      const driver = yield* Deferred.await(published)
+      const driver = owned.driver
       expect((yield* driver.advance).observation).toMatchObject({ result: 'FAILURE', operation: 'read-authority-slot' })
-      yield* Effect.yieldNow
-      expect(owner.pollUnsafe() !== undefined).toBe(rebind)
+      expect(yield* owned.needsRebind).toBe(rebind)
       expect(reconciled).toBe(!rebind)
-      yield* Fiber.interrupt(owner)
     }),
   )
 })
@@ -217,7 +211,6 @@ test('close-only recovery waits for settlement and hands off once, including que
   await Effect.runPromise(
     Effect.gen(function* () {
       const state = yield* Ref.make(restriction)
-      const published = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
       const settle: Effect.Effect<TerminalGenerationRolloverReceipt> = Effect.gen(function* () {
         settlements += 1
         if (settlements === 1) return { _tag: 'NotRequired' }
@@ -237,26 +230,28 @@ test('close-only recovery waits for settlement and hands off once, including que
           terminalIntentCount: 2,
         }
       })
-      const owner = yield* ownGenerationCycleDriver<never>({
-        generationHash,
-        mode: 'CloseOnly',
-        readAuthority: Ref.get(state),
-        reconcileWhenHeld: Effect.die('unexpected operator hold'),
-        settle,
-        owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
-      })({
-        advance: Effect.sync(() => {
-          closePasses += 1
-          return advanced
-        }),
-        ...deadline,
-        nextDelayMs: 30_000,
-      }).pipe(Effect.forkChild({ startImmediately: true }))
-      const driver = yield* Deferred.await(published)
+      const owned = yield* makeGenerationCycleDriver(
+        {
+          generationHash,
+          mode: 'CloseOnly',
+          readAuthority: Ref.get(state),
+          reconcileWhenHeld: Effect.die('unexpected operator hold'),
+          settle,
+        },
+        {
+          advance: Effect.sync(() => {
+            closePasses += 1
+            return advanced
+          }),
+          ...deadline,
+          nextDelayMs: 30_000,
+        },
+      )
+      const driver = owned.driver
       yield* driver.advance
-      expect(owner.pollUnsafe()).toBeUndefined()
+      expect(yield* owned.needsRebind).toBe(false)
       yield* Effect.all([driver.advance, driver.advance], { concurrency: 2 })
-      yield* Fiber.join(owner)
+      expect(yield* owned.needsRebind).toBe(true)
       expect(yield* Ref.get(state)).toMatchObject({ effective: Authority.Observe, kill: KillState.Clear })
     }),
   )
@@ -329,116 +324,57 @@ test('an operator hold arriving during settlement prevents another recovery cycl
   expect(heldReconciliations).toBe(1)
 })
 
-test('interrupting recovery finalizes the published driver without settling authority', async () => {
-  let finalized = false
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const published = yield* Deferred.make<void>()
-      const owner = yield* ownGenerationCycleDriver<never>({
-        generationHash,
-        mode: 'CloseOnly',
-        readAuthority: Effect.succeed(restriction),
-        reconcileWhenHeld: Effect.die('unexpected operator hold'),
-        settle: Effect.die('interruption cannot settle authority'),
-        owner: () =>
-          Deferred.succeed(published, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.ensuring(
-              Effect.sync(() => {
-                finalized = true
-              }),
-            ),
-          ),
-      })({ advance: Effect.never, ...deadline, nextDelayMs: 30_000 }).pipe(Effect.forkChild({ startImmediately: true }))
-      yield* Deferred.await(published)
-      yield* Fiber.interrupt(owner)
-    }),
-  )
-  expect(finalized).toBe(true)
-})
-
-test('one runtime runs healthy, restricted, OBSERVE rollover and reactivation drivers without a restart', async () => {
+test('one driver runs healthy, restricted, OBSERVE rollover and reactivation without a restart', async () => {
   const transitions: string[] = []
-  let finalized = 0
   await Effect.runPromise(
     Effect.gen(function* () {
       const state = yield* Ref.make(authority)
-      const first = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
-      const second = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
-      const third = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
       const successor = { ...authority, generationHash: 'b'.repeat(64) }
-      const settle: Effect.Effect<TerminalGenerationRolloverReceipt> = Effect.gen(function* () {
-        transitions.push('terminal intents and fresh exact flat reconciliation')
-        yield* Ref.set(state, { ...successor, maximum: Authority.Observe, effective: Authority.Observe })
-        transitions.push('clear OBSERVE successor')
-        return {
-          _tag: 'RolledOver',
-          previousGenerationHash: generationHash,
-          generationHash: successor.generationHash,
-          blockedCycleCount: 0,
-          blockedIntentCount: 0,
-          expiredIntentCount: 0,
-          terminalIntentCount: 2,
-        }
-      })
-      const resolveNext = Effect.gen(function* () {
-        const current = yield* Ref.get(state)
+      const prepare = Effect.gen(function* () {
+        let current = yield* Ref.get(state)
         if (current.maximum === Authority.Observe && current.kill === KillState.Clear) {
           transitions.push('activation verified')
           yield* Ref.set(state, successor)
+          current = successor
         }
-        return makeRuntime(yield* Ref.get(state))
-      })
-      const makeRuntime = (current: AuthorityState): AutonomousRuntime<never, never> => {
         const mode = current.kill === KillState.Active ? 'CloseOnly' : 'Mutation'
-        const published = mode === 'CloseOnly' ? second : current.generationHash === generationHash ? first : third
-        const owner = ownGenerationCycleDriver<never>({
-          generationHash: current.generationHash,
-          mode,
-          readAuthority: Ref.get(state),
-          reconcileWhenHeld: Effect.die('unexpected operator hold'),
-          settle,
-          owner: (driver) =>
-            Deferred.succeed(published, driver).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  finalized += 1
-                }),
-              ),
-            ),
-        })
-        return {
-          _tag: 'AutonomousRead',
-          cycleBindingId: current.generationHash,
-          startCycle: withGenerationRebinding(
-            () =>
-              Effect.succeed(
-                owner({
-                  ...deadline,
-                  nextDelayMs: 30_000,
-                  advance: Effect.gen(function* () {
-                    transitions.push(mode)
-                    if (published === first) yield* Ref.set(state, restriction)
-                    return advanced
-                  }),
-                }),
-              ),
-            resolveNext,
-          ),
-        }
-      }
-      const loop = yield* makeRuntime(authority).startCycle({
-        cycleBindingId: generationHash,
-        recordPass: () => Effect.void,
+        return yield* makeGenerationCycleDriver(
+          {
+            generationHash: current.generationHash,
+            mode,
+            readAuthority: Ref.get(state),
+            reconcileWhenHeld: Effect.die('unexpected operator hold'),
+            settle: Effect.gen(function* () {
+              transitions.push('terminal intents and fresh exact flat reconciliation')
+              yield* Ref.set(state, { ...successor, maximum: Authority.Observe, effective: Authority.Observe })
+              transitions.push('clear OBSERVE successor')
+              return {
+                _tag: 'RolledOver' as const,
+                previousGenerationHash: generationHash,
+                generationHash: successor.generationHash,
+                blockedCycleCount: 0,
+                blockedIntentCount: 0,
+                expiredIntentCount: 0,
+                terminalIntentCount: 2,
+              }
+            }),
+          },
+          {
+            ...deadline,
+            nextDelayMs: 30_000,
+            advance: Effect.gen(function* () {
+              transitions.push(mode)
+              if (current.generationHash === generationHash) yield* Ref.set(state, restriction)
+              return advanced
+            }),
+          },
+        )
       })
-      const fiber = yield* loop.pipe(Effect.forkChild({ startImmediately: true }))
-      yield* (yield* Deferred.await(first)).advance
-      yield* (yield* Deferred.await(second)).advance
-      yield* (yield* Deferred.await(third)).advance
+      const driver = yield* makeRebindingCycleDriver(yield* prepare, prepare)
+      yield* driver.advance
+      yield* driver.advance
+      yield* driver.advance
       expect(yield* Ref.get(state)).toEqual(successor)
-      expect(fiber.pollUnsafe()).toBeUndefined()
-      yield* Fiber.interrupt(fiber)
     }),
   )
   expect(transitions).toEqual([
@@ -448,5 +384,132 @@ test('one runtime runs healthy, restricted, OBSERVE rollover and reactivation dr
     'activation verified',
     'Mutation',
   ])
-  expect(finalized).toBe(3)
+})
+
+test.each(['failure', 'defect', 'interruption'] as const)(
+  'a replacement %s never runs a stale driver and permits a later retry',
+  async (mode) => {
+    let attempts = 0
+    let finalized = 0
+    let advances = 0
+    const failure = new OperationalError({
+      component: 'database',
+      operation: 'fixture',
+      message: 'unavailable',
+      retryable: true,
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const next = {
+          driver: {
+            ...deadline,
+            nextDelayMs: 10,
+            advance: Effect.sync(() => {
+              advances++
+              return advanced
+            }),
+          },
+          needsRebind: Effect.succeed(false),
+        }
+        const prepare = Effect.gen(function* () {
+          attempts++
+          if (attempts > 1) return next
+          yield* Deferred.succeed(entered, undefined)
+          if (mode === 'failure') return yield* failure
+          if (mode === 'defect') return yield* Effect.die(failure)
+          return yield* Effect.never
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              finalized++
+            }),
+          ),
+        )
+        const driver = yield* makeRebindingCycleDriver(
+          {
+            driver: { ...deadline, nextDelayMs: 10, advance: Effect.die('stale driver') },
+            needsRebind: Effect.succeed(true),
+          },
+          prepare,
+        )
+        const pass = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(entered)
+        if (mode === 'interruption') yield* Fiber.interrupt(pass)
+        const result = yield* Fiber.await(pass)
+        expect(Exit.isFailure(result)).toBe(true)
+        if (Exit.isFailure(result)) {
+          expect(Cause.hasFails(result.cause)).toBe(mode === 'failure')
+          expect(Cause.hasDies(result.cause)).toBe(mode === 'defect')
+          expect(result.cause.reasons.some(Cause.isInterruptReason)).toBe(mode === 'interruption')
+        }
+        expect(advances).toBe(0)
+        expect(finalized).toBe(1)
+        expect(yield* driver.advance).toEqual(advanced)
+        expect(advances).toBe(1)
+        expect(attempts).toBe(2)
+        expect(finalized).toBe(2)
+      }),
+    )
+  },
+)
+
+test('queued advances share one replacement and keep preparation inside pass timing', async () => {
+  let preparations = 0
+  let advances = 0
+  let timed = false
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const prepare = Effect.gen(function* () {
+        expect(timed).toBe(true)
+        preparations++
+        yield* Deferred.succeed(entered, undefined)
+        yield* Deferred.await(release)
+        return {
+          driver: {
+            ...deadline,
+            nextDelayMs: 10,
+            advance: Effect.sync(() => {
+              expect(timed).toBe(true)
+              advances++
+              return advanced
+            }),
+          },
+          needsRebind: Effect.succeed(false),
+        }
+      })
+      const driver = yield* makeRebindingCycleDriver(
+        {
+          driver: { ...deadline, nextDelayMs: 10, advance: Effect.die('stale driver') },
+          needsRebind: Effect.succeed(true),
+        },
+        prepare,
+        (pass) =>
+          Effect.gen(function* () {
+            expect(timed).toBe(false)
+            timed = true
+            return yield* pass.pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  timed = false
+                }),
+              ),
+            )
+          }),
+      )
+      const first = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
+      yield* Deferred.await(entered)
+      const second = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
+      expect(preparations).toBe(1)
+      expect(advances).toBe(0)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(first)
+      yield* Fiber.join(second)
+      expect(preparations).toBe(1)
+      expect(advances).toBe(2)
+      expect(timed).toBe(false)
+    }),
+  )
 })
