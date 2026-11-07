@@ -165,6 +165,8 @@ import ./bun-workspace-service.nix {
     bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" \
       "$out/app/services/bumba" "$out/app/services/jangar"
 
+    bun "$TMPDIR/work/services/jangar/scripts/verify-production-runtime.ts" "$out/app/services/jangar"
+
     chmod +x "$out/app/packages/cx-tools/dist/"*.js
   '';
   command = [
