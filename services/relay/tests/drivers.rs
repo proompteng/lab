@@ -37,7 +37,7 @@ fn operation_json() -> serde_json::Value {
     json!({
         "name":"read", "description":"Read fixture records", "action":"fixture.status.read",
         "target":{"name":"Fixture account", "kind":"fixture.account", "id":"fixture/account-one"},
-        "input_schema":{"type":"object", "properties":{"query":{"type":"string", "maxLength":128}}, "required":["query"], "additionalProperties":false}
+        "read_only":true, "input_schema":{"type":"object", "properties":{"query":{"type":"string", "maxLength":128}}, "required":["query"], "additionalProperties":false}
     })
 }
 fn operation() -> Operation {
@@ -98,6 +98,7 @@ fn mcp(directory: &Directory, mode: &str) -> relay::mcp::Mcp {
             },
         },
         vec![relay::mcp::McpOperation {
+            relay_context: false,
             operation: operation(),
             tool: "fixture_read".into(),
         }],
@@ -216,7 +217,9 @@ async fn mcp_http_fixture(
             "tools/list"=>{
                 let mut schema=operation().input_schema;
                 if mode=="changed" { schema["additionalProperties"]=json!(true); }
-                json!({"tools":[{"name":"fixture_read","inputSchema":schema,"annotations":{"readOnlyHint":true}}]})
+                let mut tool=json!({"name":"fixture_read","inputSchema":schema,"annotations":{"readOnlyHint":!mode.starts_with("write")}});
+                if mode=="write-missing" { tool.as_object_mut().unwrap().remove("annotations"); }
+                json!({"tools":[tool]})
             },
             "tools/call"=>{
                 calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
@@ -235,6 +238,13 @@ async fn mcp_http_fixture(
 }
 
 fn mcp_http(fixture: &HttpFixture, token: Option<String>) -> relay::mcp::Mcp {
+    mcp_http_operation(fixture, token, false)
+}
+fn mcp_http_operation(
+    fixture: &HttpFixture,
+    token: Option<String>,
+    write: bool,
+) -> relay::mcp::Mcp {
     relay::mcp::Mcp::new(
         "fixture".into(),
         relay::mcp::Transport::Http {
@@ -253,7 +263,11 @@ fn mcp_http(fixture: &HttpFixture, token: Option<String>) -> relay::mcp::Mcp {
                 .unwrap_or(relay::credentials::Authentication::None),
         },
         vec![relay::mcp::McpOperation {
-            operation: operation(),
+            relay_context: write,
+            operation: Operation {
+                read_only: !write,
+                ..operation()
+            },
             tool: "fixture_read".into(),
         }],
     )
@@ -826,5 +840,46 @@ async fn oauth_connector_startup_requires_its_exact_ofz_profile_and_destination(
             tonic::transport::Endpoint::from_static("http://localhost:1").connect_lazy(),
         );
         assert_eq!(result.is_ok(), allowed);
+    }
+}
+
+#[tokio::test]
+async fn mutations_require_declared_write_semantics_and_authenticated_invocation_context() {
+    for mode in ["write", "write-missing", "normal"] {
+        let (fixture, effects) = mcp_http_fixture(mode).await;
+        let token = fixture.directory.file("token", "fixture-token");
+        let adapter = mcp_http_operation(&fixture, Some(token), true);
+        assert!(!adapter.operations(None)[0].read_only);
+        let mut request = adapter.normalize("read", br#"{"query":"task"}"#).unwrap();
+        request.invocation = Some(relay::connector::Invocation {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            client_service: "opencode".into(),
+            actor: "workload:fixture".into(),
+            authorization_receipt_id: uuid::Uuid::new_v4().to_string(),
+            action: request.action.clone(),
+            resources: request.resources.clone(),
+        });
+        let result = adapter.execute(&request, None).await;
+        if mode == "write" {
+            result.unwrap_or_else(|f| panic!("{}", f.status));
+            assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 1);
+            let requests = fixture.requests.lock().unwrap();
+            let body: serde_json::Value = requests
+                .iter()
+                .filter_map(|raw| {
+                    let value: serde_json::Value =
+                        serde_json::from_str(raw.split_once("\r\n\r\n")?.1).ok()?;
+                    (value["method"] == "tools/call").then_some(value)
+                })
+                .next()
+                .unwrap();
+            assert_eq!(
+                body["params"]["_meta"]["io.proompteng.relay"],
+                serde_json::to_value(&request.invocation).unwrap()
+            );
+        } else {
+            assert_eq!(failure(result).status.code(), Code::FailedPrecondition);
+            assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
     }
 }

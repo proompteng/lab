@@ -19,10 +19,15 @@ import {
   type QuoteBoundTargetPlannerInput,
 } from '../target-planner/index'
 
+type NativeDecisionFixture = Pick<
+  ReturnType<typeof nativeJevFixture>,
+  'protocol' | 'portfolio' | 'observation' | 'draft'
+> & {
+  readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
+}
+
 export const matchedCommittedDecisionFixture = (
-  native: Pick<ReturnType<typeof nativeJevFixture>, 'protocol' | 'portfolio' | 'observation' | 'draft'> & {
-    readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
-  },
+  native: NativeDecisionFixture,
   evidence: ReturnType<typeof nativeJevDecisionEvidence>,
   allocationCapitalMicros = '1',
   pricingSnapshot = native.snapshot,
@@ -31,6 +36,25 @@ export const matchedCommittedDecisionFixture = (
 ) =>
   Effect.gen(function* () {
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
+    return yield* matchedCommittedTargetFixture(
+      native,
+      decision,
+      allocationCapitalMicros,
+      pricingSnapshot,
+      maxOpenOrders,
+      authorityVersion,
+    )
+  })
+
+export const matchedCommittedTargetFixture = (
+  native: NativeDecisionFixture,
+  decision: import('../strategy/runtime-decision').ProtectedEntryTarget,
+  allocationCapitalMicros = '1',
+  pricingSnapshot = native.snapshot,
+  maxOpenOrders = 2,
+  authorityVersion = 1,
+) =>
+  Effect.gen(function* () {
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, native.snapshot, pricingSnapshot))
     const broker = native.portfolio.brokerState
     const at = decision.decidedAt

@@ -2,14 +2,13 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
 import type { ForwardPerformanceConfig } from './config'
-import {
-  InferenceCostError,
-  inferenceStageKey,
-  makeInferenceCostReport,
-  type DecodedInferenceCostEvidence,
-} from '../inference-costs'
+import { InferenceCostError, type DecodedInferenceCostEvidence } from '../inference-costs'
 import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
-import { verifyInferenceExpenseCoverage, type InferenceExpenseQuote } from '../inference-expense'
+import {
+  verifyInferenceExpenseCoverage,
+  type InferenceExpenseQuote,
+  type InferenceExpenseRequestCoverage,
+} from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
@@ -25,6 +24,8 @@ export interface ForwardInferenceExpenseSession {
   readonly missingQuoteCount: number
   readonly unverifiedRequestCount: number
   readonly gapRequestCount: number
+  readonly matchedQuoteHashes: readonly string[]
+  readonly requestsWithCoverageIssues: readonly InferenceExpenseRequestCoverage[]
   readonly completeMeteredCoverage: boolean
   readonly exactSessionLedger: true
   readonly ledgerTimestampMax: string
@@ -39,45 +40,18 @@ export const summarizeForwardInferenceExpenses = (
   authorityGenerationHash?: string,
 ) =>
   Result.gen(function* () {
-    const sourceReport = yield* makeInferenceCostReport(evidence, {
-      schemaVersion: 'bayn.inference-rate-card.v1',
-      rates: [],
-    })
-    const selectedRequestIds = new Set(
-      evidence.requests
-        .filter(
-          (request) =>
-            authorityGenerationHash === undefined || request.authorityGenerationHash === authorityGenerationHash,
-        )
-        .map((request) => request.requestId),
-    )
-    const requests = new Map(
-      sourceReport.requests
-        .filter((request) => selectedRequestIds.has(request.requestId))
-        .map((request) => [inferenceStageKey(request), request]),
-    )
-    const rows = frozen.filter(({ quote }) => requests.has(inferenceStageKey(quote.line)))
     const coverage = yield* verifyInferenceExpenseCoverage(evidence, accountId, frozen, authorityGenerationHash)
-    let known = 0n
-    for (const { quote } of rows) {
-      const request = requests.get(inferenceStageKey(quote.line))
-      if (
-        request !== undefined &&
-        quote.line.receiptHash === request.receiptHash &&
-        ('handoffHash' in quote.line ? quote.line.handoffHash : null) ===
-          ('handoffHash' in request ? request.handoffHash : null)
-      )
-        known += BigInt(quote.line.estimatedCostPicoUsd ?? '0')
-    }
     return {
       sessionDate: evidence.sessionDate,
       authorityGenerationHash: authorityGenerationHash ?? null,
-      knownEstimatedCostPicoUsd: known.toString(),
+      knownEstimatedCostPicoUsd: coverage.knownEstimatedCostPicoUsd,
       sourceAsOf: coverage.sourceAsOf,
       claimedRequestCount: coverage.claimedRequestCount,
       missingQuoteCount: coverage.missingQuoteCount,
       unverifiedRequestCount: coverage.unverifiedRequestCount,
       gapRequestCount: coverage.gapRequestCount,
+      matchedQuoteHashes: coverage.matchedQuoteHashes,
+      requestsWithCoverageIssues: coverage.requestsWithCoverageIssues,
       completeMeteredCoverage: coverage.completeMeteredCoverage,
       invoiceReconciled: false,
     } satisfies Omit<

@@ -1,5 +1,5 @@
 import { Context } from 'effect'
-import * as Either from 'effect/Either'
+import * as Result from 'effect/Result'
 import {
   recordOpenWebUIDetailLink,
   recordOpenWebUIDetailPreviewTruncation,
@@ -808,10 +808,9 @@ export type ChatCompletionEncoderService = {
   }) => ChatCompletionStreamSession
 }
 
-export class ChatCompletionEncoder extends Context.Tag('ChatCompletionEncoder')<
-  ChatCompletionEncoder,
-  ChatCompletionEncoderService
->() {}
+export class ChatCompletionEncoder extends Context.Service<ChatCompletionEncoder, ChatCompletionEncoderService>()(
+  'ChatCompletionEncoder',
+) {}
 
 const createSession = (args: {
   id: string
@@ -1837,14 +1836,14 @@ const createSession = (args: {
 
     if (type === 'tool') {
       const decoded = decodeToolEvent(delta, `tool-${nextAnonymousToolId++}`)
-      if (Either.isLeft(decoded)) {
+      if (Result.isFailure(decoded)) {
         closeCommandFence(frames)
         const raw = delta as Record<string, unknown>
         console.warn(TOOL_EVENT_DECODE_FAILED_TAG, {
           chatId: meta.chatId,
           threadId: meta.threadId ?? undefined,
           turnNumber: meta.turnNumber ?? undefined,
-          error: decoded.left,
+          error: decoded.failure,
           rawKeys: typeof raw === 'object' && raw ? Object.keys(raw) : undefined,
           rawToolKind: typeof raw.toolKind === 'string' ? raw.toolKind : undefined,
           rawStatus: typeof raw.status === 'string' ? raw.status : undefined,
@@ -1853,7 +1852,7 @@ const createSession = (args: {
         return frames
       }
 
-      const toolEvent = decoded.right
+      const toolEvent = decoded.success
 
       if (detailLinksEnabled) {
         emitToolEvents(frames, toolEvent)

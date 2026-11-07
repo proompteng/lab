@@ -59,6 +59,13 @@ Relay and Ofz; the OpenCode container receives no cluster credential. An Ofz adm
 namespace relationships to the workload before tools can succeed. Each invocation checks current authority and
 returns durable authorization/execution receipts. It does not impersonate a Tengri workspace or browser user.
 
+The `agents` connector uses this same bridge for scoped start, list, status, logs, result and cancel operations.
+Ofz grants on `agents/lab` are separate from namespace read permissions. OpenCode's configured permissions ask
+before `relay_agents__start_run` and `relay_agents__cancel_run`, using the
+[pinned native MCP permission action](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/core/src/tool/mcp.ts#L20-L23).
+Read/write annotations describe the operation; they do not replace Ofz checks or the client's approval rules.
+An uncertain start is recovered with `get_run` using the original Relay operation ID, never by starting another run.
+
 The research pod has no Relay workload identity, socket mount, MCP configuration or allowed network path. Personal
 sessions and provider credentials remain in the existing development PVC. See
 [policy onboarding](../ofz/platform/README.md) and [the platform guide](../../docs/platform/ofz-relay.md).

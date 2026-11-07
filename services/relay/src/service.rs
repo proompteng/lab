@@ -164,11 +164,6 @@ impl Service {
             .into_iter()
             .find(|operation| operation.name == payload.operation)
             .ok_or_else(|| Status::unimplemented("connector operation is not onboarded"))?;
-        if !operation.read_only {
-            return Err(Status::unimplemented(
-                "effectful connector operations require an execution contract",
-            ));
-        }
         let normalized = connector.normalize(
             &payload.operation,
             &serde_json::to_vec(&payload.arguments)
@@ -288,7 +283,19 @@ impl Service {
             &payload.client_service,
             payload.delegation_id.as_deref(),
         )?;
-        let (connector, normalized) = self.normalize(&payload)?;
+        let (connector, mut normalized) = self.normalize(&payload)?;
+        let read_only = connector
+            .operations(None)
+            .iter()
+            .find(|operation| operation.name == payload.operation)
+            .is_some_and(|operation| operation.read_only);
+        let actor = match subject.identity.as_ref().expect("validated subject") {
+            authz::platform_subject::Identity::WorkloadId(id) => format!("workload:{id}"),
+            authz::platform_subject::Identity::Human(human) => format!("human:{}", human.human_id),
+            authz::platform_subject::Identity::Delegation(proof) => {
+                format!("delegation:{}", proof.delegation_id)
+            }
+        };
         let hash = Sha256::digest(&input.body).to_vec();
         let mut check = authz::CheckPlatformAccessRequest {
             operation_id: payload.operation_id.clone(),
@@ -303,6 +310,14 @@ impl Service {
         check.audit_receipt_id = decision.audit_receipt_id;
         self.outcome(&check, &check.audit_receipt_id, "started", 0, &[])
             .await?;
+        normalized.invocation = Some(crate::connector::Invocation {
+            operation_id: payload.operation_id.clone(),
+            client_service: payload.client_service.clone(),
+            actor,
+            authorization_receipt_id: check.audit_receipt_id.clone(),
+            action: normalized.action.clone(),
+            resources: normalized.resources.clone(),
+        });
         let invocation: Result<_, crate::connector::Failure> = async {
             let bearer = if let Some(provider) = connector.provider() {
                 let credential = self
@@ -337,6 +352,10 @@ impl Service {
         let output = match invocation {
             Ok(output) => output,
             Err(error) => {
+                // A missing mutation reply cannot establish that the provider did not accept it.
+                if !read_only {
+                    return Err(error.status);
+                }
                 self.outcome(
                     &check,
                     &check.audit_receipt_id,

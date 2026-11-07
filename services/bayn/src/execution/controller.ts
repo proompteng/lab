@@ -106,7 +106,7 @@ export type ExecutionControllerActivationDecision =
   | { readonly _tag: 'Replayed'; readonly state: ExecutionControllerState }
 
 export type ExecutionControllerTickDecision =
-  | { readonly _tag: 'Advance'; readonly command: AdvanceExecutionCommand }
+  | { readonly _tag: 'Advance'; readonly command: Omit<AdvanceExecutionCommand, 'issuedAt'> }
   | { readonly _tag: 'Ignored'; readonly reason: 'Inactive' | 'StaleEpoch' | 'StaleSequence' }
 
 export type ExecutionDeploymentActivationDecision =
@@ -205,7 +205,6 @@ export const decideExecutionControllerTick = (
   state: ExecutionControllerState | null,
   tick: ExecutionControllerTick,
   controllerKey: string,
-  issuedAt: string,
   workerSourceRevision: string,
 ): Result.Result<ExecutionControllerTickDecision, ExecutionControllerDecisionError> => {
   if (state === null || !state.active) return Result.succeed({ _tag: 'Ignored', reason: 'Inactive' })
@@ -228,7 +227,6 @@ export const decideExecutionControllerTick = (
       controllerKey,
       epoch: state.epoch,
       sequence: state.nextSequence,
-      issuedAt,
       sourceRevision: workerSourceRevision,
     },
   })

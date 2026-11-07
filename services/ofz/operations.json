@@ -1319,6 +1319,12 @@
     "dispatch": "Owner-scoped saved connection metadata without credentials"
   },
   {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/runs",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Owner-scoped run-card command through an enabled connection; exact registered target and current Ofz action permission before Relay execution"
+  },
+  {
     "surface": "ofz_platform",
     "operation": "ListPlatformWorkspaces",
     "action": "ACTION_POLICY_READ",

@@ -7,6 +7,7 @@ import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome, ExecutionControllerStatusSchema } from './execution/controller-status'
 import { statusFacts } from './http'
 import { MarketFeatureDefinition } from './market-data/features/contract'
+import { InputReadinessReason } from './market-data/intraday/input-readiness'
 import { initialState } from './runtime-state'
 import { Reason as RiskReason } from './risk'
 import { strictParseOptions } from './schemas'
@@ -108,6 +109,35 @@ test('status retains historical successful pass observations without adding a re
     autonomousCycleLoop: { lastPass },
     executionController: { status: { lastPass } },
   })
+})
+
+test('status exposes fixed-size observed input counts without free-form or raw payload fields', () => {
+  const inputReadiness = {
+    reason: InputReadinessReason.AllCandidatesExcluded,
+    observedAt,
+    windowStartAt: '2026-09-17T14:00:00.000Z',
+    windowEndAt: observedAt,
+    requiredFeatureDefinition: MarketFeatureDefinition.ObservedPriceWindow,
+    candidateCount: 15,
+    matchingFeatureCandidateCount: 0,
+    completedBarCandidateCount: 15,
+  }
+  const response = responseWithPass({
+    result: 'SUCCESS',
+    outcome: 'RECOVERED',
+    observedAt,
+    readiness: {
+      reason: DecisionReadinessReason.SnapshotUnavailable,
+      message: 'private-account-identity',
+      inputReadiness: Object.assign({}, inputReadiness, { rawPayload: 'private-quote-payload' }),
+    },
+  })
+  expect(response).toMatchObject({
+    autonomousCycleLoop: { lastPass: { readiness: { inputReadiness } } },
+    executionController: { status: { lastPass: { readiness: { inputReadiness } } } },
+  })
+  expect(JSON.stringify(response)).not.toContain('private-')
+  expect(JSON.stringify(response)).not.toContain('rawPayload')
 })
 
 test('status exposes breached account limits in both projections and wait modes without publishing the message', () => {

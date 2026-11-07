@@ -70,7 +70,9 @@ await mock.module('../broker/alpaca/session', () => ({
 }))
 await mock.module('../broker/alpaca/snapshot-cache', () => ({
   ...actualCapture,
-  captureBrokerObservation: () => Effect.succeed(observedBrokerSnapshotFixture(privateDetail, startedAt)),
+  makeBrokerObservationCapture: Effect.succeed(() =>
+    Effect.succeed(observedBrokerSnapshotFixture(privateDetail, startedAt)),
+  ),
 }))
 await mock.module('../db/broker-observations', () => ({
   ...actualStore,

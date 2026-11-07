@@ -244,7 +244,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
             return invalidParams(id, parsed.message)
           }
 
-          const healthResult = yield* Effect.either(
+          const healthResult = yield* Effect.result(
             atlas.codeSearchHealth({
               repository: parsed.value.repository,
               ref: parsed.value.ref,
@@ -252,22 +252,22 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
               language: parsed.value.language,
             }),
           )
-          if (healthResult._tag === 'Left') {
+          if (healthResult._tag === 'Failure') {
             if (isNotification) return null
-            return toolError(id, healthResult.left.message, { tool: toolName })
+            return toolError(id, healthResult.failure.message, { tool: toolName })
           }
-          if (healthResult.right.status !== 'ok') {
+          if (healthResult.success.status !== 'ok') {
             if (isNotification) return null
-            return toolError(id, healthResult.right.message, {
+            return toolError(id, healthResult.success.message, {
               tool: toolName,
-              indexHealth: healthResult.right,
+              indexHealth: healthResult.success,
             })
           }
 
-          const matchesResult = yield* Effect.either(atlas.codeSearch(parsed.value))
-          if (matchesResult._tag === 'Left') {
+          const matchesResult = yield* Effect.result(atlas.codeSearch(parsed.value))
+          if (matchesResult._tag === 'Failure') {
             if (isNotification) return null
-            return toolError(id, matchesResult.left.message, { tool: toolName })
+            return toolError(id, matchesResult.failure.message, { tool: toolName })
           }
           if (isNotification) return null
           return asJsonRpcResponse(
@@ -276,8 +276,8 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
               JSON.stringify(
                 {
                   ok: true,
-                  matches: matchesResult.right,
-                  indexHealth: healthResult.right,
+                  matches: matchesResult.success,
+                  indexHealth: healthResult.success,
                   mcp: { server: baseUrl.origin, tool: toolName },
                 },
                 null,
@@ -288,17 +288,17 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
         }
 
         if (toolName === 'atlas_stats') {
-          const statsResult = yield* Effect.either(atlas.stats())
-          if (statsResult._tag === 'Left') {
+          const statsResult = yield* Effect.result(atlas.stats())
+          if (statsResult._tag === 'Failure') {
             if (isNotification) return null
-            return toolError(id, statsResult.left.message, { tool: toolName })
+            return toolError(id, statsResult.failure.message, { tool: toolName })
           }
           if (isNotification) return null
           return asJsonRpcResponse(
             id,
             toTextToolResult(
               JSON.stringify(
-                { ok: true, stats: statsResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+                { ok: true, stats: statsResult.success, mcp: { server: baseUrl.origin, tool: toolName } },
                 null,
                 2,
               ),

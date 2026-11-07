@@ -1,6 +1,10 @@
 import type { ForwardPerformanceExecutionEvidence, ForwardPerformanceMarketVolumeRequest } from '../model'
 import { Result, Schema } from 'effect'
-import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import {
+  CycleDecisionDocumentSchema,
+  decodeRetainedJevV38ExecutionDecisionDocument,
+  executionCycleDecisionSchemaVersion,
+} from '../../shadow-decision-contract'
 import { strictParseOptions } from '../../schemas'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import {
@@ -12,12 +16,38 @@ import {
   type VerifiedCycleDecisionRow,
 } from './model'
 
+const RetainedJevV38ProtocolPrefix = Schema.Struct({ schemaVersion: Schema.Literal('bayn.jev.protocol.v38') })
+const RetainedJevV38DecisionPrefix = Schema.Struct({
+  schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
+  mode: Schema.Literal(legacyExecutionAuthorityToken),
+  strategyDecision: Schema.Union([
+    Schema.Struct({
+      schemaVersion: Schema.Literals([
+        'bayn.jev-entry-target.v7',
+        'bayn.entry-ablation-target.v1',
+        'bayn.repeated-momentum-target.v1',
+      ]),
+      evidence: Schema.Struct({ observation: Schema.Struct({ protocol: RetainedJevV38ProtocolPrefix }) }),
+    }),
+    Schema.Struct({
+      schemaVersion: Schema.Literal('bayn.jev-exit-target.v5'),
+      evidence: Schema.Struct({ protocol: RetainedJevV38ProtocolPrefix }),
+    }),
+  ]),
+})
+
 export const verifyPerformanceDecisions = (rows: readonly (typeof CycleDecisionRow.Type)[]) => {
   const verifiedRows: VerifiedCycleDecisionRow[] = []
   const unverifiedDecisionHashes: string[] = []
   for (const row of rows) {
-    const decoded = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
-    if (Result.isFailure(decoded)) unverifiedDecisionHashes.push(row.decision_hash)
+    // This prefix only selects the complete verifier; the original evidence still passes every strict check.
+    const retained = Schema.decodeUnknownResult(RetainedJevV38DecisionPrefix, { onExcessProperty: 'ignore' })(
+      row.document,
+    )
+    const decoded = Result.isSuccess(retained)
+      ? decodeRetainedJevV38ExecutionDecisionDocument(row.document)
+      : Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+    if (decoded._tag === 'Failure') unverifiedDecisionHashes.push(row.decision_hash)
     else verifiedRows.push({ ...row, document: decoded.success })
   }
   return { verifiedRows, unverifiedDecisionHashes: [...new Set(unverifiedDecisionHashes)].sort() }

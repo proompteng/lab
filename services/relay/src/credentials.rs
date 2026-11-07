@@ -12,6 +12,9 @@ pub enum Authentication {
     Oauth2 {
         profile: String,
     },
+    SpiffeJwt {
+        audience: String,
+    },
     WorkloadIdentity {
         federation: crate::federation::Registration,
     },
@@ -29,6 +32,14 @@ impl Authentication {
                 Self::None => true,
                 Self::BearerFile { path } => std::path::Path::new(path).is_absolute(),
                 Self::Oauth2 { profile } => crate::config::identifier(profile),
+                Self::SpiffeJwt { audience } => reqwest::Url::parse(audience).is_ok_and(|url| {
+                    url.scheme() == "https"
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.query().is_none()
+                        && url.fragment().is_none()
+                }),
                 Self::WorkloadIdentity { federation } => {
                     federation.validate()?;
                     true
@@ -45,6 +56,7 @@ pub(crate) enum Credentials {
     BearerFile(String),
     Oauth2(String),
     WorkloadIdentity(Box<crate::federation::Federation>),
+    SpiffeJwt(platform_client::jwt::Identity),
 }
 
 impl Credentials {
@@ -54,6 +66,13 @@ impl Credentials {
             Authentication::None => Self::None,
             Authentication::BearerFile { path } => Self::BearerFile(path),
             Authentication::Oauth2 { profile } => Self::Oauth2(profile),
+            Authentication::SpiffeJwt { audience } => {
+                Self::SpiffeJwt(platform_client::jwt::Identity::new(
+                    std::env::var("SPIFFE_ENDPOINT_SOCKET")?,
+                    "spiffe://proompteng.ai/ns/relay/sa/relay",
+                    audience,
+                )?)
+            }
             Authentication::WorkloadIdentity { federation } => {
                 Self::WorkloadIdentity(Box::new(crate::federation::Federation::new(federation)?))
             }
@@ -73,6 +92,10 @@ impl Credentials {
             Self::None => return Ok(None),
             Self::BearerFile(path) => read_file(path).await?,
             Self::WorkloadIdentity(federation) => federation.bearer().await?,
+            Self::SpiffeJwt(identity) => identity
+                .token()
+                .await
+                .map_err(|_| Status::unavailable("Relay workload credential unavailable"))?,
             Self::Oauth2(_) => provided
                 .ok_or_else(|| {
                     Status::failed_precondition(

@@ -3,7 +3,9 @@ import { Result, Schema } from 'effect'
 import { QualificationRuntimeSchema } from './configuration'
 import { MarketKind } from '../instruments'
 import { operationalRegistrationFixture } from './operational-period.test-support'
-import { validateOperationalRegistration } from './operational-period'
+import { validateOperationalRegistration, verifyStoredOperationalRegistration } from './operational-period'
+import { registrationFixture, testHash } from './fixtures.test-support'
+import { JevAcceptanceVersion } from '../jev/acceptance'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
 
@@ -25,6 +27,30 @@ test('operational reporting needs one real native policy, retained incidents and
     { ...registration, policies: [{ ...registration.policies[0], capitalAuthorization: undefined }] },
   ])
     expect(Result.isFailure(validateOperationalRegistration(changed))).toBe(true)
+})
+
+test('stored v38 operational periods retain their exact identity but cannot register as current periods', () => {
+  const registration = operationalRegistrationFixture(
+    registrationFixture(undefined, 20, JevAcceptanceVersion.RetainedV5),
+  )
+  const verified = Result.getOrThrow(verifyStoredOperationalRegistration(registration))
+  expect(verified.registration).toEqual(registration)
+  expect(verified.registrationHash).toBe(testHash(registration))
+  expect(registration.obligations.configuration.protocol.schemaVersion).toBe('bayn.jev.protocol.v38')
+  expect(Result.isFailure(validateOperationalRegistration(registration))).toBe(true)
+  const configuration = registration.obligations.configuration
+  for (const protocol of [
+    { ...configuration.protocol, schemaVersion: 'bayn.jev.protocol.v40' },
+    { ...configuration.protocol, maximumEntryLimitSlippageBps: 0 },
+  ])
+    expect(
+      Result.isFailure(
+        verifyStoredOperationalRegistration({
+          ...registration,
+          obligations: { ...registration.obligations, configuration: { ...configuration, protocol } },
+        }),
+      ),
+    ).toBe(true)
 })
 
 test('native reporting retains global signal alignment and original deadlines across its final boundary', () => {

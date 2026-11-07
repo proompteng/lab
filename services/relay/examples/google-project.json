@@ -20,6 +20,7 @@
             "name": "read",
             "description": "Read the federation test project's metadata",
             "action": "google.project.read",
+            "read_only": true,
             "target": { "name": "proompteng-ai", "kind": "google.project", "id": "952507162578" },
             "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }
           },

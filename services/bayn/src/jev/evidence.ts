@@ -144,7 +144,9 @@ export const decodeJevEvaluationReceipt = (request: JevEvaluationRequest, input:
   )
 
 export const entryInferenceAvailableAt = (
-  request: JevEvaluationRequest,
+  request: Pick<JevEvaluationRequest, 'expiresAt'> & {
+    readonly request: Pick<EntryInferenceInput, 'schemaVersion'>
+  },
   receipt: JevEvaluationReceipt,
   now: number,
   expectedInputVersion: EntryInferenceInput['schemaVersion'],
