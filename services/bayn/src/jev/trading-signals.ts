@@ -32,7 +32,7 @@ import {
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
-import type { JevProtocol } from './protocol'
+import type { JevProtocol, RetainedJevProtocolV38Schema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
 import { webullEntryContext } from './webull-entry-context'
 
@@ -294,10 +294,14 @@ export const commonMomentumPrices = (
     }
   })
 
-const requestFromSnapshot = (
+// Shared deterministic material preserves v38 reconstruction; each caller applies its own strict version decoder.
+export const jevTradingSignalRequestMaterial = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
-  native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  native: {
+    readonly protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+    readonly portfolio: JevPortfolio
+  },
   selectionPolicy: EntryAblationSelection | null,
 ) =>
   Result.gen(function* () {
@@ -331,7 +335,7 @@ const requestFromSnapshot = (
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
     const webullContext = yield* webullEntryContext(snapshot, symbol)
-    return yield* prepareEntryInferenceInput({
+    return {
       ...(selectionPolicy === null
         ? { schemaVersion: 'bayn.entry-inference-input.v8' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
@@ -408,8 +412,18 @@ const requestFromSnapshot = (
         },
         candidate: candidate.state,
       },
-    })
+    }
   })
+
+const requestFromSnapshot = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  selectionPolicy: EntryAblationSelection | null,
+) =>
+  jevTradingSignalRequestMaterial(snapshot, symbol, native, selectionPolicy).pipe(
+    Result.flatMap(prepareEntryInferenceInput),
+  )
 
 export const makeJevTradingSignalRequest = (input: unknown, symbol: string) =>
   reproduceJevCandidateObservation(input).pipe(

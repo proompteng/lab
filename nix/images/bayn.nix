@@ -13,11 +13,11 @@ let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.candidate-chart-entry.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67";
-  # Canonical hash of the compiled bayn.jev.protocol.v38 document.
-  strategyParameterHash = "fa21a9d606eed0332637937d4d46035ba649d3fef968ab39480af796f13f419b";
+  # Canonical hash of the compiled bayn.jev.protocol.v39 document.
+  strategyParameterHash = "a03aad6fdf2c2f9d958f5922e69da57fbd2b6e3575941840076b20cebd5a0c54";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "489e704106e73592eb03dd8daf0750cbbb157e4d257bf53b948da1449b0c2d3c";
+  strategyProtocolHash = "769bf588ec2944657b235e12c8c43a431339eab51ee4159cd44909ceaa9fed34";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -102,6 +102,8 @@ let
   depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
+    # Retained request hashes include PNG deflate bytes. Verify them with the exact production Node/zlib build.
+    "PATH=${nodejs}/bin:$PATH bun --cwd=services/bayn run test:production-runtime"
     "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"

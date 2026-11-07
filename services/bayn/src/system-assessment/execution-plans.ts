@@ -14,7 +14,7 @@ import {
   RiskOutcome,
   TimeInForce,
 } from '../execution/contracts'
-import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
+import type { RecordedExecutionDecisionDocument as ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { legacyReconciliationIdSchemaVersion } from '../execution/legacy-wire'
 import { Sha256Schema, StrictNonEmptyStringSchema } from '../schemas'
 import { isProtectedEntryTarget } from '../strategy/runtime-decision'
