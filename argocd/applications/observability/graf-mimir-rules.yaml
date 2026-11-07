@@ -4152,7 +4152,7 @@ data:
                     namespace="tengri"
                   }[15m]
                 )
-              ) > 2
+              ) >= 3
             for: 5m
             labels:
               severity: warning
