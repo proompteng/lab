@@ -9,6 +9,7 @@ import {
   type ChartDecisionSource,
 } from './chart-questions'
 import { JevContractError, decodeJevResponse, prepareJevRequest, type JevRequest } from './contract'
+import { chartPresenceIsAbsent } from './judgment-policy'
 
 export const stagedChartQuestionPolicy = {
   ...chartQuestionPolicy,
@@ -41,7 +42,11 @@ const selectedBaseStartFromChart = (
     if (!('base_last_bar' in initial.request.questions))
       return { status: 'NOT_REQUESTED' as const, reason: 'NO_ELIGIBLE_BASE' as const, predecessor }
     const answer = response.answers['base_last_bar']
-    if (answer?.type === 'choice' && answer.choice === 'no_base')
+    const presence = response.answers['base_present']
+    if (
+      (presence?.type === 'noul' && chartPresenceIsAbsent(source.protocol, presence.noul)) ||
+      (answer?.type === 'choice' && answer.choice === 'no_base')
+    )
       return { status: 'NOT_REQUESTED' as const, reason: 'NO_BASE' as const, predecessor }
     const end = chart.bars.slice(1, -1).find((bar) => answer?.type === 'choice' && bar.id === answer.choice)
     if (end === undefined)
