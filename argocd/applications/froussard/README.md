@@ -51,3 +51,8 @@ the generated `linear-secrets.yaml`, configure the Linear topic and AgentRun set
 flag to `true` in one reviewed source change. The image remains Kargo-managed: the `froussard`
 Warehouse/Stage writes the exact promoted digest and source metadata to `kargo/froussard`, and Argo
 tracks that branch. Do not hand-edit an image tag or digest or use a deployment PR for this app.
+
+The admission topic `froussard.webhook.admissions.v1` is retained on deletion, uses three
+replicas and minimum ISR two, and is consumed by `froussard-policy-v1`. The existing service
+keeps a minimum of one replica for background policy processing. Do not replay historical
+raw audit topics into this admission topic. See the [runtime contract](../../../apps/froussard/README.md).

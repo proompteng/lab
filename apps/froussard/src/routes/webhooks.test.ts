@@ -7,7 +7,9 @@ import { type AppConfig, AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
 import { AppLogger, logger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
-import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
+import { createWebhookHandler as createIngress, type WebhookConfig } from '@/routes/webhooks'
+import { ADMISSION_TOPIC, decodeAdmission, type WebhookAdmission } from '@/webhooks/admission'
+import { createGithubPolicyProcessor } from '@/webhooks/github'
 import { GithubService } from '@/services/github/service'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
@@ -166,6 +168,29 @@ const expectAgentRunSubmission = (
 describe('createWebhookHandler', () => {
   let runtime: AppRuntime
   let publishedMessages: KafkaMessage[]
+  let admissions: WebhookAdmission[]
+  let processPolicy: ReturnType<typeof createGithubPolicyProcessor>
+  const drainPolicy = async () => {
+    while (admissions.length) {
+      const admission = admissions.shift()!
+      try {
+        await processPolicy(admission)
+      } catch (error) {
+        admissions.unshift(admission)
+        throw error
+      }
+    }
+  }
+  // Existing workflow scenarios explicitly drain durable deliveries after ingress returns.
+  const createWebhookHandler = (dependencies: Parameters<typeof createIngress>[0]) => {
+    const ingress = createIngress(dependencies)
+    processPolicy = createGithubPolicyProcessor({ runtime, config: dependencies.config })
+    return async (request: Request, provider: string) => {
+      const response = await ingress(request, provider)
+      await drainPolicy()
+      return response
+    }
+  }
   let fetchMock: ReturnType<typeof vi.fn>
   let githubServiceMock: Mocked<GithubServiceDefinition>
 
@@ -294,7 +319,8 @@ describe('createWebhookHandler', () => {
     const kafkaLayer = Layer.succeed(KafkaProducer, {
       publish: (message: KafkaMessage) =>
         Effect.sync(() => {
-          publishedMessages.push(message)
+          if (message.topic === ADMISSION_TOPIC) admissions.push(decodeAdmission(String(message.value)))
+          else publishedMessages.push(message)
         }),
       ensureConnected: Effect.succeed(undefined),
       isReady: Effect.succeed(true),
@@ -324,6 +350,7 @@ describe('createWebhookHandler', () => {
 
   beforeEach(() => {
     publishedMessages = []
+    admissions = []
     fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'accepted' }), { status: 202 }))
     vi.stubGlobal('fetch', fetchMock)
     mockVerifyDiscordRequest.mockReset()
@@ -434,7 +461,7 @@ describe('createWebhookHandler', () => {
         sender: { login: 'user' },
       },
       assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
+        expect(body).toMatchObject({ status: 'accepted' })
         expect(publishedMessages).toHaveLength(1)
         expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
         expectAgentRunSubmission(fetchMock, {
@@ -479,7 +506,7 @@ describe('createWebhookHandler', () => {
         sender: { login: 'user' },
       },
       assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
+        expect(body).toMatchObject({ status: 'accepted' })
         expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
         expectAgentRunSubmission(fetchMock, {
           deliveryId: 'delivery-issue_comment-created',
@@ -545,7 +572,7 @@ describe('createWebhookHandler', () => {
         githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: true }))
       },
       assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(body).toMatchObject({ status: 'accepted' })
         expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
           expect.objectContaining({
             repositoryFullName: 'owner/repo',
@@ -605,7 +632,7 @@ describe('createWebhookHandler', () => {
         githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: true }))
       },
       assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(body).toMatchObject({ status: 'accepted' })
         expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
           expect.objectContaining({
             repositoryFullName: 'owner/repo',
@@ -696,14 +723,15 @@ describe('createWebhookHandler', () => {
     githubServiceMock[method].mockReturnValue(Effect.succeed({ ok: false, reason: 'http-error', status: 503 }))
     const warn = vi.spyOn(logger, 'warn')
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const response = await handler(
-      buildRequest(
-        { repository: { full_name: 'owner/repo' }, action: 'edited', pull_request: { number: 9 } },
-        scenarioHeaders('pull_request', 'edited'),
+    await expect(
+      handler(
+        buildRequest(
+          { repository: { full_name: 'owner/repo' }, action: 'edited', pull_request: { number: 9 } },
+          scenarioHeaders('pull_request', 'edited'),
+        ),
+        'github',
       ),
-      'github',
-    )
-    expect(response.status).toBe(202)
+    ).rejects.toThrow('read failed')
     expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ repository: 'owner/repo', pullNumber: 9, stage, reason: 'http-error', status: 503 }),
@@ -727,9 +755,9 @@ describe('createWebhookHandler', () => {
         { repository: { full_name: 'owner/repo' }, action: 'edited', pull_request: { number: 9 } },
         scenarioHeaders('pull_request', 'edited'),
       )
-    expect((await handler(request(), 'github')).status).toBe(500)
+    await expect(handler(request(), 'github')).rejects.toThrow('GitHub approval failed')
     setup()
-    expect((await handler(request(), 'github')).status).toBe(202)
+    await drainPolicy()
     expect(githubServiceMock.approvePullRequest).toHaveBeenCalledTimes(2)
   })
 
@@ -1112,7 +1140,7 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+    await expect(response.json()).resolves.toMatchObject({ status: 'accepted' })
 
     expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1172,7 +1200,7 @@ describe('createWebhookHandler', () => {
     const response = await handler(buildRequest(payload, scenarioHeaders('pull_request', 'edited')), 'github')
 
     expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+    await expect(response.json()).resolves.toMatchObject({ status: 'accepted' })
     expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
   })
 
@@ -1217,7 +1245,7 @@ describe('createWebhookHandler', () => {
     const response = await handler(buildRequest(payload, scenarioHeaders('pull_request', 'edited')), 'github')
 
     expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+    await expect(response.json()).resolves.toMatchObject({ status: 'accepted' })
     expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
       expect.objectContaining({
         repositoryFullName: 'owner/repo',
@@ -1278,7 +1306,7 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(202)
     const body = await response.json()
-    expect(body).toMatchObject({ codexStageTriggered: null })
+    expect(body).toMatchObject({ status: 'accepted' })
 
     expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
     expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
@@ -1482,12 +1510,12 @@ describe('createWebhookHandler', () => {
     await expect(second.json()).resolves.toEqual({
       type: 4,
       data: {
-        content: 'Duplicate interaction ignored.',
+        content: 'Implementation request received. Facteur will execute the workflow shortly.',
         flags: 64,
       },
     })
 
-    expect(mockToPlanModalEvent).toHaveBeenCalledTimes(1)
+    expect(mockToPlanModalEvent).toHaveBeenCalledTimes(2)
     expect(publishedMessages).toHaveLength(1)
   })
 

@@ -1,3 +1,7 @@
+vi.mock('@/webhooks/worker', () => ({
+  createPolicyWorker: () => ({ start: async () => undefined, stop: async () => undefined }),
+  makePolicyProcessor: () => async () => undefined,
+}))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AppConfig } from '@/effect/config'
@@ -110,6 +114,7 @@ vi.mock('@/services/kafka', () => {
   return {
     KafkaProducer,
     KafkaProducerLayer,
+    makeKafkaClient: () => ({ consumer: () => ({ events: { CRASH: 'crash' }, on: vi.fn() }) }),
     parseBrokerList,
   }
 })

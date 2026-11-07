@@ -171,7 +171,10 @@ export const buildLinearIssueAgentRunPayload = (
 export const makeAgentsServiceSubmitter =
   (config: FroussardAgentsConfig): AgentRunSubmitter =>
   (input) =>
-    submitAgentRunToAgentsService(input, {
-      AGENTS_SERVICE_BASE_URL: config.serviceBaseUrl,
-      AGENTS_SERVICE_CLIENT_NAME: config.serviceClientName,
-    })
+    submitAgentRunToAgentsService(
+      { ...input, signal: input.signal ?? AbortSignal.timeout(30_000) },
+      {
+        AGENTS_SERVICE_BASE_URL: config.serviceBaseUrl,
+        AGENTS_SERVICE_CLIENT_NAME: config.serviceClientName,
+      },
+    )

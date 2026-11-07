@@ -11,6 +11,22 @@ daemon-by-daemon upgrade with the existing health checks. Keep `osd_max_scrubs=3
 After reconciliation, verify all daemon versions, six OSDs up/in, available clean PGs, and actual reads and writes
 through the existing RBD, CephFS and RGW clients. A completed version rollout does not prove lower client latency.
 
+## Scrub chunk latency
+
+Deep scrubs process one object per chunk with `osd_scrub_chunk_min=1` and
+`osd_scrub_chunk_max=1`. The concurrent scrub limit remains three, the read stride remains
+4 MiB, and the existing client-priority mClock profile remains enabled. Smaller chunks let
+client writes proceed between scrub operations on these shared HDDs. The prior five-object
+chunks coincided with Kafka RBD writes taking 2–5 seconds for local or replica commit,
+controller threads blocked in `FileChannel.force`, and producer timeouts.
+
+These settings are runtime updatable through Rook's committed `cephConfig`; no daemon restart
+or volume migration is needed. After Argo reconciliation, verify the effective values on all
+six OSDs, six OSDs up/in, clean available PGs, ongoing scrub progress, Kafka ISR and producer
+latency. Compare fresh operation histories and controller logs over the same interval. If
+client latency does not improve, retain the evidence and revise or revert this isolated
+change through GitOps. A healthy Ceph summary alone does not prove client latency.
+
 Current Kubernetes and Talos access endpoints are tracked in
 `docs/runbooks/galactic-kubernetes-access.md`. The Kubernetes node names below
 still contain old `192.168.1.*` addresses, but the current LAN reachability path

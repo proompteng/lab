@@ -36,46 +36,53 @@ trusted events to the owning downstream system. Froussard is the only public web
 Agents automation; an AgentRun's `implementation.source` remains provenance, not an ingress
 configuration object.
 
-## End-to-end Data Flow
+## Durable admission and policy execution
+
+GitHub and enabled Linear deliveries are verified and written to
+`froussard.webhook.admissions.v1` before their HTTP success response. The topic has three
+partitions, replication factor three and minimum ISR two. The producer requires all ISR
+acknowledgments and uses KafkaJS idempotent production. Discord modal submissions retain
+the existing protobuf contract on `discord.commands.incoming`, with the same broker-ack boundary.
+Discord pings and modal construction require no asynchronous work.
+
+Concurrent duplicate deliveries await the same write. Only successful broker receipts enter
+the bounded duplicate cache; failures allow another attempt. Across process loss and uncertain
+HTTP outcomes, delivery is at least once. GitHub review receipts, Agents delivery keys and Atlas
+delivery IDs protect downstream effects when an uncommitted record replays.
+
+The `froussard-policy-v1` consumer group runs in the existing process, independently of HTTP
+handlers. It reads the new admission topic from its beginning, executes GitHub/Linear policy,
+and commits the next offset only after success. Failed work retains its offset and retries;
+shutdown leaves unfinished work for the next consumer. Corrupt records stop the consumer and
+restart the process rather than silently advancing. The existing raw audit topics remain
+outputs of this worker. Historical raw events are never replayed as new admissions.
+
+The ingress response budgets are eight seconds for GitHub, 4.5 seconds for Linear and 2.5
+seconds for Discord. A timeout or uncertain write returns a retryable 5xx. An eventual write
+after an HTTP timeout can still be processed, so downstream idempotency remains required.
+Policy-dependent response fields such as `codexStageTriggered` and `agentRunTriggered` are
+removed. A success response confirms durable admission, not completed policy work.
 
 ```mermaid
 flowchart LR
-  GH[GitHub webhook delivery] --> Froussard[Froussard webhook server]
-  Linear[Linear issue delivery] --> Froussard
-  Discord[Discord interaction] --> Froussard
-  subgraph Kafka Topics
-    Raw[github.webhook.events]
-    LinearRaw[linear.webhook.events]
-    DiscordTopic[discord.commands.incoming]
-  end
-  Froussard -->|raw body| Raw
-  Froussard -->|verified raw issue event| LinearRaw
-  Froussard -->|GitHub issue implementation AgentRun| Agents
-  Froussard -->|agentrun label added| Agents
-  Froussard -->|slash command| DiscordTopic
-  DiscordTopic --> Facteur[Facteur Discord bridge]
-  Facteur --> Agents[Agents AgentRun API]
-  Agents --> Runner[agents-codex-runner]
-  Runner -->|source-bound stdio bridge| LinearGateway[Agents Linear MCP gateway]
-  LinearGateway -->|OAuth app actor| LinearMcp[Official Linear MCP]
+  GitHub --> Verify[HTTP signature and payload validation]
+  Linear --> Verify
+  Verify -->|acks all ISR| Admission[froussard.webhook.admissions.v1]
+  Admission --> Worker[Policy consumer]
+  Worker --> GitHubAPI[GitHub approvals]
+  Worker --> Agents[Agents AgentRun API]
+  Worker --> Atlas[Atlas enrichment]
+  Worker --> Audit[Existing raw audit topics]
+  Discord -->|verified protobuf and broker ack| Commands[discord.commands.incoming]
+  Commands --> Facteur
+  Facteur --> Agents
 ```
 
-The Argo CD application also provisions the `discord.commands.incoming` Kafka topic so Discord automation can publish into the shared cluster alongside GitHub event streams.
-
-## Runtime Responsibilities
-
-- Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
-- Validate Discord `x-signature-ed25519`/`x-signature-timestamp` headers using `discord-interactions` before parsing the payload.
-- Validate Linear's raw-body HMAC, delivery UUID, header and payload timestamps, JSON content type,
-  and body-size limit before parsing trusted fields.
-- Emit the original JSON event (`github.webhook.events`) and submit GitHub issue implementation runs directly to the Agents `/v1/agent-runs` API.
-- Audit verified Linear events to `linear.webhook.events`. Submit exactly one `codex-linear-agent`
-  run when an Issue is created with `agentrun` or an update proves that label was newly added.
-- Use `Linear-Delivery` as both the HTTP and AgentRun idempotency key. Descriptions, signatures,
-  and actor emails are never logged.
-- Normalize Discord slash command payloads (command name, options, interaction token, user metadata) and publish them into `discord.commands.incoming`.
-- Provision and maintain the `discord.commands.incoming` Kafka topic for Facteur ingestion.
-- Surface health checks on `/health/liveness` and `/health/readiness`.
+Delivery logs include admission partition/offset receipts and policy commit/failure offsets.
+Native spans `webhook.admit` and `webhook.policy` carry the provider and delivery ID. Check the
+consumer group's committed offsets and actual downstream state when proving recovery; HTTP
+202 alone does not establish a completed approval or AgentRun. Keep at least one Knative
+replica running so the consumer can drain while HTTP traffic is idle.
 
 ## Local Development
 

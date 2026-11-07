@@ -15,7 +15,7 @@ vi.mock('kafkajs', () => ({
 const createProducer = () => {
   const connect = vi.fn().mockResolvedValue(undefined)
   const disconnect = vi.fn().mockResolvedValue(undefined)
-  const send = vi.fn().mockResolvedValue(undefined)
+  const send = vi.fn().mockResolvedValue([{ partition: 0, baseOffset: '1' }])
 
   return { connect, disconnect, send }
 }
