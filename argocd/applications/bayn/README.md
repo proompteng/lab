@@ -1,5 +1,9 @@
 # Bayn deployment
 
+## Jev 1.14 cutover
+
+[The Box cutover](../../../docs/bayn/jev114-box-cutover.md) first settles the exact v39 PAPER identity through migration 186 and native OBSERVE recovery. The old mandate remains absent until the new protocol and verified immutable image have a reviewed same-account activation request.
+
 ## Current trading scope
 
 Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before

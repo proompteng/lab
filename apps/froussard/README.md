@@ -11,10 +11,24 @@ existing approvals are reconciled per commit. See the
 Froussard uses Effect 4.1.2 for services, schemas, concurrency, and resource lifetimes. Its
 Agents client uses the same version. There is no Effect 3 adapter in the runtime.
 
-Trace export retries transient OTLP/gRPC failures with exponential backoff within one
-30-second export budget. Retry warnings retain the gRPC status and attempt; exhausted
-budgets and permanent failures remain errors. Kafka quorum outages can exceed this
-budget, so trace delivery still requires checking Tempo rather than application health.
+Telemetry uses Effect's native `OtlpTracer` and `OtlpMetrics` in the application's managed
+runtime. It exports batched OTLP/HTTP JSON to Tempo and the existing Alloy-to-Mimir pipeline.
+Froussard has no dependency on `@proompteng/otel` and does not initialize a separate SDK.
+The runtime owns exporter shutdown and flushing. Effect handles transient HTTP retries;
+failed export attempts are logged, and sustained receiver outages can still lose telemetry.
+
+Enable the signals with `OTEL_TRACES_EXPORTER=otlp` and `OTEL_METRICS_EXPORTER=otlp`.
+Configure full HTTP URLs with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. Effect reads the standard OTLP header, batch and interval
+settings. Each HTTP attempt has a 10-second timeout. The signal-specific OTLP timeout settings
+bound shutdown flushing. Legacy `LGTM_*` trace/metric endpoints and gRPC protocol selection
+are removed. Loki logging retains its existing configuration.
+
+Request spans cover handler execution and include response status and a bounded route name.
+They accept upstream trace context without recording query strings, bodies or credentials.
+Native metrics include HTTP request counts/duration and the existing Linear webhook counters
+and delivery latency histogram. Resource metadata includes the service, namespace, pod and
+source commit. Verify trace IDs in Tempo and matching pod metric series in Mimir after rollout.
 
 Froussard is a TypeScript service running on Bun (Elysia HTTP runtime) that receives webhook
 deliveries (GitHub, Linear issues, and Discord slash commands), verifies signatures, and forwards

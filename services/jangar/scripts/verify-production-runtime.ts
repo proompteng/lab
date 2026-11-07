@@ -15,6 +15,11 @@ const server = Bun.spawn([process.execPath, '.output/server/index.mjs'], {
     JANGAR_SERVER_PROFILE: 'test',
     JANGAR_CHAT_STATE_BACKEND: 'memory',
     JANGAR_MOCK_CODEX: 'true',
+    JANGAR_MODELS: 'qwen38-flamingo,gpt-6-astra',
+    JANGAR_DEFAULT_MODEL: 'qwen38-flamingo',
+    JANGAR_FLAMINGO_MODEL: 'qwen38-flamingo',
+    JANGAR_FLAMINGO_REASONING_EFFORT: 'xhigh',
+    OPENAI_API_BASE_URL: 'http://127.0.0.1:1/v1',
     AGENTS_SERVICE_BASE_URL: 'http://127.0.0.1:1',
   },
   stdout: 'pipe',
@@ -63,6 +68,7 @@ try {
   })
   assert.equal(chat.status, 200, 'chat service layers must execute a completion')
   const completion = await chat.json()
+  assert.equal(completion.model, 'qwen38-flamingo', 'omitted model must use the configured default')
   assert.equal(completion.choices[0].message.content.trim(), 'Mock Codex ready.')
   assert.equal(server.exitCode, null, 'production server must remain running')
   console.log('Jangar production runtime passed: health, model catalog, chat validation and completion')
