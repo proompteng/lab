@@ -1,10 +1,13 @@
 import { PgClient } from '@effect/sql-pg'
+import { firstCycleQuery } from './cycles'
+import type { TerminalCycleRow } from './model'
 import { generationScope, openingSnapshotBoundary } from './scope'
 
 export const transactionQuery = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) => sql<Record<string, unknown>>`
   WITH latest_reconciliation AS (
     SELECT reconciliation.reconciled_at
@@ -14,13 +17,7 @@ export const transactionQuery = (
     ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   ), first_cycle AS (
-    SELECT cycle.submission_open_at
-    FROM autonomous_cycles AS cycle
-    WHERE cycle.account_id = ${accountId}
-      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-    LIMIT 1
+    ${firstCycleQuery(sql, accountId, authorityGenerationHash, capturedCycles)}
   ), opening_snapshot AS (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
@@ -101,6 +98,7 @@ export const receiptQuery = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash: string | undefined,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) => sql<Record<string, unknown>>`
   WITH latest_reconciliation AS (
     SELECT reconciliation.reconciled_at
@@ -110,13 +108,7 @@ export const receiptQuery = (
     ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   ), first_cycle AS (
-    SELECT cycle.submission_open_at
-    FROM autonomous_cycles AS cycle
-    WHERE cycle.account_id = ${accountId}
-      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-    LIMIT 1
+    ${firstCycleQuery(sql, accountId, authorityGenerationHash, capturedCycles)}
   ), opening_snapshot AS (
     SELECT event.observed_at
     FROM account_snapshots AS snapshot
