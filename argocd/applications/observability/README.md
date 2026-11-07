@@ -204,6 +204,10 @@ Alloy retains kubelet used bytes alongside available and capacity bytes. Missing
 critical detection enabled, and any positive used-byte observation preserves detection of a completely full filesystem.
 Raw block-device capacity does not establish free space inside a VM; that requires guest filesystem telemetry.
 
+Torghut forwarder readiness and scrape-outage alerts use service identity instead of pod addresses. A healthy
+replacement prevents a retired replica from opening another service incident. Detection remains two minutes for
+readiness and five minutes for scrape failure; both incidents resolve after five continuous minutes of recovery.
+
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
 and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
