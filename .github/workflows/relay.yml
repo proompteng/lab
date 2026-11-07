@@ -80,7 +80,12 @@ jobs:
         with:
           bun-version: 1.4.2
       - name: Install client fixture dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design --filter @proompteng/agents
+      - name: Verify connector registrations
+        run: |
+          bun services/relay/generate.ts --check
+          bun test services/relay/onboarding.test.ts
+          bunx tsc --ignoreConfig --noEmit --skipLibCheck --moduleResolution bundler --module esnext --target esnext --types bun services/relay/onboarding.ts services/relay/generate.ts services/relay/connectors/*.ts services/relay/onboarding.test.ts
       - name: Verify MCP clients and public proxy with attested TLS peers
         run: bash services/relay/test-client.sh
   image:

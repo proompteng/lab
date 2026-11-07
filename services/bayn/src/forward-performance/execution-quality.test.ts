@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { test } from 'bun:test'
 import { Result } from 'effect'
+import { canonicalHashV1Result } from '../hash'
 
 import { makeForwardPerformanceExecutionMeasurements } from './execution-quality'
 import { executionQualityFixture } from './execution-quality.test-support'
@@ -13,7 +14,12 @@ const measure = (input: ReturnType<typeof executionQualityFixture>) =>
 test('preserves the synthetic complete report and evidence hashes across input order', () => {
   const input = executionQualityFixture(10)
   const report = Result.getOrThrow(makeForwardPerformanceReport(input, []))
-  assert.equal(report.reportHash, 'a22ecd7b88d70657c754cd9fe39bde780977b32abfc5121e7566a359f906893e')
+  assert.equal(report.reportHash, 'e1a0745b65ecace9f1716e7e7c478486d65f46609cac0ca7619c4a2fa4d28003')
+  assert.equal(report.receipt.receiptHash, 'f4d8eead77745a0354ca0efdb6d6d3b737ac0013a1a1a83761f00a07300d0f26')
+  assert.equal(
+    Result.getOrThrow(canonicalHashV1Result(report.receipt)),
+    'e0c14bb31545ab1b216e7cc0b14aa58ab06ba706f4e59fc3c45fc56536e17a9a',
+  )
   assert.equal(report.receipt.executionQuality.status, 'MEASURED')
   assert.deepEqual(
     Result.getOrThrow(

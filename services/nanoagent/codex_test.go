@@ -1129,6 +1129,9 @@ func TestCodexReplayProjectsOnlyToolResultImages(t *testing.T) {
 	}{
 		{"mcp", `{"type":"mcpToolCall","result":{"content":[{"type":"image","data":"image-data","mimeType":"image/png"},{"type":"text","text":"tool output"}],"structuredContent":{"type":"image","data":"keep-structured-data"}}}`, true},
 		{"dynamic", `{"type":"dynamicToolCall","contentItems":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"},{"type":"inputText","text":"tool output"}]}`, true},
+		{"generated", `{"type":"imageGeneration","status":"completed","result":"image-data","savedPath":"/workspace/cat.png","revisedPrompt":"tool output"}`, true},
+		{"generation failure", `{"type":"imageGeneration","status":"failed","result":"","failure":{"message":"Generation failed"}}`, false},
+		{"generated file", `{"type":"imageGeneration","status":"completed","fileId":"file-id","savedPath":"/workspace/cat.png"}`, false},
 		{"user", `{"type":"userMessage","content":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"}]}`, false},
 		{"text", `{"type":"mcpToolCall","result":{"content":[{"type":"text","text":"tool output"}]}}`, false},
 	} {
@@ -1164,6 +1167,59 @@ func TestCodexReplayProjectsOnlyToolResultImages(t *testing.T) {
 				t.Fatal("desktop projection mutated the original Codex message")
 			}
 		})
+	}
+}
+
+func TestCodexReplayRetainsLargeGeneratedImageCompletion(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	savedPath := "/home/nanoagent/.codex/generated_images/thread/image.png"
+	raw, err := json.Marshal(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"threadId": "thread", "turnId": "turn",
+			"item": map[string]any{
+				"type": "imageGeneration", "id": "image", "status": "completed",
+				"result": strings.Repeat("A", 3_744_212), "savedPath": savedPath,
+				"revisedPrompt": "A tabby cat", "failure": nil,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := string(raw)
+	supervisor.publish("item/completed", "", json.RawMessage(raw))
+	supervisor.publish("turn/completed", "", json.RawMessage(`{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}`))
+	id, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.unsubscribe(id)
+	event := <-events
+	if event.Method != "item/completed" || len(event.Raw) > 1024 {
+		t.Fatalf("image completion became %s (%d bytes)", event.Method, len(event.Raw))
+	}
+	var projected struct {
+		Params struct {
+			ThreadID, TurnID string
+			Item             struct{ Type, ID, Status, Result, SavedPath, RevisedPrompt string }
+		}
+	}
+	if err := json.Unmarshal(event.Raw, &projected); err != nil {
+		t.Fatal(err)
+	}
+	item := projected.Params.Item
+	if projected.Params.ThreadID != "thread" || projected.Params.TurnID != "turn" ||
+		item.Type != "imageGeneration" || item.ID != "image" || item.Status != "completed" ||
+		item.SavedPath != savedPath || item.RevisedPrompt != "A tabby cat" || item.Result != "[Image output]" {
+		t.Fatalf("image completion lost its metadata: %#v", projected)
+	}
+	if event := <-events; event.Method != "turn/completed" {
+		t.Fatalf("following turn completion became %s", event.Method)
+	}
+	if string(raw) != original {
+		t.Fatal("desktop projection changed the native image result")
 	}
 }
 

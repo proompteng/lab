@@ -163,9 +163,10 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             'APCA-API-SECRET-KEY': secret,
           },
         })
-        const response = yield* client
-          .execute(request)
-          .pipe(Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)))
+        const response = yield* client.execute(request).pipe(
+          withObservedStage('bayn.alpaca.read.headers', { dependency: 'alpaca', operation, diagnosticOnly: true }),
+          Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)),
+        )
         const headers = yield* decodeResponseHeaders(response).pipe(
           Effect.mapError((cause) =>
             invalidResponse({
@@ -177,6 +178,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           ),
         )
         const raw = yield* response.json.pipe(
+          withObservedStage('bayn.alpaca.read.body', { dependency: 'alpaca', operation, diagnosticOnly: true }),
           Effect.mapError((cause) =>
             invalidResponse({
               operation,

@@ -17,8 +17,7 @@ import { currentEntryMarkets } from '../execution/trading-scope'
 import { qualificationDeadlines } from './configuration'
 import { executionControllerPlanHash } from '../execution/controller'
 
-export const operationalRegistrationFixture = (): OperationalRegistration => {
-  const base = registrationFixture()
+export const operationalRegistrationFixture = (base = registrationFixture()): OperationalRegistration => {
   const registered = base.policies.find((policy) => policy.policy === 'JEV')
   if (registered === undefined) throw new Error('Missing candidate')
   const candidate = {

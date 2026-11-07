@@ -1,3 +1,4 @@
+import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
 import expenseSourceQueue from '../../migrations/0173_inference_expense_source_queue'
 import { entryProviderFixture } from '../jev/entry-inference.test-support'
@@ -91,6 +92,7 @@ import { JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
+import { reconstructRetainedJevV38TradingSignalBatch } from '../jev/retained-v38-trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
@@ -111,6 +113,10 @@ import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { acquireInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { Authority } from '../execution/contracts'
+import { makeAuthorityPostgres } from './execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from './execution-store/observe-authority'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const url = baynTestPostgresUrl ?? 'postgresql://localhost/bayn_sequential_entry_0391_test'
@@ -830,6 +836,159 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${original.requestId}`,
         ).toEqual([{ payload: terminal }])
+      }),
+    ))
+
+  test('v39 cutover retains v38 requests and claims while enforcing effective allowances for new requests', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 184))),
+          table: 'schema_migrations',
+        })
+        yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${request.observedAt})`
+        const broker = Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: replayAccountId,
+          }),
+        )
+        const authority = makeObserveAuthorityInterpreter(
+          sql,
+          makeAuthorityPostgres(sql, { now: sql`${request.observedAt}::timestamptz` }),
+          broker,
+        )
+        const initialized = yield* authority.ensureAuthorityGeneration({
+          generationHash: request.authorityGenerationHash,
+          maximum: Authority.Observe,
+        })
+        expect(initialized).toMatchObject({ maximum: Authority.Observe, effective: Authority.Observe, kill: 'CLEAR' })
+        yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+        const originalPlan = Result.getOrThrow(
+          reconstructRetainedJevV38TradingSignalBatch({
+            observation: {
+              ...fixture.observation.payload,
+              protocol: { ...fixture.protocol, schemaVersion: 'bayn.jev.protocol.v38' },
+            },
+            expiresAt: request.expiresAt,
+            planVersion: JevBatchPlanVersion.V8,
+          }),
+        )
+        const candidate = originalPlan.candidates.find((entry) => entry.status === JevCandidatePlanStatus.Requested)
+        if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected retained v38 evidence')
+        const original = candidate.request
+        yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${original.requestId},${original.cycleId},${original.authorityGenerationHash},${sql.json(original)})`
+        const checkpoint = stagedCheckpointFixture(original)
+        const claim = checkpoint.claims[0]
+        const terminal = checkpoint.terminals[0]
+        if (claim === undefined || terminal === undefined) throw new Error('Expected retained chart stage')
+        yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+          UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+            updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${original.cycleId}`
+        const reconciliation = fixture.portfolio.brokerState.reconciliation
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+          VALUES (${reconciliation.reconciliationId},${reconciliation.schemaVersion},${broker.accountId},
+            ${reconciliation.expectedHash},${reconciliation.observedHash},${reconciliation.contentHash},
+            ${reconciliation.status},'[]'::jsonb,clock_timestamp())`
+        const requestsBefore = yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`
+        const claimsBefore = yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`
+        const authorityBefore =
+          yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g ORDER BY generation_hash`
+        const authorityStateBefore = yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`
+        expect(authorityStateBefore).toHaveLength(1)
+        expect(
+          yield* sql`SELECT g.account_id FROM authority_state a JOIN authority_generations g USING (generation_hash)`,
+        ).toEqual([{ account_id: broker.accountId }])
+        yield* sql.withTransaction(effectiveEntryAllowanceInput)
+        expect(yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`).toEqual(
+          requestsBefore,
+        )
+        expect(yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`).toEqual(
+          claimsBefore,
+        )
+        expect(
+          yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g ORDER BY generation_hash`,
+        ).toEqual(authorityBefore)
+        expect(yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`).toEqual(authorityStateBefore)
+        const rejectedDispatch = yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
+        if (Result.isSuccess(rejectedDispatch)) throw new Error('A retained v38 request was allowed new dispatch')
+        yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+          rejectedDispatch.failure.reason.cause,
+        )
+        yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${terminal.terminalHash},${sql.json(terminal)})`
+        const successorFixture = nativeJevFixture(
+          JevPurpose.Entry,
+          new Date(Date.parse(request.observedAt) + 60_000).toISOString(),
+          replayAccountId,
+          undefined,
+          Result.getOrThrow(canonicalHashV1Result({ cutover: 'v39', previousCycleId: original.cycleId })),
+        )
+        const successorPlan = Result.getOrThrow(
+          makeJevTradingSignalBatch({
+            observation: successorFixture.observation.payload,
+            expiresAt: new Date(
+              Date.parse(successorFixture.observation.payload.observedAt) +
+                successorFixture.protocol.inferenceValidityMs,
+            ).toISOString(),
+            planVersion: JevBatchPlanVersion.V8,
+          }),
+        )
+        const successorCandidate = successorPlan.candidates.find(
+          (entry) => entry.status === JevCandidatePlanStatus.Requested,
+        )
+        if (successorCandidate?.status !== JevCandidatePlanStatus.Requested)
+          throw new Error('Expected current post-cutover request')
+        const successor = successorCandidate.request
+        // One symbol/source/generation belongs to one request. The successor gets a new native cycle and source;
+        // the retained request is never replaced or admitted again under a different protocol identity.
+        expect(successor.cycleId).not.toBe(original.cycleId)
+        expect(successor.snapshotId).not.toBe(original.snapshotId)
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${successor.observedAt} WHERE account_id=${replayAccountId}`
+        yield* (yield* CycleStore).acquire(successorFixture.draft, successor.observedAt)
+        yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${successor.requestId},${successor.cycleId},${successor.authorityGenerationHash},${sql.json(successor)})`
+        for (const [index, changed] of [
+          original.request,
+          { ...successor.request, protocol: { ...successor.request.protocol, schemaVersion: 'bayn.jev.protocol.v38' } },
+          {
+            ...successor.request,
+            numericalState: {
+              ...successor.request.numericalState,
+              entryEconomics: { maximumEntryQuoteDriftBps: 10, maximumEntryLimitSlippageBps: 0 },
+            },
+          },
+          {
+            ...successor.request,
+            numericalState: {
+              ...successor.request.numericalState,
+              entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: '0' },
+            },
+          },
+          { ...successor.request, numericalState: { ...successor.request.numericalState, entryEconomics: {} } },
+        ].entries()) {
+          const id = Result.getOrThrow(canonicalHashV1Result({ invalidInput: index }))
+          const rejected =
+            yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+            VALUES (${id},${successor.cycleId},${successor.authorityGenerationHash},${sql.json({ ...successor, requestId: id, request: changed })})`.pipe(
+              Effect.result,
+            )
+          if (Result.isSuccess(rejected))
+            throw new Error('Mixed or misleading allowance input reached the current DB contract')
+          yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+            rejected.failure.reason.cause,
+          )
+        }
       }),
     ))
 
@@ -2119,6 +2278,7 @@ integration('committed sequential provider handoff', () => {
     ['dated-execution-fee', datedExecutionFees],
     ['Jev-only', jevOnlyInference],
     ['Webull-context', webullEntryContext],
+    ['effective-entry-allowance', effectiveEntryAllowanceInput],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -2134,6 +2294,101 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`,
         ).toEqual(before)
+      }),
+    ),
+  )
+
+  test.each([
+    {
+      name: 'clear PAPER authority',
+      state: { maximum: 'PAPER', effective: 'PAPER', kill: 'CLEAR', reason: null },
+      reconciliation: 'fresh',
+    },
+    {
+      name: 'PAPER awaiting native OBSERVE settlement',
+      state: {
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+      },
+      reconciliation: 'fresh',
+    },
+    {
+      name: 'OBSERVE under an operator hold',
+      state: { maximum: 'OBSERVE', effective: 'OBSERVE', kill: 'ACTIVE', reason: 'operator hold' },
+      reconciliation: 'fresh',
+    },
+    ...['missing', 'stale', 'future', 'nonexact', 'before-mutation'].map((reconciliation) => ({
+      name: `clear OBSERVE with ${reconciliation} reconciliation`,
+      state: { maximum: 'OBSERVE', effective: 'OBSERVE', kill: 'CLEAR', reason: null },
+      reconciliation,
+    })),
+  ])('v39 cutover refuses $name without changing authority or retained request/claim bytes', async (scenario) =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* retainCheckpoint(request)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+              updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${request.cycleId}`
+            yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE authority_state (generation_hash text, maximum text, effective text, kill_state text, reason text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE intents (intent_id text,account_id text,state text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE mutation_events (intent_id text,occurred_at timestamptz) ON COMMIT DROP`
+            yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
+            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},${scenario.state.maximum},
+              ${scenario.state.effective},${scenario.state.kill},${scenario.state.reason})`
+            if (scenario.reconciliation !== 'missing') {
+              const ageSeconds =
+                scenario.reconciliation === 'stale'
+                  ? -61
+                  : scenario.reconciliation === 'future'
+                    ? 3600
+                    : scenario.reconciliation === 'before-mutation'
+                      ? -1
+                      : 0
+              yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',
+                ${scenario.reconciliation === 'nonexact' ? 'DISCREPANCY' : 'EXACT'},
+                clock_timestamp()+${ageSeconds}*interval '1 second',${'b'.repeat(64)})`
+            }
+            if (scenario.reconciliation === 'before-mutation') {
+              yield* sql`INSERT INTO intents VALUES (${'c'.repeat(64)},'paper-cutover','TERMINAL')`
+              yield* sql`INSERT INTO mutation_events VALUES (${'c'.repeat(64)},clock_timestamp())`
+            }
+            const authorityBefore = yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`
+            const generationsBefore = yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g`
+            const requestsBefore = yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`
+            const claimsBefore =
+              yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`
+            expect(claimsBefore.length).toBeGreaterThan(0)
+            const rejected = yield* sql.withTransaction(effectiveEntryAllowanceInput).pipe(Effect.result)
+            if (Result.isSuccess(rejected)) throw new Error(`The protocol cutover accepted ${scenario.name}`)
+            expect(rejected.failure).toMatchObject({
+              reason: {
+                cause: {
+                  code: '55000',
+                  message: expect.stringContaining(
+                    'effective-entry-allowance cutover requires terminal cycles, OBSERVE authority',
+                  ),
+                },
+              },
+            })
+            expect(yield* sql`SELECT row_to_json(a)::text AS payload FROM authority_state a`).toEqual(authorityBefore)
+            expect(yield* sql`SELECT row_to_json(g)::text AS payload FROM authority_generations g`).toEqual(
+              generationsBefore,
+            )
+            expect(yield* sql`SELECT payload::text FROM jev_evaluation_requests ORDER BY request_id`).toEqual(
+              requestsBefore,
+            )
+            expect(yield* sql`SELECT payload::text FROM jev_staged_dispatch_claims ORDER BY request_id,stage`).toEqual(
+              claimsBefore,
+            )
+          }),
+        )
       }),
     ),
   )

@@ -666,7 +666,23 @@ test('Bayn separates formal checks from runtime validation and publication', () 
     'services/bayn/formal/Bayn/Reliability.lean',
     'services/bayn/formal/tla/Controller.tla',
     'services/bayn/formal/conformance/economics.test.ts',
+    'services/bayn/README.md',
+    'services/bayn/src/jev/entry-economics.test.ts',
   ])
     expect(matchesPaths(path, paths)).toBe(false)
   expect(matchesPaths('services/bayn/src/execution/controller.ts', paths)).toBe(true)
+  for (const path of [
+    'services/bayn/src/jev/entry-economics.ts',
+    'services/bayn/migrations/20261106-cost-evidence.sql',
+    'services/bayn/package.json',
+    'nix/images/bayn.nix',
+    'argocd/applications/bayn/configmap.yaml',
+    'bun.lock',
+  ])
+    expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
+  expect(selectAffectedInputs(['services/bayn/README.md'], targets, lock, lock)).toEqual({
+    bayn: true,
+    image: true,
+    formal: false,
+  })
 })

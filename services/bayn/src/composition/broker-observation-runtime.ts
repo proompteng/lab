@@ -23,7 +23,7 @@ import type { ApplicationPlan } from '../app'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
-import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
+import { brokerSnapshotCacheConfig, makeBrokerObservationCapture } from '../broker/alpaca/snapshot-cache'
 import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { canonicalHashV1Result } from '../hash'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
@@ -120,10 +120,13 @@ export const acquireBrokerObservationRuntime = (
       Layer.provide(pollingHttp),
       Layer.provideMerge(telemetry),
     )
-    const acquireBroker = Effect.acquireRelease(
-      Effect.sync(() => ManagedRuntime.make(brokerResources)),
-      (value) => value.disposeEffect,
-    )
+    const acquireBroker = Effect.gen(function* () {
+      const runtime = yield* Effect.acquireRelease(
+        Effect.sync(() => ManagedRuntime.make(brokerResources)),
+        (value) => value.disposeEffect,
+      )
+      return { runtime, capture: yield* makeBrokerObservationCapture }
+    })
     const brokerRuntimes = yield* ScopedRef.fromAcquire(acquireBroker)
     const config = yield* brokerSnapshotCacheConfig.pipe(Effect.orDie)
     const captureTimeoutMs = Math.min(plan.config.operationTimeoutMs, config.maxAgeMs - config.pollIntervalMs)
@@ -189,13 +192,9 @@ export const acquireBrokerObservationRuntime = (
                   const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
                   const annotations = yield* References.CurrentLogAnnotations
                   return yield* Effect.promise((captureSignal) =>
-                    broker.runPromiseExit(
+                    broker.runtime.runPromiseExit(
                       Effect.gen(function* () {
-                        return yield* captureBrokerObservation(
-                          (yield* BrokerSession).read,
-                          ticket.startedAt,
-                          captureTimeoutMs,
-                        )
+                        return yield* broker.capture((yield* BrokerSession).read, ticket, captureTimeoutMs)
                       }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                       { signal: captureSignal },
                     ),
@@ -286,6 +285,7 @@ export const acquireBrokerObservationRuntime = (
             // interrupted capture's quota debt; only its still-owned unfinished projection is fenced.
             Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.interrupt(reservation.captureId))),
             withObservedStage('bayn.broker.observation.poll', {
+              slowAfterMs: null,
               attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
             }),
             Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),
