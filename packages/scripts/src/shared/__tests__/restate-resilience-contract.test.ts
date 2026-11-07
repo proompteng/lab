@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
+import { matchesPaths } from '../../ci/affected-inputs'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
@@ -27,7 +28,7 @@ test('Restate image promotion requires native build proofs and uploaded release 
   expect(runtime.with.push).toBe("${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
   expect(runtime.with.load).toBeUndefined()
   expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/cli.ts')
-  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
+  expect(workflow.on.push.paths).not.toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toBe(mainOnly)
   expect(publish.needs).toEqual(['build'])
   const releaseSteps = publish.steps as { name?: string; uses?: string }[]
@@ -58,6 +59,20 @@ test('Restate image promotion requires native build proofs and uploaded release 
       { image: 'restate-runtime', newName: '${{ vars.imageRepo }}', digest: '${{ imageFrom(vars.imageRepo).Digest }}' },
     ],
   })
+})
+
+test.each([
+  ['bun.lock', false],
+  ['services/jangar/package.json', false],
+  ['packages/scripts/src/shared/docker.ts', false],
+  ['packages/scripts/src/restate/build-image.ts', false],
+  ['argocd/applicationsets/platform.yaml', false],
+  ['services/restate/Dockerfile', true],
+  ['services/restate/metadata-background.patch', true],
+  ['argocd/applications/restate/statefulset.yaml', true],
+] as const)('Restate publication input %s is affected=%s', (path, affected) => {
+  const workflow = YAML.parse(readRepoFile('.github/workflows/restate-images.yml'))
+  expect(matchesPaths(path, workflow.on.push.paths)).toBe(affected)
 })
 
 test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runtime image selection', () => {
