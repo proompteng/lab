@@ -390,7 +390,7 @@ const collectBlockingChecks = (
     }
     const workflowContext = (run: (typeof runs)[number]) => {
       const workflow = run.check_suite ? workflows.get(run.check_suite.id) : undefined
-      return workflow
+      return workflow?.head_branch
         ? { key: JSON.stringify([workflow.workflow_id, workflow.event, workflow.head_branch, run.name]), workflow }
         : undefined
     }

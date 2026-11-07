@@ -16,12 +16,18 @@ describe('listPullRequestBlockingChecks', () => {
     userAgent: 'test-agent',
   }
 
-  const workflowRun = (suite: number, number: number, workflow = 10, event = 'pull_request') => ({
+  const workflowRun = (
+    suite: number,
+    number: number,
+    workflow = 10,
+    event = 'pull_request',
+    branch: string | null = 'codex/test',
+  ) => ({
     check_suite_id: suite,
     run_number: number,
     workflow_id: workflow,
     event,
-    head_branch: 'codex/test',
+    head_branch: branch,
   })
   const checkRun = (suite: number, conclusion: string | null, status = 'completed') => ({
     name: 'Validate PR title',
@@ -81,6 +87,15 @@ describe('listPullRequestBlockingChecks', () => {
       ok: true,
       checks: [{ conclusion: 'cancelled' }],
     })
+  })
+
+  it('retains checks when the workflow branch is unknown', async () => {
+    expect(
+      await inspectChecks(
+        [checkRun(1, 'cancelled'), checkRun(2, 'success')],
+        [workflowRun(1, 1, 10, 'pull_request', null), workflowRun(2, 2, 10, 'pull_request', null)],
+      ),
+    ).toMatchObject({ ok: true, checks: [{ conclusion: 'cancelled' }] })
   })
 
   it('collects all check and workflow pages before resolving superseded runs', async () => {
