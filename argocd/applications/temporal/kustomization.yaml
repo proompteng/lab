@@ -71,7 +71,7 @@ patches:
             command: ["/bin/sh", "-c", "nodetool status"]
           periodSeconds: 10
           timeoutSeconds: 5
-          failureThreshold: 90
+          failureThreshold: 180
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:

@@ -14,7 +14,7 @@ A compatible v39 image can recover before the new protocol migration. Never rest
 
 ## Admit Box inference
 
-Migration 187 requires the settled clear OBSERVE boundary again. It admits protocol v40, pinned Jev 1.14, the exact
+Migration 188 requires the settled clear OBSERVE boundary again. It admits protocol v40, pinned Jev 1.14, the exact
 Box question-policy hash and handoff v5. A new request has one CHART dispatch; BASE_START claims and skips are retired.
 The terminal, handoff, receipt and expense guards preserve old paid evidence while rejecting mixed model/stage graphs.
 The expense source queue expects two resolved stages for v40 and retains the original count for historical requests.
