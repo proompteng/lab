@@ -1445,6 +1445,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   and actual type use fixed categories. Payload values, arbitrary keys, schema messages and account identifiers are
   omitted. The response remains `INVALID_RESPONSE`; unsupported issue shapes report `unknown` rather than formatting
   the error. Successful reads, other endpoints, deadlines, retries, validation and freshness are unchanged.
+- Operation-duration histograms use Effect's canonical boundary constructor, including the unbounded overflow bucket.
+  Prometheus and OTLP retain the same finite buckets through 60 seconds and count longer operations in overflow.
+  The pinned Effect Prometheus patch emits that overflow once as `+Inf`, rather than also exporting `Infinity`.
+  Cross-service latency aggregation therefore combines matching buckets without changing alert thresholds or sample gates.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
   headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
