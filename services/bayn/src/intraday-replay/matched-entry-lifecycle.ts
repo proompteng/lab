@@ -2,7 +2,7 @@ import { jevMarketForSymbol } from '../jev/markets'
 import { Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
-import type { JevProtocol } from '../jev/protocol'
+import type { JevProtocol, RetainedJevProtocolV38Schema } from '../jev/protocol'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import {
   applyControlOrder,
@@ -39,7 +39,7 @@ export interface MatchedLifecycle {
 
 export interface MatchedTerms {
   readonly symbol: string
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
   readonly assumptions: typeof SignalStudyInputSchema.Type.assumptions
   readonly entryBudgetMicros: string
   readonly decidedAtMs: number

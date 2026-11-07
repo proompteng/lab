@@ -42,7 +42,11 @@ import {
 } from '../execution/configuration'
 import { Authority, KillState } from '../execution/contracts'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
-import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../composition/generation-cycle'
+import {
+  executionGenerationNeedsRecovery,
+  makeGenerationCycleDriver,
+  makeRebindingCycleDriver,
+} from '../composition/generation-cycle'
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'
@@ -338,32 +342,26 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           driver,
         ).pipe(Effect.provideContext(resources))
       }).pipe(Effect.mapError(replayGenerationRecoveryError))
-    let owned = yield* startGeneration(activated.generationHash)
-    const initialDriver = owned.driver
-    const permit = yield* Semaphore.make(1)
-    const advance = permit.withPermit(
-      latency.runPass(
-        Effect.gen(function* () {
-          if (yield* owned.needsRebind) {
-            const current = yield* readAuthority
-            let generationHash = current.generationHash
-            if (
-              current.maximum === Authority.Observe &&
-              current.effective === Authority.Observe &&
-              current.kill === KillState.Clear
-            ) {
-              yield* reconcileForActivation
-              const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
-                researchCapitalGrantProof(request),
-                current.generationHash,
-              )
-              generationHash = next.generationHash
-            }
-            owned = yield* startGeneration(generationHash)
-          }
-          return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
-        }),
-      ),
+    const driver = yield* makeRebindingCycleDriver(
+      yield* startGeneration(activated.generationHash),
+      Effect.gen(function* () {
+        const current = yield* readAuthority
+        let generationHash = current.generationHash
+        if (
+          current.maximum === Authority.Observe &&
+          current.effective === Authority.Observe &&
+          current.kill === KillState.Clear
+        ) {
+          yield* reconcileForActivation
+          const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+            researchCapitalGrantProof(request),
+            current.generationHash,
+          )
+          generationHash = next.generationHash
+        }
+        return yield* startGeneration(generationHash)
+      }).pipe(Effect.mapError(replayGenerationRecoveryError)),
+      latency.runPass,
     )
     return {
       authorityGenerationHash: activated.generationHash,
@@ -371,8 +369,8 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       mutations: mutationStore,
       store,
       marketData,
-      advance,
-      nextDelayMs: initialDriver.nextDelayMs,
+      advance: driver.advance.pipe(Effect.provideContext(resources)),
+      nextDelayMs: driver.nextDelayMs,
       reconcile,
       decisionLatencyEvidence: latency.evidence,
     }

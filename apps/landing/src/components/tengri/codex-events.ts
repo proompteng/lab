@@ -1,3 +1,4 @@
+import { parseAgentRunView } from '@/lib/tengri/agent-runs'
 import { codexToolText } from './codex-tool-text'
 import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
@@ -929,6 +930,8 @@ function fileChangesText(value: unknown) {
 }
 
 function toolResultText(item: Record<string, unknown>) {
+  const run = parseAgentRunView(item)
+  if (run) return JSON.stringify(run)
   if (item.type === 'imageGeneration' && typeof item.savedPath === 'string') return item.savedPath
   const error = string(record(item.error).message)
   if (error) return error

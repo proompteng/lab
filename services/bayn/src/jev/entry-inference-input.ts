@@ -97,6 +97,16 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
           }),
         )
     }
+    if (value.protocol.schemaVersion === 'bayn.jev.protocol.v39') {
+      yield* Schema.decodeUnknownResult(
+        Schema.NullOr(
+          Schema.Struct({
+            maximumEntryQuoteDriftBps: Schema.Literal(0),
+            maximumEntryLimitSlippageBps: Schema.Literal(0),
+          }),
+        ),
+      )(value.numericalState['entryEconomics'])
+    }
     const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(value)
     if (Buffer.byteLength(body) > 128_000)
       return yield* Result.fail(

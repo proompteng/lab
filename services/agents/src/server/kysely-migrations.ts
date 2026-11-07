@@ -1,3 +1,4 @@
+import * as agentsRelaySubmissions from './migrations/20261106_agents_relay_submissions'
 import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from './db'
@@ -30,6 +31,7 @@ class StaticMigrationProvider implements MigrationProvider {
 }
 
 const migrations: MigrationMap = {
+  '20261106_agents_relay_submissions': agentsRelaySubmissions,
   '20260111_agents_primitives': agentsPrimitivesMigration,
   '20260111_agents_primitives_indexes': agentsPrimitivesIndexesMigration,
   '20260205_agents_control_plane_cache': agentsControlPlaneCacheMigration,

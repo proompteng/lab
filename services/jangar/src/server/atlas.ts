@@ -43,12 +43,12 @@ export type AtlasService = {
   close: () => Effect.Effect<void, Error>
 }
 
-export class Atlas extends Context.Tag('Atlas')<Atlas, AtlasService>() {}
+export class Atlas extends Context.Service<Atlas, AtlasService>()('Atlas') {}
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-export const AtlasLive = Layer.scoped(
+export const AtlasLive = Layer.effect(
   Atlas,
   Effect.gen(function* () {
     let store: ReturnType<typeof createPostgresAtlasStore> | null = null
@@ -70,7 +70,7 @@ export const AtlasLive = Layer.scoped(
           try: () => currentStore.close(),
           catch: (error) => normalizeError('close atlas store', error),
         }),
-        Effect.catchAll((error) => {
+        Effect.catch((error) => {
           console.warn('[mcp] failed to close atlas store', { error: String(error) })
           return Effect.void
         }),
