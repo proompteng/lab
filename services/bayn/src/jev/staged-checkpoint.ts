@@ -12,12 +12,19 @@ import {
 } from './chart-stage-contract'
 import { decodeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import * as chartStages from './staged-chart-questions'
+import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
 import * as observedChartStages from './retained-observed-staged-chart-questions'
 import { hasFeasibleEntrySource } from './entry-inference'
 import type { EntryInferenceMaterial } from './entry-inference-input'
 
 export const VisualStageSchema = Schema.Literals(['CHART', 'BASE_START'])
-export type ChartStageCodecs = typeof chartStages | typeof observedChartStages
+export type ChartStageCodecs = typeof chartStages | typeof retainedJevChartStages | typeof observedChartStages
+export type ChartCheckpointCodecs = Pick<ChartStageCodecs, 'makeInitialChartStageRequest'> & {
+  readonly makeSelectedBaseStartStageRequest?: (
+    | typeof retainedJevChartStages
+    | typeof observedChartStages
+  )['makeSelectedBaseStartStageRequest']
+}
 export const VisualStageFailureSchema = Schema.Struct({
   category: Schema.Literals(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE']),
   httpStatus: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
@@ -113,23 +120,32 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
 export const decodeStagedCheckpointForRequest = (
   request: Omit<JevEvaluationRequest, 'request'> & { readonly request: EntryInferenceMaterial },
   input: unknown,
-  stages: Pick<ChartStageCodecs, 'makeInitialChartStageRequest' | 'makeSelectedBaseStartStageRequest'>,
+  stages: ChartCheckpointCodecs,
 ) =>
   Result.gen(function* () {
     const checkpoint = yield* Schema.decodeUnknownResult(StagedCheckpointSchema, strictParseOptions)(input)
     for (const rows of [checkpoint.claims, checkpoint.terminals, checkpoint.skips])
       if (new Set(rows.map((row) => row.stage)).size !== rows.length)
         return yield* invalid('Duplicate staged journal row')
+    if (
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' &&
+      (checkpoint.claims.some((claim) => claim.stage !== 'CHART') ||
+        checkpoint.terminals.some((terminal) => terminal.stage !== 'CHART') ||
+        checkpoint.skips.length !== 0)
+    )
+      return yield* invalid('Box checkpoints contain only the original CHART call')
     const chart = yield* makeNativeChartEvidence(request.request.chartSource)
     const chartSource = { chart, protocol: request.request.protocol, funding: request.request.funding }
     const initial = yield* stages.makeInitialChartStageRequest(chartSource)
     const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
     // Claims and terminals must reproduce the same selected request within this decode.
     // Keep the derivation local: every new decode still validates the full source graph.
-    let selectedBase: ReturnType<ChartStageCodecs['makeSelectedBaseStartStageRequest']> | undefined
+    let selectedBase: ReturnType<NonNullable<ChartCheckpointCodecs['makeSelectedBaseStartStageRequest']>> | undefined
     const selectedBaseRequest = () => {
       if (chartTerminal?.outcome.status !== 'RECEIVED')
         return invalid('Base start requires a received chart predecessor')
+      if (stages.makeSelectedBaseStartStageRequest === undefined)
+        return invalid('Box charts cannot admit a second visual stage')
       return (selectedBase ??= stages.makeSelectedBaseStartStageRequest(
         chartSource,
         stageResponseIdentity(chartTerminal.outcome.inference),

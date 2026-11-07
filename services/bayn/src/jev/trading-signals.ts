@@ -32,7 +32,7 @@ import {
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
-import type { JevProtocol, RetainedJevProtocolV38Schema } from './protocol'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
 import { webullEntryContext } from './webull-entry-context'
 
@@ -299,7 +299,7 @@ export const jevTradingSignalRequestMaterial = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
   native: {
-    readonly protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+    readonly protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
     readonly portfolio: JevPortfolio
   },
   selectionPolicy: EntryAblationSelection | null,

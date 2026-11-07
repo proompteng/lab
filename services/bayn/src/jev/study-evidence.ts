@@ -11,26 +11,26 @@ import {
 } from './batch'
 import { JevContractError } from './contract'
 import { selectJevEntryCandidates } from './decision'
-import { reproduceRetainedJevV38CandidateObservation } from './observation'
-import { JevObservationSchema, RetainedJevV38ObservationSchema } from './observation-contract'
+import { reproduceRetainedJevCandidateObservation } from './observation'
+import { JevObservationSchema, RetainedJevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import {
-  decodeRetainedJevV38BatchResult,
-  reproduceRetainedJevV38TradingSignalBatchEvidence,
+  decodeRetainedJevBatchResult,
+  reproduceRetainedJevTradingSignalBatchEvidence,
   retainedJevV38BatchInferencesAt,
-  RetainedJevV38BatchPlanSchema,
-} from './retained-v38-trading-signals'
+  RetainedJevBatchPlanSchema,
+} from './retained-jev-trading-signals'
 import { reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 
 // Development studies read committed evidence; these unions never enter execution admission.
-export const JevStudyObservationSchema = Schema.Union([JevObservationSchema, RetainedJevV38ObservationSchema])
-export const JevStudyBatchPlanSchema = Schema.Union([JevBatchPlanSchema, RetainedJevV38BatchPlanSchema])
+export const JevStudyObservationSchema = Schema.Union([JevObservationSchema, RetainedJevObservationSchema])
+export const JevStudyBatchPlanSchema = Schema.Union([JevBatchPlanSchema, RetainedJevBatchPlanSchema])
 
 export const reproduceJevStudyBatchEvidence = (inputObservation: unknown, inputPlan: unknown) =>
   Result.gen(function* () {
-    if (Schema.is(RetainedJevV38ObservationSchema)(inputObservation)) {
-      const observation = yield* reproduceRetainedJevV38CandidateObservation(inputObservation)
-      const plan = yield* reproduceRetainedJevV38TradingSignalBatchEvidence(inputObservation, inputPlan)
+    if (Schema.is(RetainedJevObservationSchema)(inputObservation)) {
+      const observation = yield* reproduceRetainedJevCandidateObservation(inputObservation)
+      const plan = yield* reproduceRetainedJevTradingSignalBatchEvidence(inputObservation, inputPlan)
       return { _tag: 'RETAINED_V38' as const, observation, plan }
     }
     const current = yield* reproduceJevTradingSignalBatchEvidence(inputObservation, inputPlan)
@@ -41,7 +41,7 @@ type StudyEvidence = Result.Result.Success<ReturnType<typeof reproduceJevStudyBa
 
 export const decodeJevStudyBatchResult = (source: StudyEvidence, input: unknown) =>
   source._tag === 'RETAINED_V38'
-    ? decodeRetainedJevV38BatchResult(source.plan, input)
+    ? decodeRetainedJevBatchResult(source.plan, input)
     : decodeJevBatchResult(source.plan, input)
 
 export const jevStudyBatchInferencesAt = (source: StudyEvidence, result: JevBatchResult, now: number) =>
@@ -50,7 +50,7 @@ export const jevStudyBatchInferencesAt = (source: StudyEvidence, result: JevBatc
     : usableEntryBatchInferences(source.plan, result, now, JevBatchPlanVersion.V8)
 
 /** Only the historical study selection is returned, never an executable current target. */
-export const selectRetainedJevV38StudyEntry = (
+export const selectRetainedJevStudyEntry = (
   source: Extract<StudyEvidence, { _tag: 'RETAINED_V38' }>,
   result: JevBatchResult,
   decidedAt: string,

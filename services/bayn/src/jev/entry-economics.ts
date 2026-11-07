@@ -15,6 +15,7 @@ import type { JevProtocolMaterial } from './protocol'
 
 export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: string) =>
   // Retired protocols retain their original price arithmetic for immutable financial evidence.
+  protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
   protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
@@ -40,7 +41,8 @@ export const jevMaximumEntryAskMicros = (
   observedAsk: bigint,
 ): bigint => {
   const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
-  return protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
+  return protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+    protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
     protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
@@ -136,11 +138,11 @@ export const jevEntryEconomics = (input: {
       // v38 and earlier retain their emitted bytes. v39 describes the effective entry cap;
       // shared protocol allowances still bind exit and proposal economics.
       maximumEntryQuoteDriftBps:
-        protocol.schemaVersion === 'bayn.jev.protocol.v39'
+        protocol.schemaVersion === 'bayn.jev.protocol.v40' || protocol.schemaVersion === 'bayn.jev.protocol.v39'
           ? entryAllowances.quoteDriftBps
           : protocol.maximumEntryQuoteDriftBps,
       maximumEntryLimitSlippageBps:
-        protocol.schemaVersion === 'bayn.jev.protocol.v39'
+        protocol.schemaVersion === 'bayn.jev.protocol.v40' || protocol.schemaVersion === 'bayn.jev.protocol.v39'
           ? entryAllowances.limitSlippageBps
           : protocol.maximumEntryLimitSlippageBps,
       operatingCostCoverage: 'UNKNOWN',

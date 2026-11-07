@@ -116,7 +116,7 @@ test.each([
       outcome: {
         _tag: ExecutionControllerOutcome.Waiting,
         receiptHash: 'd'.repeat(64),
-        nextDelayMs: absoluteWake ? 4_000 : 1_000,
+        nextDelayMs: absoluteWake ? 8_000 : 1_000,
         ...(absoluteWake ? { nextWakeAt: '2026-08-13T18:00:07.000Z' } : {}),
       },
     }

@@ -26,4 +26,4 @@ export const decodeChartStageResponse = (
   request: JevRequest | DecisionsRequest,
   response: unknown,
 ): Result.Result<JevResponse | DecisionsResponse, JevContractError | DecisionsError> =>
-  request.model === 'jev-1.13.0' ? decodeJevResponse(request, response) : decodeDecisionsResponse(request, response)
+  request.model === 'gpt-6-luna' ? decodeDecisionsResponse(request, response) : decodeJevResponse(request, response)

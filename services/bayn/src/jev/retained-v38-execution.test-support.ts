@@ -3,7 +3,7 @@ import { gunzipSync } from 'node:zlib'
 import { Result } from 'effect'
 import { MarketKind } from '../instruments'
 
-import { decodeRetainedJevV38ExecutionDecisionDocument } from '../shadow-decision-contract'
+import { decodeRetainedJevExecutionDecisionDocument } from '../shadow-decision-contract'
 
 // Captured independently with the original strict decoder on 8f87974758c4490bbfc9549fc7c44ba5f02f871a.
 // Never regenerate these identities from the successor implementation.
@@ -75,6 +75,6 @@ export const retainedV38ExecutionFixture = (index = 0) => {
   const golden = retainedV38ExecutionGoldens[index]
   if (golden === undefined) throw new Error('Missing retained v38 document golden')
   const bytes = retainedV38FixtureBytes(golden.file)
-  const document = Result.getOrThrow(decodeRetainedJevV38ExecutionDecisionDocument(JSON.parse(bytes.toString('utf8'))))
+  const document = Result.getOrThrow(decodeRetainedJevExecutionDecisionDocument(JSON.parse(bytes.toString('utf8'))))
   return { golden, bytes, document }
 }

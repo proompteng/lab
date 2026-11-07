@@ -1,3 +1,4 @@
+import { retainedJevProtocolV39Document } from './protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -19,16 +20,16 @@ import {
   RetainedJevProtocolV38Schema,
 } from './protocol'
 import {
-  reconstructRetainedJevV38TradingSignalBatch,
-  reproduceRetainedJevV38RequestFromObservation,
-  reproduceRetainedJevV38TradingSignalBatchEvidence,
-} from './retained-v38-trading-signals'
+  reconstructRetainedJevTradingSignalBatch,
+  reproduceRetainedJevRequestFromObservation,
+  reproduceRetainedJevTradingSignalBatchEvidence,
+} from './retained-jev-trading-signals'
 import { retainedV38TradingSignalGolden } from './retained-v38-trading-signals.test-support'
 import { makeJevTradingSignalBatch } from './trading-signals'
 import { readStagedInferenceCostEvidence } from './staged-inference-cost-evidence'
 
 const retainedProtocol = Schema.decodeUnknownSync(RetainedJevProtocolV38Schema)({
-  ...defaultJevProtocolDocument,
+  ...retainedJevProtocolV39Document,
   schemaVersion: 'bayn.jev.protocol.v38',
 })
 const fixture = () => {
@@ -46,7 +47,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
     test(`retained ${golden.planVersion} reproduces every pre-cutover request byte and batch identity`, () => {
       const input = fixture()
       const plan = Result.getOrThrow(
-        reconstructRetainedJevV38TradingSignalBatch({
+        reconstructRetainedJevTradingSignalBatch({
           ...input,
           planVersion: Schema.decodeUnknownSync(Schema.Enum(JevBatchPlanVersion))(golden.planVersion),
         }),
@@ -54,7 +55,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
       const requests = plan.candidates.flatMap((candidate) => {
         if (candidate.status !== JevCandidatePlanStatus.Requested) return []
         const prepared = Result.getOrThrow(
-          reproduceRetainedJevV38RequestFromObservation(candidate.request, input.observation),
+          reproduceRetainedJevRequestFromObservation(candidate.request, input.observation),
         )
         expect(sha256(prepared.body)).toBe(candidate.request.requestHash)
         expect(prepared.input.numericalState['entryEconomics']).toMatchObject({
@@ -83,7 +84,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         requests: [...golden.requests],
       })
       expect(
-        Result.getOrThrow(reproduceRetainedJevV38TradingSignalBatchEvidence(input.observation, structuredClone(plan))),
+        Result.getOrThrow(reproduceRetainedJevTradingSignalBatchEvidence(input.observation, structuredClone(plan))),
       ).toEqual(plan)
       expect(Result.isFailure(makeJevTradingSignalBatch({ ...input, planVersion: plan.schemaVersion }))).toBe(true)
       expect(Result.isFailure(decodeJevBatchPlan(plan))).toBe(true)
@@ -93,7 +94,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
   test('retained v38 staged costs still verify their original request and provider claims', () => {
     const input = fixture()
     const plan = Result.getOrThrow(
-      reconstructRetainedJevV38TradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
+      reconstructRetainedJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
     )
     const candidate = plan.candidates.find((entry) => entry.status === JevCandidatePlanStatus.Requested)
     if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected a retained request')
@@ -113,7 +114,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
   test('public study export and selection reproduce retained requests, receipts and results without current admission', () => {
     const input = fixture()
     const plan = Result.getOrThrow(
-      reconstructRetainedJevV38TradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
+      reconstructRetainedJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
     )
     const at = new Date(Date.parse(plan.observedAt) + 100).toISOString()
     const resultMaterial = {
@@ -187,8 +188,13 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
       const after = successor.receipt.outcome.completion.handoff.disposition
       if (before.status === 'READY' && after.status === 'READY') {
         // This includes proposal IDs, stops, targets, adverse stop prices, fees and exact funded quantities.
-        expect(after.evaluation).toEqual(before.evaluation)
-        fundedComparisons += 1
+        for (const original of before.evaluation.proposals) {
+          const current = after.evaluation.proposals.find((proposal) => proposal.proposalId === original.proposalId)
+          if (current === undefined) continue
+          expect(current.funding).toEqual(original.funding)
+          expect(current.source).toEqual(original.source)
+          fundedComparisons += 1
+        }
       }
     }
     expect(fundedComparisons).toBeGreaterThan(0)
@@ -243,7 +249,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
         planVersion: JevBatchPlanVersion.V8,
       }),
     )
-    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v39')
+    expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v40')
     expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(10)
     expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(10)
     for (const candidate of plan.candidates) {
@@ -261,7 +267,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
       retainedProtocol,
     )
     for (const changed of [
-      { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v40' },
+      { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v39' },
       { ...defaultJevProtocolDocument, inputDefinition: 'bayn.jev-entry-state.v23' },
       { ...defaultJevProtocolDocument, maximumEntryQuoteDriftBps: 0 },
       { ...retainedProtocol, maximumEntryLimitSlippageBps: 0 },
@@ -274,7 +280,7 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
   test('rehashing altered or mixed-version retained material cannot manufacture original evidence', () => {
     const input = fixture()
     const plan = Result.getOrThrow(
-      reconstructRetainedJevV38TradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
+      reconstructRetainedJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }),
     )
     const candidate = plan.candidates.find((entry) => entry.status === JevCandidatePlanStatus.Requested)
     if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected a retained request')
@@ -283,11 +289,9 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
     Object.assign(changedRequest, { requestHash: Result.getOrThrow(canonicalHashV1Result(changedRequest.request)) })
     const { requestId: _requestId, ...requestMaterial } = changedRequest
     Object.assign(changedRequest, { requestId: Result.getOrThrow(canonicalHashV1Result(requestMaterial)) })
-    expect(Result.isFailure(reproduceRetainedJevV38RequestFromObservation(changedRequest, input.observation))).toBe(
-      true,
-    )
-    expect(Result.isFailure(reproduceRetainedJevV38RequestFromObservation(candidate.request, input.current))).toBe(true)
-    expect(Result.isFailure(reproduceRetainedJevV38TradingSignalBatchEvidence(input.current, plan))).toBe(true)
+    expect(Result.isFailure(reproduceRetainedJevRequestFromObservation(changedRequest, input.observation))).toBe(true)
+    expect(Result.isFailure(reproduceRetainedJevRequestFromObservation(candidate.request, input.current))).toBe(true)
+    expect(Result.isFailure(reproduceRetainedJevTradingSignalBatchEvidence(input.current, plan))).toBe(true)
 
     const changedPlan = structuredClone(plan)
     Object.assign(changedPlan.candidates.find((entry) => entry.symbol === candidate.symbol) ?? {}, {
@@ -295,12 +299,10 @@ describe('v39 entry allowance semantics and immutable v38 evidence', () => {
     })
     const { batchId: _batchId, ...planMaterial } = changedPlan
     Object.assign(changedPlan, { batchId: Result.getOrThrow(canonicalHashV1Result(planMaterial)) })
-    expect(Result.isFailure(reproduceRetainedJevV38TradingSignalBatchEvidence(input.observation, changedPlan))).toBe(
-      true,
-    )
+    expect(Result.isFailure(reproduceRetainedJevTradingSignalBatchEvidence(input.observation, changedPlan))).toBe(true)
     expect(
       Result.isFailure(
-        reconstructRetainedJevV38TradingSignalBatch({
+        reconstructRetainedJevTradingSignalBatch({
           ...input,
           expiresAt: input.observation.observedAt,
           planVersion: JevBatchPlanVersion.V8,

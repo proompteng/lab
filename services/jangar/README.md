@@ -789,8 +789,15 @@ To use Flamingo for completions and the self-hosted embeddings model on `saigak`
 
 ```bash
 export OPENAI_API_BASE_URL='http://flamingo.flamingo.svc.cluster.local/v1'
+export JANGAR_FLAMINGO_MODEL='qwen38-flamingo'
+export JANGAR_FLAMINGO_REASONING_EFFORT='xhigh'
 export OPENAI_EMBEDDING_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:8b'
 export OPENAI_EMBEDDING_DIMENSION='4096'
 # OPENAI_API_KEY is optional for these in-cluster OpenAI-compatible endpoints
 ```
+
+Jangar selects the `flamingo` Codex provider only for `JANGAR_FLAMINGO_MODEL`, using the configured Responses
+endpoint without OpenAI authentication. Flamingo accepts `low`, `medium` or `xhigh` reasoning. Hosted web search and
+ChatGPT Apps are disabled for this provider; the configured MCP servers remain available. Other advertised models,
+including explicit Astra requests, retain the OpenAI provider.

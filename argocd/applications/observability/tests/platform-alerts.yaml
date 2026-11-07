@@ -2,6 +2,27 @@ rule_files:
   - rules.yaml
 evaluation_interval: 1m
 tests:
+  - name: two guest failures do not become a burst through counter extrapolation
+    interval: 1m
+    input_series:
+      - series: tengri_guest_failures_total{job="tengri",namespace="tengri"}
+        values: 100+0x5 101+0x4 102+0x25
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="TengriGuestFailureBurst",alertstate="firing"}) or vector(0)
+        eval_time: 17m
+        exp_samples: [{labels: '{}', value: 0}]
+  - name: three guest failures still warn and clear after the observation window
+    interval: 1m
+    input_series:
+      - series: tengri_guest_failures_total{job="tengri",namespace="tengri"}
+        values: 100+0x5 101+0x4 102 103+0x25
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="TengriGuestFailureBurst",alertstate="firing"}) or vector(0)
+        eval_time: 18m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(ALERTS{alertname="TengriGuestFailureBurst",alertstate="firing"}) or vector(0)
+        eval_time: 32m
+        exp_samples: [{labels: '{}', value: 0}]
   - name: an unhealthy Tengri application produces one critical application alert
     interval: 1m
     input_series:

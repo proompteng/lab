@@ -1,3 +1,4 @@
+import { retainedJevProtocolV38Document } from './protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -92,9 +93,7 @@ describe('source-anchored complete entry proposals', () => {
     input.assessments.support.presence.probability = 0.1
     input.assessments.resistance.presence.probability = 0.25
     input.assessments.base.presence.probability = 0.1
-    const result = Result.getOrThrow(
-      makeEntryProposals({ ...input, protocol: { ...input.protocol, schemaVersion: 'bayn.jev.protocol.v38' } }),
-    )
+    const result = Result.getOrThrow(makeEntryProposals({ ...input, protocol: retainedJevProtocolV38Document }))
     expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([
       EntrySetup.SupportRecovery,
       EntrySetup.BaseBreakout,

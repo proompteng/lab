@@ -1588,6 +1588,7 @@ describe('closing market-data fallback boundaries', () => {
           observedAt: at,
         } as const,
         nextDelayMs: 1_000,
+        nextWakeAt: new Date(Date.parse(at) + 1_000).toISOString(),
       }
       let checks = 0
       const checked = checkAdvancedMarketProjection(
@@ -1627,6 +1628,7 @@ describe('closing market-data fallback boundaries', () => {
         nextDelayMs: failureDelay ?? 30_000,
         observation: { result: 'FAILURE', failure: 'market-data' },
       })
+      expect(outcome).not.toHaveProperty('nextWakeAt')
     },
   )
 
