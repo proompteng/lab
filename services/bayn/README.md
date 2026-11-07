@@ -253,6 +253,12 @@ state are excluded from these proposal judgments. The complete verified numerica
 request for source verification and audit. Retired question construction is available only to financial readers;
 current execution and database guards accept v39 and its exact question-policy hash.
 
+A chart presence probability at or below 0.30 rejects the dependent setup before funding and final Jev dispatch:
+support or resistance rejects support recovery, while base rejects base breakout and skips the BASE_START call.
+The independent setup can continue. Probabilities above 0.30 retain the selected anchors for the existing final
+setup and stop judgments; an uncertain presence answer does not itself authorize entry. Raw chart answers remain
+in the receipts and assessments. Pre-v39 financial readers reproduce their original behavior.
+
 All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
 BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
 verified numerical source. TypeSafe labels image support experimental. The original ten-second deadline covers

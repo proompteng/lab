@@ -70,7 +70,7 @@ import {
   retainedMarketQuestionPolicyHash,
 } from '../jev/staged-inference-cost-evidence'
 import { JevClient } from '../jev/client'
-import { prepareJevRequest } from '../jev/contract'
+import { JevInferenceSchema, prepareJevRequest } from '../jev/contract'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore, type JevDispatch } from '../jev/evaluation'
@@ -1586,6 +1586,63 @@ integration('committed sequential provider handoff', () => {
     30_000,
   )
 
+  test.each([0.1, 0.3, 0.30000000000000004, 0.5])(
+    'committed base presence %s controls a NO_BASE skip despite a selected anchor',
+    async (probability) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const journal = yield* EntryInferenceJournal
+          const checkpoint = stagedCheckpointFixture(request)
+          const original = checkpoint.terminals.find((row) => row.stage === 'CHART')
+          if (original?.outcome.status !== 'RECEIVED') throw new Error('Expected chart terminal')
+          const inference = yield* Schema.decodeUnknownEffect(JevInferenceSchema)(original.outcome.inference)
+          const response = {
+            ...inference.response,
+            answers: {
+              ...inference.response.answers,
+              base_present: { type: 'noul' as const, noul: probability },
+            },
+          }
+          const { terminalHash: _, ...material } = original
+          const terminal = Result.getOrThrow(
+            makeStagedTerminalReceipt({
+              ...material,
+              outcome: {
+                status: 'RECEIVED',
+                inference: {
+                  ...inference,
+                  response,
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                },
+              },
+            }),
+          )
+          yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'NONE' } })
+          const skip = Result.getOrThrow(
+            makeStagedSkipReceipt({
+              schemaVersion: 'bayn.staged-skip-receipt.v1',
+              stage: 'BASE_START',
+              requestId: request.requestId,
+              predecessorHash: terminal.terminalHash,
+              reason: 'NO_BASE',
+              recordedAt: request.observedAt,
+            }),
+          )
+          const inserted = yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
+            VALUES (${skip.requestId},${skip.stage},${skip.skipHash},${sql.json(skip)})`.pipe(Effect.result)
+          expect(Result.isSuccess(inserted)).toBe(probability <= 0.3)
+          if (Result.isFailure(inserted))
+            yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+              inserted.failure.reason.cause,
+            )
+          expect(
+            yield* sql`SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=${request.requestId}`,
+          ).toEqual(probability <= 0.3 ? [{ skip_hash: skip.skipHash }] : [])
+        }),
+      ),
+  )
+
   test('rejects a retired provider response on a current Jev stage before admitting financial evidence', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -1642,7 +1699,7 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
-  test('runs the native evaluator through committed chart evidence before dependent Jev inference', async () =>
+  test.each([0.9, 0.1])('native evaluator commits base presence %s before dependent Jev inference', async (presence) =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1665,6 +1722,10 @@ integration('committed sequential provider handoff', () => {
                     const [stored] = yield* sql`SELECT payload #>> '{disposition,jevRequestHash}' AS request_hash
           FROM jev_inference_handoffs WHERE request_id=${request.requestId}`.pipe(Effect.orDie)
                     expect(stored?.['request_hash']).toBe(prepared.requestHash)
+                    if (presence <= 0.3)
+                      expect(
+                        Object.keys(prepared.request.questions).some((name) => name.includes('base_breakout')),
+                      ).toBe(false)
                     events.push('jev-after-committed-handoff')
                     return nativeJevInference(
                       prepared.request,
@@ -1676,18 +1737,38 @@ integration('committed sequential provider handoff', () => {
                 evaluate: (raw) =>
                   Effect.gen(function* () {
                     events.push(events.length === 0 ? 'chart' : 'base-start')
-                    return nativeChartInference(raw, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
+                    const inference = nativeChartInference(
+                      raw,
+                      utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                    )
+                    if (!('base_present' in inference.response.answers)) return inference
+                    const response = {
+                      ...inference.response,
+                      answers: {
+                        ...inference.response.answers,
+                        base_present: { type: 'noul' as const, noul: presence },
+                      },
+                    }
+                    return { ...inference, response, responseHash: Result.getOrThrow(canonicalHashV1Result(response)) }
                   }),
               },
             ),
           ),
           Effect.provide(TestClock.layer()),
         )
-        expect(events).toEqual(['chart', 'base-start', 'jev-after-committed-handoff'])
+        expect(events).toEqual(
+          presence <= 0.3
+            ? ['chart', 'jev-after-committed-handoff']
+            : ['chart', 'base-start', 'jev-after-committed-handoff'],
+        )
         expect(result.inference.jev.status).toBe('RECEIVED')
+        expect(
+          yield* sql`SELECT payload->>'reason' AS reason FROM jev_staged_skip_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual(presence <= 0.3 ? [{ reason: 'NO_BASE' }] : [])
         expect((yield* (yield* JevEvaluationStore).read(request.requestId))?.receipt).toEqual(result.receipt)
       }),
-    ))
+    ),
+  )
   test('rejects a receipt with no committed handoff', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
