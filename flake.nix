@@ -36,13 +36,23 @@
           repoShortRevision =
             if builtins.stringLength repoRevision >= 12 then builtins.substring 0 12 repoRevision else repoRevision;
 
-          # Preserve the shared zlib build so retained Bayn chart bytes still replay.
-          nodejs = pkgs.nodejs_24.overrideAttrs (old: {
-            version = "24.22.2";
-            src = pkgs.fetchurl {
-              url = "https://nodejs.org/dist/v24.22.2/node-v24.22.2.tar.xz";
-              hash = "sha256-j+LsFyO7n40LaDkHyCcI3rvtpkryHLKqIUxCQe7QoGE=";
+          nodeVersion = "24.22.2";
+          nodeSource = pkgs.fetchurl {
+            url = "https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}.tar.xz";
+            hash = "sha256-j+LsFyO7n40LaDkHyCcI3rvtpkryHLKqIUxCQe7QoGE=";
+          };
+          # Node needs libuv's new statfs fields. Use its authenticated upstream sources without changing other tools.
+          nodePackages = pkgs.extend (_final: prev: {
+            libuv = prev.libuv.overrideAttrs {
+              version = "1.52.1";
+              src = nodeSource;
+              sourceRoot = "node-v${nodeVersion}/deps/uv";
             };
+          });
+          # Preserve the shared zlib build so retained Bayn chart bytes still replay.
+          nodejs = nodePackages.nodejs_24.overrideAttrs (old: {
+            version = nodeVersion;
+            src = nodeSource;
             # Node 24.22.2 already includes emulator support.
             patches = builtins.filter (
               patch:
