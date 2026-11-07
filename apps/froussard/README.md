@@ -11,6 +11,11 @@ existing approvals are reconciled per commit. See the
 Froussard uses Effect 4.1.2 for services, schemas, concurrency, and resource lifetimes. Its
 Agents client uses the same version. There is no Effect 3 adapter in the runtime.
 
+Trace export retries transient OTLP/gRPC failures with exponential backoff within one
+30-second export budget. Retry warnings retain the gRPC status and attempt; exhausted
+budgets and permanent failures remain errors. Kafka quorum outages can exceed this
+budget, so trace delivery still requires checking Tempo rather than application health.
+
 Froussard is a TypeScript service running on Bun (Elysia HTTP runtime) that receives webhook
 deliveries (GitHub, Linear issues, and Discord slash commands), verifies signatures, and forwards
 trusted events to the owning downstream system. Froussard is the only public webhook ingress for

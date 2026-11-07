@@ -10,7 +10,7 @@ const traceGetTracerMock = vi.fn().mockReturnValue({ startSpan: traceStartSpanMo
 vi.mock('@proompteng/otel/api', () => ({
   diag: { setLogger: setLoggerMock, error: diagErrorMock, warn: diagWarnMock },
   DiagConsoleLogger: diagConsoleLoggerMock,
-  DiagLogLevel: { ERROR: 'ERROR' },
+  DiagLogLevel: { WARN: 'WARN' },
   trace: { getTracer: traceGetTracerMock },
 }))
 
