@@ -245,59 +245,36 @@ are absent from the current numerical input. Independent momentum qualification 
 reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
 Migration 178 admits only v38 requests and dispatch after the existing flat, reconciled cutover. Original v35, v36 and v37 requests, receipts, cost quotes and authority generations remain immutable and readable for financial history.
 
-The current source uses `jev` protocol v39, verified numerical input v24, batch v8 and entry inference input v8. Its
-[reviewed cutover](../../docs/bayn/effective-entry-allowance-cutover.md) follows the guarded v38 OBSERVE transition;
-source and GitOps strategy bindings move together while the old mandate remains absent. It retains the
-15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
-candlestick image from verified completed bars, asks pinned Jev 1.13 for typed chart judgments and source anchors,
-and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
-Jev receives proposal evidence v1 with the completed candidate bars and each funded proposal stored once. Code
-computes structure bounds, completed closes relative to those bounds, consecutive closes above the structure and
-whether a completed bar touched the proposed stop. The model still judges whether the structure is meaningful,
-whether the setup is confirmed and whether the stop invalidates it; crypto also retains its target-obstruction
-judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
-state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
-request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v39 and its exact question-policy hash.
+The current source uses protocol v40, numerical input v24, batch v8, entry input v8 and handoff v5.
+The [Jev 1.14 cutover](../../docs/bayn/jev114-box-cutover.md) first settles v39 into clear OBSERVE, then admits
+the new protocol. Source and GitOps strategy identities move together; a reviewed same-account mandate must bind the
+verified immutable image before PAPER activation.
 
-A chart presence probability at or below 0.30 rejects the dependent setup before funding and final Jev dispatch:
-support or resistance rejects support recovery, while base rejects base breakout and skips the BASE_START call.
-The independent setup can continue. Probabilities above 0.30 retain the selected anchors for the existing final
-setup and stop judgments; an uncertain presence answer does not itself authorize entry. Raw chart answers remain
-in the receipts and assessments. Pre-v39 financial readers reproduce their original behavior.
+A deterministic PNG and its verified completed bars go to pinned `jev-1.14.0` through the existing TypeSafe client,
+proxy and `TypeSafe-Danger-Zone-Images: true` header. One CHART call asks three independent presence Nouls and three
+Boxes for support, resistance and consolidation. Code maps regions back to exact source candle IDs using the same
+projection as the renderer. Prices, quantities, fees, stops and targets come exclusively from verified source data.
+Normalized coordinates allow their observed two-decimal reporting precision plus one raster pixel. Inverted or
+out-of-range boxes fail validation. Rounded zero-area regions remain in the receipt but cannot identify a structure.
+Support and resistance use eligible candle-wick overlap; a base uses the maximal contiguous eligible window whose
+complete candle bodies lie inside its region, excluding the newest candle and any source-time gap.
 
-All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
-BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
-verified numerical source. TypeSafe labels image support experimental. The original ten-second deadline covers
-all stages and durable handoffs; calls are not retried. Failed calls retain observed usage or unknown costs.
-The OpenAI HTTP client, API-key configuration, external secret and egress host have been removed. Pure retired
-Decisions codecs and historical tariffs remain solely to reproduce financial evidence, never to dispatch new calls.
+Presence at or below 0.30 rejects only its dependent setup. A source-feasibility check avoids calls when no source
+proposal can fund an entry. Box confidence is retained as evidence; it does not grant authority. Funding constructs
+at most one support-recovery and one base-breakout proposal. The second and final call asks Jev the existing setup,
+stop and applicable crypto target-obstruction questions over these exact funded proposals. The 0.70/0.30 judgment
+thresholds, original ten-second deadline and 15-minute holding limit remain unchanged. Calls are not retried.
 
-The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
-resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
-preflight still prevents provider calls when neither proposal template can fund an entry. Once a source is feasible,
-chart anchors describe its price structure independently of capital and fee tiers. A recognized structure can still
-produce an unfunded proposal, which code rejects before Jev dispatch. The chart request does not include the trading
-break-even price. Retained v26 through v34 chart requests reproduce their original choices and request hashes for
-financial evidence only; they cannot authorize current execution.
-The current protocol funds each equity and crypto buy at the original inference ask rounded to a valid broker tick.
-Native order construction enforces that same funded ceiling. Equity DAY orders may rest at the funded cap when a
-fresh eligible ask rises above it; risk still uses the actual quote and the order cannot chase the ask. Quotes at or
-beyond the selected stop or profit target remain ineligible. Crypto IOC orders require an ask within the funded cap.
-It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
-future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
-cannot justify a cheaper funding estimate while submitting a higher-priced order.
-PostgreSQL commits all CHART terminal receipts with their next visual admissions or proposal handoffs in one
-transaction, then all required BASE_START terminals and handoffs in one transaction. Provider calls run concurrently
-within each stage and start only after its admissions commit. The request rows serialize retries. A repeated
-transition verifies the same bytes and never permits another dispatch. Expiry can still retain the paid terminal
-receipt while refusing a successor claim; acknowledgement after the original deadline cannot authorize provider I/O.
-If a successor write fails or is interrupted, PostgreSQL retains the paid terminal separately after rolling back
-that transition. The original operation still fails and cannot dispatch its successor.
-An unused BASE_START skip commits with its handoff; paid visual terminal evidence remains independently durable on
-failure. Normal batch completion commits every final receipt, resolution and the complete result in one transaction,
-verifying the admitted observation and requests. Recovery still reconstructs incomplete stored graphs. Completion
-and decision use retain the original ten-second deadline, including commit acknowledgement time.
+Each symbol commits its CHART terminal and handoff atomically before final inference. A fast symbol can proceed while
+another chart is still running. Retries verify the same bytes and never repeat a paid call. Failed or interrupted
+handoff writes retain paid terminal evidence separately, and final dispatch rechecks the original deadline. Batch
+completion commits receipts, resolutions and the complete result together. v40 admits no BASE_START claim or skip;
+old financial readers retain original question bytes, three-stage graphs, late metering and transfer identities.
+Unknown consumption remains unknown, and the cost projection expects exactly CHART and JEV for resolved v40 requests.
+
+Current buys remain capped at the original inference ask rounded to the broker tick. Equity DAY orders may rest at
+that cap; crypto IOC orders require an eligible ask within it. A quote at or beyond the selected stop or target is
+ineligible. Funding, broker risk, crypto coin fees, maximum exit fees and liquidation behavior retain their contracts.
 
 Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
 behavior hash, complete policy hash, authority generation, and decision document. The ablation keeps chart inference
@@ -313,29 +290,10 @@ admit chart or Jev inference. Concurrent momentum source admission retains one i
 The application still selects its existing candidate at the composition root. These comparison capabilities and their
 synthetic execution tests do not establish a prospective economic qualification.
 
-Entry input v5 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
-Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
-can produce a second Jev image request containing its single conditional base-start question. This extra billable
-`BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
-Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
-and one newer completed bar. An explicit no-match answer can abstain without inventing a source anchor.
-Migration 158 admits only protocol v28 for new execution, retaining outer request v3, input v5, handoff v4 and the
-market-specific question policy. It preserves the staged transport installed by migration 153. Retired protocols, including v27,
-v1–v4 inputs and earlier question policies remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
-Each visual stage has one immutable dispatch admission and a durable terminal receipt. A duplicate admission
-cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
-An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
-Financial evidence/quotes v4 preserve three separate stage keys and transfer identities, retain unknown-to-metered history,
-validate the complete graph before reproducing old quote prefixes, and never count a stage twice.
-Late handoffs for original expired requests retain their original financial evidence contract and cannot restart inference.
-Read-only financial projection
-reproduces the original independent questions for v1/v2 and conditional all-end questions for v3, with the original
-whole-unit volume scale for v1 and relative scale for v2/v3. Original usage, costs and receipt hashes remain verifiable.
-The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
-and no unexpired inference claims. It fails closed if any precondition is absent, then restricts effective authority to
-OBSERVE with the kill switch ACTIVE and `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. It does not grant or rearm PAPER authority.
-A separately approved same-account mandate must bind the new question policy before activation; publishing a build
-or passing tests is not activation evidence. Operator holds, capital, loss and turnover history remain intact.
+Historical inputs retain their original whole-unit or relative-volume scale, explicit skips and separate provider
+stages. Their read-only projection reproduces request, response and cost hashes; it cannot admit new provider calls.
+The cutover preserves accounting, loss and turnover history and requires terminal cycles, flat inventory, settled
+orders, complete accounting, fresh exact reconciliation and no unexpired inference claims. Operator holds remain held.
 
 Equity Jev requests ask separate Nouls about the observed setup and stop invalidation. Crypto requests additionally
 require an unobstructed fee-funded target. Question names identify the market, and equity funding carries no crypto
@@ -390,8 +348,7 @@ for the existing-data proof, verifier and rollout contract.
 Native Jev admission commits the verified source observation, sealed batch plan, every requested candidate and its initial CHART claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
 including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion
-rolls back the new observation and plan. Successful evaluation needs three cohort transactions without BASE_START or four
-with it, independent of candidate count. If admission commits after expiry, no provider call starts; recovery abandons
+rolls back the new observation and plan. Successful evaluation commits one admission cohort, one terminal/handoff per symbol, and one final result cohort. If admission commits after expiry, no provider call starts; recovery abandons
 the requests and retains uncertain claim usage rather than inventing zero-cost receipts. The existing ten-second inference validity,
 quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
@@ -1053,7 +1010,7 @@ of an already filled position remains valid after that deadline within the execu
 and accounted position evidence. It retains the original first-fill holding deadline and forced-close window,
 including continuous crypto cycles whose entry lease lasts one minute.
 
-Bayn supplies pinned `jev-1.13.0` with source-bound chart judgments, verified candidate bars, quotes and funded proposal
+Bayn supplies pinned `jev-1.14.0` with source-bound Box localization, verified candidate bars, quotes and funded proposal
 economics. Jev judges each proposal's setup and stop; crypto also requires the target-obstruction judgment. Bayn
 computes quantities, costs, sizing, risk and exit triggers. Candidate admission does not require a benchmark.
 
@@ -1631,14 +1588,18 @@ bayn-inference-cost --evidence /private/inference-evidence.json --rate-card /pri
 
 The database mode requires `BAYN_POSTGRES_URL`, `BAYN_ALPACA_ACCOUNT_ID`, and the normal PostgreSQL TLS settings.
 It does not acquire a broker client, inference client, writer fence, or execution authority. The account and session
-filter execute in a repeatable-read, read-only transaction. More than 10,000 claimed requests fails explicitly rather
-than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
-endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
+filter execute in a repeatable-read, read-only transaction. Reports retain the complete request and quote set without
+truncating large sessions. Query, socket and connection deadlines remain enforced. Keep evidence, rate cards, and
+report outputs private; they are not public status endpoints, source fixtures, or CI artifacts.
+`node dist/inference-cost-command.js` is the corresponding compiled entry.
+
+Forward-performance reports discover generation-scoped expense sessions with a direct generation predicate and
+the request generation/cycle index. Account-wide discovery retains all generations and the complete-session limit.
 
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
 most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
-requests retain separate `CHART`, `BASE_START`, and `JEV` stage quotes, including explicit skips and unsuccessful calls,
+requests retain separate `CHART` and `JEV` stage quotes, including unsuccessful calls. Historical requests retain their original `BASE_START` quotes and skips,
 with batches of at most 64 quotes per write. Their transfer identities include the
 provider stage; retained single-provider Jev expenses keep their original identities. That ledger's unit is
 **USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
@@ -1893,6 +1854,12 @@ removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
+
+Controller completion persists the earlier of the worker's absolute next wake and the ordinary polling deadline.
+Worker completion, persistence and transport time consume that wait instead of restarting it. An elapsed wake runs
+on the next bounded continuation. A failed post-pass projection check discards both earlier scheduling hints and
+uses the failure's retry cadence. These wake times grant no execution authority and retain fresh reconciliation,
+quote, risk and submission checks.
 
 For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
@@ -2317,7 +2284,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. Current
 requests use `bayn.backtest.v11`, with an `inference` object containing `mode: "measured-providers"`,
-`models: {"jev": "jev-1.13.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
+`models: {"jev": "jev-1.14.0"}`, `inputDefinition: "bayn.jev-entry-state.v24"` and a positive `maximumCalls`
 shared by every Jev stage. The input binds `jevInstructionsHash` to the exact compiled instruction document.
 `bayn-backtest --instructions` reports it. `costs` uses `bayn.inference-rate-card.v1` with effective-dated provider/model
 rates. Candidate and chart ablation require only Jev tariffs; deterministic momentum requires none. Current preparation

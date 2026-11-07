@@ -6,7 +6,7 @@ import { strictParseOptions } from '../schemas'
 import {
   CycleDecisionDocumentSchema,
   decodeExecutionDecisionDocument,
-  decodeRetainedJevV38ExecutionDecisionDocument,
+  decodeRetainedJevExecutionDecisionDocument,
   makeExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { RuntimeStrategyDecisionSchema } from '../strategy/runtime-decision'
@@ -16,7 +16,7 @@ import {
 } from '../system-assessment/decision-persistence.test-support'
 import { protectiveStopDocumentFixture, makeProtectiveStopDocumentFixture } from './exit-document.test-support'
 import { controlDocumentFixture } from './control-document.test-support'
-import { RetainedJevV38ExitTargetSchema } from './retained-v38-targets'
+import { RetainedJevExitTargetSchema } from './retained-jev-targets'
 import {
   retainedV38ExecutionFixture,
   retainedV38ExecutionGoldens,
@@ -48,7 +48,7 @@ test.each(retainedV38ExecutionGoldens.map((golden, index) => ({ ...golden, index
 test('retains the original wide-spread protective-stop target and its exact liquidation terms', () => {
   const bytes = retainedV38FixtureBytes('exit-protective-stop-target.json.gz')
   const target = Schema.decodeUnknownSync(
-    RetainedJevV38ExitTargetSchema,
+    RetainedJevExitTargetSchema,
     strictParseOptions,
   )(JSON.parse(bytes.toString('utf8')))
   expect(bytes.byteLength).toBe(12_568)
@@ -103,9 +103,9 @@ test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
       })),
     ]
     for (const changed of changes)
-      expect(Result.isFailure(decodeRetainedJevV38ExecutionDecisionDocument(withHash(changed)))).toBe(true)
+      expect(Result.isFailure(decodeRetainedJevExecutionDecisionDocument(withHash(changed)))).toBe(true)
     expect(
-      Result.isFailure(decodeRetainedJevV38ExecutionDecisionDocument({ ...document, contentHash: 'f'.repeat(64) })),
+      Result.isFailure(decodeRetainedJevExecutionDecisionDocument({ ...document, contentHash: 'f'.repeat(64) })),
     ).toBe(true)
   },
 )
@@ -119,14 +119,14 @@ test.each([
   { name: 'ablation exit', fixture: makeProtectiveStopDocumentFixture('ablation') },
   { name: 'momentum exit', fixture: makeProtectiveStopDocumentFixture('momentum') },
 ])(
-  'fresh v39 $name remains current-only with unchanged raw exit allowances',
+  'fresh v40 $name remains current-only with unchanged raw exit allowances',
   async ({ fixture }) => {
     const document = await Effect.runPromise(fixture)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
-    expect(Result.isFailure(decodeRetainedJevV38ExecutionDecisionDocument(document))).toBe(true)
+    expect(Result.isFailure(decodeRetainedJevExecutionDecisionDocument(document))).toBe(true)
     const target = document.strategyDecision
     if (target?.schemaVersion === 'bayn.jev-exit-target.v5') {
-      expect(target.evidence.protocol.schemaVersion).toBe('bayn.jev.protocol.v39')
+      expect(target.evidence.protocol.schemaVersion).toBe('bayn.jev.protocol.v40')
       expect(target.evidence.protocol.maximumEntryQuoteDriftBps).toBe(10)
       expect(target.evidence.protocol.maximumEntryLimitSlippageBps).toBe(10)
     }
@@ -146,7 +146,7 @@ test('retained native and control entry identities cannot be relabeled as one an
       }
       expect(
         Result.isFailure(
-          decodeRetainedJevV38ExecutionDecisionDocument({
+          decodeRetainedJevExecutionDecisionDocument({
             ...material,
             contentHash: Result.getOrThrow(canonicalHashV1Result(material)),
           }),
