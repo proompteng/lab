@@ -1,4 +1,4 @@
-import jevBoxInference from '../../migrations/0187_jev_box_inference'
+import jevBoxInference from '../../migrations/0188_jev_box_inference'
 import { retainedJevProtocolV39Document } from '../jev/protocol'
 import effectiveEntryAllowanceInput from '../../migrations/0184_effective_entry_allowance_input'
 import webullEntryContext from '../../migrations/0178_webull_entry_context'
@@ -843,7 +843,7 @@ integration('committed sequential provider handoff', () => {
           yield* PgMigrator.run({
             loader: migrationLoader.pipe(
               Effect.map((rows) =>
-                rows.filter(([id]) => id < (retainedVersion === 'bayn.jev.protocol.v38' ? 184 : 187)),
+                rows.filter(([id]) => id < (retainedVersion === 'bayn.jev.protocol.v38' ? 184 : 188)),
               ),
             ),
             table: 'schema_migrations',
