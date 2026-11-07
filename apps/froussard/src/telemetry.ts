@@ -13,7 +13,7 @@ import {
   SEMRESATTRS_SERVICE_NAMESPACE,
 } from '@proompteng/otel/semantic-conventions'
 
-diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
+diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.WARN)
 
 type TelemetryState = {
   sdk: NodeSDK
