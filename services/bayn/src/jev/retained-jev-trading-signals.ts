@@ -27,22 +27,22 @@ import {
 } from './evidence'
 import { decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
 import { makeEntryJudgmentRequest } from './entry-questions'
-import { makeFinancialChartStageReplay } from './staged-chart-questions'
+import { makeFinancialChartStageReplay } from './retained-jev-staged-chart-questions'
 import { decodeJevResolution, JevResolutionStatus } from './resolution'
-import { reproduceRetainedJevV38CandidateObservation } from './observation'
-import { RetainedJevProtocolV38Schema } from './protocol'
+import { reproduceRetainedJevCandidateObservation } from './observation'
+import { RetainedVisualJevProtocolSchema } from './protocol'
 import { jevEntryQuoteExclusion, jevTradingSignalRequestMaterial } from './trading-signals'
 
 // These readers reconstruct immutable v38 evidence. They are not fresh-entry admission paths.
 const RetainedInputSchema = Schema.Union([
-  Schema.Struct({ ...CandidateEntryInferenceInputSchema.fields, protocol: RetainedJevProtocolV38Schema }),
-  Schema.Struct({ ...AblationEntryInferenceInputSchema.fields, protocol: RetainedJevProtocolV38Schema }),
+  Schema.Struct({ ...CandidateEntryInferenceInputSchema.fields, protocol: RetainedVisualJevProtocolSchema }),
+  Schema.Struct({ ...AblationEntryInferenceInputSchema.fields, protocol: RetainedVisualJevProtocolSchema }),
 ])
 const RetainedRequestSchema = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: RetainedInputSchema,
 })
-export const RetainedJevV38BatchPlanSchema = Schema.Struct({
+export const RetainedJevBatchPlanSchema = Schema.Struct({
   ...JevBatchPlanSchema.fields,
   candidates: Schema.Array(
     Schema.Union([
@@ -55,8 +55,8 @@ export const RetainedJevV38BatchPlanSchema = Schema.Struct({
     ]),
   ),
 })
-type RetainedBatch = typeof RetainedJevV38BatchPlanSchema.Type
-type RetainedObservation = Result.Result.Success<ReturnType<typeof reproduceRetainedJevV38CandidateObservation>>
+type RetainedBatch = typeof RetainedJevBatchPlanSchema.Type
+type RetainedObservation = Result.Result.Success<ReturnType<typeof reproduceRetainedJevCandidateObservation>>
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 
 const requestFromObservation = (
@@ -72,10 +72,10 @@ const requestFromObservation = (
     return { input, ...prepared }
   })
 
-export const reproduceRetainedJevV38RequestFromObservation = (inputRequest: unknown, inputObservation: unknown) =>
+export const reproduceRetainedJevRequestFromObservation = (inputRequest: unknown, inputObservation: unknown) =>
   Result.gen(function* () {
     const request = yield* Schema.decodeUnknownResult(RetainedRequestSchema, strictParseOptions)(inputRequest)
-    const observation = yield* reproduceRetainedJevV38CandidateObservation(inputObservation)
+    const observation = yield* reproduceRetainedJevCandidateObservation(inputObservation)
     const { requestId, ...material } = request
     if (
       requestId !== (yield* canonicalHashV1Result(material)) ||
@@ -99,13 +99,13 @@ export const reproduceRetainedJevV38RequestFromObservation = (inputRequest: unkn
     return prepared
   })
 
-export const reconstructRetainedJevV38TradingSignalBatch = (input: {
+export const reconstructRetainedJevTradingSignalBatch = (input: {
   readonly observation: unknown
   readonly expiresAt: string
   readonly planVersion: JevBatchPlanVersion
 }) =>
   Result.gen(function* () {
-    const observation = yield* reproduceRetainedJevV38CandidateObservation(input.observation)
+    const observation = yield* reproduceRetainedJevCandidateObservation(input.observation)
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
     if (Date.parse(input.expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
@@ -181,7 +181,7 @@ export const reconstructRetainedJevV38TradingSignalBatch = (input: {
       candidates,
     }
     return yield* Schema.decodeUnknownResult(
-      RetainedJevV38BatchPlanSchema,
+      RetainedJevBatchPlanSchema,
       strictParseOptions,
     )({
       ...material,
@@ -189,13 +189,13 @@ export const reconstructRetainedJevV38TradingSignalBatch = (input: {
     })
   })
 
-export const reproduceRetainedJevV38TradingSignalBatchEvidence = (inputObservation: unknown, inputPlan: unknown) =>
+export const reproduceRetainedJevTradingSignalBatchEvidence = (inputObservation: unknown, inputPlan: unknown) =>
   Result.gen(function* () {
-    const plan = yield* Schema.decodeUnknownResult(RetainedJevV38BatchPlanSchema, strictParseOptions)(inputPlan)
+    const plan = yield* Schema.decodeUnknownResult(RetainedJevBatchPlanSchema, strictParseOptions)(inputPlan)
     const { batchId, ...material } = plan
     if (batchId !== (yield* canonicalHashV1Result(material)))
       return yield* invalid('Retained v38 batch identity differs from its stored material')
-    const reconstructed = yield* reconstructRetainedJevV38TradingSignalBatch({
+    const reconstructed = yield* reconstructRetainedJevTradingSignalBatch({
       observation: inputObservation,
       expiresAt: plan.expiresAt,
       planVersion: plan.schemaVersion,
@@ -252,7 +252,7 @@ const decodeRetainedReceipt = (request: typeof RetainedRequestSchema.Type, input
     return receipt
   })
 
-export const decodeRetainedJevV38BatchResult = (plan: RetainedBatch, input: unknown) =>
+export const decodeRetainedJevBatchResult = (plan: RetainedBatch, input: unknown) =>
   Result.gen(function* () {
     const result = yield* Schema.decodeUnknownResult(JevBatchResultSchema, strictParseOptions)(input)
     const { resultHash, ...material } = result
@@ -301,7 +301,7 @@ export const retainedJevV38BatchInferencesAt = (
   Result.gen(function* () {
     if (plan.schemaVersion !== expectedVersion)
       return yield* invalid('Retained v38 batch belongs to another selection policy')
-    const result = yield* decodeRetainedJevV38BatchResult(plan, input)
+    const result = yield* decodeRetainedJevBatchResult(plan, input)
     if (!Number.isSafeInteger(now) || now < Date.parse(result.completedAt) || now >= Date.parse(plan.expiresAt))
       return yield* invalid('Retained v38 decision is outside the complete original batch validity interval')
     const inferences = []

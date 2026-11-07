@@ -1265,7 +1265,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ).toBe(true)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v39' }])
+        ).toEqual([{ strategy_parameter_schema_version: protocol.schemaVersion }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1848,7 +1848,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               expect(Result.isSuccess(result)).toBe(true)
               if (Result.isFailure(result)) throw result.failure
               expect(calls.filter((call) => call.stage === 'CHART')).toHaveLength(15)
-              expect(calls.filter((call) => call.stage === 'BASE_START')).toHaveLength(15)
+              expect(calls.filter((call) => call.stage === 'BASE_START')).toHaveLength(0)
               expect(calls.filter((call) => call.stage === 'JEV')).toHaveLength(15)
               expect(Result.getOrThrow(decideJevEntry(result.success)).selectedSymbols).toEqual(['AAPL'])
               expect(result.success.batchResult.completedAt).toBe(

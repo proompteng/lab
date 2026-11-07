@@ -50,7 +50,11 @@ export const expenseSourceFixture = (
     state?: JevRequest['state']
   } = {},
 ) => {
-  const inferenceRequest = { ...requestFixture, state: options.state ?? requestFixture.state }
+  const inferenceRequest = {
+    ...requestFixture,
+    model: 'jev-1.13.0' as const,
+    state: options.state ?? requestFixture.state,
+  }
   const material = {
     schemaVersion: 'bayn.jev-evaluation-request.v1',
     cycleId: (options.key ?? 'a').repeat(64),
@@ -63,7 +67,11 @@ export const expenseSourceFixture = (
     requestHash: Result.getOrThrow(canonicalHashV1Result(inferenceRequest)),
   }
   const request = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
-  const response = { ...responseFixture(), usage: { input_tokens: options.inputTokens ?? 1, output_tokens: 80 } }
+  const response = {
+    ...responseFixture(),
+    model: 'jev-1.13.0' as const,
+    usage: { input_tokens: options.inputTokens ?? 1, output_tokens: 80 },
+  }
   const receiptMaterial = {
     schemaVersion: 'bayn.jev-evaluation-receipt.v1',
     requestId: request.requestId,

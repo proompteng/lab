@@ -5,8 +5,8 @@ import { EntryAblationTargetSchema } from '../jev/entry-ablation'
 import { JevEntryTargetSchema } from '../jev/decision'
 import { JevExitTargetSchema } from '../jev/exit'
 import { RepeatedMomentumTargetSchema } from './repeated-momentum/decision'
-import type { RetainedJevV38EntryTarget, RetainedJevV38ExitTarget } from '../jev/retained-v38-targets'
-import type { RetainedJevV38AblationTarget, RetainedJevV38MomentumTarget } from '../jev/retained-v38-control-targets'
+import type { RetainedJevEntryTarget, RetainedJevExitTarget } from '../jev/retained-jev-targets'
+import type { RetainedJevAblationTarget, RetainedJevMomentumTarget } from '../jev/retained-jev-control-targets'
 
 const FlatExecutionTargetBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-flat-target.v1'),
@@ -41,10 +41,10 @@ export type RuntimeStrategyDecision = typeof RuntimeStrategyDecisionSchema.Type
 /** Read-only evidence may carry an exact retained target; the runtime schema above remains current-only. */
 export type RecordedRuntimeStrategyDecision =
   | RuntimeStrategyDecision
-  | RetainedJevV38EntryTarget
-  | RetainedJevV38ExitTarget
-  | RetainedJevV38AblationTarget
-  | RetainedJevV38MomentumTarget
+  | RetainedJevEntryTarget
+  | RetainedJevExitTarget
+  | RetainedJevAblationTarget
+  | RetainedJevMomentumTarget
 
 export const runtimeDecisionMatchesStrategy = (
   decision: RecordedRuntimeStrategyDecision,
@@ -89,9 +89,9 @@ export const isChartEntryTarget = <Decision extends RecordedRuntimeStrategyDecis
 export type ProtectedEntryTarget = ChartEntryTarget | typeof RepeatedMomentumTargetSchema.Type
 export type RecordedProtectedEntryTarget =
   | ProtectedEntryTarget
-  | RetainedJevV38EntryTarget
-  | RetainedJevV38AblationTarget
-  | RetainedJevV38MomentumTarget
+  | RetainedJevEntryTarget
+  | RetainedJevAblationTarget
+  | RetainedJevMomentumTarget
 
 export const isProtectedEntryTarget = <Decision extends RecordedRuntimeStrategyDecision | undefined>(
   decision: Decision,

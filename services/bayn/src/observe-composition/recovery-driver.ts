@@ -559,7 +559,7 @@ export const checkAdvancedMarketProjection = <R>(
           }),
         ).pipe(
           Effect.map((failed) => {
-            const { nextDelayMs: _nextDelayMs, ...completed } = advanced
+            const { nextDelayMs: _nextDelayMs, nextWakeAt: _nextWakeAt, ...completed } = advanced
             return { ...completed, ...failed }
           }),
         ),
