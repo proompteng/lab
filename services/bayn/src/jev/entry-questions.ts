@@ -7,9 +7,8 @@ import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
+import { entryJudgmentThresholds } from './judgment-policy'
 import { WebullEntryContextSchema, webullEntryContextPolicy } from './webull-entry-context'
-
-export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
 
 const questionNames = (setup: EntrySetup, market: MarketKind) => {
   const setupName = setup === EntrySetup.SupportRecovery ? 'support_recovery' : 'base_breakout'
