@@ -6,7 +6,10 @@ import YAML, { isMap, isSeq } from 'yaml'
 
 const root = resolve(import.meta.dir, '../../../../..')
 
-test('platform runtime and promotion alerts fire, clear, and detect missing observations', () => {
+test.each([
+  ['platform-alerts.yaml', ['ofz-relay-platform.rules', 'tengri-production.rules']],
+  ['restate-alerts.yaml', ['restate-control-plane.rules']],
+] as const)('%s fires, clears, and detects missing observations', (fixture, groupNames) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'platform-promql-'))
   try {
     const document = YAML.parseDocument(
@@ -17,12 +20,15 @@ test('platform runtime and promotion alerts fire, clear, and detect missing obse
     writeFileSync(resolve(directory, 'all-rules.yaml'), rules)
     const groups = YAML.parseDocument(rules).get('groups')
     if (!isSeq(groups)) throw new Error('Mimir rule groups are missing')
-    const platform = groups.items.find((group) => isMap(group) && group.get('name') === 'ofz-relay-platform.rules')
-    if (!isMap(platform)) throw new Error('Platform rule group is missing')
-    writeFileSync(resolve(directory, 'rules.yaml'), YAML.stringify({ groups: [platform.toJSON()] }))
+    const selected = groupNames.map((name) => {
+      const group = groups.items.find((group) => isMap(group) && group.get('name') === name)
+      if (!isMap(group)) throw new Error(`Rule group is missing: ${name}`)
+      return group.toJSON()
+    })
+    writeFileSync(resolve(directory, 'rules.yaml'), YAML.stringify({ groups: selected }))
     writeFileSync(
       resolve(directory, 'tests.yaml'),
-      readFileSync(resolve(root, 'argocd/applications/observability/tests/platform-alerts.yaml'), 'utf8'),
+      readFileSync(resolve(root, `argocd/applications/observability/tests/${fixture}`), 'utf8'),
     )
     for (const args of [
       ['check', 'rules', 'all-rules.yaml'],

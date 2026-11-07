@@ -191,14 +191,7 @@ const expected = {
     tagRegex: runQualifiedTagRegex,
     images: [imageRepo('restate')],
     apps: ['restate'],
-    includePaths: [
-      'services/restate',
-      'packages/scripts/src/restate',
-      'packages/scripts/src/shared/docker.ts',
-      'argocd/applications/restate',
-      'argocd/applicationsets/platform.yaml',
-      'bun.lock',
-    ],
+    includePaths: ['services/restate', 'argocd/applications/restate'],
   },
   opencode: {
     creationCriteria: 'image-revision',
