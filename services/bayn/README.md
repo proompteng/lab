@@ -130,9 +130,10 @@ ordering. Independent strategy, transaction and receipt reads retain the origina
 accounting and ledger verification retain their existing checks.
 
 Generation-scoped decision, market-volume and closing-boundary reads also reuse the captured terminal-cycle
-membership through one PostgreSQL array parameter. They retain completed-state filters, reconciliation cutoffs and
-native timestamp precision, and every selected decision still undergoes full verification. Independent reads keep
-their original scope queries; account-history reads add no membership parameter.
+membership through one PostgreSQL array parameter when nonempty; an explicit empty capture uses a bind-free false
+predicate. They retain completed-state filters, reconciliation cutoffs and native timestamp precision, and every
+selected decision still undergoes full verification. Independent reads keep their original scope queries;
+account-history reads add no membership parameter.
 
 Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
 authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
