@@ -79,10 +79,6 @@ export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
   readonly nextDelayMs: number
 }
 
-export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
-  driver: RecoveryFirstCycleDriver<R>,
-) => Effect.Effect<void, never, R>
-
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
   readonly brokerEnvironment?: BrokerEnvironment
@@ -135,6 +131,8 @@ export type PostMutationReconciliation = {
   readonly delayMs: number
   readonly logContext: ExecutionMutationLogContext
   readonly observedAt: string
+  /** Only ordinary durable cancel intents support lookup-only confirmation before reconciliation. */
+  readonly cancellationConfirmationIntentId?: string | undefined
 }
 
 export type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation

@@ -27,7 +27,7 @@ import {
   type ExecutionControllerTick,
 } from '../execution/controller'
 import { sha256 } from '../hash'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 
 const stateKey = 'controller'
@@ -103,6 +103,7 @@ const writeRuntimeLog = (
     .catch(() => undefined)
 
 interface ExecutionAdvanceFailureDiagnostic {
+  readonly issuedAt?: string
   readonly failureCauseCategory?: string
   readonly failureCauseOperation?: string
   readonly failureCauseTag?: string
@@ -116,6 +117,7 @@ const executionAdvanceFailureMetadataKey = 'bayn.execution-advance-failure.v1'
 const FailureLabelSchema = Schema.NonEmptyString.check(Schema.isMaxLength(80))
 const ExecutionAdvanceFailureDiagnosticSchema = Schema.fromJsonString(
   Schema.Struct({
+    issuedAt: Schema.optionalKey(UtcInstantSchema),
     failureCauseCategory: Schema.optionalKey(FailureLabelSchema),
     failureCauseOperation: Schema.optionalKey(FailureLabelSchema),
     failureCauseTag: Schema.optionalKey(FailureLabelSchema),
@@ -189,15 +191,12 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
   }
 }
 
-/** Restate records failures as TerminalError; preserve bounded domain diagnostics before the durable boundary. */
-const executionAdvanceRunFailure = (cause: unknown): unknown => {
+/** Retain the attempt's receipt timestamp and bounded diagnostics across the durable failure boundary. */
+const executionAdvanceRunFailure = (cause: unknown, issuedAt: string): restate.TerminalError => {
   const failure = executionAdvanceFailureDiagnostic(cause)
-  if (!['TransientExecutionFailure', 'NativeExecutionRuntimeError', 'OperationalError'].includes(failure.failureTag)) {
-    return cause
-  }
   return new restate.TerminalError(failure.failureMessage, {
     errorCode: cause instanceof restate.TerminalError ? cause.code : 500,
-    metadata: { [executionAdvanceFailureMetadataKey]: JSON.stringify(failure) },
+    metadata: { [executionAdvanceFailureMetadataKey]: JSON.stringify({ ...failure, issuedAt }) },
   })
 }
 
@@ -413,7 +412,7 @@ export const makeBaynExecutionController = (
   config: ExecutionControllerConfig & { readonly activationAuthorizationHash: string },
   runtime: NativeExecutionRuntime,
   hooks: readonly restate.HooksProvider[] = [],
-  transportClock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
+  clock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
   const controller = restate.object({
     name: 'BaynExecutionController',
@@ -510,9 +509,8 @@ export const makeBaynExecutionController = (
             )
             return
           }
-          const issuedAt = tick.issuedAt ?? (await ctx.date.toJSON())
           const decision = decisionOrTerminal(
-            decideExecutionControllerTick(state, tick, ctx.key, issuedAt, config.sourceRevision),
+            decideExecutionControllerTick(state, tick, ctx.key, config.sourceRevision),
           )
           if (decision._tag === 'Ignored') {
             return
@@ -523,10 +521,13 @@ export const makeBaynExecutionController = (
             stepResult = await ctx.run(
               'advance Bayn execution once',
               async () => {
+                // Time is receipt provenance only; the native driver owns all live execution deadlines. Capture it
+                // with the already-durable advance instead of waiting for a separate journaled clock round trip.
+                const issuedAt = tick.issuedAt ?? new Date(clock.currentTimeMillisUnsafe()).toISOString()
                 try {
-                  return await runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
+                  return await runtime.advance({ ...decision.command, issuedAt }, ctx.request().attemptCompletedSignal)
                 } catch (cause) {
-                  throw executionAdvanceRunFailure(cause)
+                  throw executionAdvanceRunFailure(cause, issuedAt)
                 }
               },
               executionControllerAdvanceRunOptions,
@@ -534,6 +535,7 @@ export const makeBaynExecutionController = (
           } catch (cause: unknown) {
             const attempt = tick.attempt ?? 0
             const failure = executionAdvanceFailureDiagnostic(cause)
+            const issuedAt = tick.issuedAt ?? failure.issuedAt
 
             const replacementFirstPass =
               state !== null && state.lastCompletion === undefined && state.nextSequence === state.initialSequence
@@ -636,7 +638,7 @@ export const makeBaynExecutionController = (
           // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
           // Ordinary polling waits retain the same due-time contract; projection and journaling must consume their
           // delay budget too, rather than starting a fresh wait after the persisted deadline has already passed.
-          const scheduleAt = transportClock.currentTimeMillisUnsafe()
+          const scheduleAt = clock.currentTimeMillisUnsafe()
           const completionDelay =
             completed.nextDueAt === undefined
               ? result.outcome.nextDelayMs

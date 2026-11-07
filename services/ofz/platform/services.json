@@ -58,6 +58,11 @@
       "name": "Proompteng",
       "resources": [
         {
+          "kind": "agents.target",
+          "id": "agents/lab",
+          "name": "Lab agents"
+        },
+        {
           "kind": "kubernetes.namespace",
           "id": "galactic/f4b6e45e-cd1b-426d-acd3-41b50219182e",
           "name": "ofz"

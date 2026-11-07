@@ -35,6 +35,7 @@ const fixture = () => {
       numericalState: {
         schemaVersion: defaultJevProtocolDocument.inputDefinition,
         webullContext: null,
+        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },

@@ -307,6 +307,7 @@ test('federation fetches exact JWT identities, exchanges over TLS, renews once, 
     action: 'fixture.status.read',
     target: { name: 'Fixture', kind: 'fixture.account', id: 'fixture/account' },
     input_schema: schema,
+    read_only: true,
   }
   const authentication = {
     type: 'workload_identity',

@@ -108,3 +108,8 @@ helmCharts:
     namespace: agents
     valuesFile: values.yaml
     includeCRDs: true
+
+configMapGenerator:
+  - name: agents-relay-targets
+    files:
+      - relay-targets.json

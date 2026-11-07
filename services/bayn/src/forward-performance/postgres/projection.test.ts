@@ -17,6 +17,7 @@ import {
   verifyPerformanceDecisions,
 } from './projection'
 import { persistenceDocumentFixture } from '../../system-assessment/decision-persistence.test-support'
+import { retainedV38ExecutionFixture, retainedV38ExecutionGoldens } from '../../jev/retained-v38-execution.test-support'
 
 const countedRows = <T>(values: readonly T[]) => {
   let traversals = 0
@@ -32,6 +33,35 @@ const countedRows = <T>(values: readonly T[]) => {
   })
   return { rows, traversals: () => traversals }
 }
+
+test.each(retainedV38ExecutionGoldens.map((_, index) => index))(
+  'projects genuine v38 execution evidence without losing historical performance coverage: %i',
+  (index) => {
+    const { document } = retainedV38ExecutionFixture(index)
+    const row = {
+      cycle_id: document.bindings.cycleId,
+      decision_hash: document.contentHash,
+      created_at: new Date(document.createdAt),
+      document,
+    }
+    const verified = verifyPerformanceDecisions([row])
+    expect(verified.unverifiedDecisionHashes).toEqual([])
+    expect(verified.verifiedRows).toHaveLength(1)
+    expect(verified.verifiedRows[0]?.document).toEqual(document)
+    const evidence = executionEvidenceFromRows(verified.verifiedRows, indexExecutionEvidence([], [], []))
+    expect(evidence).toHaveLength(document.targetPlan.intentTargets.length)
+    expect(evidence[0]).toMatchObject({
+      decisionDocumentHash: document.contentHash,
+      plannedQuantityAtoms: document.targetPlan.intentTargets[0]!.quantityAtoms,
+      fills: [],
+    })
+    const tampered = { ...row, document: { ...document, contentHash: 'f'.repeat(64) } }
+    expect(verifyPerformanceDecisions([tampered, tampered])).toEqual({
+      verifiedRows: [],
+      unverifiedDecisionHashes: [document.contentHash],
+    })
+  },
+)
 
 test('streams planned decisions without rebuilding history indexes or changing ambiguous ownership', async () => {
   const document = await Effect.runPromise(persistenceDocumentFixture)

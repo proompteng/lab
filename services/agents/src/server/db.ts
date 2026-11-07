@@ -240,7 +240,23 @@ type AgentsCodexEvaluation = {
   created_at: Generated<Timestamp>
 }
 
+export type RelayRunSubmission = {
+  operation_id: string
+  workspace_id: string
+  target_id: string
+  client_service: string
+  actor: string
+  authorization_receipt_id: string
+  request_hash: string
+  request_payload: JsonValue
+  run_name: string
+  projection_id: string | null
+  rejection: JsonValue | null
+  created_at: Generated<Timestamp>
+}
+
 export type AgentsDatabase = {
+  agent_run_relay_submissions: RelayRunSubmission
   agent_runs: AgentRuns
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
   agent_run_rerun_submissions: AgentRunRerunSubmissions

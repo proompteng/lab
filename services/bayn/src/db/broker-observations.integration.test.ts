@@ -93,6 +93,23 @@ describePostgres('Durable per-account broker observations', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
 
+  test('consecutive poll tickets share a generation boundary until a durable invalidation', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first), 0)
+        const second = yield* claim(store)
+        expect(second.generation).toBe(first.generation + 1)
+        yield* advanceToTicket(second)
+        yield* store.publish(second, snapshot(second), 0)
+        yield* store.invalidate
+        const next = yield* claim(store)
+        expect(next.generation).toBeGreaterThan(second.generation + 1)
+      }),
+    ))
+
   test('hard migration removes the database payload and compact reads retain the exact parent snapshot', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
