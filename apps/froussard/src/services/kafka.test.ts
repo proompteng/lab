@@ -108,7 +108,7 @@ describe('KafkaProducerLayer', () => {
 
   const createProducer = () => {
     const connect = vi.fn().mockResolvedValue(undefined)
-    const send = vi.fn().mockResolvedValue(undefined)
+    const send = vi.fn().mockResolvedValue([{ partition: 0, baseOffset: '1' }])
     const disconnect = vi.fn().mockResolvedValue(undefined)
     return { connect, send, disconnect }
   }
@@ -159,33 +159,21 @@ describe('KafkaProducerLayer', () => {
     await runtime.dispose()
   })
 
-  it('recreates producer after send failure', async () => {
-    const firstProducer = createProducer()
-    firstProducer.send.mockRejectedValueOnce(new Error('boom'))
-    const secondProducer = createProducer()
-
-    producerFactory.mockImplementationOnce(() => firstProducer).mockImplementationOnce(() => secondProducer)
-
+  it('fails an uncertain write and permits a later broker-confirmed write', async () => {
+    const producer = createProducer()
+    producer.send.mockRejectedValueOnce(new Error('boom'))
+    producerFactory.mockReturnValue(producer)
     const { runtime } = createRuntime()
-    const kafka = await runtime.runPromise(
-      Effect.gen(function* () {
-        return yield* KafkaProducer
-      }),
-    )
-
-    await expect(runtime.runPromise(kafka.publish(baseMessage))).rejects.toThrow('boom')
-
-    expect(firstProducer.connect).toHaveBeenCalled()
-    expect(firstProducer.send).toHaveBeenCalled()
-    expect(firstProducer.disconnect).toHaveBeenCalled()
-
-    await runtime.runPromise(kafka.publish(baseMessage))
-
-    expect(producerFactory).toHaveBeenCalledTimes(2)
-    expect(secondProducer.connect).toHaveBeenCalledTimes(1)
-    expect(secondProducer.send).toHaveBeenCalledTimes(1)
-
-    await runtime.dispose()
+    const kafka = runtime.runSync(KafkaProducer)
+    try {
+      await expect(runtime.runPromise(kafka.publish(baseMessage))).rejects.toThrow('boom')
+      expect(runtime.runSync(kafka.isReady)).toBe(false)
+      await runtime.runPromise(kafka.publish(baseMessage))
+      expect(runtime.runSync(kafka.isReady)).toBe(true)
+      expect(producer.send).toHaveBeenLastCalledWith(expect.objectContaining({ acks: -1, timeout: 3000 }))
+    } finally {
+      await runtime.dispose()
+    }
   })
 
   it('disconnects producer when runtime is disposed', async () => {
@@ -203,34 +191,31 @@ describe('KafkaProducerLayer', () => {
     expect(producer.disconnect).toHaveBeenCalled()
   })
 
-  it('boots synchronously and acknowledges concurrent publishes in FIFO order', async () => {
+  it('does not serialize unrelated deliveries behind a stalled write', async () => {
     const producer = createProducer()
-    const firstSend = Promise.withResolvers<void>()
+    const firstSend = Promise.withResolvers<Array<{ partition: number; baseOffset: string }>>()
     producer.send.mockImplementationOnce(() => firstSend.promise)
     producerFactory.mockReturnValue(producer)
     const { runtime } = createRuntime()
-    const kafka = runtime.runSync(
-      Effect.gen(function* () {
-        return yield* KafkaProducer
-      }),
-    )
-    const acknowledged: number[] = []
+    const kafka = runtime.runSync(KafkaProducer)
+    let firstAcknowledged = false
+    const first = runtime.runPromise(kafka.publish({ ...baseMessage, key: 'first' })).then(() => {
+      firstAcknowledged = true
+    })
     try {
-      const published = [1, 2, 3].map((number) =>
-        runtime.runPromise(kafka.publish({ ...baseMessage, key: String(number) })).then(() => {
-          acknowledged.push(number)
-        }),
-      )
       await vi.waitFor(() => expect(producer.send).toHaveBeenCalledTimes(1))
-      expect(acknowledged).toEqual([])
-      firstSend.resolve()
-      await Promise.all(published)
-      expect(acknowledged).toEqual([1, 2, 3])
-      expect(producer.send.mock.calls.map(([request]) => request.messages[0].key)).toEqual(['1', '2', '3'])
+      await runtime.runPromise(kafka.publish({ ...baseMessage, key: 'second' }))
+      expect(firstAcknowledged).toBe(false)
+      firstSend.resolve([{ partition: 0, baseOffset: '1' }])
+      await first
+      expect(firstAcknowledged).toBe(true)
+      expect(producerFactory).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotent: true, maxInFlightRequests: 5 }),
+      )
     } finally {
-      firstSend.resolve()
+      firstSend.resolve([{ partition: 0, baseOffset: '1' }])
+      await first
       await runtime.dispose()
     }
-    expect(producer.disconnect).toHaveBeenCalledTimes(1)
   })
 })

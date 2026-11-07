@@ -41,7 +41,11 @@ const duration = Metric.histogram('froussard_http_request_duration_ms', {
 
 class HttpResponseError extends Data.TaggedError('HttpResponseError')<{ response: Response }> {}
 
-export const traceRequest = (request: Request, route: string, handle: () => Response | Promise<Response>) =>
+export const traceRequest = (
+  request: Request,
+  route: string,
+  handle: (request: Request) => Response | Promise<Response>,
+) =>
   Effect.suspend(() => {
     const startedAt = performance.now()
     const attributes = { method: request.method, route }
@@ -51,9 +55,13 @@ export const traceRequest = (request: Request, route: string, handle: () => Resp
         Metric.update(Metric.withAttributes(duration, attributes), performance.now() - startedAt),
       ])
 
-    return Effect.tryPromise({
-      try: async () => handle(),
-      catch: (cause) => (cause instanceof Error ? cause : new Error('HTTP handler failed', { cause })),
+    return Effect.flatMap(Effect.currentSpan, (span) => {
+      const headers = new globalThis.Headers(request.headers)
+      for (const [name, value] of Object.entries(HttpTraceContext.toHeaders(span))) headers.set(name, value)
+      return Effect.tryPromise({
+        try: async () => handle(new Request(request, { headers })),
+        catch: (cause) => (cause instanceof Error ? cause : new Error('HTTP handler failed', { cause })),
+      })
     }).pipe(
       Effect.tapError(() => Effect.annotateCurrentSpan('http.response.status_code', 500)),
       Effect.tap((response) => Effect.annotateCurrentSpan('http.response.status_code', response.status)),

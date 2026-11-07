@@ -3,7 +3,8 @@ import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
 
 import { createDiscordWebhookHandler } from './discord'
-import { createGithubWebhookHandler } from './github'
+import { createGithubWebhookHandler } from './github-ingress'
+import { withDeadline } from './admission'
 import { createIdempotencyStore } from './idempotency-store'
 import { createLinearWebhookHandler } from './linear'
 import type { WebhookConfig } from './types'
@@ -19,10 +20,10 @@ interface WebhookDependencies {
 export const createWebhookHandler = ({ runtime, webhooks, config }: WebhookDependencies) => {
   const idempotencyStore = createIdempotencyStore(config.idempotency)
   const discordHandler = createDiscordWebhookHandler({ runtime, config, idempotencyStore })
-  const githubHandler = createGithubWebhookHandler({ runtime, webhooks, config, idempotencyStore })
+  const githubHandler = createGithubWebhookHandler({ runtime, webhooks, idempotencyStore })
   const linearHandler = createLinearWebhookHandler({ runtime, config, idempotencyStore })
 
-  return async (request: Request, provider: string): Promise<Response> => {
+  const handle = async (request: Request, provider: string): Promise<Response> => {
     if (provider === 'discord') {
       logger.info({ provider }, 'webhook request received')
       const bodyBuffer = new Uint8Array(await request.arrayBuffer())
@@ -48,4 +49,9 @@ export const createWebhookHandler = ({ runtime, webhooks, config }: WebhookDepen
     const rawBody = await request.text()
     return githubHandler(rawBody, request)
   }
+  return (request: Request, provider: string): Promise<Response> =>
+    withDeadline(
+      handle(request, provider),
+      provider === 'discord' ? 2_500 : provider === 'linear' ? 4_500 : 8_000,
+    ).catch(() => new Response('Kafka admission unavailable', { status: 503 }))
 }

@@ -1,3 +1,4 @@
+import type { FetchLike } from './types'
 import { Effect } from 'effect'
 
 import type { FetchResponse } from './types'
@@ -54,3 +55,8 @@ export const summarizeText = (value: unknown, maxLength = 200): string | null =>
   }
   return normalized
 }
+
+export const defaultFetch: FetchLike | null =
+  typeof globalThis.fetch === 'function'
+    ? (input, init) => globalThis.fetch(input, { ...init, signal: AbortSignal.timeout(30_000) })
+    : null

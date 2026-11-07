@@ -10,8 +10,9 @@ import {
 } from '@/services/agents'
 
 import type { IdempotencyStore } from './idempotency-store'
-import { makeLinearWebhookMetrics, type LinearWebhookDownstream, type LinearWebhookMetrics } from './linear-metrics'
+import { makeLinearWebhookMetrics, type LinearWebhookMetrics } from './linear-metrics'
 import type { WebhookConfig } from './types'
+import { publishAdmission, withDeadline, DeadlineExceededError, type WebhookAdmission } from './admission'
 import { publishKafkaMessage } from './utils'
 
 const LINEAR_WEBHOOK_RESPONSE_BUDGET_MS = 4_500
@@ -22,24 +23,6 @@ class BodyTooLargeError extends Error {
   constructor() {
     super('request body exceeds configured limit')
     this.name = 'BodyTooLargeError'
-  }
-}
-
-class DeadlineExceededError extends Error {
-  constructor(readonly operation: 'body' | 'kafka' | 'agents') {
-    super(`${operation} deadline exceeded`)
-    this.name = 'DeadlineExceededError'
-  }
-}
-
-class DownstreamFailureError extends Error {
-  constructor(
-    readonly dependency: LinearWebhookDownstream,
-    readonly reason: string,
-    cause: unknown,
-  ) {
-    super(`${dependency} ${reason}`, { cause })
-    this.name = 'DownstreamFailureError'
   }
 }
 
@@ -68,13 +51,7 @@ export interface LinearWebhookDependencies {
   config: WebhookConfig
   idempotencyStore: IdempotencyStore
   now?: () => number
-  submitAgentRun?: AgentRunSubmitter
-  publishRawEvent?: (input: {
-    topic: string
-    key: string
-    value: Uint8Array
-    headers: Record<string, string>
-  }) => Promise<void>
+  admit?: (admission: WebhookAdmission) => Promise<void>
   metrics?: LinearWebhookMetrics
   responseBudgetMs?: number
 }
@@ -262,20 +239,6 @@ const makeHeadBranch = (prefix: string, identifier: string, deliveryId: string) 
   return `${prefix}${issueSlug.slice(0, availableIssueBytes)}${suffix}`
 }
 
-const withDeadline = async <T>(promise: Promise<T>, timeoutMs: number, operation: 'kafka' | 'agents'): Promise<T> => {
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new DeadlineExceededError(operation)), Math.max(1, timeoutMs))
-      }),
-    ])
-  } finally {
-    if (timeout) clearTimeout(timeout)
-  }
-}
-
 const remainingBudget = (deadlineAt: number, now: () => number) => Math.max(1, deadlineAt - now())
 
 export const createLinearWebhookHandler = ({
@@ -283,21 +246,10 @@ export const createLinearWebhookHandler = ({
   config,
   idempotencyStore,
   now = Date.now,
-  submitAgentRun = makeAgentsServiceSubmitter(config.agents),
-  publishRawEvent,
+  admit = (admission) => publishAdmission(runtime, admission),
   metrics = makeLinearWebhookMetrics(runtime),
   responseBudgetMs = LINEAR_WEBHOOK_RESPONSE_BUDGET_MS,
 }: LinearWebhookDependencies) => {
-  const publish =
-    publishRawEvent ??
-    ((message) =>
-      runtime.runPromise(
-        publishKafkaMessage({
-          ...message,
-          value: message.value,
-        }),
-      ))
-
   return async (request: Request): Promise<Response> => {
     const startedAt = now()
     const deadlineAt = startedAt + responseBudgetMs
@@ -370,11 +322,6 @@ export const createLinearWebhookHandler = ({
     const eventHeader = request.headers.get('linear-event')?.trim() ?? ''
     const action = typeof payloadRecord?.action === 'string' ? payloadRecord.action : null
     const idempotencyKey = `linear:${deliveryId}`
-    if (idempotencyStore.isDuplicate(idempotencyKey)) {
-      logger.info({ provider: 'linear', deliveryId, event: eventHeader, action }, 'duplicate linear delivery ignored')
-      return respond(200, { status: 'duplicate', deliveryId }, 'duplicate')
-    }
-
     const auditHeaders: Record<string, string> = {
       'content-type': request.headers.get('content-type') ?? 'application/json',
       'linear-delivery': deliveryId,
@@ -383,118 +330,78 @@ export const createLinearWebhookHandler = ({
       ...(action ? { 'linear-action': action } : {}),
     }
 
-    const publishPromise = withDeadline(
-      publish({
-        topic: config.topics.linearRaw,
-        key: deliveryId,
-        value: rawBody,
-        headers: auditHeaders,
-      }),
-      remainingBudget(deadlineAt, now),
-      'kafka',
-    ).catch((error) => {
-      throw new DownstreamFailureError('kafka', error instanceof DeadlineExceededError ? 'timeout' : 'failure', error)
-    })
-
+    for (const name of ['traceparent', 'tracestate']) {
+      const value = request.headers.get(name)
+      if (value) auditHeaders[name] = value
+    }
     const event = eventHeader === 'Issue' ? parseLinearIssueEvent(parsed) : null
-    const shouldTrigger = event !== null && wasTriggerLabelAdded(event, config.linear.triggerLabel)
-
+    if (eventHeader === 'Issue' && (action === 'create' || action === 'update') && event === null)
+      return reject(400, 'issue-payload')
     try {
-      if (eventHeader === 'Issue' && (action === 'create' || action === 'update') && event === null) {
-        await publishPromise
-        idempotencyStore.release(idempotencyKey)
-        return reject(400, 'issue-payload')
-      }
-
-      if (!shouldTrigger) {
-        await publishPromise
-        logger.info({ provider: 'linear', deliveryId, event: eventHeader, action }, 'linear webhook ignored')
-        return respond(200, { status: 'ignored', deliveryId }, 'ignored')
-      }
-
-      const requestPayload: LinearIssueAgentRunRequest = {
-        issueId: event.issue.id,
-        identifier: event.issue.identifier,
-        title: event.issue.title,
-        description: event.issue.description,
-        url: event.issue.url,
-        action: event.action,
-        repository: config.linear.repository,
-        base: config.linear.baseBranch,
-        head: makeHeadBranch(config.linear.branchPrefix, event.issue.identifier, deliveryId),
-      }
-      const abortController = new AbortController()
-      const agentsTimeoutMs = Math.min(config.linear.agentsTimeoutMs, remainingBudget(deadlineAt, now))
-      const abortTimer = setTimeout(() => abortController.abort(), agentsTimeoutMs)
-      const submitPromise = withDeadline(
-        submitAgentRun({
-          deliveryId,
-          payload: buildLinearIssueAgentRunPayload(config.agents, requestPayload, deliveryId),
-          signal: abortController.signal,
-        }),
-        agentsTimeoutMs,
-        'agents',
+      const duplicate = await idempotencyStore.run(idempotencyKey, () =>
+        withDeadline(
+          admit({
+            provider: 'linear',
+            deliveryId,
+            receivedAt: startedAt,
+            body: new TextDecoder().decode(rawBody),
+            headers: auditHeaders,
+          }),
+          remainingBudget(deadlineAt, now),
+          'kafka',
+        ),
       )
-        .then((submission) => {
-          if (!submission.ok) {
-            throw new DownstreamFailureError(
-              'agents',
-              submission.status === 0 ? 'aborted' : `http_${submission.status}`,
-              new Error('Agents submission was not accepted'),
-            )
-          }
-          return submission
-        })
-        .catch((error) => {
-          if (error instanceof DownstreamFailureError) throw error
-          throw new DownstreamFailureError(
-            'agents',
-            error instanceof DeadlineExceededError ? 'timeout' : 'failure',
-            error,
-          )
-        })
-        .finally(() => clearTimeout(abortTimer))
-
-      const [publishResult, submitResult] = await Promise.allSettled([publishPromise, submitPromise])
-      if (publishResult.status === 'rejected') {
-        throw publishResult.reason
-      }
-      if (submitResult.status === 'rejected') {
-        throw submitResult.reason
-      }
-
-      logger.info(
-        {
-          provider: 'linear',
-          deliveryId,
-          event: eventHeader,
-          action: event.action,
-          issueId: event.issue.id,
-          issueIdentifier: event.issue.identifier,
-        },
-        'linear AgentRun submitted',
+      return respond(
+        200,
+        { status: duplicate ? 'duplicate' : 'accepted', deliveryId },
+        duplicate ? 'duplicate' : 'accepted',
       )
-      return respond(200, { status: 'accepted', deliveryId, agentRunTriggered: true }, 'accepted')
     } catch (error) {
-      await publishPromise.catch(() => undefined)
-      idempotencyStore.release(idempotencyKey)
-      const dependency = error instanceof DownstreamFailureError ? error.dependency : 'processing'
-      const failureReason = error instanceof DownstreamFailureError ? error.reason : 'failure'
-      metrics.recordDownstreamFailure(dependency, failureReason)
-      logger.error(
-        {
-          provider: 'linear',
-          deliveryId,
-          event: eventHeader,
-          action,
-          failure: `${dependency}-${failureReason}`,
-        },
-        'linear webhook processing failed',
-      )
-      return respond(500, { status: 'retry', deliveryId }, 'retry')
+      metrics.recordDownstreamFailure('kafka', error instanceof DeadlineExceededError ? 'timeout' : 'failure')
+      logger.error({ provider: 'linear', deliveryId }, 'linear admission failed')
+      return respond(503, { status: 'retry', deliveryId }, 'retry')
     }
   }
 }
+
+export const createLinearPolicyProcessor =
+  ({
+    runtime,
+    config,
+    submitAgentRun = makeAgentsServiceSubmitter(config.agents),
+  }: {
+    runtime: AppRuntime
+    config: WebhookConfig
+    submitAgentRun?: AgentRunSubmitter
+  }) =>
+  async ({ body, deliveryId, headers }: WebhookAdmission): Promise<void> => {
+    await runtime.runPromise(
+      publishKafkaMessage({ topic: config.topics.linearRaw, key: deliveryId, value: body, headers }),
+    )
+    const event = headers['linear-event'] === 'Issue' ? parseLinearIssueEvent(JSON.parse(body)) : null
+    if (!event || !wasTriggerLabelAdded(event, config.linear.triggerLabel)) return
+    const requestPayload: LinearIssueAgentRunRequest = {
+      issueId: event.issue.id,
+      identifier: event.issue.identifier,
+      title: event.issue.title,
+      description: event.issue.description,
+      url: event.issue.url,
+      action: event.action,
+      repository: config.linear.repository,
+      base: config.linear.baseBranch,
+      head: makeHeadBranch(config.linear.branchPrefix, event.issue.identifier, deliveryId),
+    }
+    const result = await submitAgentRun({
+      deliveryId,
+      payload: buildLinearIssueAgentRunPayload(config.agents, requestPayload, deliveryId),
+      signal: AbortSignal.timeout(config.linear.agentsTimeoutMs),
+    })
+    if (!result.ok) throw new Error(`Linear AgentRun submission failed: HTTP ${result.status}`)
+    logger.info(
+      { provider: 'linear', deliveryId, issueIdentifier: event.issue.identifier },
+      'linear AgentRun submitted',
+    )
+  }
 
 export const __test__ = {
   makeHeadBranch,

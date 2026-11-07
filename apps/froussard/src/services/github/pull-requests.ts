@@ -1,3 +1,4 @@
+import { defaultFetch as globalFetch } from './common'
 import { Effect, Schema } from 'effect'
 
 import { DEFAULT_API_BASE_URL, DEFAULT_USER_AGENT, readResponseText, toError, trimTrailingSlash } from './common'
@@ -9,9 +10,6 @@ import type {
   ReadyForReviewOptions,
   ReadyForReviewResult,
 } from './types'
-
-const globalFetch: FetchLike | null =
-  typeof globalThis.fetch === 'function' ? (globalThis.fetch.bind(globalThis) as FetchLike) : null
 
 const GitHubPullRequestSchema = Schema.Struct({
   number: Schema.Number,

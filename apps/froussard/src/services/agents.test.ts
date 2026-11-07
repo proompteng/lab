@@ -171,10 +171,13 @@ describe('agents service submissions', () => {
     const input = { payload: { namespace: 'agents' }, deliveryId: 'delivery-1' }
 
     await expect(submitter(input)).resolves.toEqual({ ok: true, status: 202, body: { name: 'run-1' } })
-    expect(submitAgentRunToAgentsServiceMock).toHaveBeenCalledWith(input, {
-      AGENTS_SERVICE_BASE_URL: 'http://agents.test',
-      AGENTS_SERVICE_CLIENT_NAME: 'froussard-test',
-    })
+    expect(submitAgentRunToAgentsServiceMock).toHaveBeenCalledWith(
+      { ...input, signal: expect.any(AbortSignal) },
+      {
+        AGENTS_SERVICE_BASE_URL: 'http://agents.test',
+        AGENTS_SERVICE_CLIENT_NAME: 'froussard-test',
+      },
+    )
   })
 
   it('maps a Linear issue into an issue-only implementation source', () => {

@@ -73,8 +73,9 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     )
 
     if (!pullResult.ok) {
+      if (pullResult.reason === 'not-found') return null
       logReadFailure('pull-request', pullResult)
-      return null
+      throw new Error(`GitHub pull-request read failed: ${pullResult.reason}`)
     }
 
     const pull = pullResult.pullRequest
@@ -106,7 +107,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     if (!threadsResult.ok) {
       logReadFailure('review-threads', threadsResult)
-      return null
+      throw new Error(`GitHub review-threads read failed: ${threadsResult.reason}`)
     }
 
     const checksResult = await executionContext.runGithub(() =>
@@ -121,7 +122,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     if (!checksResult.ok) {
       logReadFailure('checks', checksResult)
-      return null
+      throw new Error(`GitHub checks read failed: ${checksResult.reason}`)
     }
 
     const reactionsResult = await executionContext.runGithub(() =>
@@ -135,18 +136,10 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       }),
     )
 
-    const hasThumbsUpReaction = reactionsResult.ok ? reactionsResult.hasReaction : false
     if (!reactionsResult.ok) {
-      logger.warn(
-        {
-          repository: repoFullName,
-          pullNumber,
-          reason: reactionsResult.reason,
-          status: reactionsResult.status,
-        },
-        'failed to read pull request reactions; ready approval will not be posted',
-      )
+      throw new Error(`GitHub reaction read failed: ${reactionsResult.reason}`)
     }
+    const hasThumbsUpReaction = reactionsResult.hasReaction
 
     const unresolvedThreads = threadsResult.threads
     const blockingChecks = checksResult.checks

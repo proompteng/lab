@@ -204,7 +204,7 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     issueTitle,
     issueBody,
     sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
-    issuedAt: new Date().toISOString(),
+    issuedAt: executionContext.receivedAt,
     metadataVersion: metadata.version ?? undefined,
     iterations: metadata.iterations,
   }
@@ -342,7 +342,7 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     issueTitle,
     issueBody,
     sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
-    issuedAt: new Date().toISOString(),
+    issuedAt: executionContext.receivedAt,
     metadataVersion: metadata.version ?? undefined,
     iterations: metadata.iterations,
   }

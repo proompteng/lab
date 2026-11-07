@@ -1,6 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
-import type { Webhooks } from '@octokit/webhooks'
 import { Effect, pipe } from 'effect'
 import type { Effect as EffectType } from 'effect/Effect'
 import * as Result from 'effect/Result'
@@ -18,41 +15,15 @@ import type { KafkaProducer } from '@/services/kafka'
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
 import { handlePullRequestEvent, handleReadinessEvent } from './github/events/pull-request'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
-import type { IdempotencyStore } from './idempotency-store'
+import type { WebhookAdmission } from './admission'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
 
 const ATLAS_ENRICH_PATH = '/api/enrich'
-const MAX_ATLAS_ERROR_DETAIL = 500
 
-export interface GithubWebhookDependencies {
+export interface GithubPolicyDependencies {
   runtime: AppRuntime
-  webhooks: Webhooks
   config: WebhookConfig
-  idempotencyStore: IdempotencyStore
-}
-
-const buildHeaders = (
-  deliveryId: string,
-  eventName: string,
-  signatureHeader: string,
-  contentType: string,
-  hookId: string,
-  actionValue?: string,
-): Record<string, string> => {
-  const headers: Record<string, string> = {
-    'x-github-delivery': deliveryId,
-    'x-github-event': eventName,
-    'x-github-hook-id': hookId,
-    'content-type': contentType,
-    'x-hub-signature-256': signatureHeader,
-  }
-
-  if (actionValue) {
-    headers['x-github-action'] = actionValue
-  }
-
-  return headers
 }
 
 const extractEventIdentifiers = (payload: unknown) => {
@@ -210,6 +181,7 @@ const buildAtlasPayload = (options: {
   eventName: string
   actionValue?: string
   hookId: string
+  receivedAt: string
   senderLogin?: string
   agentRunIdentifier?: string | null
   identifiers: ReturnType<typeof extractEventIdentifiers>
@@ -229,7 +201,7 @@ const buildAtlasPayload = (options: {
       sender: options.senderLogin ?? null,
       agentRunIdentifier: options.agentRunIdentifier ?? null,
       identifiers: options.identifiers,
-      receivedAt: new Date().toISOString(),
+      receivedAt: options.receivedAt,
       payload: options.payload,
     },
   }
@@ -242,6 +214,7 @@ const triggerAtlasEnrichment = async (options: {
   eventName: string
   actionValue?: string
   hookId: string
+  receivedAt: string
   senderLogin?: string
   agentRunIdentifier?: string | null
   identifiers: ReturnType<typeof extractEventIdentifiers>
@@ -270,61 +243,20 @@ const triggerAtlasEnrichment = async (options: {
       eventName: options.eventName,
       actionValue: options.actionValue,
       hookId: options.hookId,
+      receivedAt: options.receivedAt,
       senderLogin: options.senderLogin,
       agentRunIdentifier: options.agentRunIdentifier,
       identifiers: options.identifiers,
     }),
   )
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
-    })
-
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, MAX_ATLAS_ERROR_DETAIL)
-      logger.warn(
-        {
-          deliveryId: options.deliveryId,
-          eventName: options.eventName,
-          action: options.actionValue ?? null,
-          status: response.status,
-          detail,
-        },
-        'atlas enrichment request failed',
-      )
-    } else {
-      logger.debug(
-        {
-          deliveryId: options.deliveryId,
-          eventName: options.eventName,
-          action: options.actionValue ?? null,
-          status: response.status,
-        },
-        'atlas enrichment request accepted',
-      )
-    }
-  } catch (error) {
-    logger.warn(
-      {
-        deliveryId: options.deliveryId,
-        eventName: options.eventName,
-        action: options.actionValue ?? null,
-        err: error instanceof Error ? error.message : String(error),
-      },
-      'atlas enrichment request failed',
-    )
-  }
+  const response = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(30_000) })
+  await response.arrayBuffer()
+  if (!response.ok) throw new Error(`Atlas enrichment failed: HTTP ${response.status}`)
+  logger.debug({ deliveryId: options.deliveryId, status: response.status }, 'atlas enrichment request accepted')
 }
 
-export const createGithubWebhookHandler = ({
-  runtime,
-  webhooks,
-  config,
-  idempotencyStore,
-}: GithubWebhookDependencies) => {
+export const createGithubPolicyProcessor = ({ runtime, config }: GithubPolicyDependencies) => {
   const githubService = runtime.runSync(
     Effect.gen(function* () {
       return yield* GithubService
@@ -336,52 +268,14 @@ export const createGithubWebhookHandler = ({
     factory: () => EffectType<A, E, AppLogger | AppConfigService | GithubService | KafkaProducer>,
   ) => runtime.runPromise(Semaphore.withPermits(githubSemaphore, 1)(factory()))
 
-  return async (rawBody: string, request: Request): Promise<Response> => {
-    const signatureHeader = request.headers.get('x-hub-signature-256')
-    if (!signatureHeader) {
-      logger.error({ headers: Array.from(request.headers.keys()) }, 'missing x-hub-signature-256 header')
-      return new Response('Unauthorized', { status: 401 })
-    }
-
-    const deliveryId = request.headers.get('x-github-delivery') || randomUUID()
-    const eventName = request.headers.get('x-github-event') ?? 'unknown'
-    const actionHeader = request.headers.get('x-github-action')
-
-    if (!(await webhooks.verify(rawBody, signatureHeader))) {
-      logger.error({ deliveryId, signatureHeader }, 'github webhook signature verification failed')
-      return new Response('Unauthorized', { status: 401 })
-    }
-
-    if (idempotencyStore.isDuplicate(`github:${deliveryId}`)) {
-      logger.warn({ deliveryId, eventName, action: actionHeader ?? null }, 'duplicate github webhook delivery ignored')
-      return new Response(
-        JSON.stringify({
-          status: 'duplicate',
-          deliveryId,
-          event: eventName,
-          action: actionHeader ?? null,
-        }),
-        { status: 202, headers: { 'Content-Type': 'application/json' } },
-      )
-    }
-
-    let parsedPayload: unknown
-    try {
-      parsedPayload = JSON.parse(rawBody) as unknown
-    } catch (parseError) {
-      logger.error({ err: parseError }, 'failed to parse github webhook payload')
-      return new Response('Invalid JSON body', { status: 400 })
-    }
-
+  return async ({ body: rawBody, deliveryId, receivedAt, headers }: WebhookAdmission): Promise<void> => {
+    const parsedPayload: unknown = JSON.parse(rawBody)
+    const eventName = headers['x-github-event'] ?? 'unknown'
     const actionValue =
-      typeof (parsedPayload as { action?: unknown }).action === 'string'
+      typeof (parsedPayload as { action?: unknown })?.action === 'string'
         ? (parsedPayload as { action: string }).action
         : undefined
-    const contentType = request.headers.get('content-type') ?? 'application/json'
-
-    const hookId = request.headers.get('x-github-hook-id') ?? 'unknown'
-
-    const headers = buildHeaders(deliveryId, eventName, signatureHeader, contentType, hookId, actionValue)
+    const hookId = headers['x-github-hook-id'] ?? 'unknown'
 
     const agentRunIdentifier =
       process.env.AGENT_RUN_NAME ?? process.env.AGENT_RUN_UID ?? process.env.AGENT_RUN_NAMESPACE ?? null
@@ -398,6 +292,7 @@ export const createGithubWebhookHandler = ({
         },
       },
       deliveryId,
+      receivedAt: new Date(receivedAt).toISOString(),
       agentRunIdentifier,
       submitAgentRun: makeAgentsServiceSubmitter(config.agents),
     }
@@ -426,51 +321,36 @@ export const createGithubWebhookHandler = ({
       'github webhook dispatch',
     )
 
-    try {
-      if (eventName === 'issues' && actionValue === 'opened') {
-        const stage = await handleIssueOpened({
-          parsedPayload,
-          headers,
-          config,
-          executionContext,
-          deliveryId,
-          senderLogin,
-        })
-        if (stage) {
-          codexStageTriggered = stage
-        }
+    if (eventName === 'issues' && actionValue === 'opened') {
+      const stage = await handleIssueOpened({
+        parsedPayload,
+        headers,
+        config,
+        executionContext,
+        deliveryId,
+        senderLogin,
+      })
+      if (stage) {
+        codexStageTriggered = stage
       }
+    }
 
-      if (eventName === 'issue_comment' && actionValue === 'created') {
-        const stage = await handleIssueCommentCreated({
-          parsedPayload,
-          headers,
-          config,
-          executionContext,
-          deliveryId,
-          senderLogin,
-        })
-        if (stage) {
-          codexStageTriggered = stage
-        }
+    if (eventName === 'issue_comment' && actionValue === 'created') {
+      const stage = await handleIssueCommentCreated({
+        parsedPayload,
+        headers,
+        config,
+        executionContext,
+        deliveryId,
+        senderLogin,
+      })
+      if (stage) {
+        codexStageTriggered = stage
       }
+    }
 
-      if (eventName === 'pull_request') {
-        const stage = await handlePullRequestEvent({
-          parsedPayload,
-          headers,
-          config,
-          executionContext,
-          deliveryId,
-          actionValue,
-          senderLogin,
-        })
-        if (stage) {
-          codexStageTriggered = stage
-        }
-      }
-
-      await handleReadinessEvent({
+    if (eventName === 'pull_request') {
+      const stage = await handlePullRequestEvent({
         parsedPayload,
         headers,
         config,
@@ -478,62 +358,47 @@ export const createGithubWebhookHandler = ({
         deliveryId,
         actionValue,
         senderLogin,
-        eventName,
       })
-
-      if (eventName === 'push') {
-        void triggerAtlasEnrichment({
-          config: config.atlas,
-          payload: parsedPayload,
-          deliveryId,
-          eventName,
-          actionValue,
-          hookId,
-          senderLogin,
-          agentRunIdentifier,
-          identifiers,
-        }).catch((error) => {
-          logger.warn(
-            {
-              deliveryId,
-              eventName,
-              action: actionValue ?? null,
-              err: error instanceof Error ? error.message : String(error),
-            },
-            'atlas enrichment request failed',
-          )
-        })
+      if (stage) {
+        codexStageTriggered = stage
       }
-
-      await runtime.runPromise(
-        publishKafkaMessage({
-          topic: config.topics.raw,
-          key: deliveryId,
-          value: rawBody,
-          headers,
-        }),
-      )
-
-      return new Response(
-        JSON.stringify({
-          status: 'accepted',
-          deliveryId,
-          event: eventName,
-          action: actionValue ?? null,
-          codexStageTriggered,
-        }),
-        {
-          status: 202,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      )
-    } catch (error) {
-      idempotencyStore.release(`github:${deliveryId}`)
-      logger.error(
-        { err: error, deliveryId, eventName, action: actionValue ?? null, identifiers },
-        'failed to enqueue github webhook event',
-      )
-      return new Response('Failed to enqueue webhook event', { status: 500 })
     }
+
+    await handleReadinessEvent({
+      parsedPayload,
+      headers,
+      config,
+      executionContext,
+      deliveryId,
+      actionValue,
+      senderLogin,
+      eventName,
+    })
+
+    if (eventName === 'push') {
+      await triggerAtlasEnrichment({
+        config: config.atlas,
+        payload: parsedPayload,
+        deliveryId,
+        eventName,
+        actionValue,
+        hookId,
+        receivedAt: new Date(receivedAt).toISOString(),
+        senderLogin,
+        agentRunIdentifier,
+        identifiers,
+      })
+    }
+
+    await runtime.runPromise(
+      publishKafkaMessage({
+        topic: config.topics.raw,
+        key: deliveryId,
+        value: rawBody,
+        headers,
+      }),
+    )
+
+    logger.info({ deliveryId, eventName, codexStageTriggered }, 'github policy completed')
   }
 }
