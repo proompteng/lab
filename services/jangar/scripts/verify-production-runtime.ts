@@ -14,6 +14,7 @@ const server = Bun.spawn([process.execPath, '.output/server/index.mjs'], {
     PORT: String(port),
     JANGAR_SERVER_PROFILE: 'test',
     JANGAR_CHAT_STATE_BACKEND: 'memory',
+    JANGAR_MOCK_CODEX: 'true',
     AGENTS_SERVICE_BASE_URL: 'http://127.0.0.1:1',
   },
   stdout: 'pipe',
@@ -54,8 +55,17 @@ try {
     signal: AbortSignal.timeout(2_000),
   })
   assert.equal(invalidChat.status, 400, 'chat schema must reject invalid messages')
+  const chat = await fetch(`${baseUrl}/openai/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }], stream: false }),
+    signal: AbortSignal.timeout(5_000),
+  })
+  assert.equal(chat.status, 200, 'chat service layers must execute a completion')
+  const completion = await chat.json()
+  assert.equal(completion.choices[0].message.content.trim(), 'Mock Codex ready.')
   assert.equal(server.exitCode, null, 'production server must remain running')
-  console.log('Jangar production runtime passed: health, model catalog, chat validation')
+  console.log('Jangar production runtime passed: health, model catalog, chat validation and completion')
 } catch (error) {
   if (server.exitCode === null) server.kill('SIGKILL')
   await server.exited
