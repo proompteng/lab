@@ -436,7 +436,6 @@ test.each([
             restarted,
             { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
             command.controllerKey,
-            result.readiness.availableAt ?? '',
             command.sourceRevision,
           ),
         )._tag,

@@ -1,0 +1,206 @@
+{
+  "officialArchive": {
+    "directory": "/tmp/bayn-official-node24111-parity-tuktdvvi",
+    "officialSource": "https://nodejs.org/dist/v24.11.1/node-v24.11.1-linux-x64.tar.xz",
+    "sha256Source": "https://nodejs.org/dist/v24.11.1/SHASUMS256.txt",
+    "archiveBytes": 30747116,
+    "verifiedArchiveSha256": "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8",
+    "binary": "/tmp/bayn-official-node24111-parity-tuktdvvi/node-official",
+    "officialBinarySha256": "5796fd9700e83170bc7ddfdf7f18858c794a9f91cb39dd6f9e95060b292f2563",
+    "officialInterpreter": "/lib64/ld-linux-x86-64.so.2",
+    "nixNode": "/nix/store/lgggxsrdzisnbligi7irlh4qmqczs0xk-nodejs-24.11.1/bin/node",
+    "nixLoader": "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/ld-linux-x86-64.so.2",
+    "ldd": null
+  },
+  "supportLibraryDirectories": [
+    "/nix/store/xm08aqdd7pxcdhm0ak6aqb1v7hw5q6ri-gcc-14.3.0-lib/lib",
+    "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib"
+  ],
+  "results": [
+    {
+      "runtime": "nix",
+      "build": {
+        "versions": {
+          "node": "24.11.1",
+          "acorn": "8.15.0",
+          "ada": "3.3.0",
+          "amaro": "1.1.4",
+          "ares": "1.34.5",
+          "brotli": "1.1.0",
+          "cjs_module_lexer": "2.1.0",
+          "cldr": "46.0",
+          "icu": "76.1",
+          "llhttp": "9.3.0",
+          "modules": "137",
+          "napi": "10",
+          "nbytes": "0.1.1",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.66.0",
+          "openssl": "3.6.0",
+          "simdjson": "4.0.7",
+          "simdutf": "6.4.0",
+          "sqlite": "3.50.4",
+          "tz": "2024b",
+          "undici": "7.16.0",
+          "unicode": "16.0",
+          "uv": "1.51.0",
+          "uvwasi": "0.0.23",
+          "v8": "13.6.233.10-node.28",
+          "zlib": "1.3.1",
+          "zstd": "1.5.7"
+        },
+        "arch": "x64",
+        "platform": "linux",
+        "sharedZlib": true,
+        "sharedOpenSsl": true,
+        "sharedObjects": [
+          "linux-vdso.so.1",
+          "/nix/store/l7xwm1f6f3zj2x8jwdbi8gdyfbx07sh7-zlib-1.3.1/lib/libz.so.1",
+          "/nix/store/586m17rh3and42f2pyqvmsmrxaz6bdkn-libuv-1.51.0/lib/libuv.so.1",
+          "/nix/store/l30c488dws7z5mazacqsmj25izb9jlp2-sqlite-3.50.4/lib/libsqlite3.so",
+          "/nix/store/61i74yjkj9p1qphfl7018ja4sdwkipx0-openssl-3.6.0/lib/libcrypto.so.3",
+          "/nix/store/61i74yjkj9p1qphfl7018ja4sdwkipx0-openssl-3.6.0/lib/libssl.so.3",
+          "/nix/store/4424mzk2pyia5v1j33zjgrjaivrdy03y-icu4c-76.1/lib/libicui18n.so.76",
+          "/nix/store/4424mzk2pyia5v1j33zjgrjaivrdy03y-icu4c-76.1/lib/libicuuc.so.76",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libdl.so.2",
+          "/nix/store/xm08aqdd7pxcdhm0ak6aqb1v7hw5q6ri-gcc-14.3.0-lib/lib/libstdc++.so.6",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libm.so.6",
+          "/nix/store/xm08aqdd7pxcdhm0ak6aqb1v7hw5q6ri-gcc-14.3.0-lib/lib/libgcc_s.so.1",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libpthread.so.0",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libc.so.6",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/ld-linux-x86-64.so.2",
+          "/nix/store/4424mzk2pyia5v1j33zjgrjaivrdy03y-icu4c-76.1/lib/libicudata.so.76"
+        ]
+      },
+      "strict-original-v38": {
+        "runtime": "Node v24.11.1",
+        "fixture": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-entry-equity.json",
+        "bytes": 1523926,
+        "canonicalSha256": "313ee50a8740412c5fa69ccf4753dd5e53be99a6e578dc968857859a5ff4500e",
+        "contentHash": "3a8eb0e67f156757cbe0957a06c5bbf645115961ab162b3175aff87b381368a4",
+        "strategySchema": "bayn.jev-entry-target.v7",
+        "verified": true
+      },
+      "png": {
+        "runtime": "Node v24.11.1",
+        "mode": "png",
+        "barsHash": "cc4dd6682bd86d2059489f4f1bd45bd3b87b4b034e1e4ad3dc20de5709d13e0f",
+        "barCount": 30,
+        "pngHash": "2b7041fb0838513eaacb7bf1ad9383d31d7b8649547a72d3fa92b179df52a02c",
+        "pngBytes": 5386,
+        "idatHash": "23bae58b298287b18a6f10a9118c82ede18a4fb0d281de3f09774430b8c9920b",
+        "idatBytes": 5329,
+        "decodedScanlinesHash": "cda3107460c95bc350031a28d2ead434a3f75c94460919c7b61bb991336c1e99",
+        "decodedScanlinesBytes": 983424,
+        "nonIdatChunksHash": "5d92512dc4139351ee1ff361e0d83a3d539c5d91be66925afdedf84d980322ae",
+        "initialRequestHash": "c6c6fc2283b1672931f315be4580bd66de40a8b26399249a2ba662a6e5360d1e"
+      }
+    },
+    {
+      "runtime": "official",
+      "build": {
+        "versions": {
+          "node": "24.11.1",
+          "acorn": "8.15.0",
+          "ada": "3.3.0",
+          "amaro": "1.1.4",
+          "ares": "1.34.5",
+          "brotli": "1.1.0",
+          "cjs_module_lexer": "2.1.0",
+          "cldr": "47.0",
+          "icu": "77.1",
+          "llhttp": "9.3.0",
+          "modules": "137",
+          "napi": "10",
+          "nbytes": "0.1.1",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.66.0",
+          "openssl": "3.5.4",
+          "simdjson": "4.0.7",
+          "simdutf": "6.4.0",
+          "sqlite": "3.50.4",
+          "tz": "2025b",
+          "undici": "7.16.0",
+          "unicode": "16.0",
+          "uv": "1.51.0",
+          "uvwasi": "0.0.23",
+          "v8": "13.6.233.10-node.28",
+          "zlib": "1.3.1-470d3a2",
+          "zstd": "1.5.7"
+        },
+        "arch": "x64",
+        "platform": "linux",
+        "sharedZlib": false,
+        "sharedOpenSsl": false,
+        "sharedObjects": [
+          "linux-vdso.so.1",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libdl.so.2",
+          "/nix/store/xm08aqdd7pxcdhm0ak6aqb1v7hw5q6ri-gcc-14.3.0-lib/lib/libstdc++.so.6",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libm.so.6",
+          "/nix/store/xm08aqdd7pxcdhm0ak6aqb1v7hw5q6ri-gcc-14.3.0-lib/lib/libgcc_s.so.1",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libpthread.so.0",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/libc.so.6",
+          "/nix/store/xx7cm72qy2c0643cm1ipngd87aqwkcdp-glibc-2.40-66/lib/ld-linux-x86-64.so.2"
+        ]
+      },
+      "strict-original-v38": {
+        "runtime": "Node v24.11.1",
+        "fixture": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-entry-equity.json",
+        "bytes": 1523926,
+        "canonicalSha256": "313ee50a8740412c5fa69ccf4753dd5e53be99a6e578dc968857859a5ff4500e",
+        "contentHash": "3a8eb0e67f156757cbe0957a06c5bbf645115961ab162b3175aff87b381368a4",
+        "strategySchema": "bayn.jev-entry-target.v7",
+        "verified": false,
+        "issue": {
+          "tag": "AnyOf",
+          "children": [
+            {
+              "tag": "Composite",
+              "children": [
+                {
+                  "tag": "Pointer",
+                  "path": ["strategyDecision"],
+                  "child": {
+                    "tag": "AnyOf",
+                    "children": [
+                      {
+                        "tag": "Composite",
+                        "children": [
+                          {
+                            "tag": "Filter",
+                            "child": {
+                              "tag": "Pointer",
+                              "path": ["evidence"],
+                              "child": {
+                                "tag": "InvalidValue",
+                                "message": "complete recorded candidate evidence must reproduce the exact Jev target"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "png": {
+        "runtime": "Node v24.11.1",
+        "mode": "png",
+        "barsHash": "cc4dd6682bd86d2059489f4f1bd45bd3b87b4b034e1e4ad3dc20de5709d13e0f",
+        "barCount": 30,
+        "pngHash": "22dc647fbdf0e64493995bd67defcd568ba2b006d84db21dbc4612322be78fa1",
+        "pngBytes": 5371,
+        "idatHash": "cf102a99b4e3c7f3dcc63189a1acf3fc6b7c3db9cd5d5125f505695ac4009119",
+        "idatBytes": 5314,
+        "decodedScanlinesHash": "cda3107460c95bc350031a28d2ead434a3f75c94460919c7b61bb991336c1e99",
+        "decodedScanlinesBytes": 983424,
+        "nonIdatChunksHash": "5d92512dc4139351ee1ff361e0d83a3d539c5d91be66925afdedf84d980322ae",
+        "initialRequestHash": "e1947cc568cd789abf62f62dff60e06ede95a930e61baf8cba045cb4d23a423f"
+      }
+    }
+  ]
+}

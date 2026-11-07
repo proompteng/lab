@@ -15,6 +15,7 @@ export const readRetainedRunLogs = async (input: {
   env?: NodeJS.ProcessEnv
   fetch?: typeof fetch
   tailLines: number | null
+  maxBytes?: number
   pod: string | null
   container: string | null
 }) => {
@@ -55,13 +56,18 @@ export const readRetainedRunLogs = async (input: {
   const key = decodeURIComponent(reference.pathname.slice(1))
   if (!key || key.split('/').some((part) => part === '.' || part === '..'))
     throw new Error('invalid retained log object key')
-  const tail = await getS3ObjectTail({ config, key, fetch: input.fetch ?? fetch, now: new Date() }).catch(
-    (error: unknown) => {
-      if (error instanceof ArtifactStorageError && error.status === 404)
-        throw new RetainedRunLogsNotFound('retained log artifact is unavailable')
-      throw error
-    },
-  )
+  const tail = await getS3ObjectTail({
+    config,
+    key,
+    fetch: input.fetch ?? fetch,
+    now: new Date(),
+    // Leave room for the trailing newline returned below.
+    maxBytes: input.maxBytes === undefined ? undefined : input.maxBytes - 1,
+  }).catch((error: unknown) => {
+    if (error instanceof ArtifactStorageError && error.status === 404)
+      throw new RetainedRunLogsNotFound('retained log artifact is unavailable')
+    throw error
+  })
   const all = tail.text.trimEnd().split('\n')
   const limit = input.tailLines ?? 5000
   const lines = all.slice(-limit)

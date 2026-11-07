@@ -39,6 +39,9 @@ spec:
         app.kubernetes.io/name: relay
         spiffe.io/spire-managed-identity: 'true'
     spec:
+      hostAliases:
+        - ip: 100.100.244.181
+          hostnames: [agents.k8s.proompteng.ai]
       serviceAccountName: relay
       automountServiceAccountToken: false
       enableServiceLinks: false

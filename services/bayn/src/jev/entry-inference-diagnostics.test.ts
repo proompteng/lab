@@ -92,25 +92,25 @@ test.each([
     fixture: entryEvaluationRequestFixture,
     feasible: true,
     reason: EntrySourceFeasibilityReason.Feasible,
-    requestHash: '29f34f92563db2875487e4cdffe59f0105a42e41f326bb2c86ff4d4696b72d6a',
-    claimHash: '511c2deb3e613ae2f20e560ee93cf9499cdb1d2d7e600801c84e3dd0fed2f095',
+    requestHash: '1dc6ea1e20905053511a9ccdc6cb5c1f465d44772f1397ad59db782c60df17fb',
+    claimHash: '008f6481403f224d7dfddeee1a9b02dba11ab106c0102ddedccb5b36e3f3e159',
   },
   {
     fixture: noQuantityRequest,
     feasible: false,
     reason: EntrySourceFeasibilityReason.NoExecutableQuantity,
-    requestHash: '71ab3736d5b503cbda3058eba5363cc8c2608e696c5ce188bfbc12e50f8bf4ff',
+    requestHash: '91650a85144a72e925ec1e77d9681c7abc38a80f53348a8d45afb4f618e92040',
     claimHash: null,
   },
   {
     fixture: quietCryptoRequest,
     feasible: false,
     reason: EntrySourceFeasibilityReason.NoFundedSourceStructure,
-    requestHash: 'c6fd3c33aeb4c7d44836e65e6129c6cecfa5549d6421e6427589b8f9554bd406',
+    requestHash: '4b243f59c1506079636ad5ac21b777e2ba608ace67a1223eec27406a83d562a2',
     claimHash: null,
   },
 ])(
-  'pins current v38 feasibility and identity oracles for $reason',
+  'pins current v39 feasibility and identity oracles for $reason',
   ({ fixture, feasible, reason, requestHash, claimHash }) => {
     const request = fixture()
     const prepared = prepare(request)
@@ -190,7 +190,7 @@ test('projects authentic ready and unfunded derivations without provider or fina
   const request = entryEvaluationRequestFixture()
   const ready = entryCompletionFixture(request).handoff
   expect(ready.disposition.status).toBe('READY')
-  expect(ready.handoffHash).toBe('60ce18314ac446ded57ee0a2cbe4a090766d5c83bdab0387ed4d5b77c84d5736')
+  expect(ready.handoffHash).toBe('b209e3cd6ed57efbf360e398306f4619a21fbec6521845de34fd9d436ee136e7')
   const diagnostic = entryHandoffDiagnostic(request.cycleId, ready, prepare(request).sourceFeasibility)
   expect(diagnostic.disposition).toBe('READY')
   expect(diagnostic.proposalCount).toBeGreaterThan(0)

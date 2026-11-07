@@ -53,5 +53,17 @@
         "protocol": "legacy"
       }
     }
-  }
+  },
+  "permissions": [
+    {
+      "action": "relay_agents__start_run",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "relay_agents__cancel_run",
+      "resource": "*",
+      "effect": "ask"
+    }
+  ]
 }

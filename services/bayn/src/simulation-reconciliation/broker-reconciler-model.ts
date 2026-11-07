@@ -19,7 +19,6 @@ import type { ReconciledBrokerState, ReconciliationRiskContext } from './broker-
 
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 
-export const maximumRows = 10_000
 export const ordersPageSize = 500
 export const fillsPageSize = 100
 export const incompletePassReason = reconciliationIncompleteRestrictionReason
@@ -57,11 +56,9 @@ export type PaginationFailureReason =
   | 'OrderHistoryNotDescending'
   | 'OrderTimestampCursorDidNotAdvance'
   | 'DuplicateOrder'
-  | 'OrderHistoryTooLarge'
   | 'OrderCursorDidNotAdvance'
   | 'FillPageTooLarge'
   | 'DuplicateFill'
-  | 'FillHistoryTooLarge'
   | 'FillCursorDidNotAdvance'
   | 'InvalidFeeHistory'
 
