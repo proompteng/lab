@@ -194,10 +194,12 @@ export const capturedCycleScope = (
   accountId: string,
   authorityGenerationHash: string | undefined,
   capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
-) =>
-  capturedCycles === undefined
-    ? generationScope(sql, accountId, authorityGenerationHash, 'cycle')
-    : sql`cycle.cycle_id = ANY(${capturedCycles.map((cycle) => cycle.cycle_id)}::text[])`
+) => {
+  if (capturedCycles === undefined) return generationScope(sql, accountId, authorityGenerationHash, 'cycle')
+  // The PostgreSQL codec cannot infer an empty array's type from the SQL cast.
+  if (capturedCycles.length === 0) return sql`FALSE`
+  return sql`cycle.cycle_id = ANY(${capturedCycles.map((cycle) => cycle.cycle_id)}::text[])`
+}
 
 // A scalar cut lets PostgreSQL constrain the ordered snapshot index before joining payloads.
 export const openingSnapshotBoundary = (

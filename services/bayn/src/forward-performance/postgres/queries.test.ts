@@ -5,6 +5,23 @@ import { Statement } from 'effect/sql'
 
 import type { TerminalCycleRow } from './model'
 import { decisionQuery } from './queries'
+import { capturedCycleScope } from './scope'
+
+test('compiles an empty captured scope without an untyped PostgreSQL array', () => {
+  const sql = Statement.make(
+    Effect.die('Query compilation must never acquire PostgreSQL'),
+    PgClient.makeCompiler(undefined, false),
+    [],
+    undefined,
+  ) as PgClient.PgClient
+  const [query, parameters] = sql`${capturedCycleScope(sql, 'account', 'generation', [])}`.compile()
+  expect(query).toBe('FALSE')
+  expect(parameters).toEqual([])
+
+  const [standaloneQuery] = sql`${capturedCycleScope(sql, 'account', 'generation')}`.compile()
+  expect(standaloneQuery).toContain('FROM authority_generations AS scope_generation')
+  expect(standaloneQuery).toContain('FROM autonomous_cycle_shadow_decisions AS scoped_decision')
+})
 
 test('binds captured decision membership above the PostgreSQL parameter-count limit as one array', () => {
   const sql = Statement.make(
