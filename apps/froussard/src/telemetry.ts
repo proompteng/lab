@@ -17,6 +17,7 @@ export const makeTelemetryLayer = () => {
     HttpClient.HttpClient,
     Effect.map(HttpClient.HttpClient, (client) =>
       client.pipe(
+        HttpClient.tap((response) => Effect.ignore(response.arrayBuffer)),
         HttpClient.timeout('10 seconds'),
         HttpClient.filterStatusOk,
         HttpClient.tapError((error) => Effect.logWarning('OTLP export request failed', error)),

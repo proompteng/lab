@@ -13,6 +13,7 @@ describe('native Effect telemetry', () => {
   let runtime: ManagedRuntime.ManagedRuntime<OtlpExporter.Flusher, never>
   let requests: Array<{ path: string; body: string; contentType: string | undefined }>
   let traceFailures: number
+  let stalledTraceBodies: number
   let traceStatus: number
   let hang: boolean
   let connectionClosed: boolean
@@ -20,6 +21,7 @@ describe('native Effect telemetry', () => {
   beforeEach(async () => {
     requests = []
     traceFailures = 0
+    stalledTraceBodies = 0
     traceStatus = 503
     hang = false
     connectionClosed = false
@@ -35,6 +37,11 @@ describe('native Effect telemetry', () => {
         response.once('close', () => {
           connectionClosed = true
         })
+        return
+      }
+      if (request.url === '/v1/traces' && stalledTraceBodies-- > 0) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.flushHeaders()
         return
       }
       const fail = request.url === '/v1/traces' && traceFailures-- > 0
@@ -184,6 +191,16 @@ describe('native Effect telemetry', () => {
     expect(traceBodies()).toHaveLength(3)
     expect(new Set(traceBodies()).size).toBe(1)
   })
+
+  it('retries a receiver that sends headers but stalls the response body', async () => {
+    stalledTraceBodies = 1
+    await runtime.runPromise(traceRequest(new Request('http://localhost/'), '/', () => new Response('OK')))
+    const started = performance.now()
+    await flush()
+    expect(performance.now() - started).toBeLessThan(14000)
+    expect(traceBodies()).toHaveLength(2)
+    expect(new Set(traceBodies()).size).toBe(1)
+  }, 15000)
 
   it('does not retry a permanent receiver error', async () => {
     traceFailures = 5
