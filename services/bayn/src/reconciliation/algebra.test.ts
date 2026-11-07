@@ -12,6 +12,7 @@ import { canonicalHashV1Result } from '../hash'
 import {
   AccountStatus,
   Authority,
+  DiscrepancyKind,
   IntentState,
   KillState,
   OrderSide,
@@ -390,6 +391,61 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(missing.comparison.discrepancies.some((item) => item.kind === 'CASH')).toBe(true)
     expect(exact.comparison.discrepancies).toEqual([])
     expect(exact.accountingHash).not.toBe(missing.accountingHash)
+  })
+
+  test('keeps late fee activities discrepant until broker cash reflects the debit', () => {
+    const input = comparisonInput()
+    const fees = ['-6160000', '-10000'].map((netAmountMicros, index) => ({
+      accountId,
+      activityId: `late-fee-${index}`,
+      date: '2026-07-22',
+      netAmountMicros,
+    }))
+    const feeInput = { ...input, fees, brokerFeeCashDeltaMicros: '-6170000' }
+    const lagging = successOf(compareOpeningCash(feeInput))
+    expect(lagging.comparison.metrics.cashDifferenceMicros).toBe('6170000')
+    expect(lagging.comparison.discrepancies.map((item) => item.kind)).toEqual([DiscrepancyKind.Cash])
+    const first = successOf(
+      decideReconciliation({ accountId, comparison: lagging.comparison, previous: [], reconciledAt }),
+    )
+    const later = '2026-07-22T15:40:01.000Z'
+    const ongoing = successOf(
+      decideReconciliation({
+        accountId,
+        comparison: lagging.comparison,
+        previous: first.discrepancies,
+        reconciledAt: later,
+      }),
+    )
+    expect(first.status).toBe(ReconciliationStatus.Discrepancy)
+    expect(ongoing.status).toBe(ReconciliationStatus.Discrepancy)
+    expect(ongoing.discrepancies[0]).toMatchObject({ firstObservedAt: reconciledAt, lastObservedAt: later })
+
+    const cashMicros = (BigInt(input.snapshot.account.cashMicros) - 6170000n).toString()
+    const equityMicros = (BigInt(input.snapshot.account.equityMicros) - 6170000n).toString()
+    const settled = successOf(
+      compareOpeningCash({
+        ...feeInput,
+        snapshot: {
+          ...input.snapshot,
+          account: { ...input.snapshot.account, cashMicros, equityMicros },
+          valuation: { ...input.snapshot.valuation, cashMicros, equityMicros },
+        },
+      }),
+    )
+    const exact = successOf(
+      decideReconciliation({
+        accountId,
+        comparison: settled.comparison,
+        previous: ongoing.discrepancies,
+        reconciledAt: later,
+      }),
+    )
+    expect(exact.status).toBe(ReconciliationStatus.Exact)
+    expect(exact.discrepancies).toEqual([])
+    expect(settled.accountingHash).toBe(lagging.accountingHash)
+    expect(first.status).toBe(ReconciliationStatus.Discrepancy)
+    expect(first.discrepancies[0]).toMatchObject({ firstObservedAt: reconciledAt, lastObservedAt: reconciledAt })
   })
 
   test('rejects fee history that predates the opening cash baseline', () => {
