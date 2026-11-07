@@ -9,6 +9,7 @@ import { persistIntradayRecordRows } from '../intraday/verification'
 import { emptyStreamingProjection, incorporateMarketRecord } from './projection'
 import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot } from './snapshot'
+import { WebullProducerClockDirection } from './webull-capture'
 import { selectWebullBars, webullSnapshotEvidence } from './webull-projection'
 
 const topic = 'dorvud.webull.raw.v1'
@@ -30,7 +31,12 @@ const record = (
   offset = '0',
   close = payloadBar.close,
   receivedAtMs = end + 1000,
-  options: { readonly gap?: string; readonly symbols?: readonly string[]; readonly minute?: number } = {},
+  options: {
+    readonly gap?: string
+    readonly symbols?: readonly string[]
+    readonly minute?: number
+    readonly empty?: boolean
+  } = {},
 ) => {
   const symbols = options.symbols ?? ['AAPL', 'SPY']
   const bytes = Buffer.from(
@@ -40,13 +46,15 @@ const record = (
             result: symbols.map((symbol) => ({
               symbol,
               delay_minutes: '0',
-              result: [
-                {
-                  ...payloadBar,
-                  close,
-                  time: new Date(options.minute ?? end - 60_000).toISOString().replace('Z', '+0000'),
-                },
-              ],
+              result: options.empty
+                ? []
+                : [
+                    {
+                      ...payloadBar,
+                      close,
+                      time: new Date(options.minute ?? end - 60_000).toISOString().replace('Z', '+0000'),
+                    },
+                  ],
             })),
           }
         : { channel: options.gap, symbols },
@@ -192,6 +200,43 @@ test('bar gaps and invalid captures remove only optional context, with scope and
   const conflicting = incorporateMarketRecord(original, record('0', '100.9'), universe, end + 2000)
   expect(select(conflicting)).toHaveLength(0)
 })
+
+test.each([-6000, 6000])(
+  'clock difference %i retains its diagnostic and globally withholds even an empty background response',
+  (difference) => {
+    const original = decisionCut().projection
+    const native = record('1', undefined, end + 1000, { symbols: ['ZZZZ'], empty: true })
+    const rejected = incorporateMarketRecord(
+      original,
+      { ...native, timestampMs: native.timestampMs + difference },
+      universe,
+      end + 8000,
+    )
+    expect(select(rejected, end + 7999).map((bar) => bar.value.symbol)).toEqual(['AAPL', 'SPY'])
+    expect(select(rejected, end + 8000)).toHaveLength(0)
+    expect(rejected.webull.rejections.at(-1)).toEqual({
+      availableAtMs: end + 8000,
+      sequence: original.sequence + 1,
+      reason: 'Webull timestamp violates the producer clock contract',
+      producerClock: {
+        kafkaTimestampMs: native.timestampMs + difference,
+        collectorReceivedAtMs: native.timestampMs,
+        kafkaMinusCollectorReceiptMs: difference,
+        maximumDifferenceMs: 5000,
+        direction:
+          difference > 0
+            ? WebullProducerClockDirection.KafkaAfterCollectorReceipt
+            : WebullProducerClockDirection.KafkaBeforeCollectorReceipt,
+      },
+    })
+    expect(rejected.webull.bars).toBe(original.webull.bars)
+    expect(rejected.rejections).toBe(original.rejections)
+    expect(rejected.bars).toBe(original.bars)
+    expect(rejected.quotes).toBe(original.quotes)
+    expect(rejected.trades).toBe(original.trades)
+    expect(rejected.features).toBe(original.features)
+  },
+)
 
 test('a recorded decision cut binds native proof and replays without changing IEX bars or pricing', () => {
   const cut = decisionCut()
