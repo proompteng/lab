@@ -64,8 +64,8 @@ import ./bun-workspace-service.nix {
   serviceName = "jangar";
   packageName = "@proompteng/jangar";
   depsHash = {
-    x86_64-linux = "sha256-qTFoIzq8yW0w+Tkmp4h0SrWuxFgMqgpTMUyu5mrwwQA=";
-    aarch64-linux = "sha256-x/D/A+EDOEJyDJiADahNLBTB8pehbJeOqW8qNmn6B2M=";
+    x86_64-linux = "sha256-HpHFIAcLw9WWdSPL4D0r8z6nFuFSawJCTqXEmvOjfXk=";
+    aarch64-linux = "sha256-4meeXoeW3rYpPaLyxY0n5906b8Y5/Ps4o9GBx8aw6As=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -164,6 +164,8 @@ import ./bun-workspace-service.nix {
 
     bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" \
       "$out/app/services/bumba" "$out/app/services/jangar"
+
+    bun "$TMPDIR/work/services/jangar/scripts/verify-production-runtime.ts" "$out/app/services/jangar"
 
     chmod +x "$out/app/packages/cx-tools/dist/"*.js
   '';

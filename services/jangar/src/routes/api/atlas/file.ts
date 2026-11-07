@@ -125,7 +125,7 @@ const getAtlasFileHandlerEffect = (request: Request) =>
         content: preview,
       })
     }),
-    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
+    Effect.catch((error) => Effect.succeed(resolveServiceError(error.message))),
   )
 
 export const getAtlasFileHandler = async (request: Request) =>
