@@ -1,3 +1,4 @@
+import jevBoxInference from '../../migrations/0188_jev_box_inference'
 import inferenceRequestGenerationIndex from '../../migrations/0187_inference_request_generation_index'
 import jev114ObserveCutover from '../../migrations/0186_jev114_observe_cutover'
 import chartPresenceSkip from '../../migrations/0185_chart_presence_skip'
@@ -189,6 +190,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '188_jev_box_inference': jevBoxInference,
   '187_inference_request_generation_index': inferenceRequestGenerationIndex,
   '186_jev114_observe_cutover': jev114ObserveCutover,
   '185_chart_presence_skip': chartPresenceSkip,

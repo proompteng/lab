@@ -1,6 +1,6 @@
 import { JevEvaluationStore, type JevDispatch } from './evaluation'
 import { JevOutcome, makeJevEvaluationReceipt, type JevEvaluationRequest } from './evidence'
-import { Cause, Clock, Effect, Exit, Redacted, Result, Schema } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
@@ -16,27 +16,13 @@ import {
   type EntryInferenceCompletion,
   type EntryStageTransition,
 } from './entry-inference'
-import { makeSelectedBaseStartStageRequest } from './staged-chart-questions'
 import { logCommittedEntryHandoff } from './entry-inference-diagnostics'
-import {
-  makeStagedDispatchClaim,
-  makeStagedSkipReceipt,
-  makeStagedTerminalReceipt,
-  stageResponseIdentity,
-  type BaseStartEvidence,
-  type StagedDispatchClaim,
-  type StagedSkipReceipt,
-  type StagedTerminalReceipt,
-} from './staged-checkpoint'
+import { makeStagedTerminalReceipt, type StagedDispatchClaim, type StagedTerminalReceipt } from './staged-checkpoint'
 
 type PreparedEntry = Result.Result.Success<ReturnType<typeof prepareClaimedEntry>>
-type BaseRequest = Extract<
-  Result.Result.Success<ReturnType<typeof makeSelectedBaseStartStageRequest>>,
-  { readonly status: 'PREPARED' }
->
 type Work = PreparedEntry & {
-  readonly terminals: StagedTerminalReceipt[]
-  readonly durableTerminals: Set<string>
+  terminal: StagedTerminalReceipt | null
+  terminalCommitted: boolean
   readonly request: JevEvaluationRequest
   completion: EntryInferenceCompletion | null
 }
@@ -54,7 +40,7 @@ const parallel = <A, B, E, R>(values: readonly A[], run: (value: A) => Effect.Ef
     return results
   })
 
-const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['visualRequest'] | BaseRequest) =>
+const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['visualRequest']) =>
   Effect.gen(function* () {
     const dispatchAt = yield* Clock.currentTimeMillis
     const expires = Date.parse(work.claim.expiresAt)
@@ -140,43 +126,18 @@ const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['
         outcome,
       }),
     )
-    work.terminals.push(terminal)
+    work.terminal = terminal
     return terminal
   })
 
-const skippedBase = (work: Work, reason: StagedSkipReceipt['reason'], predecessor: StagedTerminalReceipt | null) =>
-  Effect.gen(function* () {
-    const skip = yield* Effect.fromResult(
-      makeStagedSkipReceipt({
-        schemaVersion: 'bayn.staged-skip-receipt.v1',
-        stage: 'BASE_START',
-        requestId: work.claim.requestId,
-        reason,
-        predecessorHash: predecessor?.terminalHash ?? null,
-        recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-      }),
-    )
-    return { status: 'NOT_REQUESTED' as const, skip }
-  })
-
-const handoff = (work: Work, terminal: StagedTerminalReceipt | null, baseStart: BaseStartEvidence) =>
+const handoff = (work: Work, terminal: StagedTerminalReceipt | null) =>
   Effect.gen(function* () {
     let disposition: EntryHandoff['disposition']
     if (terminal === null) disposition = { status: 'SOURCE_INFEASIBLE' }
     else if (terminal.outcome.status === 'FAILED')
       disposition = { status: 'VISUAL_FAILED', failure: terminal.outcome.failure }
-    else if (baseStart.status === 'FAILED')
-      disposition = {
-        status: 'PREPARATION_FAILED',
-        visual: terminal.outcome.inference,
-        reason: 'BASE_START_FAILED',
-      }
     else {
-      const derived = deriveEntryHandoffDisposition(
-        work.prepared.input,
-        terminal.outcome.inference,
-        baseStart.status === 'RECEIVED' ? baseStart.inference : null,
-      )
+      const derived = deriveEntryHandoffDisposition(work.prepared.input, terminal.outcome.inference)
       disposition = Result.isSuccess(derived)
         ? derived.success
         : {
@@ -186,13 +147,12 @@ const handoff = (work: Work, terminal: StagedTerminalReceipt | null, baseStart: 
           }
     }
     const material = {
-      schemaVersion: 'bayn.entry-handoff.v4' as const,
+      schemaVersion: 'bayn.entry-handoff.v5' as const,
       requestId: work.claim.requestId,
       inputHash: work.prepared.requestHash,
       visualRequestHash: work.visualRequest.requestHash,
       recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
       disposition,
-      baseStart,
     }
     return { ...material, handoffHash: yield* Effect.fromResult(canonicalHashV1Result(material)) }
   })
@@ -228,7 +188,7 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
             category: 'INPUT',
             message: 'Initial visual dispatch differs from its admitted claim',
           })
-        return { ...prepared, request, completion: null, terminals: [], durableTerminals: new Set<string>() }
+        return { ...prepared, request, completion: null, terminal: null, terminalCommitted: false }
       }),
     )
     const commit = (transitions: readonly EntryStageTransition[]) =>
@@ -240,7 +200,7 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
             transition.terminal === null ? transition.successor.handoff.requestId : transition.terminal.requestId
           if (transition.terminal !== null) {
             const owner = work.find((entry) => entry.claim.requestId === requestId)
-            owner?.durableTerminals.add(transition.terminal.terminalHash)
+            if (owner !== undefined) owner.terminalCommitted = true
           }
           if (admissions.find((entry) => entry.requestId === requestId)?.dispatchAllowed !== true)
             return yield* new EntryInferenceError({
@@ -258,105 +218,34 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
             yield* logCommittedEntryHandoff(owner.request.cycleId, committed, owner.sourceFeasibility)
         }
       })
-    return yield* Effect.gen(function* () {
-      const charts = yield* parallel(work, (entry) =>
+    const pending: {
+      readonly transition: EntryStageTransition
+      readonly completed: Deferred.Deferred<void, Effect.Error<ReturnType<typeof commit>>>
+    }[] = []
+    const commitReady = (transition: EntryStageTransition) =>
+      Effect.uninterruptible(
         Effect.gen(function* () {
-          if (entry.visualClaim === null)
-            return {
-              kind: 'HANDOFF' as const,
-              work: entry,
-              terminal: null,
-              handoff: yield* handoff(entry, null, yield* skippedBase(entry, 'SOURCE_INFEASIBLE', null)),
-            }
-          const terminal = yield* visual(entry, entry.visualClaim, entry.visualRequest)
-          if (terminal.outcome.status === 'FAILED')
-            return {
-              kind: 'HANDOFF' as const,
-              work: entry,
-              terminal,
-              handoff: yield* handoff(entry, terminal, yield* skippedBase(entry, 'CHART_FAILED', terminal)),
-            }
-          const request = yield* Effect.fromResult(
-            makeSelectedBaseStartStageRequest(
-              { chart: entry.chart, protocol: entry.prepared.input.protocol, funding: entry.prepared.input.funding },
-              stageResponseIdentity(terminal.outcome.inference),
-            ),
-          )
-          if (request.status === 'NOT_REQUESTED')
-            return {
-              kind: 'HANDOFF' as const,
-              work: entry,
-              terminal,
-              handoff: yield* handoff(entry, terminal, yield* skippedBase(entry, request.reason, terminal)),
-            }
-          const admittedAt = yield* Clock.currentTimeMillis
-          if (admittedAt >= Date.parse(entry.claim.expiresAt))
-            return yield* new EntryInferenceError({
-              category: 'DEADLINE',
-              message: 'Original evidence window expired before base admission',
-            })
-          const claim = yield* Effect.fromResult(
-            makeStagedDispatchClaim({
-              schemaVersion: 'bayn.staged-dispatch-claim.v1',
-              stage: 'BASE_START',
-              requestId: entry.claim.requestId,
-              providerRequestHash: request.requestHash,
-              predecessorHash: terminal.terminalHash,
-              selectedEnd: request.selectedEnd,
-              claimedAt: utcInstantFromEpochMillis(admittedAt),
-              expiresAt: entry.claim.expiresAt,
-            }),
-          )
-          return { kind: 'BASE_START' as const, work: entry, terminal, request, claim }
+          const completed = yield* Deferred.make<void, Effect.Error<ReturnType<typeof commit>>>()
+          pending.push({ transition, completed })
+          if (pending.length === 1) {
+            // Coalesce ready charts for one round trip; later charts can commit independently of this batch.
+            yield* Effect.yieldNow
+            const ready = pending.splice(0)
+            const result = yield* Effect.exit(commit(ready.map((entry) => entry.transition)))
+            yield* Effect.forEach(ready, (entry) => Deferred.done(entry.completed, result), { discard: true })
+          }
+          yield* Deferred.await(completed)
         }),
       )
-      yield* commit(
-        charts.map(
-          (entry): EntryStageTransition =>
-            entry.kind === 'BASE_START'
-              ? { terminal: entry.terminal, successor: { kind: 'VISUAL', claim: entry.claim } }
-              : { terminal: entry.terminal, successor: { kind: 'HANDOFF', handoff: entry.handoff } },
-        ),
-      )
-      const complete = (entry: Work, committed: EntryHandoff) =>
+    return yield* Effect.gen(function* () {
+      yield* parallel(work, (entry) =>
         Effect.gen(function* () {
-          const completion = yield* evaluateHandedOffEntry(entry.claim, committed)
-          entry.completion = completion
-          return completion
-        })
-      // A ready handoff from the first commit need not wait for an unrelated
-      // candidate's base provider and second commit. These disjoint groups keep
-      // total provider concurrency bounded by the admitted candidate count.
-      // Settle both groups before failure cleanup so every paid response survives.
-      yield* parallel(
-        [
-          parallel(
-            charts.filter((entry) => entry.kind === 'HANDOFF'),
-            (entry) => complete(entry.work, entry.handoff),
-          ),
-          Effect.gen(function* () {
-            const bases = yield* parallel(
-              charts.filter((entry) => entry.kind === 'BASE_START'),
-              (entry) =>
-                Effect.gen(function* () {
-                  const terminal = yield* visual(entry.work, entry.claim, entry.request)
-                  return {
-                    work: entry.work,
-                    terminal,
-                    handoff: yield* handoff(entry.work, entry.terminal, terminal.outcome),
-                  }
-                }),
-            )
-            yield* commit(
-              bases.map((entry) => ({
-                terminal: entry.terminal,
-                successor: { kind: 'HANDOFF' as const, handoff: entry.handoff },
-              })),
-            )
-            return yield* parallel(bases, (entry) => complete(entry.work, entry.handoff))
-          }),
-        ],
-        (group) => group,
+          const terminal =
+            entry.visualClaim === null ? null : yield* visual(entry, entry.visualClaim, entry.visualRequest)
+          const ready = yield* handoff(entry, terminal)
+          yield* commitReady({ terminal, successor: { kind: 'HANDOFF', handoff: ready } })
+          entry.completion = yield* evaluateHandedOffEntry(entry.claim, ready)
+        }),
       )
       return yield* Effect.forEach(work, (entry) =>
         entry.completion === null
@@ -372,7 +261,7 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) return Effect.void
         const uncommitted = work.flatMap((entry) =>
-          entry.terminals.filter((terminal) => !entry.durableTerminals.has(terminal.terminalHash)),
+          entry.terminal === null || entry.terminalCommitted ? [] : [entry.terminal],
         )
         return Effect.gen(function* () {
           // Independent evidence sinks must both be attempted, even when the

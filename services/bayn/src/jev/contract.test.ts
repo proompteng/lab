@@ -180,7 +180,7 @@ describe('Jev provider contract', () => {
   })
 
   test.each([
-    (response: ReturnType<typeof responseFixture>) => ({ ...response, model: 'jev-1.14.0' }),
+    (response: ReturnType<typeof responseFixture>) => ({ ...response, model: 'jev-1.13.0' }),
     (response: ReturnType<typeof responseFixture>) => ({
       ...response,
       answers: { relevant: response.answers.relevant },

@@ -189,7 +189,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
             { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
           ),
         )
-        expect(quotes).toHaveLength(3)
+        expect(quotes).toHaveLength(2)
         expect(
           quotes.every(
             (quote) =>

@@ -56,7 +56,7 @@ and fails the old official-Node decoder. Both produce the same decoded scanlines
 IDAT streams are 5,329 and 5,314 bytes respectively. This is a pre-existing byte-identity boundary, not a new
 retained-verifier difference or a portability guarantee.
 
-`scripts/retained-v38-node.test.ts` builds the Node verifier and runs a bounded, cleaned-up child process over
+`scripts/retained-jev-node.test.ts` builds the Node verifier and runs a bounded, cleaned-up child process over
 all seven original production-compatible entry/exit cases, including native crypto and the public financial
 projection. `nix/images/bayn.nix` runs `test:production-runtime` unconditionally during both architecture image
 builds, with its exact production Node first on the child PATH. The script is included in service type, format

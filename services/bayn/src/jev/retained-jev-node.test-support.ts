@@ -3,12 +3,17 @@ import { readFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { Result } from 'effect'
 
-import { canonicalJsonV1Result, sha256 } from '../hash'
+import v39 from './fixtures/retained-v39/index.json'
+import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../hash'
 import {
   decodeExecutionDecisionDocument,
-  decodeRetainedJevV38ExecutionDecisionDocument,
+  decodeRetainedJevExecutionDecisionDocument,
 } from '../shadow-decision-contract'
-import { verifyPerformanceDecisions } from '../forward-performance/postgres/projection'
+import {
+  verifyPerformanceDecisions,
+  executionEvidenceFromRows,
+  indexExecutionEvidence,
+} from '../forward-performance/postgres/projection'
 
 assert.equal(process.versions['bun'], undefined, 'Production evidence must be replayed by Node')
 const runtime = {
@@ -55,6 +60,7 @@ const goldens = [
     canonicalHash: '79a832650d6e5deebbe4d1b1acbceee7a48d3661e33c63024460aa037e7f5e2d',
     contentHash: '39b9bb4151b38b273843d41bf32ba134e6c88b7208b6b111f26016287d7645a4',
   },
+  ...v39.cases,
 ]
 const paths = process.argv.slice(2)
 assert.equal(paths.length, goldens.length)
@@ -63,7 +69,7 @@ for (const [index, path] of paths.entries()) {
   const bytes = gunzipSync(readFileSync(path))
   assert.equal(bytes.byteLength, golden.bytes)
   assert.equal(sha256(bytes), golden.canonicalHash)
-  const decoded = decodeRetainedJevV38ExecutionDecisionDocument(JSON.parse(bytes.toString('utf8')))
+  const decoded = decodeRetainedJevExecutionDecisionDocument(JSON.parse(bytes.toString('utf8')))
   if (Result.isFailure(decoded)) throw new Error(`${JSON.stringify(runtime)}: ${decoded.failure.message}`)
   const document = decoded.success
   assert.equal(document.contentHash, golden.contentHash)
@@ -79,8 +85,58 @@ for (const [index, path] of paths.entries()) {
   ])
   assert.equal(projection.verifiedRows.length, 1)
   assert.deepEqual(projection.unverifiedDecisionHashes, [])
+  const evidence = executionEvidenceFromRows(projection.verifiedRows, indexExecutionEvidence([], [], []))
+  assert.equal(evidence.length, document.targetPlan.intentTargets.length)
+  assert.equal(evidence[0]?.decisionDocumentHash, document.contentHash)
+  const { contentHash: _contentHash, ...material } = document
+  const rehashed = {
+    ...material,
+    bindings: { ...document.bindings, strategyProtocolHash: 'f'.repeat(64) },
+  }
   assert.equal(
-    Result.isFailure(decodeRetainedJevV38ExecutionDecisionDocument({ ...document, contentHash: 'f'.repeat(64) })),
+    Result.isFailure(
+      decodeRetainedJevExecutionDecisionDocument({
+        ...rehashed,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(rehashed)),
+      }),
+    ),
+    true,
+  )
+  const target = document.strategyDecision
+  if (target === undefined || target.schemaVersion === 'bayn.execution-flat-target.v1')
+    throw new Error('Expected original inference evidence')
+  const originalProtocol =
+    target.schemaVersion === 'bayn.jev-exit-target.v5' ? target.evidence.protocol : target.evidence.observation.protocol
+  for (const schemaVersion of ['bayn.jev.protocol.v38', 'bayn.jev.protocol.v39', 'bayn.jev.protocol.v40', 'unknown']) {
+    if (schemaVersion === originalProtocol.schemaVersion) continue
+    const mixed: object = {
+      ...material,
+      strategyDecision: {
+        ...target,
+        evidence:
+          target.schemaVersion === 'bayn.jev-exit-target.v5'
+            ? { ...target.evidence, protocol: { ...originalProtocol, schemaVersion } }
+            : {
+                ...target.evidence,
+                observation: {
+                  ...target.evidence.observation,
+                  protocol: { ...originalProtocol, schemaVersion },
+                },
+              },
+      },
+    }
+    assert.equal(
+      Result.isFailure(
+        decodeRetainedJevExecutionDecisionDocument({
+          ...mixed,
+          contentHash: Result.getOrThrow(canonicalHashV1Result(mixed)),
+        }),
+      ),
+      true,
+    )
+  }
+  assert.equal(
+    Result.isFailure(decodeRetainedJevExecutionDecisionDocument({ ...document, contentHash: 'f'.repeat(64) })),
     true,
   )
 }

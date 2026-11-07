@@ -518,14 +518,6 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             input,
           ),
         )
-        const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
-        if (skip !== undefined) {
-          const checkpoint = yield* staged(request)
-          yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
-          const stored = yield* read('base-start-skip', input.requestId)
-          if (stored === null) yield* write('base-start-skip', input.requestId, skip)
-          else yield* same(stored, skip)
-        }
         const existing = yield* read('handoff', request.requestId)
         yield* Effect.fromResult(verifyStagedCheckpointHandoff(yield* staged(request), handoff))
         if (existing !== null) {
@@ -571,21 +563,11 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 Effect.gen(function* () {
                   if (terminal === null)
                     return { requestId: successor.handoff.requestId, ...(yield* recordHandoff(successor.handoff)) }
-                  if (
-                    (successor.kind === 'VISUAL' &&
-                      (terminal.stage !== 'CHART' ||
-                        successor.claim.stage !== 'BASE_START' ||
-                        successor.claim.requestId !== terminal.requestId)) ||
-                    (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
-                  )
+                  if (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
                     return yield* failure('A visual successor must belong to its terminal request and stage')
                   yield* recordTerminal(terminal)
                   const admission =
-                    successor.kind === 'NONE'
-                      ? { dispatchAllowed: false }
-                      : successor.kind === 'VISUAL'
-                        ? yield* recordClaim(successor.claim)
-                        : yield* recordHandoff(successor.handoff)
+                    successor.kind === 'NONE' ? { dispatchAllowed: false } : yield* recordHandoff(successor.handoff)
                   return { requestId: terminal.requestId, ...admission }
                 }),
               ),

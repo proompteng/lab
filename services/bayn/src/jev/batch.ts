@@ -1,6 +1,7 @@
 import type { EntryInferenceMaterial } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
+import * as boxChartStages from './staged-chart-questions'
+import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 import { Result, Schema } from 'effect'
 
@@ -263,7 +264,11 @@ export const jevBatchQuestionSetHash = (
     for (const candidate of candidates) {
       if (candidate.request === undefined) continue
       const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
-      const visual = yield* makeInitialChartStageRequest({
+      const stages =
+        candidate.request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+          ? boxChartStages
+          : retainedJevChartStages
+      const visual = yield* stages.makeInitialChartStageRequest({
         chart,
         protocol: candidate.request.request.protocol,
         funding: candidate.request.request.funding,
@@ -272,13 +277,13 @@ export const jevBatchQuestionSetHash = (
         symbol: candidate.symbol,
         visual: { model: visual.request.model, questions: visual.request.questions },
         staged: {
-          policy: stagedChartQuestionPolicy,
+          policy: stages.stagedChartQuestionPolicy,
           inputHash: yield* canonicalHashV1Result(candidate.request.request),
         },
         jev:
           candidate.request.request.schemaVersion === 'bayn.entry-ablation-input.v1'
             ? { status: 'OMITTED_BY_POLICY', selectionPolicy: candidate.request.request.selectionPolicy }
-            : entryJudgmentPolicy,
+            : { ...entryJudgmentPolicy, model: candidate.request.request.protocol.model },
       })
     }
     return yield* hash(specifications)

@@ -5,7 +5,7 @@ import { Effect, Result, Schema } from 'effect'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import {
   decodeExecutionDecisionDocument,
-  decodeRetainedJevV38ExecutionDecisionDocument,
+  decodeRetainedJevExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
@@ -96,8 +96,8 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
       strictParseOptions,
     )(record.payload)
     const document =
-      registration.obligations.configuration.protocol.schemaVersion === 'bayn.jev.protocol.v38'
-        ? yield* Effect.fromResult(decodeRetainedJevV38ExecutionDecisionDocument(row.document))
+      registration.obligations.configuration.protocol.schemaVersion !== 'bayn.jev.protocol.v40'
+        ? yield* Effect.fromResult(decodeRetainedJevExecutionDecisionDocument(row.document))
         : yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
     if (document.contentHash !== reference.sourceId)
       return yield* new SystemAssessmentError({ message: 'Decision source identity differs' })
