@@ -20,7 +20,7 @@ interface PullRequestBaseParams {
 }
 
 export const handlePullRequestEvent = async (params: PullRequestBaseParams): Promise<WorkflowStage | null> => {
-  const { parsedPayload, config, executionContext, actionValue, skipActionCheck } = params
+  const { parsedPayload, config, executionContext, actionValue, skipActionCheck, deliveryId } = params
 
   if (!skipActionCheck && !shouldHandlePullRequestAction(actionValue)) {
     return null
@@ -56,6 +56,11 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
   }
 
   const processPullRequest = async () => {
+    const logReadFailure = (stage: string, result: { reason: string; status?: number }) =>
+      logger.warn(
+        { repository: repoFullName, pullNumber, deliveryId, stage, reason: result.reason, status: result.status },
+        'ready approval blocked by GitHub read failure',
+      )
     logger.info({ repository: repoFullName, pullNumber, action: actionValue ?? 'unknown' }, 'processing pull request')
     const pullResult = await executionContext.runGithub(() =>
       executionContext.githubService.fetchPullRequest({
@@ -68,6 +73,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     )
 
     if (!pullResult.ok) {
+      logReadFailure('pull-request', pullResult)
       return null
     }
 
@@ -81,6 +87,10 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     }
 
     if (!pull.headRef || !pull.headSha || !pull.baseRef) {
+      logger.warn(
+        { repository: repoFullName, pullNumber, deliveryId },
+        'ready approval blocked by missing pull request refs',
+      )
       return null
     }
 
@@ -95,6 +105,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     )
 
     if (!threadsResult.ok) {
+      logReadFailure('review-threads', threadsResult)
       return null
     }
 
@@ -109,6 +120,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     )
 
     if (!checksResult.ok) {
+      logReadFailure('checks', checksResult)
       return null
     }
 
@@ -157,6 +169,20 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
         : undefined
 
     if (!readyApproval) {
+      logger.info(
+        {
+          repository: repoFullName,
+          pullNumber,
+          headSha: pull.headSha,
+          deliveryId,
+          blockingChecks: blockingChecks.map(({ name, conclusion }) => ({ name, conclusion })),
+          unresolvedThreadCount: unresolvedThreads.length,
+          hasThumbsUpReaction,
+          draft: pull.draft,
+          mergeableState,
+        },
+        'ready approval blocked',
+      )
       return null
     }
 
