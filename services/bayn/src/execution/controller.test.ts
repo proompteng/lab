@@ -418,7 +418,8 @@ describe('execution controller decisions', () => {
 
   test.each([
     { wakeAt: '2026-08-13T18:00:04.000Z', dueAt: '2026-08-13T18:00:04.000Z' },
-    { wakeAt: '2026-08-13T18:00:02.000Z', dueAt: '2026-08-13T18:00:02.000Z' },
+    { wakeAt: '2026-08-13T18:00:02.000Z', dueAt: '2026-08-13T18:00:03.001Z' },
+    { wakeAt: '2026-08-13T18:00:03.000Z', dueAt: '2026-08-13T18:00:03.001Z' },
     { wakeAt: '2026-08-13T18:00:20.000Z', dueAt: '2026-08-13T18:00:07.000Z' },
   ])('persists the earlier absolute wake without extending the polling bound (%j)', ({ wakeAt, dueAt }) => {
     const state = Result.getOrThrow(
