@@ -16,6 +16,110 @@ describe('listPullRequestBlockingChecks', () => {
     userAgent: 'test-agent',
   }
 
+  const workflowRun = (suite: number, number: number, workflow = 10, event = 'pull_request') => ({
+    check_suite_id: suite,
+    run_number: number,
+    workflow_id: workflow,
+    event,
+    head_branch: 'codex/test',
+  })
+  const checkRun = (suite: number, conclusion: string | null, status = 'completed') => ({
+    name: 'Validate PR title',
+    status,
+    conclusion,
+    check_suite: { id: suite },
+  })
+  const inspectChecks = (checks: ReturnType<typeof checkRun>[], workflows: ReturnType<typeof workflowRun>[]) =>
+    Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async (input) =>
+          createResponse(
+            input.includes('/check-runs')
+              ? { check_runs: checks }
+              : input.includes('/actions/runs?')
+                ? { workflow_runs: workflows }
+                : { statuses: [] },
+          ),
+      }),
+    )
+
+  it.each(['cancelled', 'failure', 'timed_out'])(
+    'ignores superseded %s runs after a replacement passes',
+    async (conclusion) => {
+      expect(
+        await inspectChecks([checkRun(2, 'success'), checkRun(1, conclusion)], [workflowRun(2, 2), workflowRun(1, 1)]),
+      ).toEqual({ ok: true, checks: [] })
+    },
+  )
+
+  it.each([
+    ['in_progress', null],
+    ['completed', 'failure'],
+    ['completed', 'cancelled'],
+  ])('retains the newest %s / %s check even when an older run passed', async (status, conclusion) => {
+    expect(
+      await inspectChecks(
+        [checkRun(1, 'success'), checkRun(2, conclusion, status ?? 'completed')],
+        [workflowRun(1, 1), workflowRun(2, 2)],
+      ),
+    ).toMatchObject({ ok: true, checks: [{ name: 'Validate PR title', conclusion: conclusion ?? status }] })
+  })
+
+  it.each([
+    workflowRun(2, 2, 20),
+    workflowRun(2, 2, 10, 'push'),
+    { ...workflowRun(2, 2), head_branch: 'another-branch' },
+  ])('does not supersede an identically named check in another workflow context', async (other) => {
+    expect(
+      await inspectChecks([checkRun(1, 'failure'), checkRun(2, 'success')], [workflowRun(1, 1), other]),
+    ).toMatchObject({ ok: true, checks: [{ conclusion: 'failure' }] })
+  })
+
+  it('retains checks whose workflow identity cannot be established', async () => {
+    expect(await inspectChecks([checkRun(1, 'cancelled'), checkRun(2, 'success')], [workflowRun(2, 2)])).toMatchObject({
+      ok: true,
+      checks: [{ conclusion: 'cancelled' }],
+    })
+  })
+
+  it('collects all check and workflow pages before resolving superseded runs', async () => {
+    const result = await Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async (input) => {
+          const url = new URL(String(input))
+          const firstPage = url.searchParams.get('page') === '1'
+          if (url.pathname.endsWith('/check-runs')) {
+            return createResponse({
+              check_runs: firstPage ? Array(100).fill(checkRun(1, 'cancelled')) : [checkRun(2, 'success')],
+            })
+          }
+          if (url.pathname.endsWith('/actions/runs')) {
+            return createResponse({
+              workflow_runs: firstPage ? Array(100).fill(workflowRun(1, 1)) : [workflowRun(2, 2)],
+            })
+          }
+          return createResponse({ statuses: [] })
+        },
+      }),
+    )
+    expect(result).toEqual({ ok: true, checks: [] })
+  })
+
+  it.each([403, 503])('fails closed when workflow metadata returns HTTP %s', async (status) => {
+    const result = await Effect.runPromise(
+      listPullRequestBlockingChecks({
+        ...baseOptions,
+        fetchImplementation: async (input) =>
+          input.includes('/check-runs')
+            ? createResponse({ check_runs: [checkRun(1, 'cancelled'), checkRun(2, 'success')] })
+            : new Response('unavailable', { status }),
+      }),
+    )
+    expect(result).toMatchObject({ ok: false, reason: 'http-error', status })
+  })
+
   it('aggregates failures from check runs and commit statuses', async () => {
     const fetchStub = vi.fn(async (input: string | URL) => {
       const url = String(input)
