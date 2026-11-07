@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevFailure, jevModel, JevResponseSchema } from '../jev/contract'
+import { JevFailure, JevResponseSchema } from '../jev/contract'
 import { decisionsModel, validDecisionsUsage } from '../jev/decisions'
 import type { JevProtocolMaterial } from '../jev/protocol'
 import {
@@ -20,7 +20,7 @@ export const registeredReplayInferenceTariff = (
   rateCard: unknown,
   interval: { readonly startAt: string; readonly endAt: string },
   policy: JevResearchPolicy,
-  protocol: Pick<JevProtocolMaterial, 'entrySignalPolicy'>,
+  protocol: Pick<JevProtocolMaterial, 'entrySignalPolicy' | 'model'>,
 ) =>
   Result.gen(function* () {
     const { rates } = yield* prepareInferenceRateCard(rateCard)
@@ -28,11 +28,11 @@ export const registeredReplayInferenceTariff = (
     const requiredModels =
       policy === JevResearchPolicy.Candidate
         ? [
-            { provider: 'typesafe', model: jevModel },
+            { provider: 'typesafe', model: protocol.model },
             ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
           ]
         : policy === JevResearchPolicy.Ablation
-          ? [jevOnly ? { provider: 'typesafe', model: jevModel } : { provider: 'openai', model: decisionsModel }]
+          ? [jevOnly ? { provider: 'typesafe', model: protocol.model } : { provider: 'openai', model: decisionsModel }]
           : []
     if (
       interval.startAt >= interval.endAt ||
@@ -138,7 +138,7 @@ export const calculateReplayInferenceCosts = (
     const tariff = Result.isSuccess(prepared)
       ? prepared.success.rates.find(
           ({ rate }) =>
-            rate.provider === (call.request.model === jevModel ? 'typesafe' : 'openai') &&
+            rate.provider === (call.request.model === decisionsModel ? 'openai' : 'typesafe') &&
             rate.model === call.request.model &&
             rate.effectiveFrom <= call.simulatedStartedAt &&
             call.simulatedStartedAt < rate.effectiveUntil,

@@ -417,7 +417,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         )
         expect(inferences.length).toBeGreaterThan(0)
         expect(inferences.every(({ inference }) => inference.jev.status === 'OMITTED_BY_POLICY')).toBe(true)
-        expect(chartCalls).toBe(inferences.length * 2)
+        expect(chartCalls).toBe(inferences.length)
         const target = yield* Effect.fromResult(
           decideEntryAblation({
             observation: observation.payload,
@@ -429,7 +429,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(target.selectedSymbols).toHaveLength(1)
         expect(target.policy).toEqual(parameters)
         expect(yield* evaluateJevBatch(ablation, observation.payload)).toEqual(stored)
-        expect(chartCalls).toBe(inferences.length * 2)
+        expect(chartCalls).toBe(inferences.length)
         const snapshot = yield* acquireInferenceExpenseSnapshot(
           sql,
           r.accountId,
@@ -695,7 +695,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                   .withTransaction(
                     Effect.gen(function* () {
                       const now = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
-                      yield* target`UPDATE simulated_execution_clocks SET observed_at=${now} WHERE account_id=${replayAccountId}`
+                      yield* target`UPDATE simulated_execution_clocks SET observed_at=GREATEST(observed_at,${now}::timestamptz) WHERE account_id=${replayAccountId}`
                       return yield* effect
                     }),
                   )

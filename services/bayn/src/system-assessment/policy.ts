@@ -20,7 +20,6 @@ import {
 } from '../jev/entry-ablation-policy'
 
 import { canonicalHashV1Result } from '../hash'
-import { jevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
 import { approvedExecutionRiskPolicyHashes } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
@@ -341,11 +340,15 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       const requiredModels =
         policy.policy === JevResearchPolicy.Candidate
           ? [
-              { provider: 'typesafe', model: jevModel },
+              { provider: 'typesafe', model: registration.obligations.configuration.protocol.model },
               ...(jevOnly ? [] : [{ provider: 'openai', model: decisionsModel }]),
             ]
           : policy.policy === JevResearchPolicy.Ablation
-            ? [jevOnly ? { provider: 'typesafe', model: jevModel } : { provider: 'openai', model: decisionsModel }]
+            ? [
+                jevOnly
+                  ? { provider: 'typesafe', model: registration.obligations.configuration.protocol.model }
+                  : { provider: 'openai', model: decisionsModel },
+              ]
             : []
       const firstSession = registration.calendar.sessions[0]
       const lastSession = registration.calendar.sessions.at(-1)

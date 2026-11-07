@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mocked } from 'vi
 
 import { type AppConfig, AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
-import { AppLogger } from '@/logger'
+import { AppLogger, logger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github/service'
@@ -657,6 +657,7 @@ describe('createWebhookHandler', () => {
       Effect.succeed({ ok: true, checks: [{ name: 'CI', conclusion }] }),
     )
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const info = vi.spyOn(logger, 'info')
     const response = await handler(
       buildRequest(
         { repository: { full_name: 'owner/repo' }, action: 'edited', pull_request: { number: 9 } },
@@ -666,6 +667,49 @@ describe('createWebhookHandler', () => {
     )
     expect(response.status).toBe(202)
     expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'owner/repo',
+        pullNumber: 9,
+        headSha: 'cleansha',
+        deliveryId: 'delivery-pull_request-edited',
+        blockingChecks: [{ name: 'CI', conclusion }],
+        unresolvedThreadCount: 0,
+        hasThumbsUpReaction: true,
+        draft: false,
+        mergeableState: 'clean',
+      }),
+      'ready approval blocked',
+    )
+    info.mockRestore()
+  })
+
+  it.each([
+    ['fetchPullRequest', 'pull-request'],
+    ['listPullRequestReviewThreads', 'review-threads'],
+    ['listPullRequestBlockingChecks', 'checks'],
+  ] as const)('logs a %s read failure without approving', async (method, stage) => {
+    webhookScenarios
+      .find((scenario) => scenario.name === 'submits ready approval when clean pull request updates')
+      ?.setup?.()
+    githubServiceMock[method].mockReset()
+    githubServiceMock[method].mockReturnValue(Effect.succeed({ ok: false, reason: 'http-error', status: 503 }))
+    const warn = vi.spyOn(logger, 'warn')
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const response = await handler(
+      buildRequest(
+        { repository: { full_name: 'owner/repo' }, action: 'edited', pull_request: { number: 9 } },
+        scenarioHeaders('pull_request', 'edited'),
+      ),
+      'github',
+    )
+    expect(response.status).toBe(202)
+    expect(githubServiceMock.approvePullRequest).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ repository: 'owner/repo', pullNumber: 9, stage, reason: 'http-error', status: 503 }),
+      'ready approval blocked by GitHub read failure',
+    )
+    warn.mockRestore()
   })
 
   it('returns failure for a rejected approval and permits redelivery', async () => {

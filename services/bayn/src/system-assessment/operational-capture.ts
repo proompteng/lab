@@ -13,7 +13,6 @@ import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { instrumentMarket } from '../instruments'
 import { UtcInstantSchema, strictParseOptions } from '../schemas'
-import { loadActiveStrategyProtocol } from '../strategy'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { utcInstantFromEpochMillis } from '../time'
 import { readRegisteredFinancialIdentity } from './capital-identity'
@@ -24,7 +23,6 @@ import {
   systemControllerPassQuery,
   systemDecisionQuery,
 } from './capture-queries'
-import { captureQualificationRuntime, qualificationRuntime } from './configuration'
 import { decisionMarketScopeSupported } from './decision-work'
 import { SystemAssessmentError } from './economics'
 import { readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
@@ -88,12 +86,8 @@ export const captureOperationalSourceCut = (
       const identity = config.execution.brokerIdentity
       const first = registration.calendar.sessions[0]
       const last = registration.calendar.sessions.at(-1)
-      const { runtimeConfiguration, runtimeConfigurationHash } = yield* Effect.fromResult(
-        captureQualificationRuntime(
-          qualificationRuntime(config, yield* Effect.fromResult(loadActiveStrategyProtocol())),
-          registration.obligations,
-        ),
-      )
+      // The persisted registration owns historical clocks; the reporting build is recorded separately below.
+      const { configuration: runtimeConfiguration, runtimeConfigurationHash } = registration.obligations
       if (
         identity === undefined ||
         identity.environment !== BrokerEnvironment.Sandbox ||

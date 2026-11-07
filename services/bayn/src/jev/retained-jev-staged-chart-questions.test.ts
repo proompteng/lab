@@ -1,19 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Layer, Redacted, Result } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
+import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { JevClient, JevClientLive } from './client'
-import { decodeJevResponse, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
-import { defaultJevProtocolDocument } from './protocol'
+import { decodeJevResponse, type JevRequest, type JevResponse } from './contract'
+import { retainedJevProtocolV39Document } from './protocol'
 import {
   decodeSelectedBaseStartStageResponse,
   makeInitialChartStageRequest,
   makeFinancialChartStageReplay,
   makeSelectedBaseStartStageRequest,
   stagedChartAssessments,
-} from './staged-chart-questions'
+} from './retained-jev-staged-chart-questions'
 
 const source = (count: number, extreme = false) => ({
   symbol: 'ETH/USD',
@@ -29,7 +27,7 @@ const source = (count: number, extreme = false) => ({
 })
 const fundedSource = (chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>) => ({
   chart,
-  protocol: defaultJevProtocolDocument,
+  protocol: retainedJevProtocolV39Document,
   funding: { bidMicros: '101000000', askMicros: '101010000', capitalMicros: '10000000000', cryptoFeeTier: null },
 })
 const responseFor = (request: JevRequest, end?: string, basePresence = 0.8234567890123456): JevResponse => ({
@@ -266,38 +264,5 @@ describe('Jev-only staged chart transport', () => {
       choose(responseFor(first.request), 'base_last_bar', input.chart.bars[1]?.id ?? 'missing'),
     )
     expect(Result.isFailure(decodeSelectedBaseStartStageResponse(input, changedInitial, base))).toBe(true)
-  })
-
-  test('both 120-bar stages use only the pinned Jev endpoint and image opt-in', async () => {
-    const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(120))))
-    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
-    const sent: string[] = []
-    const http = HttpClient.make((request, url) => {
-      sent.push(url.toString())
-      expect(request.headers['typesafe-danger-zone-images']).toBe('true')
-      const body = request.body
-      if (body._tag !== 'Uint8Array') throw new Error('Expected sealed JSON')
-      const parsed: unknown = JSON.parse(Buffer.from(body.body).toString('utf8'))
-      const prepared = Result.getOrThrow(prepareJevRequest(parsed))
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(request, new Response(JSON.stringify(responseFor(prepared.request)))),
-      )
-    })
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const client = yield* JevClient
-        const initial = yield* client.evaluate(first.request, 10000)
-        const next = yield* Effect.fromResult(
-          makeSelectedBaseStartStageRequest(input, receiptFor(first, initial.response)),
-        )
-        if (next.status !== 'PREPARED') throw new Error('Expected base start')
-        return yield* client.evaluate(next.request, 10000)
-      }).pipe(
-        Effect.provide(JevClientLive(Redacted.make('fixture-key'), 10000)),
-        Effect.provide(Layer.succeed(HttpClient.HttpClient, http)),
-      ),
-    )
-    expect(result.response.model).toBe('jev-1.13.0')
-    expect(sent).toEqual(['https://api.typesafe.ai/v1/systemone', 'https://api.typesafe.ai/v1/systemone'])
   })
 })
