@@ -36,7 +36,7 @@ export type BumbaWorkflowsService = {
   ) => Effect.Effect<StartAtlasReconciliationResult, Error>
 }
 
-export class BumbaWorkflows extends Context.Tag('BumbaWorkflows')<BumbaWorkflows, BumbaWorkflowsService>() {}
+export class BumbaWorkflows extends Context.Service<BumbaWorkflows, BumbaWorkflowsService>()('BumbaWorkflows') {}
 
 const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return undefined
@@ -105,7 +105,7 @@ const resolveAtlasReconciliationStart = (input: StartAtlasReconciliationInput) =
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-export const BumbaWorkflowsLive = Layer.scoped(
+export const BumbaWorkflowsLive = Layer.effect(
   BumbaWorkflows,
   Effect.gen(function* () {
     let clientPromise: Promise<TemporalClient> | null = null
@@ -137,7 +137,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
       return Effect.tryPromise({
         try: async () => (await pendingClient).shutdown(),
         catch: () => undefined,
-      }).pipe(Effect.catchAll(() => Effect.void))
+      }).pipe(Effect.catch(() => Effect.void))
     })
 
     return {
