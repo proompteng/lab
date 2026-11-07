@@ -606,3 +606,37 @@ describe('Bayn telemetry', () => {
     }
   })
 })
+
+test('enclosing stages retain timings and failure logs while the inner operation reports slowness once', async () => {
+  const logs: Readonly<Record<string, unknown>>[] = []
+  const timings = new Map<string, ExecutionStageTiming>()
+  const logger = Logger.make(({ fiber }) => {
+    logs.push(fiber.getRef(References.CurrentLogAnnotations))
+  })
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.adjust(1_200).pipe(
+        withObservedStage('bayn.execution.cycle-pass'),
+        withObservedStage('bayn.execution.bounded-pass', { slowAfterMs: null }),
+        withObservedStage('bayn.execution.generation-pass', { slowAfterMs: null }),
+      )
+      yield* Effect.fail('failed operation').pipe(
+        withObservedStage('bayn.execution.bounded-pass', { slowAfterMs: null }),
+        Effect.exit,
+      )
+    }).pipe(
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Logger.layer([logger])),
+      Effect.provideService(ExecutionStageTimings, timings),
+    ),
+  )
+  expect(logs).toHaveLength(2)
+  expect(logs[0]).toMatchObject({ stage: 'bayn.execution.cycle-pass', elapsedMs: 1_200, outcome: 'succeeded' })
+  expect(logs[1]).toMatchObject({ stage: 'bayn.execution.bounded-pass', outcome: 'failed' })
+  expect(timings.get('bayn.execution.generation-pass:')).toMatchObject({ count: 1, inclusiveElapsedMs: 1_200 })
+  expect(timings.get('bayn.execution.bounded-pass:')).toMatchObject({
+    count: 2,
+    failures: 1,
+    inclusiveElapsedMs: 1_200,
+  })
+})

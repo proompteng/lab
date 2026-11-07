@@ -129,7 +129,7 @@ describe('captured controller latency', () => {
     expect(unwitnessed.observedWindowCount).toBe(20)
   })
 
-  test('late completion stays in the original session and retries do not cover a later missing window', () => {
+  test('late completion stays in the original session and journaled retries do not cover a later missing window', () => {
     const { cut, measure } = fixture()
     const pass = cut.controllerPasses[0]
     if (pass === undefined) throw new Error('Missing pass')
@@ -153,6 +153,42 @@ describe('captured controller latency', () => {
     expect(report.observedWindowCount).toBe(19)
     expect(report.samples[0]?.sessionDate).toBe('2026-11-02')
     expect(report.samples[0]?.commandThroughCompletionMs).toBe(86_401_000)
+  })
+
+  test('a later committed re-execution cannot cover an abandoned unjournaled attempt in an earlier window', () => {
+    const { cut, measure } = fixture()
+    const abandoned = cut.controllerPasses[0]
+    const later = cut.controllerPasses[1]
+    if (abandoned === undefined || later === undefined) throw new Error('Missing separate scheduled windows')
+    const abandonedIssuedAt = abandoned.observation.executionIssuedAt
+    const committedIssuedAt = later.observation.executionIssuedAt
+    if (abandonedIssuedAt === undefined || committedIssuedAt === undefined) throw new Error('Missing attempt clocks')
+    const committed = {
+      ...later,
+      sequence: abandoned.sequence,
+      receiptHash: testHash({ abandoned: abandoned.receiptHash, committedAt: later.completedAt }),
+    }
+    const report = measure({
+      ...cut,
+      controllerPasses: [committed, ...cut.controllerPasses.slice(2)],
+      durableObservations: [
+        {
+          kind: 'CONTROLLER',
+          sourceHash: committed.receiptHash,
+          sourceAt: committed.completedAt,
+          witnessedAt: committed.completedAt,
+          correct: true,
+        },
+        ...cut.durableObservations.slice(2),
+      ],
+    })
+    expect(report.status).toBe('INCOMPLETE')
+    expect(report.observedWindowCount).toBe(19)
+    expect(report.unobservedWindows.map((window) => window.dueAt)).toEqual([abandonedIssuedAt])
+    expect(report.samples.some((sample) => sample.issuedAt === abandonedIssuedAt)).toBe(false)
+    expect(report.samples[0]?.issuedAt).toBe(committedIssuedAt)
+    expect(report.p95CommandThroughCompletionMs).toBeNull()
+    expect(report.p95CommandThroughDurableVisibilityMs).toBeNull()
   })
 
   test('the last scheduled command cannot close the evaluation before the registered session ends', () => {

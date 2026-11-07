@@ -57,6 +57,10 @@ pub(crate) fn validate(
     for entry in operations {
         let operation = RegisteredOperation::new(entry.operation.clone())?;
         anyhow::ensure!(
+            operation.read_only(),
+            "mutations require an authenticated MCP execution contract"
+        );
+        anyhow::ensure!(
             names.insert(operation.name().to_owned()),
             "duplicate HTTP operation"
         );

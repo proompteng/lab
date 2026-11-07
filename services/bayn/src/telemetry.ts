@@ -306,7 +306,8 @@ export const withObservedStage =
     options: {
       readonly dependency?: string
       readonly operation?: string
-      readonly slowAfterMs?: number
+      /** Enclosing stages use null when the operation already reports its slow duration. Failures still log. */
+      readonly slowAfterMs?: number | null
       readonly recordCompletion?: boolean
       /** Isolate diagnostic finalizer defects from the wrapped operation's exit. */
       readonly diagnosticOnly?: boolean
@@ -366,7 +367,7 @@ export const withObservedStage =
                     interruptions: (previous?.interruptions ?? 0) + (outcome === 'interrupted' ? 1 : 0),
                   })
                 }
-                const slow = elapsedMs >= (options.slowAfterMs ?? 1_000)
+                const slow = options.slowAfterMs !== null && elapsedMs >= (options.slowAfterMs ?? 1_000)
                 if (Exit.isSuccess(exit) && !slow && options.recordCompletion !== true) return
                 const log = Exit.isFailure(exit)
                   ? Effect.logWarning('Bayn execution stage did not complete')

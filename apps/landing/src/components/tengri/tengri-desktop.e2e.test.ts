@@ -12293,3 +12293,74 @@ test('reconciles a finished background run without coupling its failures to the 
   await expect(chat.getByRole('alert')).toHaveCount(0)
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
+
+for (const width of [1440, 390]) {
+  test(`AgentRun card refreshes and retains an uncertain cancellation at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const view = {
+      kind: 'agent-run',
+      targetId: 'agents/lab',
+      run: { runId: '77777777-7777-4777-8777-777777777777', status: 'Pending' },
+    }
+    await mockTengri(page, {
+      resumeThreadRawJson: JSON.stringify({
+        thread: {
+          turns: [
+            {
+              id: 'turn-1',
+              status: 'completed',
+              items: [
+                {
+                  id: 'relay-start',
+                  type: 'mcpToolCall',
+                  server: 'relay',
+                  tool: 'start_run',
+                  status: 'completed',
+                  result: { content: [{ type: 'text', text: JSON.stringify({ structuredContent: view }) }] },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+    const commands: string[] = []
+    await page.route('**/api/tengri/runs', async (route) => {
+      const command = route.request().postDataJSON()
+      commands.push(command.operation)
+      if (command.operation === 'cancel_run') return route.fulfill({ status: 503, json: { error: 'Lost reply' } })
+      return route.fulfill({
+        json: {
+          view: {
+            ...view,
+            run: {
+              ...view.run,
+              status: 'Running',
+              progress: { activeTools: [{ title: 'Checking the requested change' }] },
+            },
+          },
+          canCancel: true,
+        },
+      })
+    })
+    await page.goto('/')
+    const card = page.locator('[aria-label="Agent run"]')
+    await expect(card).toBeVisible()
+    await card.getByRole('button', { name: 'Refresh run' }).click()
+    await expect(card.getByRole('status')).toHaveText('Running')
+    await expect(card.getByText('Checking the requested change')).toBeVisible()
+    await card.getByRole('button', { name: 'Cancel run' }).click()
+    await expect(card.getByRole('alert')).toContainText('Cancellation could not be confirmed')
+    await expect(card.getByRole('button', { name: 'Cancel run' })).toBeDisabled()
+    await card.getByRole('button', { name: 'Refresh run' }).click()
+    expect(commands).toEqual(['get_result', 'cancel_run', 'get_result'])
+    const bounds = await card.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+    if (process.env.TENGRI_RUN_CARD_SCREENSHOTS)
+      await card.screenshot({ path: `${process.env.TENGRI_RUN_CARD_SCREENSHOTS}/run-card-${width}.png` })
+    const accessibility = await new AxeBuilder({ page }).include('[aria-label="Agent run"]').analyze()
+    expect(accessibility.violations).toEqual([])
+  })
+}

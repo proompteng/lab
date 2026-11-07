@@ -142,7 +142,7 @@ describe.skipIf(directory === undefined)('TLC reachable states conform to produc
         epoch: s.deliveryEpoch,
         sequence: s.deliverySequence,
       } as const
-      const advance = decideExecutionControllerTick(state, tick, hash, at(0), revision(s.deliverySource))
+      const advance = decideExecutionControllerTick(state, tick, hash, revision(s.deliverySource))
       expect(Result.isSuccess(advance) && advance.success._tag === 'Advance').toBe(s.canAdvance)
       const complete = completeExecutionControllerTick(
         state,

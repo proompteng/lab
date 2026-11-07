@@ -7,9 +7,16 @@ import {
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
   protectedEntryBuyPriceCeilings,
+  FlatExecutionTargetSchema,
+  type RecordedRuntimeStrategyDecision,
 } from './strategy/runtime-decision'
 import { MarketKind, instrumentMarket } from './instruments'
-import { reproduceJevCandidateObservation } from './jev/observation'
+import { reproduceJevCandidateObservation, reproduceRetainedJevV38CandidateObservation } from './jev/observation'
+import { RetainedJevV38EntryTargetSchema, RetainedJevV38ExitTargetSchema } from './jev/retained-v38-targets'
+import {
+  RetainedJevV38AblationTargetSchema,
+  RetainedJevV38MomentumTargetSchema,
+} from './jev/retained-v38-control-targets'
 import { JevContractError } from './jev/contract'
 import {
   makeRepeatedMomentumPolicy,
@@ -34,7 +41,12 @@ import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { maximumFundedBuyQuantities } from './jev/entry-sizing'
 import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './jev/entry-economics'
-import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
+import {
+  defaultJevProtocolDocument,
+  jevBehaviorHash,
+  type JevProtocol,
+  type RetainedJevProtocolV38Schema,
+} from './jev/protocol'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
   SnapshotManifestFields as ExecutionMarketDataBindingFields,
@@ -563,6 +575,10 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   expiresAt: UtcInstantSchema,
 })
 
+type ExecutionDecisionValidationMaterial = Omit<typeof ExecutionDecisionMaterialSchema.Type, 'strategyDecision'> & {
+  readonly strategyDecision?: RecordedRuntimeStrategyDecision
+}
+
 const executionBindingMatchesIntradayMomentumProtocol = (binding: SnapshotExecutionMarketDataBinding): boolean =>
   binding.universeId === defaultIntradayMomentumProtocolDocument.universeId &&
   binding.universeSymbolHash === defaultIntradayMomentumProtocolDocument.universeSymbolHash &&
@@ -760,7 +776,7 @@ const intradayMomentumAllocationIssues = (
 }
 
 const intradayMomentumSnapshotEvidenceIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
+  document: ExecutionDecisionValidationMaterial,
   binding: SnapshotExecutionMarketDataBinding,
 ): readonly Schema.FilterIssue[] => {
   const rows = document.decisionMarketDataRows
@@ -864,7 +880,7 @@ export function reconstructBoundIntradaySnapshot(
 }
 
 const quoteBoundLiquidationSnapshotIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
+  document: ExecutionDecisionValidationMaterial,
   binding: SnapshotExecutionMarketDataBinding,
 ): readonly Schema.FilterIssue[] => {
   const executionSession = document.executionSession
@@ -970,7 +986,7 @@ const quoteBoundLiquidationSnapshotIssues = (
 }
 
 const streamingPricingEvidenceIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
+  document: ExecutionDecisionValidationMaterial,
 ): readonly Schema.FilterIssue[] => {
   const binding = document.bindings.executionMarketData
   if (
@@ -1057,9 +1073,7 @@ const streamingPricingEvidenceIssues = (
   return []
 }
 
-const targetPlannerEvidenceIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
-): readonly Schema.FilterIssue[] => {
+const targetPlannerEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const input = document.plannerInput
   const executionMarketData = document.bindings.executionMarketData
   const requiresQuoteBoundLiquidationEvidence =
@@ -1216,18 +1230,54 @@ export const jevProtocolIdentityMatches = (protocol: JevProtocol, strategyProtoc
   return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
-const ablationProtocolIdentityMatches = (policy: EntryAblationPolicy, strategyProtocolHash: string): boolean => {
+// Only the retained document schema can supply v38 here; current admission schemas remain strict v39.
+const recordedJevProtocolIdentityMatches = (
+  protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type,
+  strategyProtocolHash: string,
+): boolean => {
+  if (protocol.schemaVersion !== 'bayn.jev.protocol.v38')
+    return jevProtocolIdentityMatches(protocol, strategyProtocolHash)
+  const parameters = canonicalHashV1Result(protocol)
+  const expected = canonicalHashV1Result({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v38' })
+  if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
+    return false
+  const identity = makeStrategyProtocolHashResult({
+    name: 'jev',
+    behaviorHash: jevBehaviorHash,
+    parameterHash: parameters.success,
+    parameterSchemaVersion: 'bayn.jev.protocol.v38',
+  })
+  return Result.isSuccess(identity) && identity.success === strategyProtocolHash
+}
+
+const ablationProtocolIdentityMatches = (
+  policy: Omit<EntryAblationPolicy, 'sharedProtocol'> & {
+    readonly sharedProtocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+  },
+  strategyProtocolHash: string,
+): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
+  const expected = canonicalHashV1Result({
+    ...defaultJevProtocolDocument,
+    schemaVersion: policy.sharedProtocol.schemaVersion,
+  })
   if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
     return false
   const identity = entryAblationStrategyIdentity(policy)
   return Result.isSuccess(identity) && identity.success.protocolHash === strategyProtocolHash
 }
 
-const momentumProtocolIdentityMatches = (policy: RepeatedMomentumPolicy, strategyProtocolHash: string): boolean => {
+const momentumProtocolIdentityMatches = (
+  policy: Omit<RepeatedMomentumPolicy, 'sharedProtocol'> & {
+    readonly sharedProtocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+  },
+  strategyProtocolHash: string,
+): boolean => {
   const parameters = canonicalHashV1Result(policy.sharedProtocol)
-  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
+  const expected = canonicalHashV1Result({
+    ...defaultJevProtocolDocument,
+    schemaVersion: policy.sharedProtocol.schemaVersion,
+  })
   const identity = repeatedMomentumStrategyIdentity(policy)
   return (
     Result.isSuccess(parameters) &&
@@ -1238,9 +1288,7 @@ const momentumProtocolIdentityMatches = (policy: RepeatedMomentumPolicy, strateg
   )
 }
 
-const jevEntryEvidenceIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
-): readonly Schema.FilterIssue[] => {
+const jevEntryEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
   if (!isProtectedEntryTarget(target) || document.plannerInput === undefined)
     return [
@@ -1269,7 +1317,9 @@ const jevEntryEvidenceIssues = (
       })
     for (const symbol of target.selectedSymbols) {
       const originalAsk = Result.gen(function* () {
-        const source = yield* reproduceJevCandidateObservation(observation)
+        const source = yield* observation.protocol.schemaVersion === 'bayn.jev.protocol.v38'
+          ? reproduceRetainedJevV38CandidateObservation(observation)
+          : reproduceJevCandidateObservation(observation)
         const quote = source.snapshot.latestQuotes[symbol]
         if (quote === undefined)
           return yield* Result.fail(
@@ -1320,7 +1370,7 @@ const jevEntryEvidenceIssues = (
       ? momentumProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
       : target.schemaVersion === 'bayn.entry-ablation-target.v1'
         ? ablationProtocolIdentityMatches(target.policy, document.bindings.strategyProtocolHash)
-        : jevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
+        : recordedJevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash)) ||
     observation.cycleId !== document.bindings.cycleId ||
     observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
     observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1380,14 +1430,12 @@ const jevEntryEvidenceIssues = (
   return issues
 }
 
-const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
+const entryQuoteAgeLimit = (document: ExecutionDecisionValidationMaterial, eventAt: string, limit: number) =>
   isProtectedEntryTarget(document.strategyDecision)
     ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
     : limit
 
-const jevExitEvidenceIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
-): readonly Schema.FilterIssue[] => {
+const jevExitEvidenceIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
   if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') return []
   const evidence = target.evidence
@@ -1398,7 +1446,7 @@ const jevExitEvidenceIssues = (
     position === undefined ||
     evidence.portfolio.purpose !== 'MANAGE' ||
     !(
-      jevProtocolIdentityMatches(evidence.protocol, document.bindings.strategyProtocolHash) ||
+      recordedJevProtocolIdentityMatches(evidence.protocol, document.bindings.strategyProtocolHash) ||
       ablationProtocolIdentityMatches(
         makeEntryAblationPolicy(evidence.protocol),
         document.bindings.strategyProtocolHash,
@@ -1436,9 +1484,7 @@ const jevExitEvidenceIssues = (
   return []
 }
 
-const executionMaterialIssues = (
-  document: typeof ExecutionDecisionMaterialSchema.Type,
-): readonly Schema.FilterIssue[] => {
+const executionMaterialIssues = (document: ExecutionDecisionValidationMaterial): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
   const intradayStrategy = ['intraday-momentum', 'jev'].includes(document.bindings.strategyName)
@@ -2088,6 +2134,49 @@ export const ExecutionDecisionDocumentSchema = ExecutionDecisionDocumentSemantic
   }),
 )
 export type ExecutionDecisionDocument = typeof ExecutionDecisionDocumentSchema.Type
+
+/** Retained operational evidence uses all original execution checks without entering current admission. */
+export const RetainedJevV38ExecutionDecisionDocumentSchema = Schema.Struct({
+  ...ExecutionDecisionMaterialSchema.fields,
+  strategyDecision: Schema.optionalKey(
+    Schema.Union([
+      RetainedJevV38EntryTargetSchema,
+      RetainedJevV38AblationTargetSchema,
+      RetainedJevV38MomentumTargetSchema,
+      RetainedJevV38ExitTargetSchema,
+      FlatExecutionTargetSchema,
+    ]),
+  ),
+  contentHash: Sha256Schema,
+}).check(
+  Schema.makeFilter(executionMaterialIssues),
+  Schema.makeFilter((document) => {
+    const { contentHash, ...material } = document
+    const expected = canonicalHashV1Result(material)
+    const protocol = { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v38' as const }
+    return document.bindings.strategyName === 'jev' &&
+      (recordedJevProtocolIdentityMatches(protocol, document.bindings.strategyProtocolHash) ||
+        ablationProtocolIdentityMatches(makeEntryAblationPolicy(protocol), document.bindings.strategyProtocolHash) ||
+        momentumProtocolIdentityMatches(
+          makeRepeatedMomentumPolicy(protocol),
+          document.bindings.strategyProtocolHash,
+        )) &&
+      Result.isSuccess(expected) &&
+      expected.success === contentHash
+      ? []
+      : [
+          {
+            path: ['contentHash'],
+            issue: 'retained v38 execution must preserve its exact protocol and canonical document identity',
+          },
+        ]
+  }),
+)
+export type RetainedJevV38ExecutionDecisionDocument = typeof RetainedJevV38ExecutionDecisionDocumentSchema.Type
+export type RecordedExecutionDecisionDocument = ExecutionDecisionDocument | RetainedJevV38ExecutionDecisionDocument
+
+export const decodeRetainedJevV38ExecutionDecisionDocument = (input: unknown) =>
+  Schema.decodeUnknownResult(RetainedJevV38ExecutionDecisionDocumentSchema, strictParseOptions)(input)
 
 export const CycleDecisionDocumentSchema = Schema.Union([
   ObserveShadowDecisionDocumentSchema,

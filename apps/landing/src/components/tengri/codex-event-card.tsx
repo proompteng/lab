@@ -20,6 +20,8 @@ import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
 import type { CodexApprovalDecision } from './codex-events'
+import { AgentRunCard } from './agent-run-card'
+import { parseAgentRunView } from '@/lib/tengri/agent-runs'
 import { CodexCopyButton } from './codex-copy-button'
 import { codexAsyncQuestionReplyDisplayText } from './codex-async-questions'
 import { codexActivityTitle } from './codex-activity'
@@ -198,6 +200,11 @@ export const CodexEventCard = memo(function CodexEventCard({
         </div>
       </details>
     )
+  }
+
+  if (kind === 'tool-output') {
+    const run = parseAgentRunView(text)
+    if (run) return <AgentRunCard key={text} initial={run} agentId={agentId} />
   }
 
   if (kind === 'tool-call' || kind === 'tool-output' || kind === 'file-diff') {

@@ -18,6 +18,47 @@ const OPENCODE: &str = "spiffe://proompteng.ai/ns/opencode/sa/opencode";
 const FIXTURE_FIRST: &str = "spiffe://proompteng.ai/ns/fixture/sa/first";
 const FIXTURE_SECOND: &str = "spiffe://proompteng.ai/ns/fixture/sa/second";
 
+struct UncertainMutation {
+    operation: relay::registered::RegisteredOperation,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+#[tonic::async_trait]
+impl relay::connector::Connector for UncertainMutation {
+    fn id(&self) -> &str {
+        "fixture-mutation"
+    }
+    fn provider(&self) -> Option<relay::credentials::Provider<'_>> {
+        None
+    }
+    fn operations(
+        &self,
+        access: Option<&[sdk::PlatformConnectionScope]>,
+    ) -> Vec<wire::ConnectorOperation> {
+        self.operation
+            .discovery(self.id(), access)
+            .into_iter()
+            .collect()
+    }
+    fn normalize(
+        &self,
+        _name: &str,
+        arguments: &[u8],
+    ) -> Result<relay::connector::Normalized, tonic::Status> {
+        self.operation.normalize(arguments)
+    }
+    async fn execute(
+        &self,
+        request: &relay::connector::Normalized,
+        _bearer: Option<&str>,
+    ) -> Result<relay::connector::Output, relay::connector::Failure> {
+        let invocation = request.invocation.as_ref().expect("authorized context");
+        assert_eq!(invocation.client_service, "fixture-client");
+        assert!(!invocation.authorization_receipt_id.is_empty());
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(tonic::Status::unavailable("response lost after side effect").into())
+    }
+}
+
 fn workload_lookup(
     body: &[u8],
     client: &str,
@@ -2244,6 +2285,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             kind: "kubernetes.namespace".into(),
             id: resource_id.clone(),
         },
+        read_only: true,
         input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
     };
     let python = std::process::Command::new("python3")
@@ -2284,6 +2326,15 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         }],
     )
     .unwrap();
+    let mutation_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let uncertain_mutation = UncertainMutation {
+        operation: relay::registered::RegisteredOperation::new(relay::registered::Operation {
+            read_only: false,
+            ..operation.clone()
+        })
+        .unwrap(),
+        calls: mutation_calls.clone(),
+    };
     let mcp_script = config_dir.join("upstream-mcp.py");
     std::fs::write(
         &mcp_script,
@@ -2314,6 +2365,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             },
         },
         vec![relay::mcp::McpOperation {
+            relay_context: false,
             operation,
             tool: "fixture_read".into(),
         }],
@@ -2326,6 +2378,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             Box::new(cli),
             Box::new(http),
             Box::new(mcp),
+            Box::new(uncertain_mutation),
         ],
         channel,
     )
@@ -2514,6 +2567,47 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             before + usize::from(connector == "fixture-http")
         );
     }
+    let uncertain_body = serde_json::to_vec(&ExecutionPayload {
+        operation_id: Uuid::new_v4().to_string(),
+        client_service: "fixture-client".into(),
+        connector_id: "fixture-mutation".into(),
+        operation: "read".into(),
+        arguments: serde_json::json!({}),
+        binding: None,
+        delegation_id: None,
+    })
+    .unwrap();
+    for _ in 0..2 {
+        let mut request = platform_client::request(wire::ExecuteRequest {
+            subject: Some(sdk::PlatformSubject {
+                client_service: "fixture-client".into(),
+                identity: Some(sdk::platform_subject::Identity::WorkloadId(
+                    FIXTURE_FIRST.into(),
+                )),
+            }),
+            body: uncertain_body.clone(),
+        });
+        request
+            .extensions_mut()
+            .insert(platform_client::tls::Peer(FIXTURE_FIRST.into()));
+        assert!(relay.execute(request).await.is_err());
+    }
+    assert_eq!(mutation_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        relay
+            .get_execution(workload_lookup(
+                &uncertain_body,
+                "fixture-client",
+                FIXTURE_FIRST
+            ))
+            .await
+            .unwrap()
+            .into_inner()
+            .execution
+            .unwrap()
+            .outcome,
+        "started"
+    );
     let mut payload = ExecutionPayload {
         operation_id: Uuid::new_v4().to_string(),
         client_service: "tengri-web".into(),
