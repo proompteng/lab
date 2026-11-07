@@ -1,4 +1,3 @@
-import { executionDecisionRows } from '../../db/execution-decision-query'
 import { PgClient } from '@effect/sql-pg'
 import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
@@ -41,13 +40,14 @@ import {
   postgresError,
 } from './model'
 import {
+  capturedCycleScope,
   closingSnapshotBoundary,
   durableCycleGenerationBinding,
   generationScope,
   openingSnapshotBoundary,
   reconciliationExactness,
 } from './scope'
-import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
+import { decisionQuery, ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { firstCapturedCycleQuery, firstCycleQuery, readForwardPerformanceCycles } from './cycles'
 import {
   executionEvidenceFromRows,
@@ -103,6 +103,7 @@ export const readForwardPerformanceMarketVolumeBindings = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
+  capturedCycles?: readonly (typeof TerminalCycleRow.Type)[],
 ) =>
   sql<Record<string, unknown>>`
     WITH latest_reconciliation AS (
@@ -131,7 +132,7 @@ export const readForwardPerformanceMarketVolumeBindings = (
     CROSS JOIN latest_reconciliation
     WHERE cycle.account_id = ${accountId}
       AND cycle.state = 'COMPLETED'
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+      AND ${capturedCycleScope(sql, accountId, authorityGenerationHash, capturedCycles)}
       AND cycle.terminal_at <= latest_reconciliation.reconciled_at
       AND cycle.execution_close_at <= latest_reconciliation.reconciled_at
     ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
@@ -207,6 +208,8 @@ export const readForwardPerformancePostgres = (
     .withTransaction(
       Effect.gen(function* () {
         const cycleRows = yield* readForwardPerformanceCycles(sql, accountId, authorityGenerationHash)
+        // Account-history reads have no generation proof to repeat and need no additional ID parameter.
+        const scopedCycles = authorityGenerationHash === undefined ? undefined : cycleRows
 
         const strategyRows = yield* readForwardPerformanceStrategyRows(
           sql,
@@ -300,7 +303,7 @@ export const readForwardPerformancePostgres = (
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-              AND event.observed_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
+              AND event.observed_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash, scopedCycles)}
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), accounted_cash AS (
@@ -442,32 +445,13 @@ export const readForwardPerformancePostgres = (
         )
         const consumeDecisionRows = yield* openSnapshotRows(
           sql,
-          sql`
-          WITH latest_reconciliation AS (
-            SELECT reconciliation.reconciled_at
-            FROM reconciliations AS reconciliation
-            WHERE reconciliation.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-            LIMIT 1
-          )
-          SELECT decision_rows.cycle_id, decision_rows.decision_hash, decision_rows.document, decision_rows.created_at
-          FROM (
-            ${executionDecisionRows(sql)}
-          ) AS decision_rows
-          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
-          CROSS JOIN latest_reconciliation
-          WHERE cycle.account_id = ${accountId}
-            AND cycle.state = 'COMPLETED'
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
-          ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
-        `,
+          decisionQuery(sql, accountId, authorityGenerationHash, scopedCycles),
         )
         const marketVolumeBindingRows = yield* readForwardPerformanceMarketVolumeBindings(
           sql,
           accountId,
           authorityGenerationHash,
+          scopedCycles,
         )
         const executionIntentRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (

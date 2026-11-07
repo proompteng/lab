@@ -2,6 +2,15 @@ rule_files:
   - rules.yaml
 evaluation_interval: 1m
 tests:
+  - name: an unhealthy Tengri application produces one critical application alert
+    interval: 1m
+    input_series:
+      - series: argocd_app_info{name="tengri",health_status="Degraded",sync_status="Synced"}
+        values: 1+0x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname=~"PlatformApplicationUnhealthy|TengriArgoApplicationDegraded",name="tengri",alertstate="firing"}) or vector(0)
+        eval_time: 6m
+        exp_samples: [{labels: '{}', value: 1}]
   - name: healthy platform applications databases and idle promotions stay quiet
     interval: 1m
     input_series:
