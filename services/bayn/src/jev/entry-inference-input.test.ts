@@ -16,6 +16,7 @@ const input = {
   numericalState: {
     schemaVersion: defaultJevProtocolDocument.inputDefinition,
     webullContext: null,
+    entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
     task: { decisionPurpose: 'ENTRY' },
     candidate: { symbol: 'AAPL', bars1m: bars },
     session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z', observedAt: '2026-10-25T07:00:02.000Z' },
@@ -27,7 +28,7 @@ const input = {
 }
 
 describe('sequential entry inference input', () => {
-  test('retained v37 protocol bytes keep their original identity while current admission requires v38', () => {
+  test('retained v37 protocol bytes keep their original identity while current admission requires v39', () => {
     const retained = {
       ...defaultJevProtocolDocument,
       schemaVersion: 'bayn.jev.protocol.v37',
