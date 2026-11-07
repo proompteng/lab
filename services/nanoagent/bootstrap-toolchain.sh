@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly NODE_VERSION='24.11.1'
-readonly BUN_VERSION='1.4.2'
+readonly NODE_VERSION='24.22.2'
+readonly BUN_VERSION='1.4.4'
 readonly UV_VERSION='0.11.14'
-readonly GO_VERSION='1.25.5'
+readonly GO_VERSION='1.27.3'
 readonly RUST_VERSION='1.90.0'
 readonly C_COMPILER_MAJOR='13'
 readonly C_COMPILER_VERSION='13.3.0'

@@ -192,7 +192,7 @@ import ./bun-workspace-service.nix {
     "JANGAR_COMMIT=${repoRevision}"
     "JAVA_HOME=${pkgs.jdk25_headless}"
     "GRADLE_HOME=${pkgs.gradle_9}"
-    "GOROOT=${pkgs.go}/share/go"
+    "GOROOT=${exact.go}/share/go"
   ];
   extraContents = [
     codexCli
@@ -203,7 +203,7 @@ import ./bun-workspace-service.nix {
     pkgs.curl
     pkgs.gh
     pkgs.git
-    pkgs.go
+    exact.go
     pkgs.gradle_9
     pkgs.jdk25_headless
     pkgs.jq

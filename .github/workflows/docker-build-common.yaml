@@ -34,7 +34,7 @@ on:
       bun_version:
         required: false
         type: string
-        default: '1.4.2'
+        default: '1.4.4'
 
 jobs:
   build:

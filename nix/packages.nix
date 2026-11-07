@@ -280,54 +280,54 @@ let
     };
   };
 
-  goVersion = "1.25.5";
+  goVersion = "1.27.3";
   goSource = sourceFor "go" {
     x86_64-linux.src = fetchurl {
       url = "https://go.dev/dl/go${goVersion}.linux-amd64.tar.gz";
-      hash = "sha256-npt1XWOzas8wwSqaP8N5JDcUwcbT3XKGHaY38zbrs1s=";
+      hash = "sha256-Ze+8gP3B+izSYxytW0gXd6aOhyXzTon1D8ascU43m0A=";
     };
     aarch64-linux.src = fetchurl {
       url = "https://go.dev/dl/go${goVersion}.linux-arm64.tar.gz";
-      hash = "sha256-sAtpSQPRJsWIw3jnLTVFVJk105gmNbo/epZMn6I/47k=";
+      hash = "sha256-oG6ZMJ28vcoajM0igsPuFG5VkwiG4mtPEZMmlYcWX0k=";
     };
     x86_64-darwin.src = fetchurl {
       url = "https://go.dev/dl/go${goVersion}.darwin-amd64.tar.gz";
-      hash = "sha256-tp1RvOWZ5TgalM4VJjrmROyEZnpc4j1Y3C5j4sEqn1Y=";
+      hash = "sha256-tvjpMeSrSX/N5tqK5EmaWPnSWOVcioCCSlFurllQp1A=";
     };
     aarch64-darwin.src = fetchurl {
       url = "https://go.dev/dl/go${goVersion}.darwin-arm64.tar.gz";
-      hash = "sha256-vtjr6CTj07J+hHHRMH+AP8arjh0Ot6SuGWl5vZuAHdM=";
+      hash = "sha256-3TkIzyCVnXmMHgbr5bciE/BQXOATc7QM4xEJdabNmcI=";
     };
   };
 
-  bunVersion = "1.4.2";
+  bunVersion = "1.4.4";
   bunSource = sourceFor "bun" {
     x86_64-linux = {
       sourceRoot = "bun-linux-x64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64.zip";
-        hash = "sha256-NjaPrvdSeHXV/6UuU81IAhdB8qg+tiCKjdZAaNQiqRM=";
+        hash = "sha256-v4zL+ysLgBWeD5ptFcVTF63YB3U028YTCj7bUvzLOVw=";
       };
     };
     aarch64-linux = {
       sourceRoot = "bun-linux-aarch64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-aarch64.zip";
-        hash = "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=";
+        hash = "sha256-uqa7NvUdblhWHgK76oJQOKnfRU9nPW13bou/hvjHhQ4=";
       };
     };
     x86_64-darwin = {
       sourceRoot = "bun-darwin-x64-baseline";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-x64-baseline.zip";
-        hash = "sha256-utW71s8U0JgNEV9ZVMn/kE32GdXplNLaH/zNPzFjALA=";
+        hash = "sha256-1KFVrfv9CRVes7oFyeOlRPOSl9emhhbTx3WfZ6tcR9w=";
       };
     };
     aarch64-darwin = {
       sourceRoot = "bun-darwin-aarch64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-aarch64.zip";
-        hash = "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=";
+        hash = "sha256-wkDX8My5DCY6hJ/NsJt+5iYw2SE0jtaq/ahrnVd7xRA=";
       };
     };
   };
@@ -428,6 +428,8 @@ in
     version = goVersion;
     src = goSource.src;
     sourceRoot = "go";
+    passthru.CGO_ENABLED = pkgs.go.CGO_ENABLED;
+    meta.platforms = lib.platforms.darwin ++ lib.platforms.linux;
 
     nativeBuildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       pkgs.autoPatchelfHook

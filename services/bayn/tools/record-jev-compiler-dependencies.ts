@@ -12,7 +12,7 @@ if (
   sourceFlag !== '--source' ||
   sourceRevision === undefined ||
   !/^[a-f0-9]{40}$/.test(sourceRevision) ||
-  Bun.version !== '1.4.2'
+  Bun.version !== '1.4.4'
 )
   throw Error('Use pinned Bun: --output <backtest.js> --source <revision> [--define name=value]')
 const define: Record<string, string> = {}
@@ -60,7 +60,7 @@ await writeFile(
   JSON.stringify({
     schemaVersion: 'bayn.jev-compiler-dependencies.v4',
     sourceRevision,
-    bunVersion: '1.4.2',
+    bunVersion: '1.4.4',
     files: dependencies.files(),
     controlFiles: controlDependencies.files(),
     compilerFiles: compilerDependencies.files(),

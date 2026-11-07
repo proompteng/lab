@@ -19,7 +19,7 @@
     "fumadocs-mdx": "14.3.2",
     "fumadocs-ui": "16.8.7",
     "lucide-react": "^1.14.0",
-    "next": "16.3.0-canary.83",
+    "next": "16.4.5",
     "react": "19.2.5",
     "react-dom": "19.2.5"
   },
@@ -29,7 +29,7 @@
     "@types/node": "25.6.0",
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
-    "bun-types": "1.4.2",
+    "bun-types": "1.4.4",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.2.4",
     "typescript": "^7.0.2"

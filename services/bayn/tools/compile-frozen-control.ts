@@ -20,7 +20,7 @@ export const compileFrozenControl = async (options: {
   imageRepository: string
   output: string
 }) => {
-  if (Bun.version !== '1.4.2' || !/^[a-f0-9]{40}$/.test(options.sourceRevision))
+  if (Bun.version !== '1.4.4' || !/^[a-f0-9]{40}$/.test(options.sourceRevision))
     throw Error('Frozen replay compilation requires pinned Bun and the carrier revision')
   const source = frozenControlSource({
     dependenciesDirectory: options.dependenciesDirectory,

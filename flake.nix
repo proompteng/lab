@@ -36,7 +36,14 @@
           repoShortRevision =
             if builtins.stringLength repoRevision >= 12 then builtins.substring 0 12 repoRevision else repoRevision;
 
-          nodejs = assertVersion "nodejs_24" "24.11.1" pkgs.nodejs_24;
+          # Preserve the shared zlib build so retained Bayn chart bytes still replay.
+          nodejs = pkgs.nodejs_24.overrideAttrs {
+            version = "24.22.2";
+            src = pkgs.fetchurl {
+              url = "https://nodejs.org/dist/v24.22.2/node-v24.22.2.tar.xz";
+              hash = "sha256-j+LsFyO7n40LaDkHyCcI3rvtpkryHLKqIUxCQe7QoGE=";
+            };
+          };
           go = exact.go;
           ruby = assertVersion "ruby_3_4" "3.4.7" pkgs.ruby_3_4;
 
@@ -301,7 +308,7 @@
               bun = exact.bun;
             };
             "headlamp-image" = import ./nix/images/headlamp.nix {
-              inherit pkgs lib repoRevision;
+              inherit pkgs lib repoRevision nodejs go;
             };
             "torghut-image" = import ./nix/images/torghut.nix {
               inherit pkgs lib;
@@ -347,6 +354,7 @@
         {
           packages = exact // linuxPackages // {
             default = toolchainDoctor;
+            inherit nodejs;
             inherit
               toolchainDoctor
               ociDoctor

@@ -78,7 +78,7 @@ jobs:
         run: bash services/ofz/test-control.sh platform
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install client fixture dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design --filter @proompteng/agents
       - name: Verify connector registrations

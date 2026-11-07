@@ -20,7 +20,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -53,7 +53,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -157,14 +157,14 @@ jobs:
         uses: actions/setup-node@v6
         if: ${{ steps.npm_token.outputs.skip != 'true' }}
         with:
-          node-version: '24.11.1'
+          node-version: '24.22.2'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         if: ${{ steps.npm_token.outputs.skip != 'true' }}
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         if: ${{ steps.npm_token.outputs.skip != 'true' }}

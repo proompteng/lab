@@ -85,8 +85,8 @@ export const buildJevInstructionVariant = (
       const spec = yield* Schema.decodeUnknownEffect(JevInstructionVariantSpecSchema, strictParseOptions)(input)
       // Source preflight is read-only and independent of the compilation runtime.
       yield* verifySource(root, spec.sourceRevision)
-      if (Bun.version !== '1.4.2')
-        return yield* new VariantBuildError({ message: 'Variant builds require the pinned Bun 1.4.2 toolchain' })
+      if (Bun.version !== '1.4.4')
+        return yield* new VariantBuildError({ message: 'Variant builds require the pinned Bun 1.4.4 toolchain' })
       const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path
       if (sha256(dependencyReceiptRaw) !== spec.dependencyReceiptSha256)
