@@ -62,7 +62,10 @@ export const ActiveExecutionStages = Context.Reference<Map<symbol, ActiveExecuti
 
 const operationDuration = Metric.histogram('bayn_operation_duration_seconds', {
   description: 'Inclusive wall time of a named operation, including failures and interruptions.',
-  boundaries: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+  // The native OTLP exporter expects the final bucket to be the unbounded overflow bucket.
+  boundaries: Metric.boundariesFromIterable([
+    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
+  ]),
 })
 export const telemetryHeartbeat = Metric.gauge('bayn_telemetry_heartbeat_timestamp_seconds')
 
