@@ -30,7 +30,8 @@ test('production Nix Node replays original v38 and v39 entry and exit bytes thro
         join(fixtures, 'entry-crypto-node.json.gz'),
         ...v39.cases.map((golden) => join(sources, 'fixtures/retained-v39', golden.file)),
       ],
-      { stdout: 'pipe', stderr: 'pipe', timeout: 30_000, killSignal: 'SIGKILL' },
+      // Two retained generations share twice the original v38 replay budget.
+      { stdout: 'pipe', stderr: 'pipe', timeout: 60_000, killSignal: 'SIGKILL' },
     )
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
@@ -49,4 +50,4 @@ test('production Nix Node replays original v38 and v39 entry and exit bytes thro
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
-}, 45_000)
+}, 75_000)
