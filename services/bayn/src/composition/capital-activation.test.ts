@@ -27,9 +27,11 @@ import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import {
   configuredCapitalActivation,
+  researchCapitalRecoveryRequestIsCompatible,
   prepareOrRecoverResearchCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
   validateResearchCapitalPreflight,
@@ -122,6 +124,32 @@ test('retains the exact compatible mandate without changing its account or risk 
   expect(configuredCapitalActivation(plan(JSON.stringify(current)))).toEqual(
     Result.succeed({ request: current, buildContinuation: null, buildLineage: null }),
   )
+})
+
+test('v39 requires a reviewed strategy rebind even when the v38 account, grant class and risk remain identical', () => {
+  const previousStrategy = {
+    ...strategy,
+    parameterSchemaVersion: 'bayn.jev.protocol.v38',
+    parameterHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        ...defaultJevProtocolDocument,
+        schemaVersion: 'bayn.jev.protocol.v38',
+      }),
+    ),
+  }
+  const previous = request({
+    ...previousStrategy,
+    protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(previousStrategy)),
+  })
+  const current = request()
+  expect(previous.broker).toEqual(current.broker)
+  expect(previous.riskPolicyHash).toBe(current.riskPolicyHash)
+  expect(previous.limits).toEqual(current.limits)
+  expect(previous.grant._tag).toBe(current.grant._tag)
+  expect(previous.strategy.behaviorHash).toBe(current.strategy.behaviorHash)
+  expect(Result.isFailure(configuredCapitalActivation(plan(JSON.stringify(previous))))).toBe(true)
+  expect(Result.isFailure(researchCapitalRecoveryRequestIsCompatible(previous, plan()))).toBe(true)
+  expect(previous.requestHash).not.toBe(current.requestHash)
 })
 
 test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {

@@ -14,9 +14,13 @@ import {
   verifyRetainedOperationalV1Obligations,
 } from './operational-obligations'
 import { isVerifiedOperationalSourceCut, type VerifiedOperationalSourceCut } from './operational-source-cut'
-import { OperationalRegistrationSchema, validateOperationalRegistration } from './operational-period'
+import {
+  OperationalRegistrationSchema,
+  validateOperationalRegistration,
+  verifyStoredOperationalRegistration,
+} from './operational-period'
 import { measureReliability, ObligationOutcome, ReliabilityStatus } from './reliability'
-import type { SystemSourceCut } from './source-cut'
+import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
 import { SystemSourceCutSchema } from './source-cut'
 import { BrokerIdentitySchema } from '../broker/identity'
 import { AccountingTransactionSchema } from '../accounting/schema'
@@ -118,7 +122,11 @@ export const evaluateOperationalAssessment = (
     strictParseOptions,
   )(input).pipe(
     Result.mapError((cause) => new SystemAssessmentError({ message: 'Operational assessment is malformed', cause })),
-    Result.flatMap((data) => evaluateDecodedOperationalAssessment(data, evidence, verifiedSources)),
+    Result.flatMap((data) =>
+      validateOperationalRegistration(data.registration).pipe(
+        Result.flatMap(() => evaluateDecodedOperationalAssessment(data, evidence, verifiedSources)),
+      ),
+    ),
   )
 
 /** Reproduce immutable receipts under their original input contract; admission only accepts the current version. */
@@ -149,7 +157,7 @@ const evaluateDecodedOperationalAssessment = (
       evidence.buildBinding !== (current ? 'CURRENT' : 'RETAINED_OPERATIONAL_V1')
     )
       return yield* Result.fail(new SystemAssessmentError({ message: 'Operational source replay policy differs' }))
-    const { registration, registrationHash } = yield* validateOperationalRegistration(data.registration)
+    const { registration, registrationHash } = yield* verifyStoredOperationalRegistration(data.registration)
     const nativeAudit = native
       ? isVerifiedOperationalSourceCut(evidence)
         ? evidence.nativeSafetyAudit

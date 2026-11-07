@@ -8,6 +8,7 @@ import { JevResearchPolicy } from './jev/acceptance'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
+import { recordForwardPerformancePersistence } from './forward-performance/report'
 import { Sha256Schema, strictParseOptions } from './schemas'
 import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-performance-receipt'
 import { WriterFenceLive } from './execution/writer-fence'
@@ -123,7 +124,10 @@ const runProof = (options: {
         if (options.persistReceipt === true) {
           return yield* evaluateAndPersistForwardPerformanceReceipt(options.authorityGenerationHash, (writerFence) =>
             runForwardPerformanceReport(config, undefined, { ...options, writerFence }),
-          ).pipe(Effect.timeout(config.operationTimeoutMs))
+          ).pipe(
+            Effect.timeout(config.operationTimeoutMs),
+            Effect.flatMap((persisted) => Effect.fromResult(recordForwardPerformancePersistence(persisted))),
+          )
         }
         return yield* runForwardPerformanceReport(config, undefined, options)
       }).pipe(

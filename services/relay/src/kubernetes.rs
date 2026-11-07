@@ -267,6 +267,7 @@ impl Connector for Kubernetes {
             }
         };
         Ok(Normalized {
+            invocation: None,
             action: action.into(),
             resources: vec![PlatformResource {
                 kind: "kubernetes.namespace".into(),

@@ -4,7 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
 import { SystemAssessmentError } from './economics'
 import { executionOrderPlans } from './execution-plans'
-import type { SystemSourceCut } from './source-cut'
+import type { RecordedSystemSourceCut as SystemSourceCut } from './recorded-source-cut'
 
 export const decisionPersistenceAssumptions = [
   'PostgreSQL admission receipts attest that the bound immutable decision transaction was already committed.',

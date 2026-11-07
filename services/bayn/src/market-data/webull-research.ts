@@ -12,6 +12,7 @@ import {
 } from '../schemas'
 import { makeWebullResearchQueries } from './webull-research-queries'
 import { WebullRequestState, WebullSession, WebullSymbolSchema, webullPriceFields } from './webull-contract'
+import { webullMaximumAvailabilityLagMs } from './streaming/webull-projection'
 
 export class WebullResearchError extends Data.TaggedError('WebullResearchError')<{
   readonly message: string
@@ -33,6 +34,7 @@ export const WebullResearchInputSchema = Schema.Struct({
     Schema.makeFilter((value) => Date.parse(value) % 60_000 === 0, { expected: 'a completed-minute boundary' }),
   ),
   durationMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 360 })),
+  evidenceAsOf: Schema.optionalKey(UtcInstantSchema),
   selection: Schema.Union([
     Schema.Struct({ kind: Schema.Literal(SelectionKind.Catalog) }),
     Schema.Struct({
@@ -44,7 +46,17 @@ export const WebullResearchInputSchema = Schema.Struct({
       ),
     }),
   ]),
-})
+}).check(
+  Schema.makeFilter(
+    (input) => {
+      if (input.evidenceAsOf === undefined) return true
+      const end = Date.parse(input.startAt) + input.durationMinutes * 60_000
+      const cutoff = Date.parse(input.evidenceAsOf)
+      return cutoff >= end && cutoff <= end + 360_000
+    },
+    { expected: 'a collector evidence cutoff from window end through six minutes after it' },
+  ),
+)
 export type WebullResearchInput = typeof WebullResearchInputSchema.Type
 
 const MillisecondsSchema = Schema.FiniteFromString.check(
@@ -69,8 +81,21 @@ export const WebullResearchBarSchema = Schema.Struct({
   archived_ns: UnsignedMicrosSchema,
   capture_id: Schema.String.check(Schema.isUUID()),
   payload_sha256: Sha256Schema,
+  first_received_ns: UnsignedMicrosSchema,
+  first_capture_id: Schema.String.check(Schema.isUUID()),
+  first_source_topic: StrictNonEmptyStringSchema,
+  first_source_partition: NonNegativeIntegerSchema,
+  first_source_offset: UnsignedMicrosSchema,
+  first_payload_sha256: Sha256Schema,
   capture_observations: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
-})
+}).check(
+  Schema.makeFilter(
+    (bar) =>
+      BigInt(bar.first_received_ns) >= BigInt(bar.bar_start_ms + 60_000) * 1_000_000n &&
+      BigInt(bar.first_received_ns) <= BigInt(bar.received_ns),
+    { expected: 'first collector receipt after minute completion and no later than the latest receipt' },
+  ),
+)
 export type WebullResearchBar = typeof WebullResearchBarSchema.Type
 export const WebullResearchRequestSchema = Schema.Struct({
   provider: Schema.Literal('webull'),
@@ -114,6 +139,8 @@ export interface WebullResearchRows {
 export const webullResearchRowLimit = 100_000
 export const webullResearchEndMs = (input: WebullResearchInput) =>
   Date.parse(input.startAt) + input.durationMinutes * 60_000
+export const webullResearchEvidenceMs = (input: WebullResearchInput) =>
+  input.evidenceAsOf === undefined ? webullResearchEndMs(input) : Date.parse(input.evidenceAsOf)
 
 const priceKeys = ['open', 'high', 'low', 'close', 'volume'] as const
 const equalDecimal = (left: string, right: string) => {
@@ -122,10 +149,23 @@ const equalDecimal = (left: string, right: string) => {
   return Option.isSome(a) && Option.isSome(b) && BigDecimal.equals(a.value, b.value)
 }
 const key = (bar: Pick<WebullResearchBar, 'symbol' | 'bar_start_ms'>) => `${bar.symbol}/${bar.bar_start_ms}`
+const collectorLagNs = (bar: WebullResearchBar) =>
+  BigInt(bar.first_received_ns) - BigInt(bar.bar_start_ms + 60_000) * 1_000_000n
+const collectorLagMs = (bar: WebullResearchBar) => Number(collectorLagNs(bar)) / 1_000_000
+const timelyCollectorReceipt = (bar: WebullResearchBar) =>
+  collectorLagNs(bar) <= BigInt(webullMaximumAvailabilityLagMs) * 1_000_000n
 
 /** Current retained evidence with a collector-receipt cutoff, never a trading snapshot or historical availability proof. */
 export const makeWebullResearchReport = (input: WebullResearchInput, rows: WebullResearchRows) => {
   const endMs = webullResearchEndMs(input)
+  const evidenceMs = webullResearchEvidenceMs(input)
+  const eligibleMinuteSlots = Math.max(
+    0,
+    Math.min(
+      input.durationMinutes,
+      Math.floor((evidenceMs - webullMaximumAvailabilityLagMs - Date.parse(input.startAt)) / 60_000),
+    ),
+  )
   const issues: string[] = []
   const seen = new Set<string>()
   for (const bar of rows.bars) {
@@ -152,9 +192,43 @@ export const makeWebullResearchReport = (input: WebullResearchInput, rows: Webul
     if (previous === undefined || bar.bar_start_ms > previous.bar_start_ms) latest.set(bar.symbol, bar)
   }
   const requests = new Map(rows.requests.map((row) => [row.symbol, row]))
+  const selectedSymbols = new Set(symbols)
+  const minuteGroups = new Map<string, WebullResearchBar[]>()
+  const startMs = Date.parse(input.startAt)
+  for (const bar of rows.bars) {
+    if (!selectedSymbols.has(bar.symbol) || bar.bar_start_ms < startMs || bar.bar_start_ms + 60_000 > endMs) {
+      issues.push(`Webull minute outside the requested coverage window: ${key(bar)}`)
+      continue
+    }
+    const group = minuteGroups.get(key(bar)) ?? []
+    group.push(bar)
+    minuteGroups.set(key(bar), group)
+  }
+  const timingBySymbol = new Map(
+    symbols.map((symbol) => [symbol, { observedMinutes: 0, timelyMinutes: 0, lateMinutes: 0, conflictingMinutes: 0 }]),
+  )
+  for (const group of minuteGroups.values()) {
+    const bar = group[0]
+    if (bar === undefined) continue
+    if (bar.bar_start_ms + 60_000 + webullMaximumAvailabilityLagMs > evidenceMs) continue
+    const timing = timingBySymbol.get(bar.symbol)
+    if (timing === undefined) continue
+    if (group.length > 1) timing.conflictingMinutes++
+    else {
+      timing.observedMinutes++
+      if (timelyCollectorReceipt(bar)) timing.timelyMinutes++
+      else timing.lateMinutes++
+    }
+  }
   const coverage = symbols.map((symbol) => {
     const bar = latest.get(symbol)
     const request = requests.get(symbol)
+    const timing = timingBySymbol.get(symbol) ?? {
+      observedMinutes: 0,
+      timelyMinutes: 0,
+      lateMinutes: 0,
+      conflictingMinutes: 0,
+    }
     return {
       symbol,
       requestState: request?.request_state ?? 'NO_CAPTURED_REQUEST',
@@ -162,6 +236,15 @@ export const makeWebullResearchReport = (input: WebullResearchInput, rows: Webul
       latestBarStartAt: bar === undefined ? null : new Date(bar.bar_start_ms).toISOString(),
       barAgeSeconds: bar === undefined ? null : (endMs - bar.bar_start_ms) / 1_000,
       fresh: bar !== undefined && endMs - bar.bar_start_ms <= 360_000,
+      collectorTiming: {
+        requestedMinuteSlots: input.durationMinutes,
+        eligibleMinuteSlots,
+        pendingMinutes: input.durationMinutes - eligibleMinuteSlots,
+        ...timing,
+        missingMinutes: eligibleMinuteSlots - timing.observedMinutes - timing.conflictingMinutes,
+        latestFirstReceiptLagMs:
+          bar === undefined || minuteGroups.get(key(bar))?.length !== 1 ? null : collectorLagMs(bar),
+      },
     }
   })
   if (symbols.length === 0) issues.push('No captured catalog requests or completed bars in the window')
@@ -196,17 +279,23 @@ export const makeWebullResearchReport = (input: WebullResearchInput, rows: Webul
     }
   })
   const report = {
-    schemaVersion: 'bayn.webull-research.v1',
+    schemaVersion: 'bayn.webull-research.v2',
     qualification: 'UNQUALIFIED',
     intervalSeconds: 60,
     input,
     endAt: new Date(endMs).toISOString(),
+    evidenceAsOf: new Date(evidenceMs).toISOString(),
     availabilityBasis: 'Collector receipt cutoff in the current retained archive; not historical Bayn availability',
     feedComparisonBasis:
       'Webull Nasdaq Basic decimal strings versus Alpaca IEX archived Float64 values; venue coverage differs',
     catalogBasis:
       'Symbols present in captured requests; this is not an assertion that every listed symbol is supported',
     freshBarStartBudgetSeconds: 360,
+    collectorTimingBasis:
+      'Earliest valid archived collector receipt for each requested symbol/minute, across revisions; not Bayn consumer availability or trading eligibility',
+    collectorTimingBudgetMs: webullMaximumAvailabilityLagMs,
+    collectorTimingDenominator:
+      'Eligible requested symbol/minute slots whose ten-second budget has closed by evidenceAsOf; remaining slots are pending, not missing. No market-calendar or trade-activity assumption',
     issues,
     coverage,
     bars: rows.bars,
@@ -222,6 +311,28 @@ export const makeWebullResearchReport = (input: WebullResearchInput, rows: Webul
       gapEvents: rows.gaps.length,
       matchedMinutes: comparison.filter((row) => row.webull !== null && row.alpaca !== null).length,
       differingMinutes: comparison.filter((row) => row.status === FeedComparisonState.Different).length,
+      collectorTiming: coverage.reduce(
+        (total, row) => ({
+          requestedMinuteSlots: total.requestedMinuteSlots + row.collectorTiming.requestedMinuteSlots,
+          eligibleMinuteSlots: total.eligibleMinuteSlots + row.collectorTiming.eligibleMinuteSlots,
+          pendingMinutes: total.pendingMinutes + row.collectorTiming.pendingMinutes,
+          observedMinutes: total.observedMinutes + row.collectorTiming.observedMinutes,
+          timelyMinutes: total.timelyMinutes + row.collectorTiming.timelyMinutes,
+          lateMinutes: total.lateMinutes + row.collectorTiming.lateMinutes,
+          missingMinutes: total.missingMinutes + row.collectorTiming.missingMinutes,
+          conflictingMinutes: total.conflictingMinutes + row.collectorTiming.conflictingMinutes,
+        }),
+        {
+          requestedMinuteSlots: 0,
+          eligibleMinuteSlots: 0,
+          pendingMinutes: 0,
+          observedMinutes: 0,
+          timelyMinutes: 0,
+          lateMinutes: 0,
+          missingMinutes: 0,
+          conflictingMinutes: 0,
+        },
+      ),
     },
   }
   return Result.map(canonicalHashV1Result(report), (reportHash) => ({ ...report, reportHash }))
@@ -229,8 +340,8 @@ export const makeWebullResearchReport = (input: WebullResearchInput, rows: Webul
 
 export const readWebullResearch = (input: WebullResearchInput) =>
   Effect.gen(function* () {
-    if (webullResearchEndMs(input) > (yield* Clock.currentTimeMillis))
-      return yield* new WebullResearchError({ message: 'Research window ends in the future' })
+    if (webullResearchEvidenceMs(input) > (yield* Clock.currentTimeMillis))
+      return yield* new WebullResearchError({ message: 'Research evidence cutoff is in the future' })
     const sql = yield* ClickhouseClient.ClickhouseClient
     const queries = makeWebullResearchQueries(sql, input)
     const decode = <A, I>(schema: Schema.Codec<A, I>) =>

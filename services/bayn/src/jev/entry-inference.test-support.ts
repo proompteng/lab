@@ -21,7 +21,8 @@ import {
 import { decodeJevResponse, prepareJevRequest } from './contract'
 import { JevClient } from './client'
 import { utcInstantFromEpochMillis } from '../time'
-import { EntryInferenceJournal, deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
+import { EntryInferenceJournal, deriveEntryDispositionForChart, type EntryInferenceCompletion } from './entry-inference'
+import { makeEntryJudgmentRequest } from './entry-questions'
 import type { EntryInferenceInput, EntryInferenceMaterial } from './entry-inference-input'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
@@ -47,6 +48,7 @@ export const entryEvaluationRequestFixture = (
       numericalState: {
         schemaVersion: defaultJevProtocolDocument.inputDefinition,
         webullContext: null,
+        entryEconomics: { maximumEntryQuoteDriftBps: 0, maximumEntryLimitSlippageBps: 0 },
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol, bars1m: bars },
         session: { completedBarWindowEndsAt: windowEndAt },
@@ -216,7 +218,9 @@ export const entryInferenceFixtureLayer = Layer.sync(EntryInferenceJournal, () =
 })
 
 export const entryCompletionFixture = (
-  request: JevEvaluationRequest,
+  request: Pick<JevEvaluationRequest, 'requestId' | 'requestHash' | 'observedAt' | 'expiresAt'> & {
+    readonly request: EntryInferenceMaterial
+  },
   at = request.observedAt,
   support = 0.9,
 ): EntryInferenceCompletion => {
@@ -227,11 +231,21 @@ export const entryCompletionFixture = (
   const skip = checkpoint.skips[0]
   const baseStart = base?.outcome ?? (skip === undefined ? null : { status: 'NOT_REQUESTED' as const, skip })
   if (baseStart === null) throw new Error('Expected fixture base outcome')
+  const nativeChart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
+  const assessments = Result.getOrThrow(
+    stagedChartAssessments(
+      { chart: nativeChart, protocol: request.request.protocol, funding: request.request.funding },
+      stageResponseIdentity(chart.outcome.inference),
+      baseStart.status === 'RECEIVED' ? stageResponseIdentity(baseStart.inference) : null,
+    ),
+  )
   const disposition = Result.getOrThrow(
-    deriveEntryHandoffDisposition(
+    deriveEntryDispositionForChart(
       request.request,
       chart.outcome.inference,
-      baseStart.status === 'RECEIVED' ? baseStart.inference : null,
+      nativeChart,
+      assessments,
+      makeEntryJudgmentRequest,
     ),
   )
   const material = {

@@ -10,9 +10,8 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { decodeJevBatchResult } from './batch'
 import { JevPurpose } from './portfolio'
-import { reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import { decodeJevStudyBatchResult, reproduceJevStudyBatchEvidence } from './study-evidence'
 import { JevStudyCycleSchema, verifyJevStudyInventory, type JevStudyInventory } from './study-inventory'
 
 export class JevStudyExportFailure extends Data.TaggedError('JevStudyExportFailure')<{
@@ -34,9 +33,10 @@ export const verifyJevStudyExportRow = (input: unknown, sessionDate: string, acc
       RowSchema,
       strictParseOptions,
     )(input).pipe(Result.mapError(() => new JevStudyExportFailure({ message: 'Stored batch row is malformed' })))
-    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(row.observation, row.plan).pipe(
+    const source = yield* reproduceJevStudyBatchEvidence(row.observation, row.plan).pipe(
       Result.mapError(() => new JevStudyExportFailure({ message: `Batch ${row.batchId} does not reproduce` })),
     )
+    const { observation, plan } = source
     if (
       observation.schemaVersion !== 'bayn.jev-observation.v1' ||
       observation.cycleId !== row.cycleId ||
@@ -51,7 +51,7 @@ export const verifyJevStudyExportRow = (input: unknown, sessionDate: string, acc
     const result =
       row.result === null
         ? null
-        : yield* decodeJevBatchResult(plan, row.result).pipe(
+        : yield* decodeJevStudyBatchResult(source, row.result).pipe(
             Result.mapError(() => new JevStudyExportFailure({ message: `Batch ${row.batchId} result is invalid` })),
           )
     return { ...row, plan, result, purpose: observation.portfolio.purpose }

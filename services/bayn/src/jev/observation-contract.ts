@@ -2,7 +2,7 @@ import { Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { JevPortfolioSchema } from './portfolio'
-import { JevProtocolSchema } from './protocol'
+import { JevProtocolSchema, RetainedJevProtocolV38Schema } from './protocol'
 
 export const JevObservationSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-observation.v1'),
@@ -17,4 +17,9 @@ export const JevObservationSchema = Schema.Struct({
     quotes: Schema.Array(Schema.Unknown),
     trades: Schema.Array(Schema.Unknown),
   }),
+})
+
+export const RetainedJevV38ObservationSchema = Schema.Struct({
+  ...JevObservationSchema.fields,
+  protocol: RetainedJevProtocolV38Schema,
 })
