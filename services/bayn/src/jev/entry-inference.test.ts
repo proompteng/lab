@@ -15,6 +15,7 @@ import { EntryAblationSelection, prepareEntryInferenceInput, type EntryInference
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { JevOutcome, makeJevEvaluationRequest, makeJevEvaluationReceipt, entryInferenceAvailableAt } from './evidence'
 import { defaultJevProtocolDocument } from './protocol'
+import { EntrySetup } from './entry-proposals'
 import type { StagedDispatchClaim } from './staged-checkpoint'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
@@ -67,6 +68,7 @@ const providers = (
     readonly baseClaimDenied?: boolean
     readonly baseTerminalFails?: boolean
     readonly journalCommitDelay?: number
+    readonly presence?: Readonly<Record<string, number>>
   } = {},
 ) => {
   const events: string[] = []
@@ -211,7 +213,8 @@ const providers = (
                   model: prepared.request.model,
                   answers: Object.fromEntries(
                     Object.entries(prepared.request.questions).map(([name, question]) => {
-                      if (question.type === 'noul') return [name, { type: 'noul', noul: 0.8 }]
+                      if (question.type === 'noul')
+                        return [name, { type: 'noul', noul: options.presence?.[name] ?? 0.8 }]
                       if (question.type !== 'choice') throw new Error('Unexpected chart question')
                       const choices = Object.keys(question.criteria)
                       return [
@@ -257,6 +260,45 @@ const run = (claim: Parameters<typeof evaluateFixtureEntry>[0], setup: ReturnTyp
   )
 
 describe('claimed sequential entry inference', () => {
+  test.each([
+    { presence: { support_present: 0.1 }, setups: [EntrySetup.BaseBreakout], visualCalls: 2 },
+    { presence: { resistance_present: 0.25 }, setups: [EntrySetup.BaseBreakout], visualCalls: 2 },
+    { presence: { base_present: 0.3 }, setups: [EntrySetup.SupportRecovery], visualCalls: 1 },
+    {
+      presence: { support_present: 0.1, resistance_present: 0.25, base_present: 0.1 },
+      setups: [],
+      visualCalls: 1,
+    },
+    {
+      presence: { support_present: 0.5, resistance_present: 0.5, base_present: 0.5 },
+      setups: [EntrySetup.SupportRecovery, EntrySetup.BaseBreakout],
+      visualCalls: 2,
+    },
+  ])('presence $presence removes only inapplicable downstream questions', async ({ presence, setups, visualCalls }) => {
+    const setup = providers({ presence })
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, setup))
+    const disposition = result.handoff.disposition
+    expect(setup.events.filter((event) => event === 'visual')).toHaveLength(visualCalls)
+    if (disposition.status !== 'READY' && disposition.status !== 'NO_FUNDED_PROPOSALS')
+      throw new Error('Expected completed chart assessment')
+    expect(disposition.evaluation.proposals.map((proposal) => proposal.source.setup)).toEqual([...setups])
+    if (setups.length === 0) {
+      expect(disposition.status).toBe('NO_FUNDED_PROPOSALS')
+      expect(setup.events).not.toContain('jev')
+      expect(result.jev.status).toBe('NOT_REQUESTED')
+    } else {
+      if (disposition.status !== 'READY') throw new Error('Expected dependent judgments')
+      const expected = setups.flatMap((value) => {
+        const prefix = `equity_${value.toLowerCase()}`
+        return [`${prefix}_confirmed`, `${prefix}_stop_invalidates`]
+      })
+      expect(Object.keys(disposition.jevRequest.questions)).toEqual(expected)
+      expect(result.jev.status).toBe('RECEIVED')
+    }
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+  })
+
   test('two-second journal commits leave the original deadline available for both chart stages and Jev', async () => {
     const setup = providers({ journalCommitDelay: 2_000, jevDelay: 1_000 })
     const claim = fixture()
