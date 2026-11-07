@@ -17,10 +17,11 @@ manual synchronization to the exact promoted revision and affected worker Deploy
 
 ## Cassandra capacity
 
-Cassandra's native startup probe permits up to 15 minutes to open retained SSTables and initialize JMX before the
-existing liveness and readiness probes begin. A retained-volume move exceeded the former three-minute liveness
-window and was repeatedly terminated during initialization. Steady-state liveness and local-node `UN` readiness
-checks retain their existing settings. The StatefulSet remains `OnDelete`; after the reviewed Kargo revision is
+Cassandra's native startup probe permits up to 30 minutes to open retained SSTables, replay commit logs, flush recovered
+memtables and initialize JMX before the existing liveness and readiness probes begin. Recovery after the November 7
+storage outage exceeded the previous 15-minute window and was terminated while flushing recovered data.
+Steady-state liveness and local-node `UN` readiness checks retain their existing settings. The StatefulSet remains
+`OnDelete`; after the reviewed Kargo revision is
 applied, replace only the unavailable maintenance target, preserving its PVC/PV and Cassandra host ID.
 
 `cassandra-pvcs.yaml` declares the three existing `data-temporal-cassandra-{0,1,2}` claims at 30Gi. They were expanded
