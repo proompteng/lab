@@ -37,13 +37,19 @@
             if builtins.stringLength repoRevision >= 12 then builtins.substring 0 12 repoRevision else repoRevision;
 
           # Preserve the shared zlib build so retained Bayn chart bytes still replay.
-          nodejs = pkgs.nodejs_24.overrideAttrs {
+          nodejs = pkgs.nodejs_24.overrideAttrs (old: {
             version = "24.22.2";
             src = pkgs.fetchurl {
               url = "https://nodejs.org/dist/v24.22.2/node-v24.22.2.tar.xz";
               hash = "sha256-j+LsFyO7n40LaDkHyCcI3rvtpkryHLKqIUxCQe7QoGE=";
             };
-          };
+            # Node 24.22.2 already includes emulator support.
+            patches = builtins.filter (
+              patch:
+              !lib.hasSuffix "configure-emulator.patch" (toString patch)
+              && !lib.hasSuffix "bin-sh-node-run-v22.patch" (toString patch)
+            ) old.patches ++ [ ./nix/patches/nodejs-positional-args-shell.patch ];
+          });
           go = exact.go;
           ruby = assertVersion "ruby_3_4" "3.4.7" pkgs.ruby_3_4;
 

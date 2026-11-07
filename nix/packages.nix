@@ -428,7 +428,9 @@ in
     version = goVersion;
     src = goSource.src;
     sourceRoot = "go";
-    passthru.CGO_ENABLED = pkgs.go.CGO_ENABLED;
+    passthru = {
+      inherit (pkgs.go) CGO_ENABLED GOOS GOARCH;
+    };
     meta.platforms = lib.platforms.darwin ++ lib.platforms.linux;
 
     nativeBuildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
