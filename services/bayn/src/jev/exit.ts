@@ -48,6 +48,14 @@ export const JevExitEvidenceSchema = Schema.Struct({
 })
 export type JevExitEvidence = typeof JevExitEvidenceSchema.Type
 
+/** Pure exit arithmetic needs these policy facts; admission still decodes the complete current protocol. */
+export type JevExitEvidenceMaterial = Omit<JevExitEvidence, 'protocol'> & {
+  readonly protocol: Pick<
+    JevExitEvidence['protocol'],
+    'candidateSymbols' | 'maximumHoldingMinutes' | 'maximumQuoteAgeMs'
+  >
+}
+
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 export const jevProtectiveQuoteIsFresh = (
   quote: Pick<IntradayQuote, 'eventAt'>,
@@ -88,7 +96,7 @@ type PriceExitSource = {
 }
 
 export const verifiedPositionQuote = (
-  input: Pick<JevExitEvidence, 'protocol' | 'sessionDate' | 'observedAt'> & { readonly symbol: string },
+  input: Pick<JevExitEvidenceMaterial, 'protocol' | 'sessionDate' | 'observedAt'> & { readonly symbol: string },
   source: PriceExitSource,
 ) =>
   Result.gen(function* () {
@@ -130,7 +138,7 @@ export const verifiedPositionQuote = (
     return { bid, quote }
   })
 
-export const validateJevPositionEvidence = (evidence: typeof JevPositionEvidenceSchema.Type) =>
+export const validateJevPositionEvidence = (evidence: Omit<JevExitEvidenceMaterial, 'trigger'>) =>
   Result.gen(function* () {
     const { portfolio, protocol } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
@@ -161,9 +169,8 @@ export const validateJevPositionEvidence = (evidence: typeof JevPositionEvidence
     return { portfolio, position, firstFill, entryPlan, now }
   })
 
-export const decideJevExit = (input: unknown) =>
+export const deriveJevExitTargetMaterial = <Evidence extends JevExitEvidenceMaterial>(evidence: Evidence) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(JevExitEvidenceSchema, strictParseOptions)(input)
     const { protocol, trigger } = evidence
     const { portfolio, position, firstFill, entryPlan, now } = yield* validateJevPositionEvidence(evidence)
     let commitDeadlineAt = new Date(now + protocol.maximumQuoteAgeMs).toISOString()
@@ -203,6 +210,15 @@ export const decideJevExit = (input: unknown) =>
     }
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev exit evidence does not reproduce', cause })))
 
+export const decideJevExit = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    JevExitEvidenceSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.flatMap(deriveJevExitTargetMaterial),
+    Result.mapError((cause) => new JevContractError({ message: 'Jev exit evidence does not reproduce', cause })),
+  )
+
 export const JevExitTargetSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-exit-target.v5'),
   strategyName: Schema.Literal('jev'),
@@ -224,8 +240,9 @@ export const JevExitTargetSchema = Schema.Struct({
   }),
 )
 export type JevExitTarget = typeof JevExitTargetSchema.Type
+export type JevExitTargetMaterial = Omit<JevExitTarget, 'evidence'> & { readonly evidence: JevExitEvidenceMaterial }
 
-const isProfitExit = (target: JevExitTarget | undefined): target is JevExitTarget =>
+const isProfitExit = (target: JevExitTargetMaterial | undefined): target is JevExitTargetMaterial =>
   target !== undefined &&
   (target.reason === JevExitReason.ProfitTarget ||
     (target.reason === JevExitReason.ProtectionReleased &&
@@ -233,7 +250,7 @@ const isProfitExit = (target: JevExitTarget | undefined): target is JevExitTarge
       target.evidence.portfolio.profitExitRequested))
 
 export const jevProfitTargetStopCrossed = (
-  target: JevExitTarget,
+  target: JevExitTargetMaterial,
   observedAt: string,
   evaluatedAt: string,
   source: PriceExitSource,
@@ -257,7 +274,7 @@ export const jevProfitTargetStopCrossed = (
   })
 
 export const jevProfitTargetLimitFloors = (
-  target: JevExitTarget | undefined,
+  target: JevExitTargetMaterial | undefined,
   observedAt: string,
   references: readonly { readonly symbol: string; readonly referencePriceMicros: string }[],
 ): Result.Result<Readonly<Record<string, bigint>>, JevContractError> =>
@@ -280,7 +297,7 @@ export const jevProfitTargetLimitFloors = (
   })
 
 export const jevProfitTargetHoldingDeadlineAt = (
-  target: JevExitTarget | undefined,
+  target: JevExitTargetMaterial | undefined,
 ): Result.Result<string | undefined, JevContractError> => {
   if (!isProfitExit(target)) return Result.succeed(undefined)
   const portfolio = target.evidence.portfolio

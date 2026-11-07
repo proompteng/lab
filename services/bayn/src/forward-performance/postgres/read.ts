@@ -27,7 +27,6 @@ import {
   type ForwardPerformancePostgresEvidence,
   decodeCashYieldSnapshots,
   decodeCount,
-  decodeCycles,
   decodeDurableExecutions,
   decodeExecutionFills,
   decodeExecutionIntents,
@@ -48,6 +47,7 @@ import {
   reconciliationExactness,
 } from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
+import { firstCapturedCycleQuery, readForwardPerformanceCycles } from './cycles'
 import {
   executionEvidenceFromRows,
   indexExecutionEvidence,
@@ -210,24 +210,7 @@ export const readForwardPerformancePostgres = (
   forwardPerformanceSnapshot(sql, writerFence)
     .withTransaction(
       Effect.gen(function* () {
-        const cycleRows = yield* sql<Record<string, unknown>>`
-          SELECT
-            cycle_id,
-            qualification_run_id,
-            strategy_name,
-            strategy_protocol_hash,
-            account_id,
-            execution_policy_hash,
-            strategy_execution_model_hash,
-            state,
-            submission_open_at,
-            terminal_at
-          FROM autonomous_cycles AS cycle
-          WHERE cycle.account_id = ${accountId}
-            AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeCycles))
+        const cycleRows = yield* readForwardPerformanceCycles(sql, accountId, authorityGenerationHash)
 
         const strategyRows = yield* readForwardPerformanceStrategyRows(sql, accountId, authorityGenerationHash)
 
@@ -249,13 +232,7 @@ export const readForwardPerformancePostgres = (
             ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           ), first_cycle AS (
-            SELECT cycle.submission_open_at
-            FROM autonomous_cycles AS cycle
-            WHERE cycle.account_id = ${accountId}
-              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-            LIMIT 1
+            ${firstCapturedCycleQuery(sql, cycleRows)}
           )
           SELECT snapshot.equity_micros::text AS starting_capital_micros
           FROM account_snapshots AS snapshot
@@ -277,13 +254,7 @@ export const readForwardPerformancePostgres = (
             ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           ), first_cycle AS (
-            SELECT cycle.submission_open_at
-            FROM autonomous_cycles AS cycle
-            WHERE cycle.account_id = ${accountId}
-              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-            LIMIT 1
+            ${firstCapturedCycleQuery(sql, cycleRows)}
           ), opening_snapshot AS (
             SELECT
               event.event_id,
@@ -619,13 +590,7 @@ export const readForwardPerformancePostgres = (
             ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           ), first_cycle AS (
-            SELECT cycle.submission_open_at
-            FROM autonomous_cycles AS cycle
-            WHERE cycle.account_id = ${accountId}
-              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-            LIMIT 1
+            ${firstCapturedCycleQuery(sql, cycleRows)}
           ), opening_snapshot AS (
             SELECT event.observed_at
             FROM account_snapshots AS snapshot

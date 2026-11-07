@@ -1,6 +1,9 @@
 import type { ForwardPerformanceExecutionEvidence, ForwardPerformanceMarketVolumeRequest } from '../model'
 import { Result, Schema } from 'effect'
-import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import {
+  CycleDecisionDocumentSchema,
+  decodeRetainedJevV38ExecutionDecisionDocument,
+} from '../../shadow-decision-contract'
 import { strictParseOptions } from '../../schemas'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import {
@@ -16,7 +19,12 @@ export const verifyPerformanceDecisions = (rows: readonly (typeof CycleDecisionR
   const verifiedRows: VerifiedCycleDecisionRow[] = []
   const unverifiedDecisionHashes: string[] = []
   for (const row of rows) {
-    const decoded = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+    const current = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+    if (Result.isSuccess(current)) {
+      verifiedRows.push({ ...row, document: current.success })
+      continue
+    }
+    const decoded = decodeRetainedJevV38ExecutionDecisionDocument(row.document)
     if (Result.isFailure(decoded)) unverifiedDecisionHashes.push(row.decision_hash)
     else verifiedRows.push({ ...row, document: decoded.success })
   }

@@ -134,6 +134,10 @@ const serializeArray = (value: readonly unknown[], ancestors: Set<object>, path:
   return `[${entries.join(',')}]`
 }
 
+// Most evidence keys and scalar values need no JSON escaping.
+const quoteCanonicalString = (value: string): string =>
+  /["\\\u0000-\u001f]/u.test(value) ? JSON.stringify(value) : `"${value}"`
+
 const serializeObject = (value: object, ancestors: Set<object>, path: string): string => {
   if (ancestors.has(value)) return validationFailure(path, 'cycle', 'object')
 
@@ -148,7 +152,7 @@ const serializeObject = (value: object, ancestors: Set<object>, path: string): s
     if (!key.isWellFormed()) return validationFailure(path, 'invalid-unicode-key', 'string')
     const nestedPath = `${path}.${key}`
     const nested = serializeCanonicalValue(dataProperty(value, key, nestedPath, 'object'), ancestors, nestedPath)
-    entries.push(`${JSON.stringify(key)}:${nested}`)
+    entries.push(`${quoteCanonicalString(key)}:${nested}`)
   }
   ancestors.delete(value)
   return `{${entries.join(',')}}`
@@ -158,10 +162,12 @@ const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: s
   if (value === null) return 'null'
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') {
-    return value.isWellFormed() ? JSON.stringify(value) : validationFailure(path, 'invalid-unicode-surrogate', 'string')
+    return value.isWellFormed()
+      ? quoteCanonicalString(value)
+      : validationFailure(path, 'invalid-unicode-surrogate', 'string')
   }
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? JSON.stringify(value) : validationFailure(path, 'non-finite-number', 'number')
+    return Number.isFinite(value) ? String(value) : validationFailure(path, 'non-finite-number', 'number')
   }
   if (typeof value !== 'object') return validationFailure(path, 'non-json-type', typeof value)
 

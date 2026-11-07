@@ -736,6 +736,18 @@ export const submitJobRun = async (
     .filter((file) => file.path && file.content)
 
   const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const activeDeadlineSeconds =
+    runtimeConfig.activeDeadlineSeconds === undefined
+      ? undefined
+      : parseOptionalNumber(runtimeConfig.activeDeadlineSeconds)
+  if (
+    activeDeadlineSeconds !== undefined &&
+    (activeDeadlineSeconds === null ||
+      !Number.isInteger(activeDeadlineSeconds) ||
+      activeDeadlineSeconds < 1 ||
+      activeDeadlineSeconds > 86400)
+  )
+    throw new Error('runtime.config.activeDeadlineSeconds must be an integer between 1 and 86400')
   const logRetentionSeconds = resolveRunnerLogRetentionSeconds(runtimeConfig)
   const backoffLimit = (() => {
     const explicit = parseOptionalNumber(runtimeConfig.backoffLimit)
@@ -806,6 +818,7 @@ export const submitJobRun = async (
   const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
   const labels: Record<string, string> = {
     'agents.proompteng.ai/agent-run': runName,
+    ...(runUid ? { 'agents.proompteng.ai/run-uid': runUid } : {}),
   }
   if (agentName) {
     labels['agents.proompteng.ai/agent'] = normalizeLabelValue(agentName)
@@ -1074,6 +1087,7 @@ export const submitJobRun = async (
     },
     spec: {
       backoffLimit,
+      ...(activeDeadlineSeconds === undefined ? {} : { activeDeadlineSeconds }),
       template: {
         metadata: {
           labels: mergedLabels,

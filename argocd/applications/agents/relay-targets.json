@@ -1,0 +1,20 @@
+{
+  "lab": {
+    "id": "agents/lab",
+    "name": "Lab agents",
+    "workspaceId": "e984074d-8b6d-5244-9fdb-59ff5d4a5836",
+    "namespace": "agents",
+    "namespaceUid": "faa67314-9bd4-4d1e-b082-00e1904fbeef",
+    "agent": "codex-agent",
+    "repository": "proompteng/lab",
+    "base": "main",
+    "vcsRef": "github",
+    "secretBindingRef": "codex-github-token",
+    "secrets": [
+      "codex-auth",
+      "github-token",
+      "agents-artifacts"
+    ],
+    "timeoutSeconds": 7200
+  }
+}

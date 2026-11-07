@@ -1,9 +1,13 @@
 import { PgClient } from '@effect/sql-pg'
+import { isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
-import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
-import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import {
+  decodeExecutionDecisionDocument,
+  decodeRetainedJevV38ExecutionDecisionDocument,
+} from '../shadow-decision-contract'
+import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { decisionAdmissionWitnesses, indexDecisionAdmissionMutations } from './decision-admissions'
 import {
   ControllerPassEvidenceSchema,
@@ -15,8 +19,9 @@ import { SystemAssessmentError } from './economics'
 import { executionOrderPlans, protectionIntentsByDecision } from './execution-plans'
 import { earliestDurableWitnesses } from './obligation-witnesses'
 import { bindOperationalWork, registeredControllerWork, registeredDecisionWork } from './operational-obligations'
-import { type OperationalRegistration, validateOperationalRegistration } from './operational-period'
+import { type OperationalRegistration, verifyStoredOperationalRegistration } from './operational-period'
 import { readSystemSourceCutPayload, SystemSourceCutSchema } from './source-cut'
+import { RecordedSystemSourceCutSchema } from './recorded-source-cut'
 import { readSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 import { makeOperationalSafetyScan, type NativeOperationalSafetyAudit } from './operational-safety'
 
@@ -78,7 +83,7 @@ export type VerifiedOperationalSourceCut = {
 }
 
 export const isVerifiedOperationalSourceCut = (
-  cut: VerifiedOperationalSourceCut | typeof SystemSourceCutSchema.Type,
+  cut: VerifiedOperationalSourceCut | typeof RecordedSystemSourceCutSchema.Type,
 ): cut is VerifiedOperationalSourceCut => verified in cut && cut[verified] === true
 
 const readDecision = (reference: SourceReference, registration: OperationalRegistration) =>
@@ -87,10 +92,13 @@ const readDecision = (reference: SourceReference, registration: OperationalRegis
     if (record.kind !== SystemSourceRecordKind.Decision || reference.kind !== record.kind)
       return yield* new SystemAssessmentError({ message: 'Decision source record kind differs' })
     const row = yield* Schema.decodeUnknownEffect(
-      SystemSourceCutSchema.fields.decisions.value,
+      Schema.Struct({ sessionDate: IsoDateSchema, document: Schema.Unknown }),
       strictParseOptions,
     )(record.payload)
-    const document = yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
+    const document =
+      registration.obligations.configuration.protocol.schemaVersion === 'bayn.jev.protocol.v38'
+        ? yield* Effect.fromResult(decodeRetainedJevV38ExecutionDecisionDocument(row.document))
+        : yield* Effect.fromResult(decodeExecutionDecisionDocument(row.document))
     if (document.contentHash !== reference.sourceId)
       return yield* new SystemAssessmentError({ message: 'Decision source identity differs' })
     if (!decisionMarketScopeSupported(document, registration))
@@ -224,19 +232,39 @@ export const readOperationalAssessmentSourceCut = (
   Effect.gen(function* () {
     const value = yield* readSystemSourceCutPayload(hash)
     const cut = yield* Schema.decodeUnknownEffect(
-      Schema.Union([SystemSourceCutSchema, OperationalSourceCutSchema]),
+      Schema.Union([RecordedSystemSourceCutSchema, OperationalSourceCutSchema]),
       strictParseOptions,
     )(value)
     if ((yield* Effect.fromResult(canonicalHashV1Result(cut))) !== hash)
       return yield* new SystemAssessmentError({ message: 'Operational source cut digest differs' })
-    if (cut.schemaVersion === 'bayn.system-source-cut.v4') return cut
-    const { registrationHash } = yield* Effect.fromResult(validateOperationalRegistration(registration))
+    const { registrationHash } = yield* Effect.fromResult(verifyStoredOperationalRegistration(registration))
     if (
       cut.registrationHash !== registrationHash ||
       cut.runtimeConfigurationHash !== registration.obligations.runtimeConfigurationHash ||
       (yield* Effect.fromResult(canonicalHashV1Result(cut.sourceMaterial))) !== cut.sourceMaterialHash
     )
       return yield* new SystemAssessmentError({ message: 'Operational source cut differs from its registration' })
+    if (cut.schemaVersion === 'bayn.system-source-cut.v4') {
+      if (
+        cut.decisions.some(({ document }) => {
+          const target = document.strategyDecision
+          const protocol =
+            target?.schemaVersion === 'bayn.jev-exit-target.v5'
+              ? target.evidence.protocol
+              : isProtectedEntryTarget(target)
+                ? target.evidence.observation.protocol
+                : undefined
+          return (
+            protocol !== undefined &&
+            protocol.schemaVersion !== registration.obligations.configuration.protocol.schemaVersion
+          )
+        })
+      )
+        return yield* new SystemAssessmentError({
+          message: 'Stored operational decisions mix strategy protocol versions',
+        })
+      return cut
+    }
     return yield* replayOperationalSourceRecords(cut, registration, buildBinding)
   }).pipe(
     Effect.mapError((cause) => new SystemAssessmentError({ message: 'Operational source verification failed', cause })),

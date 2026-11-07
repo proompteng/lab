@@ -68,7 +68,7 @@ const protocolFields = (entryQuestionPolicyHash: string) => ({
 const CurrentProtocol = Schema.Struct({
   ...protocolFields(entryQuestionPolicyHash),
   inputDefinition: Schema.Literal('bayn.jev-entry-state.v24'),
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v38'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v39'),
   entrySignalPolicy: Schema.Literal('jev-only'),
   lookbackMinutes: Schema.Struct({
     equity: Schema.Literal(marketHistoryMinutes[MarketKind.Equity]),
@@ -125,7 +125,7 @@ const validateProtocol = (
   return issues
 }
 
-// These schemas reproduce immutable financial evidence; new execution accepts only v38.
+// These schemas reproduce immutable financial evidence; new execution accepts only v39.
 export const jevProtocolSchemaForQuestionPolicy = <
   V extends
     | 'bayn.jev.protocol.v24'
@@ -289,10 +289,25 @@ export const RetainedJevProtocolV37Schema = Schema.Struct({
   ),
 )
 
+export const RetainedJevProtocolV38Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v38'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+      true,
+    ),
+  ),
+)
+
 export type JevProtocol = typeof JevProtocolSchema.Type
 // Historical registration started at v28. This reader never admits a protocol for execution.
 export const HistoricalJevProtocolSchema = Schema.Union([
   JevProtocolSchema,
+  RetainedJevProtocolV38Schema,
   RetainedJevProtocolV37Schema,
   RetainedJevProtocolV35Schema,
   RetainedJevProtocolV36Schema,
@@ -312,6 +327,7 @@ export const HistoricalJevProtocolSchema = Schema.Union([
 ])
 export type JevProtocolMaterial =
   | JevProtocol
+  | typeof RetainedJevProtocolV38Schema.Type
   | typeof RetainedJevProtocolV37Schema.Type
   | typeof RetainedJevProtocolV30Schema.Type
   | typeof RetainedJevProtocolV31Schema.Type
@@ -334,10 +350,12 @@ export type JevProtocolMaterial =
     })
 
 export const usesJevOnlyInference = (protocol: Pick<JevProtocolMaterial, 'schemaVersion'>) =>
-  protocol.schemaVersion === 'bayn.jev.protocol.v38' || protocol.schemaVersion === 'bayn.jev.protocol.v37'
+  protocol.schemaVersion === 'bayn.jev.protocol.v39' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
+  protocol.schemaVersion === 'bayn.jev.protocol.v37'
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v38',
+  schemaVersion: 'bayn.jev.protocol.v39',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',
