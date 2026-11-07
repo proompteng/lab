@@ -26,7 +26,7 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | Rank | Module                                                                  |  LOC |
 | ---- | ----------------------------------------------------------------------- | ---: |
 | 1    | `services/jangar/src/server/control-plane-status-types.ts`              | 2611 |
-| 2    | `services/jangar/src/server/chat-completion-encoder.ts`                 | 2074 |
+| 2    | `services/jangar/src/server/chat-completion-encoder.ts`                 | 2073 |
 | 3    | `services/jangar/src/server/torghut-market-context-agents.ts`           | 2002 |
 | 4    | `services/jangar/src/server/atlas-store.ts`                             | 1826 |
 | 5    | `services/jangar/src/server/torghut-simulation-control-plane.ts`        | 1724 |
@@ -36,8 +36,8 @@ The inventory keeps the Jangar HTTP registration boundary separate from its UI r
 | 9    | `services/jangar/src/routes/github/pulls/$owner/$repo/$number.tsx`      | 1027 |
 | 10   | `services/jangar/src/server/torghut-trading.ts`                         | 1000 |
 | 11   | `services/jangar/src/routes/torghut/trading.tsx`                        |  952 |
-| 12   | `services/jangar/src/server/github-client.ts`                           |  941 |
-| 13   | `services/jangar/src/server/torghut-quant-metrics.ts`                   |  933 |
+| 12   | `services/jangar/src/server/torghut-quant-metrics.ts`                   |  933 |
+| 13   | `services/jangar/src/server/github-client.ts`                           |  931 |
 | 14   | `services/jangar/src/server/github-review-actions.ts`                   |  928 |
 | 15   | `services/jangar/src/routes/atlas/search.tsx`                           |  893 |
 | 16   | `services/jangar/src/server/torghut-quant-runtime.ts`                   |  842 |
