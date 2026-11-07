@@ -36,7 +36,33 @@
           repoShortRevision =
             if builtins.stringLength repoRevision >= 12 then builtins.substring 0 12 repoRevision else repoRevision;
 
-          nodejs = assertVersion "nodejs_24" "24.11.1" pkgs.nodejs_24;
+          nodeVersion = "24.22.2";
+          nodeSource = pkgs.fetchurl {
+            url = "https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}.tar.xz";
+            hash = "sha256-j+LsFyO7n40LaDkHyCcI3rvtpkryHLKqIUxCQe7QoGE=";
+          };
+          # Node needs libuv's new statfs fields. Keep its full upstream tests without changing other tools.
+          nodePackages = pkgs.extend (_final: prev: {
+            libuv = prev.libuv.overrideAttrs {
+              version = "1.52.1";
+              src = pkgs.fetchurl {
+                url = "https://dist.libuv.org/dist/v1.52.1/libuv-v1.52.1.tar.gz";
+                hash = "sha256-ZtURuebjNMDmInnrI0+/srMRCxR5wJuVtEx6/KjP+ec=";
+              };
+              sourceRoot = "libuv-v1.52.1";
+            };
+          });
+          # Preserve the shared zlib build so retained Bayn chart bytes still replay.
+          nodejs = nodePackages.nodejs_24.overrideAttrs (old: {
+            version = nodeVersion;
+            src = nodeSource;
+            # Node 24.22.2 already includes emulator support.
+            patches = builtins.filter (
+              patch:
+              !lib.hasSuffix "configure-emulator.patch" (toString patch)
+              && !lib.hasSuffix "bin-sh-node-run-v22.patch" (toString patch)
+            ) old.patches ++ [ ./nix/patches/nodejs-positional-args-shell.patch ];
+          });
           go = exact.go;
           ruby = assertVersion "ruby_3_4" "3.4.7" pkgs.ruby_3_4;
 
@@ -301,7 +327,7 @@
               bun = exact.bun;
             };
             "headlamp-image" = import ./nix/images/headlamp.nix {
-              inherit pkgs lib repoRevision;
+              inherit pkgs lib repoRevision nodejs go;
             };
             "torghut-image" = import ./nix/images/torghut.nix {
               inherit pkgs lib;
@@ -347,6 +373,7 @@
         {
           packages = exact // linuxPackages // {
             default = toolchainDoctor;
+            inherit nodejs;
             inherit
               toolchainDoctor
               ociDoctor

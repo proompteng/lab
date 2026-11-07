@@ -59,7 +59,7 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Plan publication
         id: plan
         run: bun packages/temporal-bun-sdk/scripts/release-plan.ts
@@ -78,11 +78,11 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
         with:
-          node-version: '24.11.1'
+          node-version: '24.22.2'
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
       - name: Build Temporal Bun SDK
@@ -154,11 +154,11 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
         with:
-          node-version: '24.11.1'
+          node-version: '24.22.2'
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
       - name: Build Temporal Bun SDK
@@ -320,7 +320,7 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
         with:
-          node-version: '24.11.1'
+          node-version: '24.22.2'
           registry-url: https://registry.npmjs.org
 
       - name: Upgrade npm for trusted publishing
@@ -331,7 +331,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example

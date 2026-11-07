@@ -4,20 +4,20 @@ This guide covers the contributor tooling that should match the current repo sta
 
 ## Node.js and Bun
 
-- Node.js: `24.11.1`
-- Bun: `1.4.2`
+- Node.js: `24.22.2`
+- Bun: `1.4.4`
 
 Examples with `nvm`:
 
 ```bash
-nvm install 24.11.1
-nvm alias default 24.11.1
+nvm install 24.22.2
+nvm alias default 24.22.2
 ```
 
 Install Bun from the official installer:
 
 ```bash
-curl -fsSL https://bun.sh/install | bash -s -- bun-v1.4.2
+curl -fsSL https://bun.sh/install | bash -s -- bun-v1.4.4
 ```
 
 ## OpenTofu and Terraform

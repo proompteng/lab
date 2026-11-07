@@ -482,7 +482,7 @@ const compilerBuildFixture = (report: ReturnType<typeof nativeReportFixture>, in
     strategyBehaviorHash: report.build.strategyBehaviorHash,
     strategyParameterHash: report.build.strategyParameterHash,
     executableSha256: report.executableSha256,
-    bunVersion: '1.4.2',
+    bunVersion: '1.4.4',
     replacedSourceModule: 'services/bayn/src/jev/instructions.ts',
     sourceVerification: 'CLEAN_COMMITTED_BUILD_INPUTS',
     dependencyVerification: 'PINNED_IMAGE_INPUT_BYTES',

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 ARG IMAGE_BASE=mirror.gcr.io/alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
-ARG IMAGE_GO=mirror.gcr.io/golang:1.26.7@sha256:e30143be198ab04cf7ba25fba83ab3a692ca584c994aad0bf131fa0eb32dd8c1
-ARG IMAGE_NODE=mirror.gcr.io/node:22@sha256:4ad2c2b350ab49fb637ab40a269ffe207c61818bb7eb3a4ea122001a0c605e1f
+ARG IMAGE_GO=mirror.gcr.io/golang:1.27.3@sha256:e519d3b0a5b285e5aa53ab9eef02bc6bbb9cb04608389b743a136a9ce75f0d1e
+ARG IMAGE_NODE=mirror.gcr.io/node:24.22.2@sha256:8fa96264f302f58bbb13aa7339c541547b56975766ce956c875da149452a3e40
 ARG HEADLAMP_REF=v0.45.0
 ARG HEADLAMP_SHA=0e9fe810cb618964172f420666727c9a67fd6ebf
 ARG LAB_GIT_SHA=dirty

@@ -176,12 +176,12 @@ test('rejects bootstrap without the native web SDK import check', async () => {
 test('rejects bootstrap without exact Hermes toolchain version checks', async () => {
   const files = await loadProductionFiles()
   files.bootstrap = files.bootstrap.replace(
-    'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
+    'check_tool_version node v24.22.2 "$toolchain_bin/node" --version',
     '"$toolchain_bin/node" --version',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.bootstrap}: missing production invariant "check_tool_version node v24.11.1 \\"$toolchain_bin/node\\" --version"`,
+    `${productionPaths.bootstrap}: missing production invariant "check_tool_version node v24.22.2 \\"$toolchain_bin/node\\" --version"`,
   )
 })
 

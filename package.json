@@ -105,7 +105,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.4",
     "nitro": "^3.0.260429-beta",
     "xstate": "^5.31.0"
   },
@@ -113,7 +113,7 @@
     "@commitlint/cli": "20.5.3",
     "@commitlint/config-conventional": "20.5.3",
     "@playwright/test": "^1.59.1",
-    "bun-types": "1.4.2",
+    "bun-types": "1.4.4",
     "lefthook": "2.1.9",
     "lint-staged": "16.4.0",
     "node-gyp": "12.3.0",
@@ -132,9 +132,9 @@
     "*.css": "oxfmt --no-error-on-unmatched-pattern"
   },
   "engines": {
-    "node": "24.11.1"
+    "node": "24.22.2"
   },
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "patchedDependencies": {
     "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
     "@platformatic/kafka@2.12.1": "patches/@platformatic%2Fkafka@2.12.1.patch",

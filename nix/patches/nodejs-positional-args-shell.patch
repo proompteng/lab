@@ -1,0 +1,5 @@
+--- a/test/fixtures/run-script/node_modules/.bin/positional-args
++++ b/test/fixtures/run-script/node_modules/.bin/positional-args
+@@ -1 +1 @@
+-#!/bin/bash
++#!/bin/sh

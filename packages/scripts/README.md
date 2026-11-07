@@ -4,7 +4,7 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Prerequisites
 
-- Bun 1.4.2 (matches repo toolchain)
+- Bun 1.4.4 (matches repo toolchain)
 - Prometheus `promtool` 3.5.0 on `PATH` (or `PROMTOOL` set to its executable) for real Bayn alert-rule evaluation;
   CI installs the checksum-pinned standalone release tool
 - Grafana Alloy 1.19.2 on `PATH` (or `ALLOY` set to its executable) for native Bayn RGW receipt filtering;

@@ -9,8 +9,8 @@ if (args.length !== 6 || args[0] !== '--spec' || args[2] !== '--dependencies' ||
   throw Error('Usage: --spec <variant.json> --dependencies <image-receipt.json> --output <new-directory>')
 const specPath = args[1],
   dependencyPath = args[3]
-if (specPath === undefined || dependencyPath === undefined || Bun.version !== '1.4.2')
-  throw Error('Pinned Bun 1.4.2 required')
+if (specPath === undefined || dependencyPath === undefined || Bun.version !== '1.4.4')
+  throw Error('Pinned Bun 1.4.4 required')
 const root = resolve(import.meta.dir, '../../..')
 if ((await stat(specPath)).size > 65536 || (await stat(dependencyPath)).size > 8 * 1024 * 1024)
   throw Error('Compiler input exceeds its bound')

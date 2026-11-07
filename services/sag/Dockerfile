@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 
 FROM oven/bun:${BUN_VERSION} AS builder
 WORKDIR /workspace
@@ -13,7 +13,7 @@ COPY scripts ./scripts
 RUN bun install --frozen-lockfile --ignore-scripts
 RUN bun run build:sag
 
-FROM node:24.11.1-bookworm-slim AS node-runtime
+FROM node:24.22.2-bookworm-slim AS node-runtime
 
 FROM oven/bun:${BUN_VERSION}-slim AS runner
 WORKDIR /app

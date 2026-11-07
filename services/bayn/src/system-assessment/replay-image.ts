@@ -26,7 +26,7 @@ const FrozenCompiler = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
   origin: Schema.Unknown,
   strategy: Schema.Unknown,
-  bunVersion: Schema.Literal('1.4.2'),
+  bunVersion: Schema.Literal('1.4.4'),
   executableSha256: Sha256Schema,
   adapterSha256: Sha256Schema,
   files: Schema.Record(Schema.String, Sha256Schema),

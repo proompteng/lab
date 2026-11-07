@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 # Built from a Turbo-pruned context:
 # `bunx turbo prune --scope=@proompteng/anypi --docker --out-dir <dir>`
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG NODE_VERSION=24.11.1
+ARG NODE_VERSION=24.22.2
 ARG UV_VERSION=0.11.14
 ARG GH_VERSION=2.94.0
 ARG HELM_VERSION=3.18.6

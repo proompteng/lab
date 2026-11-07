@@ -16,7 +16,7 @@ import {
 import { reproduceFrozenControlReport } from '../src/system-assessment/frozen-control-report'
 
 const [mode, directory] = process.argv.slice(2)
-if (process.versions.node !== '24.11.1' || directory === undefined || (mode !== 'prepare' && mode !== 'verify'))
+if (process.versions.node !== '24.22.2' || directory === undefined || (mode !== 'prepare' && mode !== 'verify'))
   throw Error('Use pinned Node: <prepare|verify> <synthetic-scenario-directory>')
 const capture = readFileSync(`${directory}/capture.json`, 'utf8')
 const captureHash = sha256(capture)

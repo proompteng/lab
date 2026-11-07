@@ -1,6 +1,6 @@
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 
-FROM node:lts-alpine AS deps
+FROM node:24.22.2-alpine AS deps
 ARG BUN_VERSION
 WORKDIR /app
 
@@ -24,7 +24,7 @@ COPY . .
 
 RUN bun run --filter docs build
 
-FROM node:lts-alpine AS runner
+FROM node:24.22.2-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
