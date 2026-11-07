@@ -60,6 +60,18 @@ export const summarizeForwardInferenceExpenses = (
     >
   })
 
+export const inferenceExpenseSessionQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) => sql`
+  SELECT DISTINCT cycle.execution_session_date::text AS "sessionDate"
+  FROM jev_evaluation_requests AS request JOIN autonomous_cycles AS cycle USING (cycle_id)
+  WHERE cycle.account_id = ${accountId}
+    AND ${authorityGenerationHash === undefined ? sql`TRUE` : sql`request.authority_generation_hash = ${authorityGenerationHash}`}
+  ORDER BY "sessionDate" LIMIT 1001
+`
+
 export const readForwardInferenceExpenseSnapshots = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -67,13 +79,7 @@ export const readForwardInferenceExpenseSnapshots = (
   writerFence?: WriterFenceService,
 ) =>
   Effect.gen(function* () {
-    const sessions = yield* sql`
-      SELECT DISTINCT cycle.execution_session_date::text AS "sessionDate"
-      FROM jev_evaluation_requests AS request JOIN autonomous_cycles AS cycle USING (cycle_id)
-      WHERE cycle.account_id = ${accountId}
-        AND (${authorityGenerationHash ?? null}::text IS NULL OR request.authority_generation_hash = ${authorityGenerationHash ?? null})
-      ORDER BY "sessionDate" LIMIT 1001
-    `.pipe(
+    const sessions = yield* inferenceExpenseSessionQuery(sql, accountId, authorityGenerationHash).pipe(
       Effect.flatMap(
         Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema })), strictParseOptions),
       ),

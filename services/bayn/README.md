@@ -1636,6 +1636,9 @@ truncating large sessions. Query, socket and connection deadlines remain enforce
 report outputs private; they are not public status endpoints, source fixtures, or CI artifacts.
 `node dist/inference-cost-command.js` is the corresponding compiled entry.
 
+Forward-performance reports discover generation-scoped expense sessions with a direct generation predicate and
+the request generation/cycle index. Account-wide discovery retains all generations and the complete-session limit.
+
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
 most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
