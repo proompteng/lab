@@ -11,11 +11,20 @@ import { generateIdentity, invoke, proofFor } from './relay-client.mjs'
 
 function fixtureConfiguration(keyFile) {
   return {
-    keyFile, credential: 'a'.repeat(43), endpoint: 'https://proompteng.ai/api/platform/relay/agent',
+    keyFile,
+    credential: 'a'.repeat(43),
+    endpoint: 'https://proompteng.ai/api/platform/relay/agent',
     connectionId: '11111111-1111-4111-8111-111111111111',
     delegationId: '22222222-2222-4222-8222-222222222222',
-    recoveryGeneration: '1', credentialGeneration: '1', connectorId: 'galactic', clientService: 'tengri-web',
-    binding: { service: 'tengri', id: '33333333-3333-4333-8333-333333333333', generation: '44444444-4444-4444-8444-444444444444' },
+    recoveryGeneration: '1',
+    credentialGeneration: '1',
+    connectorId: 'galactic',
+    clientService: 'tengri-web',
+    binding: {
+      service: 'tengri',
+      id: '33333333-3333-4333-8333-333333333333',
+      generation: '44444444-4444-4444-8444-444444444444',
+    },
     operations: [{ name: 'status', description: 'Read pod status', inputSchema: { type: 'object' }, readOnly: true }],
   }
 }
@@ -27,11 +36,7 @@ test('stdio exposes only read-only tools and reports private-key failures withou
     await generateIdentity(keyFile)
     await chmod(keyFile, 0o644)
     const file = path.join(directory, 'grant.json')
-    await writeFile(
-      file,
-      JSON.stringify(fixtureConfiguration(keyFile)),
-      { mode: 0o600 },
-    )
+    await writeFile(file, JSON.stringify(fixtureConfiguration(keyFile)), { mode: 0o600 })
     const client = fileURLToPath(new URL('./relay-client.mjs', import.meta.url))
     const result = spawnSync(process.execPath, [client, file], {
       input:
@@ -43,6 +48,8 @@ test('stdio exposes only read-only tools and reports private-key failures withou
     const replies = result.stdout.trim().split('\n').map(JSON.parse)
     assert.deepEqual(replies.find((reply) => reply.id === 1).result.tools[0].annotations, {
       readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: true,
     })
     assert.match(replies.find((reply) => reply.id === 2).error.message, /The connector request failed or was denied/)
@@ -58,58 +65,75 @@ test('stdio exposes only read-only tools and reports private-key failures withou
   }
 })
 
-test('a running MCP bridge reads replaced configuration and never retains a removed grant', { timeout: 7000 }, async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'relay-rotation-'))
-  let child
-  let timeout
-  try {
-    const keyFile = path.join(directory, 'identity.pem')
-    await generateIdentity(keyFile)
-    const config = fixtureConfiguration(keyFile)
-    const file = path.join(directory, 'grant.json')
-    await writeFile(file, JSON.stringify(config), { mode: 0o600 })
-    child = spawn(process.execPath, [fileURLToPath(new URL('./relay-client.mjs', import.meta.url)), file], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    let stderr = ''
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8') })
-    const exited = new Promise((resolve) => child.once('exit', resolve))
-    timeout = setTimeout(() => child.kill(), 5000)
-    const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
-    let sequence = 0
-    const call = async (method, params) => {
-      const id = ++sequence
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
-      const reply = await lines.next()
-      assert.equal(reply.done, false)
-      const value = JSON.parse(reply.value)
-      assert.equal(value.id, id)
-      return value
+test(
+  'a running MCP bridge reads replaced configuration and never retains a removed grant',
+  { timeout: 7000 },
+  async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'relay-rotation-'))
+    let child
+    let timeout
+    try {
+      const keyFile = path.join(directory, 'identity.pem')
+      await generateIdentity(keyFile)
+      const config = fixtureConfiguration(keyFile)
+      const file = path.join(directory, 'grant.json')
+      await writeFile(file, JSON.stringify(config), { mode: 0o600 })
+      child = spawn(process.execPath, [fileURLToPath(new URL('./relay-client.mjs', import.meta.url)), file], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      let stderr = ''
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString('utf8')
+      })
+      const exited = new Promise((resolve) => child.once('exit', resolve))
+      timeout = setTimeout(() => child.kill(), 5000)
+      const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
+      let sequence = 0
+      const call = async (method, params) => {
+        const id = ++sequence
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+        const reply = await lines.next()
+        assert.equal(reply.done, false)
+        const value = JSON.parse(reply.value)
+        assert.equal(value.id, id)
+        return value
+      }
+      assert.equal((await call('initialize', { protocolVersion: '2025-11-25' })).result.protocolVersion, '2025-11-25')
+      assert.equal((await call('tools/list')).result.tools[0].name, 'status')
+      const rotated = {
+        ...config,
+        delegationId: '55555555-5555-4555-8555-555555555555',
+        credentialGeneration: '2',
+        operations: [{ name: 'logs', description: 'Read pod logs', inputSchema: { type: 'object' }, readOnly: true }],
+      }
+      const replacement = path.join(directory, 'replacement')
+      await writeFile(replacement, JSON.stringify(rotated), { mode: 0o600 })
+      await rename(replacement, file)
+      assert.equal((await call('tools/list')).result.tools[0].name, 'logs')
+      await writeFile(
+        file,
+        JSON.stringify({ ...rotated, operations: [{ ...rotated.operations[0], readOnly: false }] }),
+        { mode: 0o600 },
+      )
+      assert.equal((await call('tools/list')).result.tools[0].annotations.readOnlyHint, false)
+      await writeFile(
+        file,
+        JSON.stringify({ ...rotated, operations: [{ ...rotated.operations[0], readOnly: 'false' }] }),
+        { mode: 0o600 },
+      )
+      assert.equal((await call('tools/list')).error.code, -32000)
+      await rm(file)
+      assert.equal((await call('tools/list')).error.code, -32000)
+      child.stdin.end()
+      assert.equal(await exited, 0, stderr)
+      assert(!stderr.includes(config.credential))
+    } finally {
+      clearTimeout(timeout)
+      child?.kill()
+      await rm(directory, { recursive: true, force: true })
     }
-    assert.equal((await call('initialize', { protocolVersion: '2025-11-25' })).result.protocolVersion, '2025-11-25')
-    assert.equal((await call('tools/list')).result.tools[0].name, 'status')
-    const rotated = {
-      ...config,
-      delegationId: '55555555-5555-4555-8555-555555555555', credentialGeneration: '2',
-      operations: [{ name: 'logs', description: 'Read pod logs', inputSchema: { type: 'object' }, readOnly: true }],
-    }
-    const replacement = path.join(directory, 'replacement')
-    await writeFile(replacement, JSON.stringify(rotated), { mode: 0o600 })
-    await rename(replacement, file)
-    assert.equal((await call('tools/list')).result.tools[0].name, 'logs')
-    await writeFile(file, JSON.stringify({ ...rotated, operations: [{ ...rotated.operations[0], readOnly: false }] }), { mode: 0o600 })
-    assert.equal((await call('tools/list')).error.code, -32000)
-    await rm(file)
-    assert.equal((await call('tools/list')).error.code, -32000)
-    child.stdin.end()
-    assert.equal(await exited, 0, stderr)
-    assert(!stderr.includes(config.credential))
-  } finally {
-    clearTimeout(timeout)
-    child?.kill()
-    await rm(directory, { recursive: true, force: true })
-  }
-})
+  },
+)
 
 test('agent proof binds its key, grant credential, endpoint, method, and exact body bytes', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'relay-agent-'))
@@ -264,10 +288,14 @@ test('failed guest calls use a fresh proof for status lookup and never resend ex
     ]) {
       const upstreamFailure = ['forbidden', 'forbidden-body-error'].includes(scenario)
         ? 403
-        : scenario === 'not-found' ? 404 : 0
+        : scenario === 'not-found'
+          ? 404
+          : 0
       const recordedOutcome = upstreamFailure
         ? 'failed'
-        : ['invalid', 'unreadable-response', 'invalid-receipt'].includes(scenario) ? 'succeeded' : scenario
+        : ['invalid', 'unreadable-response', 'invalid-receipt'].includes(scenario)
+          ? 'succeeded'
+          : scenario
       const kinds = []
       const proofs = []
       let original
@@ -332,7 +360,10 @@ test('failed guest calls use a fresh proof for status lookup and never resend ex
       assert.notEqual(proofs[0].bht, proofs[1].bht)
       assert.equal(result.isError, true)
       assert.equal(result._meta.relay.operationId, JSON.parse(original).operationId)
-      assert.equal(result._meta.relay.outcome, ['invalid', 'unavailable', 'denied'].includes(scenario) ? 'unknown' : recordedOutcome)
+      assert.equal(
+        result._meta.relay.outcome,
+        ['invalid', 'unavailable', 'denied'].includes(scenario) ? 'unknown' : recordedOutcome,
+      )
       if (upstreamFailure) {
         assert.match(result.content[0].text, new RegExp(`HTTP ${upstreamFailure}`))
         assert.equal(result._meta.relay.upstreamStatus, upstreamFailure)
@@ -340,7 +371,8 @@ test('failed guest calls use a fresh proof for status lookup and never resend ex
         assert.equal(result._meta.relay.executionReceiptId, '66666666-6666-4666-8666-666666666666')
         assert.equal(result._meta.relay.lookupReceiptId, '44444444-4444-4444-8444-444444444444')
       }
-      if (scenario === 'denied') assert.deepEqual(result._meta.relay, { operationId: JSON.parse(original).operationId, outcome: 'unknown' })
+      if (scenario === 'denied')
+        assert.deepEqual(result._meta.relay, { operationId: JSON.parse(original).operationId, outcome: 'unknown' })
       assert.doesNotMatch(JSON.stringify(result), /private fixture/)
       assert.match(result.content[0].text, /The request was not resent/)
     }

@@ -10,11 +10,11 @@ import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../sch
 import {
   isSnapshotExecutionMarketDataBinding,
   jevProtocolIdentityMatches,
-  type ExecutionDecisionDocument,
+  type RecordedExecutionDecisionDocument as ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { ScheduledEvaluation } from './policy'
-import type { ProtectedEntryTarget } from '../strategy/runtime-decision'
+import type { RecordedProtectedEntryTarget as ProtectedEntryTarget } from '../strategy/runtime-decision'
 import { JevProtocolSchema, usesJevOnlyInference, type JevProtocolMaterial } from '../jev/protocol'
 import { qualificationCalendar } from './calendar'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'

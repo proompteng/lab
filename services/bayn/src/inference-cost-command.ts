@@ -106,6 +106,17 @@ const print = (value: string) =>
     yield* Stream.run(Stream.make(`${value}\n`), stdio.stdout())
   })
 
+export const makeInferenceExpenseSessionReport = (
+  ledger: Effect.Success<ReturnType<typeof readInferenceExpenseLedger>>,
+  coverage: Extract<ReturnType<typeof verifyInferenceExpenseCoverage>, { readonly _tag: 'Success' }>['success'],
+  ledgerObservedAt: string,
+) => ({
+  ...ledger,
+  schemaVersion: 'bayn.inference-expense-ledger-report.v3' as const,
+  coverage,
+  ledgerObservedAt,
+})
+
 export const readInferenceExpenseSession = (sessionDate: string) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -125,7 +136,7 @@ export const readInferenceExpenseSession = (sessionDate: string) =>
           tigerBeetle: { ...tigerBeetle, ledger: inferenceExpenseLedger },
         })
         const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
-        return { ...ledger, coverage, ledgerObservedAt: DateTime.formatIso(yield* DateTime.now) }
+        return makeInferenceExpenseSessionReport(ledger, coverage, DateTime.formatIso(yield* DateTime.now))
       })
       return yield* read.pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- read-only command owns the database and ledger clients

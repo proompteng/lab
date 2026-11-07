@@ -1,15 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
+import fc from 'fast-check'
 
 import {
   canonicalHashV1Result,
   canonicalJsonV1Result,
   canonicalJsonWithHashV1Result,
   renderCanonicalJsonFailure,
+  sha256,
   stableU128,
   stableU64,
   type CanonicalJsonFailure,
 } from './hash'
+import { checkProperty } from './testing/property-test-support'
 
 const failureOf = <A>(result: Result.Result<A, CanonicalJsonFailure>): CanonicalJsonFailure => {
   expect(Result.isFailure(result)).toBe(true)
@@ -30,6 +33,62 @@ describe('canonical hashing', () => {
     expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body: canonical, hash }))
     expect(Result.getOrThrow(canonicalHashV1Result({ b: 2, a: 1 }))).toBe(
       Result.getOrThrow(canonicalHashV1Result({ a: 1, b: 2 })),
+    )
+  })
+
+  test('matches JSON scalar encoding at finite-number formatting boundaries', () => {
+    const numbers = [
+      0,
+      -0,
+      Number.MIN_VALUE,
+      -Number.MIN_VALUE,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MIN_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER,
+      1e-7,
+      1e-6,
+      1e20,
+      1e21,
+      Math.PI,
+    ]
+    for (const value of numbers) {
+      const body = JSON.stringify(value)
+      expect(canonicalJsonWithHashV1Result(value)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+    }
+  })
+
+  test('preserves every JSON escape in values and keys alongside unescaped Unicode', () => {
+    const values = [
+      '',
+      'ordinary evidence text / 2026-09-04T14:30:02.000Z',
+      '"',
+      '\\',
+      'line\nbreak\tand\rreturn',
+      'é e\u0301 😀 \u2028 \u2029 \ufeff',
+      ...Array.from({ length: 32 }, (_, code) => String.fromCharCode(code)),
+    ]
+    for (const value of values) {
+      const input = { [value]: [value, value + ' tail'] }
+      const body = JSON.stringify(input)
+      expect(canonicalJsonWithHashV1Result(input)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+    }
+  })
+
+  test('property: scalar encoding stays byte-identical to JSON for finite numbers and well-formed Unicode', () => {
+    checkProperty(
+      'canonical-json-scalar-encoding',
+      fc.property(
+        fc.double({ noNaN: true, noDefaultInfinity: true }),
+        fc.fullUnicodeString({ maxLength: 80 }),
+        fc.fullUnicodeString({ maxLength: 80 }),
+        (number, key, value) => {
+          const input = { [key]: [number, value] }
+          const body = JSON.stringify(input)
+          expect(canonicalJsonWithHashV1Result(input)).toEqual(Result.succeed({ body, hash: sha256(body) }))
+        },
+      ),
+      2000,
     )
   })
 

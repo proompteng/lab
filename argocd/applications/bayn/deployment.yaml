@@ -88,16 +88,18 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "fa21a9d606eed0332637937d4d46035ba649d3fef968ab39480af796f13f419b"
+              value: "a03aad6fdf2c2f9d958f5922e69da57fbd2b6e3575941840076b20cebd5a0c54"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "489e704106e73592eb03dd8daf0750cbbb157e4d257bf53b948da1449b0c2d3c"
+              value: "769bf588ec2944657b235e12c8c43a431339eab51ee4159cd44909ceaa9fed34"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab"
             - name: BAYN_BROKER_ACCESS
               value: read-only
+            - name: BAYN_CAPITAL_AUTHORITY
+              value: none
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -106,9 +108,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"588976a7a41ea2b4d64d65597411634e0517cf31869c9051205c739add4c57ed","authoredActivation":{"sourceRevision":"42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a"},"activation":{"sourceRevision":"42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a"}}'
-            - name: BAYN_CAPITAL_AUTHORITY
-              value: none
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"50d25b82e5bb7f1b6a8a8c3e37a2ebcc8c6afce4c101df6ec01f698358ec76c1","authoredActivation":{"sourceRevision":"4e76d71a66c8ec04145c7915e7fa677103871279","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:8f8af6c8675a1ccc48b142b20447f20df85d7f4907a62b22c497647a0b7e8af3"},"activation":{"sourceRevision":"4e76d71a66c8ec04145c7915e7fa677103871279","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:8f8af6c8675a1ccc48b142b20447f20df85d7f4907a62b22c497647a0b7e8af3"}}'
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_CYCLE_POLL_INTERVAL_MS
