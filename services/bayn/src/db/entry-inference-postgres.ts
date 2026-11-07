@@ -110,23 +110,7 @@ export const makeEntryInferenceWrites = (sql: PgClient.PgClient) => {
         ),
       )
       const { checkpoint } = loaded
-      const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
-      const complete =
-        skip === undefined
-          ? checkpoint
-          : yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
-      yield* Effect.fromResult(verifyStagedCheckpointHandoff(complete, handoff))
-      if (skip !== undefined) {
-        // The code-owned skip and its handoff have no provider I/O between them.
-        // Commit both before allowing the dependent Jev call.
-        yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
-                VALUES (${skip.requestId},${skip.stage},${skip.skipHash},${sql.json(skip)})
-                ON CONFLICT(request_id,stage) DO NOTHING`
-        yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
-          yield* sql`SELECT payload=${sql.json(skip)} AS matches
-                  FROM jev_staged_skip_receipts WHERE request_id=${skip.requestId} AND stage=${skip.stage}`,
-        )
-      }
+      yield* Effect.fromResult(verifyStagedCheckpointHandoff(checkpoint, handoff))
       const inserted = yield* Schema.decodeUnknownEffect(
         Schema.Array(Schema.Struct({ handoff_hash: Schema.String })),
         strictParseOptions,
@@ -164,11 +148,8 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
     }).pipe(Effect.mapError(failed))
   const transitionId = (input: EntryStageTransition) =>
     input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId
-  const stageOrder = (input: EntryStageTransition) => (input.terminal?.stage === 'BASE_START' ? 1 : 0)
   const ordered = (inputs: readonly EntryStageTransition[]) =>
-    inputs.toSorted(
-      (left, right) => transitionId(left).localeCompare(transitionId(right)) || stageOrder(left) - stageOrder(right),
-    )
+    inputs.toSorted((left, right) => transitionId(left).localeCompare(transitionId(right)))
   return {
     recordVisualClaims: (inputs: readonly StagedDispatchClaim[]) =>
       commit(
@@ -189,21 +170,11 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
             const requestId = transitionId(input)
             const source = yield* load(requestId)
             if (terminal === null) return { requestId, ...(yield* recordHandoff(successor.handoff, source)) }
-            if (
-              (successor.kind === 'VISUAL' &&
-                (terminal.stage !== 'CHART' ||
-                  successor.claim.stage !== 'BASE_START' ||
-                  successor.claim.requestId !== requestId)) ||
-              (successor.kind === 'HANDOFF' && successor.handoff.requestId !== requestId)
-            )
+            if (successor.kind === 'HANDOFF' && successor.handoff.requestId !== requestId)
               return yield* failed('A visual successor must belong to its terminal request and stage')
             const loaded = yield* recordTerminal(terminal, source)
             const admission =
-              successor.kind === 'NONE'
-                ? { dispatchAllowed: false }
-                : successor.kind === 'VISUAL'
-                  ? yield* recordClaim(successor.claim, loaded)
-                  : yield* recordHandoff(successor.handoff, loaded)
+              successor.kind === 'NONE' ? { dispatchAllowed: false } : yield* recordHandoff(successor.handoff, loaded)
             return { requestId, ...admission }
           }),
         ),

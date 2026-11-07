@@ -13,7 +13,7 @@ import {
 import { JevOutcome } from './jev/evidence'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
 import { readSequentialInferenceCostEvidence } from './jev/sequential-inference-cost-evidence'
-import { JevFailure, jevModel } from './jev/contract'
+import { JevFailure } from './jev/contract'
 import { decisionsModel, DecisionsUsageSchema } from './jev/decisions'
 import {
   ChartCheckpointSchema,
@@ -221,7 +221,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       const visual: Stage[] = visualStages.map((stage) => ({
         stage: stage.stage === 'CHART' ? InferenceStage.Chart : InferenceStage.BaseStart,
         provider: usesJevOnlyInference(request.request.protocol) ? 'typesafe' : 'openai',
-        model: usesJevOnlyInference(request.request.protocol) ? jevModel : decisionsModel,
+        model: usesJevOnlyInference(request.request.protocol) ? request.request.protocol.model : decisionsModel,
         purpose: InferencePurpose.Entry,
         tariffAt: stage.tariffAt,
         recordedStartedAt: stage.recordedStartedAt,
@@ -270,7 +270,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         {
           stage: InferenceStage.Jev,
           provider: 'typesafe',
-          model: jevModel,
+          model: request.request.protocol.model,
           purpose: InferencePurpose.Entry,
           usage: jevUsage,
           tariffAt: startedAt,
@@ -456,7 +456,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       {
         stage: InferenceStage.Jev,
         provider: 'typesafe',
-        model: jevModel,
+        model: request.request.protocol.model,
         usage: jevUsage,
         tariffAt: jevStartedAt,
         recordedStartedAt: jevRecordedStartedAt,

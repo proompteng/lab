@@ -177,7 +177,8 @@ const seedExecutionAuthority = (
   protocolVersion:
     | 'bayn.jev.protocol.v37'
     | 'bayn.jev.protocol.v38'
-    | 'bayn.jev.protocol.v39' = defaultJevProtocolDocument.schemaVersion,
+    | 'bayn.jev.protocol.v39'
+    | 'bayn.jev.protocol.v40' = defaultJevProtocolDocument.schemaVersion,
 ) => {
   const observeGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))
   const executionGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
@@ -422,8 +423,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         return { rows, locked }
       }),
     )
-    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v39')
-    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v39')
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe(defaultJevProtocolDocument.schemaVersion)
+    expect(result.locked.history.strategy_parameter_schema_version).toBe(defaultJevProtocolDocument.schemaVersion)
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
