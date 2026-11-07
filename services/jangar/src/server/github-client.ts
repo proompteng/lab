@@ -233,29 +233,15 @@ export class GitHubRateLimitError extends Error {
   }
 }
 
-const unwrapEffectError = (error: unknown): unknown => {
-  if (error && typeof error === 'object') {
-    const candidate = error as { _tag?: string; cause?: unknown; error?: unknown }
-    if (candidate._tag === 'UnknownException') {
-      return candidate.cause ?? candidate.error ?? error
-    }
-    if ('cause' in candidate && candidate.cause) {
-      return candidate.cause as unknown
-    }
-  }
-  return error
-}
+const shouldRetryRateLimit = (error: Error) => error instanceof GitHubRateLimitError
 
-const shouldRetryRateLimit = (error: unknown) => unwrapEffectError(error) instanceof GitHubRateLimitError
-
-const rateLimitSchedule = (() => {
-  const backoff = Schedule.exponential(Duration.millis(1_000), 2)
-  const capped = Schedule.delayed(backoff, (delay) => Duration.min(delay, Duration.millis(300_000)))
-  const jittered = Schedule.jitteredWith({ min: 0.8, max: 1.2 })(capped)
-  const limited = Schedule.intersect(Schedule.recurs(RATE_LIMIT_RETRY_MAX_ATTEMPTS))(jittered)
-  const normalized = Schedule.map(limited, ([delay]) => delay)
-  return Schedule.whileInput<unknown>(shouldRetryRateLimit)(normalized)
-})()
+const rateLimitSchedule = Schedule.max([
+  Schedule.exponential(Duration.millis(1_000), 2).pipe(
+    Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.millis(300_000)))),
+    Schedule.jittered,
+  ),
+  Schedule.recurs(RATE_LIMIT_RETRY_MAX_ATTEMPTS),
+])
 
 const buildHeaders = (token: string | null, userAgent = 'jangar-github-client') => {
   const headers: Record<string, string> = {
@@ -324,51 +310,55 @@ const updateRateLimitThrottle = (resetAt: number | null) => {
 }
 
 const requestJson = async (url: string, init: RequestInit) => {
-  const effect = Effect.tryPromise(() =>
-    enqueueRequest(async () => {
-      const response = await fetch(url, init)
-      const text = await response.text()
-      if (!response.ok) {
-        const { remaining, resetAt, retryAfterMs } = parseRateLimitHeaders(response)
-        if (isRateLimitResponse(response.status, text, remaining, retryAfterMs)) {
-          const retryAt = updateRateLimitThrottle(resetAt ?? (retryAfterMs ? Date.now() + retryAfterMs : null))
-          throw new GitHubRateLimitError(`GitHub API ${response.status}: ${text}`, {
-            status: response.status,
-            retryAt,
-            remaining,
-            resetAt,
-          })
+  const effect = Effect.tryPromise({
+    try: () =>
+      enqueueRequest(async () => {
+        const response = await fetch(url, init)
+        const text = await response.text()
+        if (!response.ok) {
+          const { remaining, resetAt, retryAfterMs } = parseRateLimitHeaders(response)
+          if (isRateLimitResponse(response.status, text, remaining, retryAfterMs)) {
+            const retryAt = updateRateLimitThrottle(resetAt ?? (retryAfterMs ? Date.now() + retryAfterMs : null))
+            throw new GitHubRateLimitError(`GitHub API ${response.status}: ${text}`, {
+              status: response.status,
+              retryAt,
+              remaining,
+              resetAt,
+            })
+          }
+          throw new Error(`GitHub API ${response.status}: ${text}`)
         }
-        throw new Error(`GitHub API ${response.status}: ${text}`)
-      }
-      return text ? (JSON.parse(text) as unknown) : null
-    }),
-  )
-  return Effect.runPromise(Effect.retry(effect, rateLimitSchedule))
+        return text ? (JSON.parse(text) as unknown) : null
+      }),
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+  })
+  return Effect.runPromise(Effect.retry(effect, { schedule: rateLimitSchedule, while: shouldRetryRateLimit }))
 }
 
 const requestText = async (url: string, init: RequestInit) => {
-  const effect = Effect.tryPromise(() =>
-    enqueueRequest(async () => {
-      const response = await fetch(url, init)
-      const text = await response.text()
-      if (!response.ok) {
-        const { remaining, resetAt, retryAfterMs } = parseRateLimitHeaders(response)
-        if (isRateLimitResponse(response.status, text, remaining, retryAfterMs)) {
-          const retryAt = updateRateLimitThrottle(resetAt ?? (retryAfterMs ? Date.now() + retryAfterMs : null))
-          throw new GitHubRateLimitError(`GitHub API ${response.status}: ${text}`, {
-            status: response.status,
-            retryAt,
-            remaining,
-            resetAt,
-          })
+  const effect = Effect.tryPromise({
+    try: () =>
+      enqueueRequest(async () => {
+        const response = await fetch(url, init)
+        const text = await response.text()
+        if (!response.ok) {
+          const { remaining, resetAt, retryAfterMs } = parseRateLimitHeaders(response)
+          if (isRateLimitResponse(response.status, text, remaining, retryAfterMs)) {
+            const retryAt = updateRateLimitThrottle(resetAt ?? (retryAfterMs ? Date.now() + retryAfterMs : null))
+            throw new GitHubRateLimitError(`GitHub API ${response.status}: ${text}`, {
+              status: response.status,
+              retryAt,
+              remaining,
+              resetAt,
+            })
+          }
+          throw new Error(`GitHub API ${response.status}: ${text}`)
         }
-        throw new Error(`GitHub API ${response.status}: ${text}`)
-      }
-      return text
-    }),
-  )
-  return Effect.runPromise(Effect.retry(effect, rateLimitSchedule))
+        return text
+      }),
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+  })
+  return Effect.runPromise(Effect.retry(effect, { schedule: rateLimitSchedule, while: shouldRetryRateLimit }))
 }
 
 export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClientOptions) => {

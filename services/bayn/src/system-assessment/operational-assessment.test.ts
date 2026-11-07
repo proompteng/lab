@@ -1,4 +1,4 @@
-import { JevResearchPolicy } from '../jev/acceptance'
+import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { PgClient } from '@effect/sql-pg'
@@ -11,7 +11,7 @@ import {
 } from './operational-assessment'
 import { emptySourceCutFixture } from './source-cut.test-support'
 import { SystemSourceCutSchema } from './source-cut'
-import { testHash } from './fixtures.test-support'
+import { testHash, registrationFixture } from './fixtures.test-support'
 import { SafetyViolationKind } from './assessment'
 import { ObligationClass, ReliabilityStatus } from './reliability'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
@@ -28,8 +28,7 @@ import {
 } from './operational-source-cut'
 import { makeSystemSourceRecord, SystemSourceRecordKind } from './source-records'
 
-const fixture = (controllerPlanHash?: string | null) => {
-  const baseRegistration = operationalRegistrationFixture()
+const fixture = (controllerPlanHash?: string | null, baseRegistration = operationalRegistrationFixture()) => {
   const configuration = {
     ...baseRegistration.obligations.configuration,
     ...(controllerPlanHash === undefined ? {} : { controllerPlanHash }),
@@ -264,7 +263,10 @@ test('each in-period controller pass must bind the registered build even without
 
 const completeFixture = () => {
   // Pin the original registration material independently of the current admission fixture.
-  const { cut: original, input } = fixture(sha256('controller plan'))
+  const { cut: original, input } = fixture(
+    sha256('controller plan'),
+    operationalRegistrationFixture(registrationFixture(undefined, 20, JevAcceptanceVersion.RetainedV5)),
+  )
   const registration = input.registration
   const candidate = registration.policies[0]
   const build = candidate.capitalAuthorization!.buildLineage.activation

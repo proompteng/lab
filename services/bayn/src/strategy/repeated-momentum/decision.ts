@@ -15,7 +15,12 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../../schemas'
-import { MomentumFundedExitPlanSchema, makeMomentumFundedExitPlan } from './exit-plan'
+import {
+  MomentumFundedExitPlanSchema,
+  makeMomentumFundedExitPlan,
+  type MomentumPolicyMaterial,
+  type MomentumFundingObservation,
+} from './exit-plan'
 import { RepeatedMomentumPolicySchema, type RepeatedMomentumPolicy } from './policy'
 import { momentumControlCandidates } from './signals'
 import type { StrategyDefinition } from '../core'
@@ -34,9 +39,15 @@ export const MomentumDecisionEvidenceSchema = Schema.Struct({
 })
 export type MomentumDecisionEvidence = typeof MomentumDecisionEvidenceSchema.Type
 
-const deriveMomentumTarget = (policy: RepeatedMomentumPolicy, evidence: MomentumDecisionEvidence) =>
+export const deriveMomentumTargetMaterial = <
+  Policy extends MomentumPolicyMaterial,
+  Evidence extends { readonly observation: unknown; readonly decidedAt: string },
+>(
+  policy: Policy,
+  evidence: Evidence,
+  observation: MomentumFundingObservation & { readonly protocol: Policy['sharedProtocol'] },
+) =>
   Result.gen(function* () {
-    const observation = yield* reproduceJevCandidateObservation(evidence.observation)
     const protocol = policy.sharedProtocol
     const decided = Date.parse(evidence.decidedAt)
     const hours = observation.snapshot.manifest.calendar
@@ -99,6 +110,11 @@ const deriveMomentumTarget = (policy: RepeatedMomentumPolicy, evidence: Momentum
       },
     }
   })
+
+const deriveMomentumTarget = (policy: RepeatedMomentumPolicy, evidence: MomentumDecisionEvidence) =>
+  reproduceJevCandidateObservation(evidence.observation).pipe(
+    Result.flatMap((observation) => deriveMomentumTargetMaterial(policy, evidence, observation)),
+  )
 
 export const decideRepeatedMomentumEntry = (input: unknown, policy: RepeatedMomentumPolicy) =>
   Result.gen(function* () {

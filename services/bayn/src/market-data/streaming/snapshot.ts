@@ -25,6 +25,10 @@ import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap
 import { kafkaBootstrapComplete } from './bootstrap'
 import { topicPartitionKey, type StreamingProjection, type ObservedMarketValue } from './projection'
 import { selectStreamingInputs } from './inputs'
+import { InputReadinessReason } from '../intraday/input-readiness'
+import { MarketFeatureDefinition } from '../features/contract'
+import { intradayInstantNanos } from '../intraday/time'
+import { isContinuousMarket } from '../../market-hours'
 
 export interface StreamingRecordReceipt {
   readonly sourceTopic: string
@@ -190,7 +194,32 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       request.candidateSymbols.every((symbol) => excluded.has(symbol))
     )
       return yield* Result.fail(
-        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
+        new IntradaySnapshotFailure({
+          reason: 'not-ready',
+          message: 'No candidate has complete raw data and a matching rolling feature',
+          facts: {
+            inputReadiness: {
+              reason: InputReadinessReason.AllCandidatesExcluded,
+              observedAt: request.observedAt,
+              windowStartAt: request.rangeStartAt,
+              windowEndAt: request.rangeEndAt,
+              ...(isContinuousMarket(request.calendar)
+                ? {}
+                : { requiredFeatureDefinition: MarketFeatureDefinition.ObservedPriceWindow }),
+              candidateCount: request.candidateSymbols.length,
+              matchingFeatureCandidateCount: request.candidateSymbols.filter((symbol) =>
+                featureReceipts.some((feature) => feature.value.material.symbol === symbol),
+              ).length,
+              completedBarCandidateCount: request.candidateSymbols.filter((symbol) =>
+                bars.some(
+                  (bar) =>
+                    bar.symbol === symbol &&
+                    intradayInstantNanos(bar.eventAt) === intradayInstantNanos(request.rangeEndAt) - 60_000_000_000n,
+                ),
+              ).length,
+            },
+          },
+        }),
       )
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),

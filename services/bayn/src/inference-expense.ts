@@ -129,10 +129,10 @@ export enum InferenceExpenseCoverageIssue {
   UnpricedUsage = 'UNPRICED_USAGE',
 }
 
-type InferenceExpenseRequestCoverage = Pick<
+export type InferenceExpenseRequestCoverage = Pick<
   InferenceExpenseQuote['line'],
   'requestId' | 'model' | 'purpose' | 'usageStatus' | 'receiptHash' | 'resolutionHash'
-> & { readonly issues: readonly InferenceExpenseCoverageIssue[] }
+> & { readonly stage: InferenceStage; readonly issues: readonly InferenceExpenseCoverageIssue[] }
 
 type ExpenseRateCard = {
   readonly schemaVersion: 'bayn.inference-rate-card.v1'
@@ -618,6 +618,8 @@ export const verifyInferenceExpenseCoverage = (
     let missingQuoteCount = 0
     let unverifiedRequestCount = 0
     let gapRequestCount = 0
+    let knownEstimatedCostPicoUsd = 0n
+    const matchedQuoteHashes: string[] = []
     const requestsWithCoverageIssues: InferenceExpenseRequestCoverage[] = []
     for (const line of original.requests) {
       const issues: InferenceExpenseCoverageIssue[] = []
@@ -651,6 +653,9 @@ export const verifyInferenceExpenseCoverage = (
           return yield* Result.fail(
             new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
           )
+        matchedQuoteHashes.push(current.quote.quoteHash)
+        if (current.quote.line.estimatedCostPicoUsd !== null)
+          knownEstimatedCostPicoUsd += BigInt(current.quote.line.estimatedCostPicoUsd)
         if (current.verifiedAt === null) {
           unverifiedRequestCount++
           issues.push(InferenceExpenseCoverageIssue.UnverifiedLedger)
@@ -667,6 +672,7 @@ export const verifyInferenceExpenseCoverage = (
       if (issues.length > 0)
         requestsWithCoverageIssues.push({
           requestId: line.requestId,
+          stage: 'stage' in line ? line.stage : InferenceStage.Jev,
           model: line.model,
           purpose: line.purpose,
           usageStatus: line.usageStatus,
@@ -681,6 +687,8 @@ export const verifyInferenceExpenseCoverage = (
       missingQuoteCount,
       unverifiedRequestCount,
       gapRequestCount,
+      knownEstimatedCostPicoUsd: knownEstimatedCostPicoUsd.toString(),
+      matchedQuoteHashes: matchedQuoteHashes.sort(),
       requestsWithCoverageIssues,
       completeMeteredCoverage: missingQuoteCount === 0 && unverifiedRequestCount === 0 && gapRequestCount === 0,
     }

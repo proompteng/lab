@@ -110,7 +110,8 @@ export const measureControllerLatency = (
         missing.push(`MISSING_COMMAND_CLOCK:${pass.receiptHash}`)
         continue
       }
-      // A retry carries its first issuedAt. It cannot cover a later unstarted schedule window.
+      // Journaled failure/delivery retries retain their first issuedAt and cannot cover a later unstarted window.
+      // An unjournaled abandoned attempt supplies no completion evidence; only the committed re-execution counts.
       const firstDue = firstDueBySession.get(session.sessionDate)
       if (firstDue !== undefined && issuedAt >= firstDue) {
         const interval = registration.obligations.decisionIntervalMs

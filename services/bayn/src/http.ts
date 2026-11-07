@@ -11,6 +11,7 @@ import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { CycleState, CycleTerminalReason } from './cycle/model'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
+import { decodeInputReadiness } from './market-data/intraday/input-readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
@@ -140,6 +141,7 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
       reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
     } as const
   }
+  const inputReadiness = decodeInputReadiness(pass.readiness?.inputReadiness)
   return {
     result: pass.result,
     observedAt: pass.observedAt,
@@ -162,6 +164,7 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
               ? {}
               : { requiredFeature: pass.readiness.requiredFeature }),
             ...(pass.readiness.snapshotQuery === undefined ? {} : { snapshotQuery: pass.readiness.snapshotQuery }),
+            ...(inputReadiness === undefined ? {} : { inputReadiness }),
           },
         }),
   } as const

@@ -1,0 +1,27 @@
+{
+  "sourceRevision": "5d776325dda0bec3a44e4eae8efbbfa4961ff475",
+  "sourceBaseRevision": "8f87974758c4490bbfc9549fc7c44ba5f02f871a",
+  "runtime": "v24.11.1",
+  "helperSourceSha256": {
+    "services/bayn/src/intraday-replay/matched-entry.test-support.ts": "27d9cbed947e4f3d12a41cf6319d60d4c84722bbe90f2b914223c28175127156",
+    "services/bayn/src/jev/control-document.test-support.ts": "1e3ee6d741d9092ae611ab601d10a6ff53b29abc1c25e22e2110229a4a109f95"
+  },
+  "helperPaths": {
+    "services/bayn/src/intraday-replay/matched-entry.test-support.ts": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/original-v38-matched-target-helper.ts",
+    "services/bayn/src/jev/control-document.test-support.ts": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/original-v38-control-helper.ts"
+  },
+  "fixture": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-entry-ablation.json",
+  "canonicalBytes": 1522195,
+  "canonicalSha256": "ce05d8ed4a7396abe7adf18f695401b8313004e34f7275dbfc396c17113b1fb7",
+  "contentHash": "dfbff59c8d94d1a272eb40efd093206973fd9770a3892cacfc7b5d4a47bf5996",
+  "gzipPath": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/node-entry-ablation.json.gz",
+  "gzipBytes": 138833,
+  "gzipSha256": "987a1fe02539cce55015f7c650f08adfaba24ff1d667cca3c75bf2eafb7a56aa",
+  "gzipParameters": {
+    "mtime": 0,
+    "filename": "",
+    "compresslevel": 9
+  },
+  "harness": "/tmp/bayn-node-v38-evidence-ef739b90-dtxcanaq/capture-ablation.mjs",
+  "harnessSha256": "8b08288497e7b380a7b021ab5fdf2f8bc81ea6e9bebea3c5ed48a22969fda6d9"
+}
