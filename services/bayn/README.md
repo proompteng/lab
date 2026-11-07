@@ -129,6 +129,12 @@ by primary key inside the same snapshot, preserving PostgreSQL microsecond preci
 ordering. Independent strategy, transaction and receipt reads retain the original scoped selection. Cycle, decision,
 accounting and ledger verification retain their existing checks.
 
+Generation-scoped decision, market-volume and closing-boundary reads also reuse the captured terminal-cycle
+membership through one PostgreSQL array parameter when nonempty; an explicit empty capture uses a bind-free false
+predicate. They retain completed-state filters, reconciliation cutoffs and native timestamp precision, and every
+selected decision still undergoes full verification. Independent reads keep their original scope queries;
+account-history reads add no membership parameter.
+
 Status economics label cumulative retained accounting with `accounting.scope: ACCOUNT_HISTORY`; those totals span
 authority generations. `realizedCloseCount` counts SELL accounting transactions, including partial fills. Execution
 fees include recorded fill fees and posted broker fee effects; unposted charges and operating expenses remain outside
@@ -155,8 +161,9 @@ the same strict parse options. Immutable historical documents and the decoders
 used to read them remain supported.
 
 Canonical JSON serialization writes finite numbers and strings without JSON escape characters directly. Strings
-that need escaping still use the runtime JSON encoder. Unicode validation, sorted keys, descriptors, dense arrays,
-cycle checks and failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
+that need escaping still use the runtime JSON encoder. Successful traversal keeps diagnostic path segments local to
+the call and renders their text only on failure. Unicode validation, sorted keys, descriptors, dense arrays,
+cycle checks and exact failure paths retain their original behavior; canonical bytes and financial hashes are unchanged.
 
 New target planning accepts only quote-bound inputs with an explicit allocation, verified bid/ask prices and
 per-symbol liquidity limits. Retired `bayn.paper-target-planner-input.v1` and `v2` inputs cannot construct new plans;
@@ -252,6 +259,12 @@ judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchm
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
 current execution and database guards accept v39 and its exact question-policy hash.
+
+A chart presence probability at or below 0.30 rejects the dependent setup before funding and final Jev dispatch:
+support or resistance rejects support recovery, while base rejects base breakout and skips the BASE_START call.
+The independent setup can continue. Probabilities above 0.30 retain the selected anchors for the existing final
+setup and stop judgments; an uncertain presence answer does not itself authorize entry. Raw chart answers remain
+in the receipts and assessments. Pre-v39 financial readers reproduce their original behavior.
 
 All three inference stages use the existing TypeSafe System One endpoint and one Jev client. CHART and conditional
 BASE_START send the deterministic PNG through the documented image asset field and image opt-in header, alongside
@@ -582,6 +595,10 @@ Snapshots retain each selected capture once, with native bytes, Kafka coordinate
 Recorded replay verifies that proof again. `Kafka Webull minute bars incorporated` logs measure the real consumer
 arrival delay, including late inputs. The existing streaming diagnostics command also reports Webull coverage.
 Historical diagnostic reads establish arrival at the diagnostic consumer only, not availability to an earlier decision.
+
+Producer-clock rejections include validated collector receipt and Kafka timestamps, their signed difference,
+the permitted 5,000 ms difference and the observed ordering. These diagnostics do not attribute a queue or clock
+cause. The existing clock bound, independent ten-second first-arrival cutoff and context withholding remain enforced.
 
 Protocol v38 carries `webullContext` in numerical input v24 and final proposal evidence v2. It contains one independently
 labeled completed M1 bar for the candidate, with exact native decimal strings and original receipt timing. The

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { BigDecimal, Result, Schema } from 'effect'
+import { BigDecimal, Data, Result, Schema } from 'effect'
 
 import { NonNegativeIntegerSchema, Sha256Schema, StrictNonEmptyStringSchema, UnsignedMicrosSchema } from '../../schemas'
 import { MarketFeatureFailure } from '../features/feature-core'
@@ -13,6 +13,22 @@ export enum WebullCaptureKind {
   Gap = 'GAP',
   Ignored = 'IGNORED',
 }
+
+export enum WebullProducerClockDirection {
+  KafkaAfterCollectorReceipt = 'KAFKA_AFTER_COLLECTOR_RECEIPT',
+  KafkaBeforeCollectorReceipt = 'KAFKA_BEFORE_COLLECTOR_RECEIPT',
+}
+export interface WebullProducerClockDiagnostic {
+  readonly kafkaTimestampMs: number
+  readonly collectorReceivedAtMs: number
+  readonly kafkaMinusCollectorReceiptMs: number
+  readonly maximumDifferenceMs: number
+  readonly direction: WebullProducerClockDirection
+}
+export class WebullProducerClockError extends Data.TaggedError('WebullProducerClockError')<{
+  readonly message: string
+  readonly producerClock: WebullProducerClockDiagnostic
+}> {}
 
 const TimeMs = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 253402300799999 }))
 const SourceSchema = Schema.Union([
@@ -131,7 +147,7 @@ const minuteStart = (value: string) => {
 
 export const decodeWebullCapture = (
   record: KafkaMarketRecord,
-): Result.Result<DecodedWebullCapture, MarketFeatureFailure> =>
+): Result.Result<DecodedWebullCapture, MarketFeatureFailure | WebullProducerClockError> =>
   Result.gen(function* () {
     const transport = yield* Schema.decodeUnknownResult(TransportSchema)(record).pipe(
       Result.mapError((cause) => failure('Invalid Webull transport coordinate or producer timestamp', cause)),
@@ -146,12 +162,26 @@ export const decodeWebullCapture = (
     )
       return { kind: WebullCaptureKind.Ignored }
     const receivedAt = yield* canonicalRawTimestamp(envelope.receivedAt)
-    if (
-      envelope.source.type === 'http' &&
-      Math.abs(transport.timestampMs - Number(intradayInstantNanos(receivedAt) / 1000000n)) >
-        marketFeatureClockSkewAllowanceMs
-    )
-      return yield* Result.fail(failure('Webull timestamp violates the producer clock contract'))
+    if (envelope.source.type === 'http') {
+      const collectorReceivedAtMs = Number(intradayInstantNanos(receivedAt) / 1000000n)
+      const kafkaMinusCollectorReceiptMs = transport.timestampMs - collectorReceivedAtMs
+      if (Math.abs(kafkaMinusCollectorReceiptMs) > marketFeatureClockSkewAllowanceMs)
+        return yield* Result.fail(
+          new WebullProducerClockError({
+            message: 'Webull timestamp violates the producer clock contract',
+            producerClock: {
+              kafkaTimestampMs: transport.timestampMs,
+              collectorReceivedAtMs,
+              kafkaMinusCollectorReceiptMs,
+              maximumDifferenceMs: marketFeatureClockSkewAllowanceMs,
+              direction:
+                kafkaMinusCollectorReceiptMs > 0
+                  ? WebullProducerClockDirection.KafkaAfterCollectorReceipt
+                  : WebullProducerClockDirection.KafkaBeforeCollectorReceipt,
+            },
+          }),
+        )
+    }
     const bytes = Buffer.from(envelope.payloadBase64, 'base64')
     if (
       bytes.byteLength > 4 * 1024 * 1024 ||
