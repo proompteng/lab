@@ -8,6 +8,7 @@ import type { NativeChartEvidence } from './chart-evidence'
 import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError } from './contract'
 import type { JevEntryEconomics } from './entry-economics'
+import { chartPresenceIsAbsent } from './judgment-policy'
 import { jevExitLimitValue } from './liquidation-economics'
 import type { JevProtocolMaterial } from './protocol'
 
@@ -387,7 +388,12 @@ export const makeEntryProposals = (input: {
       })
 
     const { support, resistance, base } = assessments
-    if (support.anchor.status === 'NOT_IDENTIFIED' || resistance.anchor.status === 'NOT_IDENTIFIED') {
+    if (
+      (support.presence.status === 'ASSESSED' && chartPresenceIsAbsent(protocol, support.presence.probability)) ||
+      (resistance.presence.status === 'ASSESSED' && chartPresenceIsAbsent(protocol, resistance.presence.probability)) ||
+      support.anchor.status === 'NOT_IDENTIFIED' ||
+      resistance.anchor.status === 'NOT_IDENTIFIED'
+    ) {
       reject(EntrySetup.SupportRecovery, ProposalRejection.NoStructure)
     } else if (
       support.presence.status === 'REFUSED' ||
@@ -412,7 +418,11 @@ export const makeEntryProposals = (input: {
         quantizeInstrumentPriceMicros(chart.symbol, high - 1n, 'DOWN'),
       )
     }
-    if (base.first.status === 'NOT_IDENTIFIED' || base.last.status === 'NOT_IDENTIFIED') {
+    if (
+      (base.presence.status === 'ASSESSED' && chartPresenceIsAbsent(protocol, base.presence.probability)) ||
+      base.first.status === 'NOT_IDENTIFIED' ||
+      base.last.status === 'NOT_IDENTIFIED'
+    ) {
       reject(EntrySetup.BaseBreakout, ProposalRejection.NoStructure)
     } else if (
       base.presence.status === 'REFUSED' ||

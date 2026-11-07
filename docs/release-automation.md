@@ -56,6 +56,10 @@ validation on pull requests and main without rebuilding service images or starti
 ARC runner and OpenCode still rebuild when their embedded CI tools change. Existing manual workflow dispatch remains
 available for publication diagnostics.
 
+Restate publication watches its Docker build context and application manifests. Its runtime has no Bun dependency,
+so the root lockfile, script helpers and shared ApplicationSet do not create a new Restate image or roll its retained
+members. The Warehouse watches the same owned paths as the publisher.
+
 App dependency-closure checks recompute both native fixed-output hashes when dependency inputs change. App UI source
 edits reuse the qualified dependency closure. A failed or cancelled closure check blocks publication; an unnecessary
 closure check can be skipped without blocking the image build.

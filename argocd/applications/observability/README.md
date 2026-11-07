@@ -78,6 +78,11 @@ The rules use the existing `notify: email` route. Native Prometheus scenarios in
 exercise firing delays, recovery, idle promotions and missing observations. Argo health and scrape health remain
 infrastructure evidence; application acceptance still requires actual authorized connector results and durable receipts.
 
+`PlatformApplicationUnhealthy` owns Tengri's Argo health alert too, so one unhealthy application produces one alert.
+Restate replica scrape and failure-detector degradation warn after five minutes, allowing a short single-node
+replacement. Missing metadata quorum still pages after two minutes, including when all metadata telemetry disappears.
+[Restate scenarios](tests/restate-alerts.yaml) exercise both recovery and sustained quorum loss.
+
 ## Required buckets
 
 - `loki-data`
