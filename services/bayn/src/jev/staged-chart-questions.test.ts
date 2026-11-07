@@ -32,11 +32,12 @@ const fundedSource = (chart: Result.Result.Success<ReturnType<typeof makeNativeC
   protocol: defaultJevProtocolDocument,
   funding: { bidMicros: '101000000', askMicros: '101010000', capitalMicros: '10000000000', cryptoFeeTier: null },
 })
-const responseFor = (request: JevRequest, end?: string): JevResponse => ({
+const responseFor = (request: JevRequest, end?: string, basePresence = 0.8234567890123456): JevResponse => ({
   model: request.model,
   answers: Object.fromEntries(
     Object.entries(request.questions).map(([name, question]) => {
-      if (question.type === 'noul') return [name, { type: 'noul', noul: 0.12345678901234568 }]
+      if (question.type === 'noul')
+        return [name, { type: 'noul', noul: name === 'base_present' ? basePresence : 0.12345678901234568 }]
       if (question.type !== 'choice') throw new Error('Unexpected chart question')
       const choices = Object.keys(question.criteria)
       const choice = name === 'base_last_bar' ? (end ?? choices.at(-2)) : choices[0]
@@ -76,6 +77,37 @@ const choose = (response: JevResponse, name: string, value: string): JevResponse
 }
 
 describe('Jev-only staged chart transport', () => {
+  for (const probability of [0, 0.1, 0.3, 0.30000000000000004, 0.5, 0.8]) {
+    test(`base presence ${probability} controls the dependent base-start call`, () => {
+      const input = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+      const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+      const response = responseFor(first.request)
+      const receipt = receiptFor(first, {
+        ...response,
+        answers: { ...response.answers, base_present: { type: 'noul', noul: probability } },
+      })
+      const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(input, receipt))
+      if (probability <= 0.3) {
+        expect(next).toMatchObject({ status: 'NOT_REQUESTED', reason: 'NO_BASE' })
+        const assessment = Result.getOrThrow(stagedChartAssessments(input, receipt, null))
+        expect(assessment.base.presence).toEqual({ status: 'ASSESSED', probability })
+        expect(assessment.base.first).toEqual({ status: 'NOT_IDENTIFIED' })
+        expect(assessment.base.last.status).toBe('ASSESSED')
+        expect(Result.isFailure(stagedChartAssessments(input, receipt, receipt))).toBe(true)
+      } else {
+        expect(next.status).toBe('PREPARED')
+      }
+    })
+  }
+
+  test('retained v38 reconstructs its original base-start call despite negative presence', () => {
+    const current = fundedSource(Result.getOrThrow(makeNativeChartEvidence(source(6))))
+    const input = { ...current, protocol: { ...current.protocol, schemaVersion: 'bayn.jev.protocol.v38' as const } }
+    const first = Result.getOrThrow(makeInitialChartStageRequest(input))
+    const receipt = receiptFor(first, responseFor(first.request, undefined, 0.1))
+    expect(Result.getOrThrow(makeSelectedBaseStartStageRequest(input, receipt)).status).toBe('PREPARED')
+  })
+
   for (const count of [1, 2, 6, 30, 120])
     for (const extreme of [false, true]) {
       test(`${count} bars, extreme=${extreme}: preserves complete source and finite probability precision`, () => {
@@ -98,7 +130,7 @@ describe('Jev-only staged chart transport', () => {
           base = receiptFor(next, responseFor(next.request))
         }
         const assessment = Result.getOrThrow(stagedChartAssessments(input, receiptFor(first, raw), base))
-        expect(assessment.base.presence).toEqual({ status: 'ASSESSED', probability: 0.12345678901234568 })
+        expect(assessment.base.presence).toEqual({ status: 'ASSESSED', probability: 0.8234567890123456 })
         const replay = makeFinancialChartStageReplay()
         expect(Result.getOrThrow(replay.makeInitialChartStageRequest(input))).toEqual(first)
         expect(Result.getOrThrow(replay.makeSelectedBaseStartStageRequest(input, receiptFor(first, raw)))).toEqual(next)
