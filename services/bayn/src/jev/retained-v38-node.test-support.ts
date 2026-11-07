@@ -6,7 +6,7 @@ import { Result } from 'effect'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import {
   decodeExecutionDecisionDocument,
-  decodeRetainedJevV38ExecutionDecisionDocument,
+  decodeRetainedJevExecutionDecisionDocument,
 } from '../shadow-decision-contract'
 import { verifyPerformanceDecisions } from '../forward-performance/postgres/projection'
 
@@ -63,7 +63,7 @@ for (const [index, path] of paths.entries()) {
   const bytes = gunzipSync(readFileSync(path))
   assert.equal(bytes.byteLength, golden.bytes)
   assert.equal(sha256(bytes), golden.canonicalHash)
-  const decoded = decodeRetainedJevV38ExecutionDecisionDocument(JSON.parse(bytes.toString('utf8')))
+  const decoded = decodeRetainedJevExecutionDecisionDocument(JSON.parse(bytes.toString('utf8')))
   if (Result.isFailure(decoded)) throw new Error(`${JSON.stringify(runtime)}: ${decoded.failure.message}`)
   const document = decoded.success
   assert.equal(document.contentHash, golden.contentHash)
@@ -80,7 +80,7 @@ for (const [index, path] of paths.entries()) {
   assert.equal(projection.verifiedRows.length, 1)
   assert.deepEqual(projection.unverifiedDecisionHashes, [])
   assert.equal(
-    Result.isFailure(decodeRetainedJevV38ExecutionDecisionDocument({ ...document, contentHash: 'f'.repeat(64) })),
+    Result.isFailure(decodeRetainedJevExecutionDecisionDocument({ ...document, contentHash: 'f'.repeat(64) })),
     true,
   )
 }

@@ -7,8 +7,10 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   JevProtocolSchema,
-  RetainedJevProtocolV38Schema,
+  RetainedVisualJevProtocolSchema,
   defaultJevProtocolDocument,
+  retainedJevProtocolV38Document,
+  retainedJevProtocolV39Document,
   jevBehaviorHash,
 } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
@@ -69,13 +71,19 @@ export const verifyStoredOperationalRegistration = (input: unknown) =>
     if (candidate.policy !== JevResearchPolicy.Candidate || candidate.capitalAuthorization === undefined)
       return yield* invalid('Operational registration requires the existing sealed native capital generation')
     const runtime = registration.obligations.configuration
-    if (!Schema.is(JevProtocolSchema)(runtime.protocol) && !Schema.is(RetainedJevProtocolV38Schema)(runtime.protocol))
+    if (
+      !Schema.is(JevProtocolSchema)(runtime.protocol) &&
+      !Schema.is(RetainedVisualJevProtocolSchema)(runtime.protocol)
+    )
       return yield* invalid('Operational registration requires a recognized native protocol')
     const parameterHash = yield* canonicalHashV1Result(runtime.protocol)
-    const expectedParameterHash = yield* canonicalHashV1Result({
-      ...defaultJevProtocolDocument,
-      schemaVersion: runtime.protocol.schemaVersion,
-    })
+    const expectedParameterHash = yield* canonicalHashV1Result(
+      runtime.protocol.schemaVersion === 'bayn.jev.protocol.v40'
+        ? defaultJevProtocolDocument
+        : runtime.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+          ? retainedJevProtocolV39Document
+          : retainedJevProtocolV38Document,
+    )
     const protocolHash = yield* makeStrategyProtocolHashResult({
       name: 'jev',
       behaviorHash: jevBehaviorHash,
