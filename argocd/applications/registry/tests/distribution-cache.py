@@ -5,7 +5,9 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -126,14 +128,28 @@ def exercise(cached):
             "storage:\n", "storage:\n  cache:\n    blobdescriptor: inmemory\n"
         )
     config = config.replace("log:\n", "log:\n  level: error\n")
-    path = Path("/tmp/distribution.yml")
+    deployment = (
+        Path("/deployment.yaml")
+        .read_text()
+        .split("        - name: registry\n", 1)[1]
+        .split("        - name: registry-proxy\n", 1)[0]
+    )
+    command = json.loads(
+        re.search(r"^\s+command: (\[.*\])$", deployment, re.MULTILINE)[1]
+    )
+    assert command[:2] == ["/bin/registry", "serve"]
+    path = Path(command[2])
+    assert f"mountPath: {path.parent}" in deployment
     path.write_text(config)
     log_path = Path("/tmp/distribution.log")
     with log_path.open("w") as log:
-        registry = start(["registry", "serve", str(path)], log)
+        registry = start(command, log)
         proxy = start(["haproxy", "-W", "-db", "-f", "/proxy.cfg"], log)
         try:
             wait_ready([registry, proxy], log_path)
+            with socket.socket() as listener_probe:
+                listener_probe.settimeout(1)
+                assert listener_probe.connect_ex(("127.0.0.2", 5000)) != 0
             gate = WriteGate()
             gate.open()
             kept, kept_diff = layer(b"retained content")
@@ -193,6 +209,7 @@ def exercise(cached):
                 "repushManifestStatus": status,
                 "fullPullMatches": pull_ok,
                 "truncatedPull": truncated,
+                "nonPrimaryLoopbackRejected": True,
             }
         finally:
             for process in [proxy, registry]:

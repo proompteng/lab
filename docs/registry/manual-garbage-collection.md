@@ -77,5 +77,7 @@ docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp \
 
 The real HAProxy fixture checks stalled-upload drain, reads during quarantine, mutation rejection, proxy restart while
 frozen, exception recovery, actual retention and purge, and recovery after a killed worker. The separate upload-pacing
-fixture preserves the shared 10 MiB/s boundary. The scoped `registry-cleanup` workflow runs both fixtures in CI.
+fixture preserves the shared 10 MiB/s boundary. The Distribution regression executes the Deployment's command against
+its mounted configuration and verifies the listener is limited to the configured loopback address. The scoped
+`registry-cleanup` workflow runs all fixtures in CI.
 Render the registry Application and validate its resources before delivering through reviewed `main` and Argo.
