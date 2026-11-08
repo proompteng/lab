@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -28,11 +30,50 @@ IMAGE_TYPES = {
 
 @contextmanager
 def worker_pool(count):
-    pool = ThreadPoolExecutor(max_workers=count)
+    pending = set()
+    handlers = {}
+    executor = None
+    failure = None
+
+    def record(signum, _frame):
+        pending.add(signum)
+
+    def check_pending():
+        if pending & {signal.SIGTERM, signal.SIGINT}:
+            raise InterruptedError("Filesystem worker phase interrupted")
+        if signal.SIGALRM in pending:
+            raise TimeoutError("Filesystem worker phase exceeded its budget")
+
+    def map_work(function, values):
+        check_pending()
+        for result in executor.map(function, values):
+            check_pending()
+            yield result
+
     try:
-        yield pool
+        # Install non-raising handlers before spawning workers, and restore them only after join.
+        if threading.current_thread() is threading.main_thread():
+            for signum in [signal.SIGTERM, signal.SIGINT, signal.SIGALRM]:
+                previous = signal.getsignal(signum)
+                if previous != signal.SIG_IGN:
+                    handlers[signum] = previous
+                    signal.signal(signum, record)
+        executor = ThreadPoolExecutor(max_workers=count)
+        yield map_work
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        pool.shutdown(wait=True, cancel_futures=True)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except BaseException:
+                # A failed join must kill every mutation thread before its lock can be released.
+                os._exit(70)
+        for signum, previous in handlers.items():
+            signal.signal(signum, previous)
+        if failure is None or isinstance(failure, TimeoutError):
+            check_pending()
 
 
 def encoded(digest):
@@ -244,10 +285,10 @@ class Store:
             tagLinks=len(tag_files),
             revisionLinks=len(revision_files),
         )
-        with worker_pool(self.workers) as pool:
-            for repository, tag, value in pool.map(tag_value, tag_files):
+        with worker_pool(self.workers) as map_work:
+            for repository, tag, value in map_work(tag_value, tag_files):
                 tags[repository][tag] = value
-            for value in pool.map(recent_value, revision_files):
+            for value in map_work(recent_value, revision_files):
                 if value:
                     recent.add(value)
         return tags, recent
@@ -354,11 +395,11 @@ class Store:
                     raise ValueError(f"Invalid descriptor size: {digest}")
             return digest, {"signature": current, "raw": raw.decode()}, children, blobs
 
-        with worker_pool(self.workers) as pool:
+        with worker_pool(self.workers) as map_work:
             while pending:
                 batch = pending - visited
                 pending = set()
-                for digest, manifest, children, blobs in pool.map(inspect, batch):
+                for digest, manifest, children, blobs in map_work(inspect, batch):
                     manifests[digest] = manifest
                     visited.add(digest)
                     marked.add(digest)
@@ -375,7 +416,7 @@ class Store:
                 if signature(self.blob(digest))[2] != size:
                     raise ValueError(f"Missing or truncated retained blob: {digest}")
 
-            list(pool.map(verify, expected_sizes.items()))
+            list(map_work(verify, expected_sizes.items()))
         return marked, {digest: manifests[digest] for digest in visited}
 
     def prepare(self, references, keep=5, days=7, prune_tags=True):
@@ -412,10 +453,10 @@ class Store:
                     result.append({"digest": digest, "signature": value})
             return result
 
-        with worker_pool(self.workers) as pool:
+        with worker_pool(self.workers) as map_work:
             blobs = [
                 row
-                for rows in pool.map(candidates, (self.root / "blobs/sha256").iterdir())
+                for rows in map_work(candidates, (self.root / "blobs/sha256").iterdir())
                 for row in rows
             ]
         blobs.sort(key=lambda row: row["signature"][2], reverse=True)
@@ -548,8 +589,8 @@ class Store:
             return True
 
         # Tag directories also contain allocated metadata; do not unlink them while frozen.
-        with worker_pool(min(self.workers, 16)) as pool:
-            deleted_tags = sum(pool.map(move_tag, deletes))
+        with worker_pool(min(self.workers, 16)) as map_work:
+            deleted_tags = sum(map_work(move_tag, deletes))
 
         def move(row):
             if time.monotonic() >= deadline or deleted_tags != len(deletes):
@@ -566,8 +607,8 @@ class Store:
             return row["signature"][2]
 
         # Rename preserves allocated blocks. Their slow physical release happens after writes reopen.
-        with worker_pool(min(self.workers, 16)) as pool:
-            sizes = list(pool.map(move, rows))
+        with worker_pool(min(self.workers, 16)) as map_work:
+            sizes = list(map_work(move, rows))
         quarantined_blobs = sum(size is not None for size in sizes)
         return {
             "deletedTags": deleted_tags,
@@ -658,9 +699,9 @@ class Store:
             emit("purged", digest=row["digest"], bytes=current[2])
             return current[2]
 
-        with worker_pool(min(self.workers, 8)) as pool:
-            deleted_tags = sum(pool.map(remove_tag, receipt["tags"]))
-            sizes = list(pool.map(remove, receipt["blobs"]))
+        with worker_pool(min(self.workers, 8)) as map_work:
+            deleted_tags = sum(map_work(remove_tag, receipt["tags"]))
+            sizes = list(map_work(remove, receipt["blobs"]))
         for path in quarantine.iterdir():
             if path.is_dir():
                 path.rmdir()

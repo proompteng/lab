@@ -240,6 +240,45 @@ with m.locked(m.ROOT):
     )
     assert mixed.returncode != 0 and "different script revisions" in mixed.stderr
     assert request("POST") == 201
+    signal_code = """import http.client,json,os,signal,sys,threading,time
+sys.path.insert(0,'/cleanup')
+import cleanup,maintenance as m
+started=threading.Event();done=threading.Event();state={'fenced':False}
+def work(index):
+ if index==0:return 0
+ started.set();time.sleep(.15)
+ c=http.client.HTTPConnection('127.0.0.1',8080,timeout=2)
+ c.request('POST','/v2/fixture/blobs/uploads/',b'')
+ r=c.getresponse();state['fenced']=r.status==405;r.read();c.close()
+ (m.ROOT/'_gc_quarantine'/('signal-probe-'+sys.argv[1])).write_text('completed')
+ done.set();return 1
+def alarm(*_):raise TimeoutError('SIGALRM')
+signal.signal(signal.SIGTERM,m.interrupted);signal.signal(signal.SIGALRM,alarm)
+try:
+ with m.locked(m.ROOT),m.WriteGate().frozen(time.monotonic()+5):
+  with cleanup.worker_pool(1) as map_work:
+   values=map_work(work,[0,1]);next(values);assert started.wait(1)
+   signal.setitimer(signal.ITIMER_REAL,.03)
+   if sys.argv[1]=='term-first':os.kill(os.getpid(),signal.SIGTERM)
+   else:
+    threading.Timer(.05,lambda:os.kill(os.getpid(),signal.SIGTERM)).start()
+    time.sleep(.04)
+except (InterruptedError,TimeoutError):
+ print(json.dumps({'allWorkersStopped':done.is_set(),'fencedUntilComplete':state['fenced']}))
+finally:signal.setitimer(signal.ITIMER_REAL,0)
+"""
+    for order in ["term-first", "alarm-first"]:
+        interrupted = subprocess.run(
+            ["python3", "-c", signal_code, order],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        state = json.loads(interrupted.stdout.splitlines()[-1])
+        assert state["allWorkersStopped"] and state["fencedUntilComplete"], state
+        assert request("POST") == 201
+        (maintenance.ROOT / "_gc_quarantine" / ("signal-probe-" + order)).unlink()
     print(
         json.dumps(
             {
@@ -251,6 +290,7 @@ with m.locked(m.ROOT):
                 "killedWorkerRecoveryPassed": True,
                 "cancelBeforeStartPassed": True,
                 "mixedRevisionRejected": True,
+                "overlappingSignalsKeepFenceUntilWorkersStop": True,
             }
         )
     )

@@ -2,6 +2,8 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -22,28 +24,57 @@ class CleanupTest(unittest.TestCase):
         release = threading.Event()
         ran = []
 
-        def active():
+        def work(index):
+            if index == 0:
+                return index
             started.set()
             release.wait(2)
+            ran.append(index)
+            return index
 
         with self.assertRaisesRegex(RuntimeError, "interrupted phase"):
-            with cleanup.worker_pool(1) as pool:
-                pool.submit(active)
+            with cleanup.worker_pool(1) as map_work:
+                results = map_work(work, range(101))
+                self.assertEqual(next(results), 0)
                 self.assertTrue(started.wait(1))
-                queued = [pool.submit(ran.append, index) for index in range(100)]
-
-                def release_after_cancellation():
-                    deadline = time.monotonic() + 1
-                    while not queued[0].cancelled() and time.monotonic() < deadline:
-                        time.sleep(0.001)
-                    release.set()
-
-                watcher = threading.Thread(target=release_after_cancellation)
-                watcher.start()
+                timer = threading.Timer(0.1, release.set)
+                timer.start()
                 raise RuntimeError("interrupted phase")
-        watcher.join(timeout=2)
-        self.assertTrue(all(future.cancelled() for future in queued))
-        self.assertEqual(ran, [])
+        timer.join(timeout=2)
+        self.assertEqual(ran, [1])
+
+    def test_signal_orders_cannot_interrupt_joining_active_workers(self):
+        script = r"""import json,os,signal,sys,threading,time
+sys.path.insert(0,sys.argv[1])
+import cleanup
+started=threading.Event();done=threading.Event()
+def work(index):
+ if index == 0:return 0
+ started.set();time.sleep(.15);done.set();return 1
+def terminate(*_):raise InterruptedError('SIGTERM')
+def alarm(*_):raise TimeoutError('SIGALRM')
+signal.signal(signal.SIGTERM,terminate);signal.signal(signal.SIGALRM,alarm)
+try:
+ with cleanup.worker_pool(1) as map_work:
+  values=map_work(work,[0,1]);next(values);assert started.wait(1)
+  signal.setitimer(signal.ITIMER_REAL,.03)
+  if sys.argv[2]=='term-first':os.kill(os.getpid(),signal.SIGTERM)
+  else:
+   threading.Timer(.05,lambda:os.kill(os.getpid(),signal.SIGTERM)).start()
+   time.sleep(.04)
+except (InterruptedError,TimeoutError):
+ print(json.dumps({'allWorkersStopped':done.is_set()}))
+finally:signal.setitimer(signal.ITIMER_REAL,0)
+"""
+        for order in ["term-first", "alarm-first"]:
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(Path(__file__).parent), order],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+            self.assertTrue(json.loads(result.stdout)["allWorkersStopped"], order)
 
     def test_cooperative_deadline_reports_unfinished_quarantine(self):
         orphan = self.blob(b"deadline candidate")
