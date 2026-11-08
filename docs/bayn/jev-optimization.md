@@ -155,7 +155,7 @@ production accounting/recovery behavior.
 This development comparison measures selection together with measured Jev latency and cost. It does not isolate
 selection from latency or replace the separately frozen matched-entry acceptance experiment.
 
-The control input `bayn.control-study-input.v9` requires an explicit `costObjective`. `ALL_COSTS` retains the priced
+The control input `bayn.control-study-input.v10` requires an explicit `costObjective`. `ALL_COSTS` retains the priced
 data requirement. `KNOWN_COST_DIAGNOSTIC` can report known-cost outcomes with unknown data allocation kept null and
 all-cost net results unavailable. It grants no qualification and cannot bypass Ridge's training provenance/cost
 requirements. See [control portfolios](control-portfolios.md) and [matched entry study](matched-entry-study.md).

@@ -166,10 +166,15 @@ jobs:
           go-version-file: services/nanoagent/go.mod
           cache-dependency-path: services/nanoagent/go.sum
 
-      - name: Set up Buf
-        uses: bufbuild/buf-setup-action@v1
+      - uses: ./.github/actions/setup-nix-toolchain
         with:
-          github_token: ${{ github.token }}
+          github-token: ${{ github.token }}
+
+      - name: Install pinned Buf
+        run: |
+          set -euo pipefail
+          buf_tools="$(nix build --no-link --print-out-paths .#buf)"
+          echo "${buf_tools}/bin" >> "$GITHUB_PATH"
 
       - name: Install race detector build tools
         run: |
@@ -293,8 +298,8 @@ jobs:
           printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
           printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.10.0
+      - name: Verify pinned Cosign
+        run: cosign version
 
       - name: Publish, verify, and sign multi-architecture images
         id: images

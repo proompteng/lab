@@ -26,6 +26,18 @@ type Work = PreparedEntry & {
   readonly request: JevEvaluationRequest
   completion: EntryInferenceCompletion | null
 }
+
+export interface EntryInferenceEvaluationOptions {
+  /**
+   * Internal execution budget for an enclosing unbound entry admission.
+   * This is deliberately not part of the persisted request or claim contract.
+   */
+  readonly admissionDeadlineAt?: number
+}
+
+const effectiveDeadlineAt = (requestExpiresAt: string, admissionDeadlineAt?: number) =>
+  Math.min(Date.parse(requestExpiresAt), admissionDeadlineAt ?? Date.parse(requestExpiresAt))
+
 const parallel = <A, B, E, R>(values: readonly A[], run: (value: A) => Effect.Effect<B, E, R>) =>
   Effect.gen(function* () {
     // Settle the bounded provider calls before propagating an error, retaining every paid response.
@@ -40,30 +52,51 @@ const parallel = <A, B, E, R>(values: readonly A[], run: (value: A) => Effect.Ef
     return results
   })
 
-const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['visualRequest']) =>
+const visual = (
+  work: Work,
+  claim: StagedDispatchClaim,
+  request: PreparedEntry['visualRequest'],
+  options: EntryInferenceEvaluationOptions,
+) =>
   Effect.gen(function* () {
-    const dispatchAt = yield* Clock.currentTimeMillis
+    const checkedAt = yield* Clock.currentTimeMillis
     const expires = Date.parse(work.claim.expiresAt)
-    if (dispatchAt < Date.parse(claim.claimedAt))
+    const deadlineAt = effectiveDeadlineAt(work.claim.expiresAt, options.admissionDeadlineAt)
+    if (checkedAt < Date.parse(claim.claimedAt))
       return yield* new EntryInferenceError({
         category: 'DEADLINE',
         message: 'Entry inference clock regressed after admission',
       })
     let outcome: StagedTerminalReceipt['outcome']
-    if (dispatchAt >= expires)
+    if (checkedAt >= deadlineAt)
       return yield* new EntryInferenceError({
         category: 'DEADLINE',
-        message: 'Original evidence window expired while committing visual admission',
+        message:
+          deadlineAt < expires
+            ? 'Entry admission expired before visual dispatch'
+            : 'Original evidence window expired while committing visual admission',
       })
     const client = yield* JevClient
-    const response = yield* client.evaluate(request.request, expires - dispatchAt).pipe(
+    // Re-read the clock immediately before every provider dispatch. The store
+    // admission may have yielded long enough to cross the enclosing lease.
+    const dispatchAt = yield* Clock.currentTimeMillis
+    if (dispatchAt >= deadlineAt)
+      return yield* new EntryInferenceError({
+        category: 'DEADLINE',
+        message:
+          deadlineAt < expires ? 'Entry admission expired before visual dispatch' : 'Original evidence window expired',
+      })
+    const response = yield* client.evaluate(request.request, deadlineAt - dispatchAt).pipe(
       Effect.timeoutOrElse({
-        duration: expires - dispatchAt,
+        duration: deadlineAt - dispatchAt,
         orElse: () =>
           Effect.fail(
             new EntryInferenceError({
               category: 'DEADLINE',
-              message: 'Original evidence window expired during visual inference',
+              message:
+                deadlineAt < expires
+                  ? 'Entry admission expired during visual inference'
+                  : 'Original evidence window expired during visual inference',
             }),
           ),
       }),
@@ -114,7 +147,17 @@ const visual = (work: Work, claim: StagedDispatchClaim, request: PreparedEntry['
           category: 'INPUT',
           message: 'Visual response does not match its dispatch claim',
         })
-      outcome = { status: 'RECEIVED', inference: received }
+      else if (returnedAt >= deadlineAt)
+        outcome = {
+          status: 'FAILED',
+          failure: {
+            category: 'DEADLINE',
+            httpStatus: null,
+            responseHash: received.responseHash,
+            usage: received.response.usage,
+          },
+        }
+      else outcome = { status: 'RECEIVED', inference: received }
     }
     const terminal = yield* Effect.fromResult(
       makeStagedTerminalReceipt({
@@ -157,7 +200,10 @@ const handoff = (work: Work, terminal: StagedTerminalReceipt | null) =>
     return { ...material, handoffHash: yield* Effect.fromResult(canonicalHashV1Result(material)) }
   })
 
-export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[]) =>
+export const evaluateClaimedEntryInferences = (
+  dispatches: readonly JevDispatch[],
+  options: EntryInferenceEvaluationOptions = {},
+) =>
   Effect.gen(function* () {
     const journal = yield* EntryInferenceJournal
     const work: Work[] = yield* Effect.forEach(dispatches, (dispatch) =>
@@ -241,10 +287,10 @@ export const evaluateClaimedEntryInferences = (dispatches: readonly JevDispatch[
       yield* parallel(work, (entry) =>
         Effect.gen(function* () {
           const terminal =
-            entry.visualClaim === null ? null : yield* visual(entry, entry.visualClaim, entry.visualRequest)
+            entry.visualClaim === null ? null : yield* visual(entry, entry.visualClaim, entry.visualRequest, options)
           const ready = yield* handoff(entry, terminal)
           yield* commitReady({ terminal, successor: { kind: 'HANDOFF', handoff: ready } })
-          entry.completion = yield* evaluateHandedOffEntry(entry.claim, ready)
+          entry.completion = yield* evaluateHandedOffEntry(entry.claim, ready, options)
         }),
       )
       return yield* Effect.forEach(work, (entry) =>
@@ -324,9 +370,14 @@ const rejectedJevUsage = (error: JevError, expectedRequestHash: string) => {
     : null
 }
 
-const evaluateHandedOffEntry = (claim: EntryInferenceClaim, handoff: EntryHandoff) =>
+const evaluateHandedOffEntry = (
+  claim: EntryInferenceClaim,
+  handoff: EntryHandoff,
+  options: EntryInferenceEvaluationOptions,
+) =>
   Effect.gen(function* () {
     const expires = Date.parse(claim.expiresAt)
+    const deadlineAt = effectiveDeadlineAt(claim.expiresAt, options.admissionDeadlineAt)
     const omitJev = claim.input.schemaVersion === 'bayn.entry-ablation-input.v1'
     const disposition = handoff.disposition
     const completed = (jev: EntryInferenceCompletion['jev']) =>
@@ -343,15 +394,32 @@ const evaluateHandedOffEntry = (claim: EntryInferenceClaim, handoff: EntryHandof
       })
     if (omitJev) return yield* completed({ status: 'OMITTED_BY_POLICY' })
     if (jevNow >= expires) return yield* completed({ status: 'NOT_DISPATCHED' })
+    if (jevNow >= deadlineAt)
+      return yield* new EntryInferenceError({
+        category: 'DEADLINE',
+        message: 'Entry admission expired before Jev dispatch',
+      })
     const client = yield* JevClient
-    const inference = yield* client.evaluate(disposition.jevRequest, expires - jevNow).pipe(
+    // Re-read the clock immediately before every provider dispatch. The
+    // handoff commit itself may have crossed the enclosing lease.
+    const dispatchAt = yield* Clock.currentTimeMillis
+    if (dispatchAt >= expires) return yield* completed({ status: 'NOT_DISPATCHED' })
+    if (dispatchAt >= deadlineAt)
+      return yield* new EntryInferenceError({
+        category: 'DEADLINE',
+        message: 'Entry admission expired before Jev dispatch',
+      })
+    const inference = yield* client.evaluate(disposition.jevRequest, deadlineAt - dispatchAt).pipe(
       Effect.timeoutOrElse({
-        duration: expires - jevNow,
+        duration: deadlineAt - dispatchAt,
         orElse: () =>
           Effect.fail(
             new EntryInferenceError({
               category: 'DEADLINE',
-              message: 'Original evidence window expired during Jev inference',
+              message:
+                deadlineAt < expires
+                  ? 'Entry admission expired during Jev inference'
+                  : 'Original evidence window expired during Jev inference',
             }),
           ),
       }),
@@ -376,7 +444,7 @@ const evaluateHandedOffEntry = (claim: EntryInferenceClaim, handoff: EntryHandof
       Result.isFailure(responseHash) ||
       responseHash.success !== received.responseHash ||
       Result.isFailure(decodeJevResponse(disposition.jevRequest, received.response)) ||
-      Date.parse(received.startedAt) < jevNow ||
+      Date.parse(received.startedAt) < dispatchAt ||
       received.completedAt < received.startedAt ||
       Date.parse(received.completedAt) > returnedAt
     )
@@ -387,7 +455,7 @@ const evaluateHandedOffEntry = (claim: EntryInferenceClaim, handoff: EntryHandof
         responseHash: Result.isSuccess(responseHash) ? responseHash.success : null,
         usage: bound ? received.response.usage : null,
       })
-    if (returnedAt >= expires)
+    if (returnedAt >= deadlineAt)
       return yield* completed({
         status: 'FAILED',
         failure: JevFailure.Timeout,
