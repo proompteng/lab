@@ -56,6 +56,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
   '';
+  nativeArrivalExportCommand = pkgs.writeShellScriptBin "bayn-native-arrival-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/native-arrival-export-command.js" "$@"
+  '';
   webullResearchCommand = pkgs.writeShellScriptBin "bayn-webull-research" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -68,7 +73,8 @@ let
       version = "0.1.4";
       pyproject = true;
       src = pkgs.fetchurl {
-        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        name = "8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        url = "https://codeload.github.com/gepa-ai/gepa/tar.gz/8f287de942f41a6d1e0e7e5b2d576247c4bedee9";
         hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
       };
       build-system = [ ps.setuptools ps.wheel ps.build ];
@@ -115,6 +121,7 @@ let
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/frozen-control-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
+    "node services/bayn/dist/native-arrival-export-command.js --help"
     "node services/bayn/dist/webull-research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
@@ -194,6 +201,7 @@ import ./bun-workspace-service.nix {
     backtestCommand
     frozenControlCommand
     controlCommand
+    nativeArrivalExportCommand
     webullResearchCommand
     gepaPython
     pkgs.go-containerregistry
