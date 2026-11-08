@@ -625,6 +625,8 @@ could have read historically and cannot serve as a qualified backtest or live de
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
 
+The [November 7 paper-edge campaign](../../docs/bayn/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
+
 Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
 untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
 fully costed profit and positive absolute and paired lower bounds over the exact registered calendar. It has no
@@ -2542,6 +2544,8 @@ See the runbook for native session and budget enforcement and the [standalone se
 for development access and the verified state migration.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
+`bayn-jev-evaluate` is offline and never acquires provider credentials. Release and health verification must not issue
+paid inference outside admitted trading work or explicitly budgeted research with durable requests and receipts.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and
 execution evidence. The runner reserves paid calls before dispatch, rejects ambiguous retries, keeps evaluation
 feedback out of proposals and retains an unchanged-question repeat. Existing numerical controls provide a separate
