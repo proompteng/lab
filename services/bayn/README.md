@@ -2544,6 +2544,8 @@ See the runbook for native session and budget enforcement and the [standalone se
 for development access and the verified state migration.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
+`bayn-jev-evaluate` is offline and never acquires provider credentials. Release and health verification must not issue
+paid inference outside admitted trading work or explicitly budgeted research with durable requests and receipts.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and
 execution evidence. The runner reserves paid calls before dispatch, rejects ambiguous retries, keeps evaluation
 feedback out of proposals and retains an unchanged-question repeat. Existing numerical controls provide a separate
