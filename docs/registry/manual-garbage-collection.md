@@ -17,6 +17,10 @@ uploads. The four-minute frozen budget includes drain, current-root validation a
 remain available. The gate is persisted before closing, so a proxy restart still rejects new mutations. Distribution
 binds only to 127.0.0.1:5000; the Service and Ingress continue through the existing proxy on port 8080.
 
+Keep blob descriptor caching disabled. Filesystem quarantine must not leave a serving process advertising removed
+layers from its cache. The native Distribution fixture reproduces the stale-cache failure, then verifies that the
+deployed configuration requires the layer to be uploaded again and permits a complete matching pull without a restart.
+
 Quarantine moves do not free allocated blocks. The worker reopens uploads before physically deleting quarantined
 files. Version 3 receipts bind each batch and directory inode to the original PVC UID/PV. Blob hashes, inode, size and
 mtime must still match. Tag inventories preserve every metadata file and directory identity. Changed files, unexpected

@@ -43,3 +43,10 @@ jobs:
           --tmpfs /tmp --tmpfs /control:uid=99,gid=99,mode=0770
           --tmpfs /var/lib/registry:uid=99,gid=99,mode=0770
           --memory 256m --cpus 2 --pids-limit 128 registry-cleanup-test
+      - name: Verify repush after real Distribution cleanup
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --tmpfs /tmp --tmpfs /control:uid=99,gid=99,mode=0770
+          --tmpfs /var/lib/registry:uid=99,gid=99,mode=0770
+          --memory 256m --cpus 2 --pids-limit 128
+          --entrypoint python3 registry-cleanup-test /cache-test.py

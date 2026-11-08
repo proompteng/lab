@@ -48,6 +48,10 @@ Uploads reopen before receipted quarantine files are physically deleted. The gat
 proxy restart cannot reopen writes during quarantine. The Distribution listener binds only to loopback to prevent a
 Pod-address bypass.
 
+Blob descriptor caching is disabled. A serving process must check storage after quarantine so a client cannot reuse a
+deleted layer from a stale positive cache entry. The native Distribution regression covers collection, repush and full
+content verification without restarting either serving process.
+
 Keep at least five recent build tags per repository, all images uploaded within seven days, unknown human tags and
 all images referenced by the explicit workload and retained Kargo protection contract. Retain platform manifests,
 attestations and layers reachable from those roots. The existing claim, version 3 receipt identities and content checks
