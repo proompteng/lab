@@ -245,12 +245,16 @@ export const validateSystemRegistration = (input: unknown, version = JevAcceptan
       new Set(registration.policies.map((policy) => policy.accountBindingHash)),
       new Set(registration.calendar.sessions.map((session) => session.sessionDate)),
     )
-    const markets = registration.obligations.configuration.protocol.marketProfiles.map((profile) => profile.market)
+    const runtime = registration.obligations.configuration
+    const markets = runtime.protocol.marketProfiles.map((profile) => profile.market)
+    const entryMarkets = runtime.entryMarkets ?? markets
     if (
-      registration.calendar.tradingMarkets.length !== markets.length ||
-      markets.some((market) => !registration.calendar.tradingMarkets.includes(market))
+      registration.calendar.tradingMarkets.some((market) => !markets.includes(market)) ||
+      entryMarkets.some((market) => !markets.includes(market) || !registration.calendar.tradingMarkets.includes(market))
     )
-      return yield* invalid('Registered trading markets must include the complete native policy')
+      return yield* invalid(
+        'Registered trading markets must cover the native entry scope within its authorized profiles',
+      )
     const ablationQuestionHash =
       version === JevAcceptanceVersion.Current
         ? entryAblationQuestionPolicyHash

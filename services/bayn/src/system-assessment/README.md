@@ -133,6 +133,10 @@ selected matched control, source/image/prompt identities, cost weights, actual i
 allocation, and sourced conditional statistical support and assumptions before the first open. Current registrations
 have no bootstrap plan. The allocation must fit every bound source-approved risk policy. Both existing
 PAPER and live-style risk variants are recognized without changing their limits or issuing a capital grant.
+The financial market scope must cover every registered runtime entry market and may retain additional native
+markets for existing-position exits. An equity-only runtime can register an equity-only evaluation without
+enabling crypto. Captured activity outside that financial scope remains an evidence failure. Historical runtime
+commitments without an entry scope still require every market in their original protocol.
 Selecting the deployed control still requires its frozen identity; selected ablation and momentum definitions derive
 from their native runtime policies. Unknown or expanded risk material and substituted controls remain invalid.
 Contracted inference discounts are permitted; all costs still require evidence.
