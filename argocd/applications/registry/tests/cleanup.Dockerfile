@@ -3,10 +3,11 @@ FROM haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f674
 USER root
 RUN apk add --no-cache python3
 USER 99:99
-COPY --from=distribution /bin/registry /usr/local/bin/registry
+COPY --from=distribution /bin/registry /bin/registry
 COPY packages/scripts/src/registry /cleanup
 COPY argocd/applications/registry/haproxy.cfg /proxy.cfg
 COPY argocd/applications/registry/registry-configmap.yaml /registry-configmap.yaml
+COPY argocd/applications/registry/deployment.yaml /deployment.yaml
 COPY argocd/applications/registry/tests/write-gate.py /test.py
 COPY argocd/applications/registry/tests/distribution-cache.py /cache-test.py
 ENTRYPOINT ["python3", "/test.py"]

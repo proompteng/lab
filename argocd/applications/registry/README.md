@@ -47,6 +47,7 @@ gate and drains accepted uploads. Reads remain available. Frozen validation and 
 Uploads reopen before receipted quarantine files are physically deleted. The gate is persisted before it closes so a
 proxy restart cannot reopen writes during quarantine. The Distribution listener binds only to loopback to prevent a
 Pod-address bypass.
+Startup passes the mounted configuration path directly to Distribution so its listener and cache settings take effect.
 
 Blob descriptor caching is disabled. A serving process must check storage after quarantine so a client cannot reuse a
 deleted layer from a stale positive cache entry. The native Distribution regression covers collection, repush and full
