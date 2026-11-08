@@ -1,3 +1,4 @@
+import legacyPositionSnapshotIndex from '../../migrations/0190_legacy_position_snapshot_index'
 import nativeProtectionCancelReceipts from '../../migrations/0189_native_protection_cancel_receipts'
 import jevBoxInference from '../../migrations/0188_jev_box_inference'
 import inferenceRequestGenerationIndex from '../../migrations/0187_inference_request_generation_index'
@@ -191,6 +192,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '190_legacy_position_snapshot_index': legacyPositionSnapshotIndex,
   '189_native_protection_cancel_receipts': nativeProtectionCancelReceipts,
   '188_jev_box_inference': jevBoxInference,
   '187_inference_request_generation_index': inferenceRequestGenerationIndex,

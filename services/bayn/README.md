@@ -1,5 +1,11 @@
 # Bayn
 
+Position observability bounds trusted clock-regression checks by the selected account and the newer observation-time
+interval. A partial legacy index finds pre-migration snapshots without walking the growing trusted tail. Durable
+ingestion order, legacy timestamp ambiguity, future exclusion and clock-regression rejection remain unchanged. The
+additive index migration retains every evidence row; its build temporarily blocks position-snapshot writes. This
+reduces avoidable status-read I/O, but does not establish a cause or cure for a storage stall or a pass timeout.
+
 Broker read timing separates `bayn.alpaca.read.headers` (request execution through response headers, including
 configured transport retries) from `bayn.alpaca.read.body` (body transfer and JSON parsing). Both remain inside the
 original total read deadline and use only the existing finite operation/dependency/outcome labels. A header-stage
