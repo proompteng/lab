@@ -365,6 +365,7 @@
               ;
             atticClient = pkgs.attic-client;
             atticServer = pkgs.attic-server;
+            buf = pkgs.buf;
           };
 
           apps = {
