@@ -32,6 +32,19 @@ no trading driver, places no order and changes no authority. A failed rebuild le
 untouched. Shared preparation does not lock current-source ticks. Registering a different source still fences old
 ticks, so the complete replacement pool must warm before registration. Existing handoff and trading deadlines remain unchanged.
 
+An already rejected broker observation read distinguishes a verified foreign source revision from a missing or
+invalidated cut. The diagnostic reads only an account-scoped ownership boolean and exposes no account or revision
+identifier. It does not admit either revision, extend freshness or change authority, recovery markers or deadlines.
+During a staged release, controller activation can invalidate predecessor API observations before replacement APIs
+are ready. A new controller's successful publication does not restore an old API's revision-bound health read.
+Those failures reduce runtime/trading readiness; they do not establish an HTTP routing outage. Kubernetes uses
+`/status-readyz`, which can route a degraded read-only status API while its PostgreSQL, ledger and cycle reads remain
+available and its health lease is fresh. `/readyz` and `bayn_runtime_ready` still fail closed on rejected broker cuts.
+The PostgreSQL handoff tests exercise both readiness decisions across prepared, failed/interrupted initial-poll,
+fresh-successor and stale/foreign-cut states without changing authority. They do not simulate Argo scheduling or
+prove continuous service. Any earlier API preparation must independently verify its cycle/authority projection,
+rollout ordering and live effect; do not relax revision, freshness or authority fences to make preparation succeed.
+
 Background broker polling brackets account and position reads with two matching complete history scans.
 Consecutive successful tickets with the same latest fill reuse the preceding poll's completed scan as the next
 before-read, and fetch the full after-history again, including old fill or fee corrections. The existing
@@ -192,6 +205,12 @@ cancellation through the existing lookup-only recovery path and unchanged consis
 post-recovery reconciliation before cycle work. The local hint grants no authority, cannot submit or cancel, and is
 lost safely on restart; normal durable recovery remains the fallback. Missing, failed or unresolved confirmation
 retains fail-closed restrictions. Native protective-order cancellations keep their separate reconciliation path.
+
+Native protection retains each broker HTTP 204 cancellation receipt against its exact durable command. Migration 189
+adds append-only receipts without inventing acknowledgments for historical commands. A verified accepted cancellation
+awaiting broker publication uses a continuation of at most five seconds; uncertain outcomes keep normal recovery
+backoff. Acceptance does not prove that an order settled. Fresh exact reconciliation must still show every protective
+sell settled before a standalone exit can proceed, and an ambiguous receipt write is reconciled before another mutation.
 
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
@@ -427,6 +446,9 @@ increments remain enforced; held inventory, current authority and account risk c
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+Every provider stage also uses the earlier of the parent admission deadline and its original request expiry. Store
+admission and handoff commits cannot renew that budget. A paid response that arrives at the boundary retains its
+verified usage and response hash even when it can no longer support an entry.
 An abstention waits for another observation only while that lease has enough finalization headroom.
 Equity session hours cannot extend the unused lease or defer its valid no-trade decision until the closing bell.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
@@ -624,6 +646,8 @@ could have read historically and cannot serve as a qualified backtest or live de
 ## Profitability goal
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
+
+The [November 7 paper-edge campaign](../../docs/bayn/paper-edge-research-2026-11-07.md) starts with exact-source CosmosAlpha reproduction and examines new factor-search and wallet-flow mechanisms. Its reference design does not register a prospective economic period or authorize a strategy change.
 
 Demonstrate repeatable positive net profit after execution, inference, data, infrastructure, and research costs on
 untouched prospective sessions. The active [TypeScript acceptance policy](src/jev/acceptance.ts) requires positive
@@ -1597,7 +1621,13 @@ Forward-performance reports discover generation-scoped expense sessions with a d
 the request generation/cycle index. Account-wide discovery retains all generations and the complete-session limit.
 
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
-most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
+most four pages of 64 pending terminal-cycle batches for its bound account and settles those past their original request expiry
+through the existing idempotent finalizer. This closes evidence after an admission expires or the process restarts;
+it makes no provider calls and cannot bind a decision or authorize an order.
+An account-bound cursor survives physical session recreation and wraps at the end of the sweep, so failed batches
+remain retryable without starving later work. Process restart may reset this progress hint; committed results remain authoritative.
+
+The same pass then reads at most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
 requests retain separate `CHART` and `JEV` stage quotes, including unsuccessful calls. Historical requests retain their original `BASE_START` quotes and skips,
 with batches of at most 64 quotes per write. Their transfer identities include the
@@ -2542,6 +2572,8 @@ See the runbook for native session and budget enforcement and the [standalone se
 for development access and the verified state migration.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
+`bayn-jev-evaluate` is offline and never acquires provider credentials. Release and health verification must not issue
+paid inference outside admitted trading work or explicitly budgeted research with durable requests and receipts.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and
 execution evidence. The runner reserves paid calls before dispatch, rejects ambiguous retries, keeps evaluation
 feedback out of proposals and retains an unchanged-question repeat. Existing numerical controls provide a separate

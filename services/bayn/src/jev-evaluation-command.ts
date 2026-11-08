@@ -1,12 +1,9 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Config, Effect, FileSystem, Layer, Logger, Redacted, Schema, Stdio, Stream } from 'effect'
+import { Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { sha256 } from './hash'
 import { JevContractError } from './jev/contract'
-import { JevClientLive } from './jev/client'
-import { JevHttpClientLive } from './jev/http'
-import { verifyBoxAcceptance } from './jev/box-acceptance'
 import { jevInstructions } from './jev/instructions'
 import { JevInstructionsSchema } from './jev/instructions-contract'
 import { JevInstructionVariantBuildSchema } from './jev/instruction-variant'
@@ -18,7 +15,7 @@ import {
 import { Sha256Schema, StrictNonEmptyStringSchema, strictParseOptions } from './schemas'
 
 export const jevEvaluationCommandUsage =
-  'Usage: bayn-jev-evaluate --baseline | --verify-box | --outcome <native-artifact.json> --output <new-outcome.json> | --compare <economic-manifest.json> --output <new-comparison.json> | --help'
+  'Usage: bayn-jev-evaluate --baseline | --outcome <native-artifact.json> --output <new-outcome.json> | --compare <economic-manifest.json> --output <new-comparison.json> | --help'
 
 export const jevEvaluationCommand = (args: readonly string[]) =>
   Effect.gen(function* () {
@@ -28,19 +25,6 @@ export const jevEvaluationCommand = (args: readonly string[]) =>
         Stream.make(new TextEncoder().encode(`${typeof value === 'string' ? value : JSON.stringify(value)}\n`)),
         stdio.stdout(),
       )
-    if (args.length === 1 && args[0] === '--verify-box') {
-      const key = yield* Config.String('BAYN_JEV_API_KEY').pipe(Config.map(Redacted.make))
-      const proxy = yield* Config.String('BAYN_ALPACA_PROXY_URL').pipe(
-        Config.withDefault('http://bayn-egress-proxy:3128'),
-      )
-      const provider = JevClientLive(key, 10_000).pipe(Layer.provide(JevHttpClientLive(proxy)))
-      // @effect-diagnostics-next-line strictEffectProvide:off -- CLI owns this scoped provider and its egress dispatcher
-      const result = yield* verifyBoxAcceptance.pipe(Effect.provide(provider))
-      yield* print(result)
-      if (result.status !== 'PASS')
-        return yield* new JevContractError({ message: 'Box acceptance did not complete downstream inference' })
-      return
-    }
     if (args.length === 1 && args[0] === '--help') return yield* print(jevEvaluationCommandUsage)
     if (args.length === 1 && args[0] === '--baseline') return yield* print(jevInstructions)
     if (args.length === 4 && args[0] === '--outcome' && args[2] === '--output') {

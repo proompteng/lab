@@ -24,10 +24,10 @@ resources:
 - notebooks
 images:
 - name: registry.ide-newton.ts.net/lab/signal-publisher
-  digest: sha256:fc3e7b7bd2f0407b1320babbf24f71e87e8f7be93ec85924f5d75e9149a26c42
+  digest: sha256:3079ea854000e118b3d65b95a94bd7c0e6bc1b937dbfcc9f736709faf2ef3555
 - name: registry.ide-newton.ts.net/lab/torghut
-  digest: sha256:fb0556c7736a3b0970c42277d256bbf65b7fd991f6c5dd65769a0d69973dcc4c
+  digest: sha256:adf4ddd4f71fda29dbe59f3b87092a9826446b5fd3f8946b5f29a177c9896ae4
 - name: registry.ide-newton.ts.net/lab/torghut-ta
-  digest: sha256:adffc3e203de3fa7b55310223565c92e0dfc82363b1aaf055fde770cf37bd30a
+  digest: sha256:9541a782b3000a2180b45cb085d8ee59004f1a8502ae7653ec1df3bea5fb166f
 - name: registry.ide-newton.ts.net/lab/torghut-ws
-  digest: sha256:0700a38abe04f66252db88ef412f61e486bcb726294c147df0d2fbd8eea6d2e0
+  digest: sha256:f9477f2173222a0076471af206064f79ce664c9a3dab4e0512fdb340874552cd
