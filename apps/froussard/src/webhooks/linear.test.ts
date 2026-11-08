@@ -1,14 +1,17 @@
 import { createHmac } from 'node:crypto'
 
-import { Effect } from 'effect'
+import { Effect, Layer } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AppRuntime } from '@/effect/runtime'
-import { logger } from '@/logger'
+import { AppLogger, logger } from '@/logger'
 import type { AgentRunSubmitter } from '@/services/agents'
 
 import { createIdempotencyStore } from './idempotency-store'
-import { createLinearWebhookHandler } from './linear'
+import { make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { KafkaProducer } from '@/services/kafka'
+import type { WebhookAdmission } from './admission'
+import { createLinearPolicyProcessor, createLinearWebhookHandler } from './linear'
 import type { LinearWebhookMetrics } from './linear-metrics'
 import type { WebhookConfig } from './types'
 
@@ -145,17 +148,60 @@ const makeHarness = (
     (async (message) => {
       published.push(message)
     })
-  const handler = createLinearWebhookHandler({
-    runtime: { runSync: Effect.runSync } as AppRuntime,
+  const admissions: WebhookAdmission[] = []
+  const runtime = makeManagedRuntime(
+    Layer.merge(
+      Layer.succeed(AppLogger, {
+        debug: () => Effect.void,
+        info: () => Effect.void,
+        warn: () => Effect.void,
+        error: () => Effect.void,
+      }),
+      Layer.succeed(KafkaProducer, {
+        publish: (message) =>
+          Effect.sync(() => {
+            published.push({
+              ...message,
+              value: Buffer.from(message.value),
+              headers: message.headers as Record<string, string>,
+            })
+          }),
+        ensureConnected: Effect.void,
+        isReady: Effect.succeed(true),
+      }),
+    ),
+  ) as AppRuntime
+  const ingress = createLinearWebhookHandler({
+    runtime,
     config: options.config ?? config,
     idempotencyStore: createIdempotencyStore(config.idempotency),
     now: () => NOW,
-    submitAgentRun: submit,
-    publishRawEvent: publish,
+    admit: async (admission) => {
+      if (options.publish)
+        await publish({
+          topic: 'froussard.webhook.admissions.v1',
+          key: admission.deliveryId,
+          value: Buffer.from(admission.body),
+          headers: { ...admission.headers },
+        })
+      admissions.push(admission)
+    },
     metrics: options.metrics,
     responseBudgetMs: options.responseBudgetMs,
   })
-  return { handler, submissions, published }
+  const process = createLinearPolicyProcessor({ runtime, config: options.config ?? config, submitAgentRun: submit })
+  const drain = async () => {
+    while (admissions.length) {
+      await process(admissions[0]!)
+      admissions.shift()
+    }
+  }
+  const handler = async (request: Request) => {
+    const response = await ingress(request)
+    await drain()
+    return response
+  }
+  return { handler, ingress, drain, submissions, published, admissions }
 }
 
 describe('Linear webhook intake', () => {
@@ -184,7 +230,6 @@ describe('Linear webhook intake', () => {
     await expect(response.json()).resolves.toEqual({
       status: 'accepted',
       deliveryId: DELIVERY,
-      agentRunTriggered: true,
     })
     expect(published).toHaveLength(1)
     expect(published[0]).toMatchObject({
@@ -453,10 +498,10 @@ describe('Linear webhook intake', () => {
 
     expect((await harness.handler(signedRequest(payload))).status).toBe(400)
     expect(harness.submissions).toHaveLength(0)
-    expect(harness.published).toHaveLength(1)
+    expect(harness.published).toHaveLength(0)
   })
 
-  it('returns 500 on Kafka failure and releases the delivery for a successful retry', async () => {
+  it('returns 503 on Kafka failure and releases the delivery for a successful retry', async () => {
     let shouldFail = true
     const submissions: Parameters<AgentRunSubmitter>[0][] = []
     const submit: AgentRunSubmitter = async (input) => {
@@ -470,44 +515,39 @@ describe('Linear webhook intake', () => {
       },
     })
 
-    expect((await harness.handler(signedRequest(issuePayload()))).status).toBe(500)
+    expect((await harness.handler(signedRequest(issuePayload()))).status).toBe(503)
     shouldFail = false
     expect((await harness.handler(signedRequest(issuePayload()))).status).toBe(200)
-    expect(submissions).toHaveLength(2)
+    expect(submissions).toHaveLength(1)
   })
 
-  it('returns 500 on Agents failure and releases the delivery for retry', async () => {
+  it('acknowledges admission while Agents is unavailable and retains policy work for retry', async () => {
     let shouldFail = true
     const submit: AgentRunSubmitter = async () =>
       shouldFail
         ? { ok: false, status: 503, body: null, error: 'unavailable' }
         : { ok: true, status: 201, body: { ok: true } }
     const harness = makeHarness({ submit })
-
-    expect((await harness.handler(signedRequest(issuePayload()))).status).toBe(500)
+    expect((await harness.ingress(signedRequest(issuePayload()))).status).toBe(200)
+    await expect(harness.drain()).rejects.toThrow('HTTP 503')
+    expect(harness.admissions).toHaveLength(1)
     shouldFail = false
-    expect((await harness.handler(signedRequest(issuePayload()))).status).toBe(200)
+    await harness.drain()
+    expect(harness.admissions).toHaveLength(0)
   })
 
-  it("aborts a slow Agents submission before Linear's delivery deadline", async () => {
-    let signal: AbortSignal | null | undefined
+  it('keeps a stalled Agents request off the ingress path and bounds the worker request', async () => {
+    let signal: AbortSignal | undefined | null
     const submit: AgentRunSubmitter = (input) => {
       signal = input.signal
-      return new Promise((resolve) => {
-        input.signal?.addEventListener('abort', () => {
-          resolve({ ok: false, status: 0, body: null, error: 'aborted' })
-        })
-      })
+      return new Promise((resolve) =>
+        input.signal?.addEventListener('abort', () => resolve({ ok: false, status: 0, body: null, error: 'aborted' })),
+      )
     }
-    const timeoutConfig: WebhookConfig = {
-      ...config,
-      linear: { ...config.linear, agentsTimeoutMs: 10 },
-    }
-    const harness = makeHarness({ config: timeoutConfig, submit })
-
-    const response = await harness.handler(signedRequest(issuePayload()))
-
-    expect(response.status).toBe(500)
+    const harness = makeHarness({ config: { ...config, linear: { ...config.linear, agentsTimeoutMs: 10 } }, submit })
+    expect((await harness.ingress(signedRequest(issuePayload()))).status).toBe(200)
+    expect(signal).toBeUndefined()
+    await expect(harness.drain()).rejects.toThrow('HTTP 0')
     expect(signal?.aborted).toBe(true)
   })
 
@@ -528,7 +568,7 @@ describe('Linear webhook intake', () => {
         throw new Error('Kafka unavailable')
       },
     })
-    expect((await failed.handler(signedRequest(issuePayload()))).status).toBe(500)
+    expect((await failed.handler(signedRequest(issuePayload()))).status).toBe(503)
 
     expect(events).toContain('verification:signature')
     expect(events).toContain('downstream:kafka:failure')

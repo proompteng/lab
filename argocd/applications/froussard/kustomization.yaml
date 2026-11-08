@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - github-secrets.yaml
   - discord-secrets.yaml
+  - webhook-admission-topic.yaml
   - github-webhook-topic.yaml
   - linear-webhook-topic.yaml
   - coder-workspace-access.yaml

@@ -24,6 +24,7 @@ export interface WorkflowExecutionContext {
     }
   }
   deliveryId: string
+  receivedAt: string
   agentRunIdentifier?: string | null
   submitAgentRun: AgentRunSubmitter
 }

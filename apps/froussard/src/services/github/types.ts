@@ -1,4 +1,5 @@
 export interface FetchInit {
+  signal?: AbortSignal
   method?: string
   headers?: Record<string, string>
   body?: string

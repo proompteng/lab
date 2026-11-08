@@ -54,18 +54,6 @@ export const createDiscordWebhookHandler =
       return jsonResponse({ type: INTERACTION_TYPE.PING })
     }
 
-    const interactionId = typeof typedInteraction.id === 'string' ? typedInteraction.id : undefined
-    if (interactionId && idempotencyStore.isDuplicate(`discord:${interactionId}`)) {
-      logger.warn({ interactionId }, 'duplicate discord interaction ignored')
-      return jsonResponse({
-        type: 4,
-        data: {
-          content: 'Duplicate interaction ignored.',
-          ...(config.discord.response.ephemeral ? { flags: EPHEMERAL_FLAG } : {}),
-        },
-      })
-    }
-
     if (typedInteraction.type === INTERACTION_TYPE.APPLICATION_COMMAND) {
       const commandInteraction = interaction as DiscordApplicationCommandInteraction
       const commandName = commandInteraction.data?.name?.toLowerCase()
@@ -152,13 +140,15 @@ export const createDiscordWebhookHandler =
         kafkaHeaders['x-discord-user-id'] = protoEvent.user.id
       }
 
-      await runtime.runPromise(
-        publishKafkaMessage({
-          topic: config.topics.discordCommands,
-          key: protoEvent.interactionId,
-          value: encodedEvent,
-          headers: kafkaHeaders,
-        }),
+      await idempotencyStore.run(`discord:${protoEvent.interactionId}`, () =>
+        runtime.runPromise(
+          publishKafkaMessage({
+            topic: config.topics.discordCommands,
+            key: protoEvent.interactionId,
+            value: encodedEvent,
+            headers: kafkaHeaders,
+          }),
+        ),
       )
 
       return jsonResponse({

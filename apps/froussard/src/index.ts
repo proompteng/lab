@@ -7,7 +7,9 @@ import { makeAppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
 import { createHealthHandlers } from '@/routes/health'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
-import { KafkaProducer } from '@/services/kafka'
+import { ADMISSION_GROUP } from '@/webhooks/admission'
+import { createPolicyWorker, makePolicyProcessor } from '@/webhooks/worker'
+import { makeKafkaClient, KafkaProducer } from '@/services/kafka'
 import { traceRequest } from '@/telemetry'
 
 const buildVersion = process.env.FROUSSARD_VERSION ?? 'dev'
@@ -22,29 +24,34 @@ const { config, kafka } = await runtime.runPromise(
   }),
 )
 
+const webhookConfig: WebhookConfig = {
+  idempotency: config.idempotency,
+  atlas: config.atlas,
+  agents: config.agents,
+  codebase: config.codebase,
+  github: config.github,
+  codexTriggerLogins: config.codex.triggerLogins,
+  codexWorkflowLogin: config.codex.workflowLogin,
+  codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
+  topics: config.kafka.topics,
+  linear: {
+    webhookSecret: config.linearWebhookSecret,
+    ...config.linear,
+  },
+  discord: {
+    publicKey: config.discord.publicKey,
+    response: config.discord.defaultResponse,
+  },
+}
+
+const policyConsumer = makeKafkaClient(config.kafka).consumer({
+  groupId: ADMISSION_GROUP,
+  allowAutoTopicCreation: false,
+})
+const worker = createPolicyWorker(policyConsumer, makePolicyProcessor(runtime, webhookConfig))
+
 export const createApp = () => {
   const health = createHealthHandlers({ runtime, kafka })
-
-  const webhookConfig: WebhookConfig = {
-    idempotency: config.idempotency,
-    atlas: config.atlas,
-    agents: config.agents,
-    codebase: config.codebase,
-    github: config.github,
-    codexTriggerLogins: config.codex.triggerLogins,
-    codexWorkflowLogin: config.codex.workflowLogin,
-    codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
-    topics: config.kafka.topics,
-    linear: {
-      webhookSecret: config.linearWebhookSecret,
-      ...config.linear,
-    },
-    discord: {
-      publicKey: config.discord.publicKey,
-      response: config.discord.defaultResponse,
-    },
-  }
-
   const webhookHandler = createWebhookHandler({
     runtime,
     webhooks: new Webhooks({ secret: config.githubWebhookSecret }),
@@ -82,7 +89,9 @@ export const createApp = () => {
       return new Response('Internal Server Error', { status: 500 })
     })
     .post('/webhooks/:provider', ({ request, params }) =>
-      runtime.runPromise(traceRequest(request, '/webhooks/:provider', () => webhookHandler(request, params.provider))),
+      runtime.runPromise(
+        traceRequest(request, '/webhooks/:provider', (tracedRequest) => webhookHandler(tracedRequest, params.provider)),
+      ),
     )
 }
 
@@ -93,6 +102,17 @@ export const startServer = () => {
     void runtime
       .runPromise(kafka.ensureConnected)
       .catch((error) => logger.error({ err: error }, 'failed to connect Kafka producer'))
+
+    policyConsumer.on(policyConsumer.events.CRASH, ({ payload }) => {
+      if (!payload.restart) {
+        logger.error({ err: payload.error }, 'policy consumer stopped; restarting process')
+        void shutdown().finally(() => process.exit(1))
+      }
+    })
+    void worker.start().catch((error) => {
+      logger.error({ err: error }, 'policy consumer failed to start')
+      void shutdown().finally(() => process.exit(1))
+    })
 
     const port = Number(process.env.PORT ?? 8080)
     app.listen(port)
@@ -110,6 +130,11 @@ if (import.meta.main) {
 }
 
 export const shutdown = async () => {
+  try {
+    await worker.stop()
+  } catch (error) {
+    logger.error({ err: error }, 'failed to stop policy consumer')
+  }
   try {
     await runtime.dispose()
   } catch (error) {

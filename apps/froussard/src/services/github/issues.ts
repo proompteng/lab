@@ -1,3 +1,4 @@
+import { defaultFetch as globalFetch } from './common'
 import { Effect } from 'effect'
 
 import { DEFAULT_API_BASE_URL, DEFAULT_USER_AGENT, readResponseText, toError, trimTrailingSlash } from './common'
@@ -12,8 +13,6 @@ import type {
   PostIssueReactionOptions,
   PostIssueReactionResult,
 } from './types'
-
-const globalFetch = typeof globalThis.fetch === 'function' ? (globalThis.fetch.bind(globalThis) as FetchLike) : null
 
 export const postIssueReaction = (options: PostIssueReactionOptions): Effect.Effect<PostIssueReactionResult> => {
   const {

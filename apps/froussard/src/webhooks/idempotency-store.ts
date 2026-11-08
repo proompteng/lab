@@ -4,59 +4,40 @@ export interface IdempotencyConfig {
 }
 
 export interface IdempotencyStore {
-  isDuplicate: (key: string) => boolean
-  release: (key: string) => void
+  /** Resolves only after this delivery's broker write succeeds. */
+  run: (key: string, publish: () => Promise<void>) => Promise<boolean>
 }
 
 export const createIdempotencyStore = ({ ttlMs, maxEntries }: IdempotencyConfig): IdempotencyStore => {
-  const boundedTtlMs = Number.isFinite(ttlMs) ? Math.max(0, ttlMs) : 0
-  const boundedMaxEntries = Number.isFinite(maxEntries) ? Math.max(0, maxEntries) : 0
-
-  if (boundedTtlMs === 0 || boundedMaxEntries === 0) {
-    return {
-      isDuplicate: () => false,
-      release: () => undefined,
-    }
-  }
-
-  const entries = new Map<string, number>()
-
-  const pruneExpired = (now: number) => {
-    for (const [key, expiresAt] of entries) {
-      if (expiresAt <= now) {
-        entries.delete(key)
-      }
-    }
-  }
-
+  const pending = new Map<string, Promise<void>>()
+  const committed = new Map<string, number>()
   return {
-    isDuplicate: (key: string) => {
-      if (!key) {
-        return false
-      }
-
+    async run(key, publish) {
       const now = Date.now()
-      pruneExpired(now)
-
-      const expiresAt = entries.get(key)
-      if (typeof expiresAt === 'number' && expiresAt > now) {
+      for (const [id, expiry] of committed) if (expiry <= now) committed.delete(id)
+      if (committed.has(key)) return true
+      const existing = pending.get(key)
+      if (existing) {
+        await existing
         return true
       }
-
-      entries.set(key, now + boundedTtlMs)
-
-      while (entries.size > boundedMaxEntries) {
-        const oldestKey = entries.keys().next().value
-        if (typeof oldestKey !== 'string') {
-          break
+      if (pending.size >= 128) throw new Error('Kafka admission capacity exhausted')
+      const write = Promise.resolve().then(publish)
+      pending.set(key, write)
+      try {
+        await write
+        if (ttlMs > 0 && maxEntries > 0) {
+          committed.set(key, Date.now() + ttlMs)
+          while (committed.size > maxEntries) {
+            const oldest = committed.keys().next().value
+            if (oldest === undefined) break
+            committed.delete(oldest)
+          }
         }
-        entries.delete(oldestKey)
+        return false
+      } finally {
+        pending.delete(key)
       }
-
-      return false
-    },
-    release: (key: string) => {
-      entries.delete(key)
     },
   }
 }

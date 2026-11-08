@@ -1,3 +1,4 @@
+import { defaultFetch as globalFetch } from './common'
 import type { ApprovePullRequestOptions, ApprovePullRequestResult } from './types'
 import { Effect, Schema } from 'effect'
 import { fetchPullRequest } from './pull-requests'
@@ -23,9 +24,6 @@ import type {
   PullRequestBlockingCheck,
   PullRequestReviewThread,
 } from './types'
-
-const globalFetch: FetchLike | null =
-  typeof globalThis.fetch === 'function' ? (globalThis.fetch.bind(globalThis) as FetchLike) : null
 
 const LIST_REVIEW_THREADS_QUERY = `
   query ReviewThreads($owner: String!, $repo: String!, $pullNumber: Int!, $cursor: String) {

@@ -1,9 +1,7 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Deferred from 'effect/Deferred'
-import * as Queue from 'effect/Queue'
 import { Kafka } from 'kafkajs'
 
-import { AppConfigService } from '@/effect/config'
+import { AppConfigService, type AppConfig } from '@/effect/config'
 import { AppLogger } from '@/logger'
 
 export { parseBrokerList } from '@/utils/kafka'
@@ -23,172 +21,90 @@ export interface KafkaProducerService {
 
 export class KafkaProducer extends Context.Service<KafkaProducer, KafkaProducerService>()('@froussard/KafkaProducer') {}
 
-interface QueuedMessage {
-  readonly message: KafkaMessage
-  readonly deferred: Deferred.Deferred<void, unknown>
-}
+export const makeKafkaClient = (config: AppConfig['kafka']) =>
+  new Kafka({
+    clientId: config.clientId,
+    brokers: config.brokers,
+    ssl: false,
+    sasl: { mechanism: 'scram-sha-512', username: config.username, password: config.password },
+    connectionTimeout: 1_000,
+    requestTimeout: 4_000,
+    retry: { retries: 2, initialRetryTime: 100, maxRetryTime: 500 },
+  })
 
 export const KafkaProducerLayer = Layer.effect(
   KafkaProducer,
   Effect.gen(function* () {
     const config = yield* AppConfigService
     const logger = yield* AppLogger
-
-    const kafka = new Kafka({
-      clientId: config.kafka.clientId,
-      brokers: config.kafka.brokers,
-      ssl: false,
-      sasl: {
-        mechanism: 'scram-sha-512',
-        username: config.kafka.username,
-        password: config.kafka.password,
-      },
+    const producer = makeKafkaClient(config.kafka).producer({
+      allowAutoTopicCreation: false,
+      idempotent: true,
+      maxInFlightRequests: 5,
+      retry: { retries: 2, initialRetryTime: 100, maxRetryTime: 500 },
     })
-
-    const createProducer = () => kafka.producer({ allowAutoTopicCreation: false })
-    let producer = createProducer()
-    const readyRef = yield* Ref.make(false)
-
-    const connect = Effect.tryPromise(() => producer.connect()).pipe(
-      Effect.tap(() => Ref.set(readyRef, true)),
-      Effect.tap(() =>
-        logger.info('Kafka producer connected', {
-          clientId: config.kafka.clientId,
-          brokers: config.kafka.brokers.join(','),
-        }),
-      ),
-    )
-
-    const disconnect = Effect.tryPromise(() => producer.disconnect()).pipe(
-      Effect.tap(() => logger.info('Kafka producer disconnected', { clientId: config.kafka.clientId })),
-      Effect.catch((error) =>
-        logger
-          .warn('Kafka producer disconnect failed', {
-            clientId: config.kafka.clientId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-          .pipe(Effect.as(undefined)),
-      ),
-      Effect.tap(() => Ref.set(readyRef, false)),
-    )
-
-    const ensureConnected = Ref.get(readyRef).pipe(Effect.flatMap((ready) => (ready ? Effect.void : connect)))
-
-    const resetProducer = Effect.sync(() => {
-      producer = createProducer()
-    })
-
-    const sendMessage = (message: KafkaMessage) =>
+    const ready = yield* Ref.make(false)
+    let connection: Promise<void> | undefined
+    const ensureConnected = Effect.tryPromise(() => {
+      connection ??= producer.connect().catch((error: unknown) => {
+        connection = undefined
+        throw error
+      })
+      return connection
+    }).pipe(Effect.tap(() => Ref.set(ready, true)))
+    const publish = (message: KafkaMessage) =>
       ensureConnected.pipe(
-        Effect.flatMap(() =>
+        Effect.andThen(
           Effect.tryPromise({
             try: () =>
               producer.send({
                 topic: message.topic,
+                acks: -1,
+                timeout: 3_000,
                 messages: [
                   {
                     key: message.key,
-                    value: normalizeValue(message.value),
-                    headers: normalizeHeaders(message.headers),
+                    value: typeof message.value === 'string' ? message.value : Buffer.from(message.value),
+                    headers:
+                      message.headers &&
+                      Object.fromEntries(
+                        Object.entries(message.headers).map(([key, value]) => [
+                          key,
+                          typeof value === 'string' ? value : Buffer.from(value),
+                        ]),
+                      ),
                   },
                 ],
               }),
-            catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-          }).pipe(
-            Effect.tap(() =>
-              logger.info('published kafka message', {
+            catch: (error) => error,
+          }),
+        ),
+        Effect.tap((receipts) =>
+          logger.info('kafka write acknowledged', {
+            topic: message.topic,
+            key: message.key,
+            receipts: JSON.stringify(receipts.map(({ partition, baseOffset }) => ({ partition, offset: baseOffset }))),
+          }),
+        ),
+        Effect.tapError((error) =>
+          Ref.set(ready, false).pipe(
+            Effect.andThen(
+              logger.error('kafka write failed', {
                 topic: message.topic,
                 key: message.key,
+                error: String(error),
               }),
-            ),
-            Effect.tapError((error) =>
-              Ref.set(readyRef, false).pipe(
-                Effect.andThen(
-                  Effect.tryPromise(() => producer.disconnect()).pipe(Effect.catch(() => Effect.succeed(undefined))),
-                ),
-                Effect.andThen(resetProducer),
-                Effect.andThen(
-                  logger.error('failed to publish kafka message', {
-                    err: error instanceof Error ? error.message : String(error),
-                    topic: message.topic,
-                    key: message.key,
-                  }),
-                ),
-              ),
             ),
           ),
         ),
+        Effect.asVoid,
       )
-
-    const queueCapacity = 128
-    const queue = yield* Queue.bounded<QueuedMessage>(queueCapacity)
-
-    const processQueuedMessage = (item: QueuedMessage) =>
-      sendMessage(item.message).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Deferred.fail(item.deferred, error).pipe(
-              Effect.andThen(
-                logger.error('dropping kafka message after failure', {
-                  topic: item.message.topic,
-                  key: item.message.key,
-                }),
-              ),
-            ),
-          onSuccess: () => Deferred.succeed(item.deferred, undefined),
-        }),
-      )
-
-    yield* Queue.take(queue).pipe(Effect.flatMap(processQueuedMessage), Effect.forever, Effect.forkScoped)
-
-    const publish = (message: KafkaMessage) =>
-      Effect.gen(function* () {
-        const deferred = yield* Deferred.make<void, unknown>()
-        yield* Queue.offer(queue, { message, deferred })
-        return yield* Deferred.await(deferred)
-      })
-
-    const isReady = Ref.get(readyRef)
-
     return yield* Effect.acquireRelease(
-      Effect.succeed<KafkaProducerService>({
-        publish,
-        ensureConnected,
-        isReady,
-      }),
-      () => Queue.shutdown(queue).pipe(Effect.andThen(disconnect), Effect.andThen(resetProducer)),
+      Effect.succeed<KafkaProducerService>({ publish, ensureConnected, isReady: Ref.get(ready) }),
+      () =>
+        Effect.tryPromise(() => producer.disconnect()).pipe(
+          Effect.catch((error) => logger.warn('Kafka disconnect failed', { error: String(error) })),
+        ),
     )
   }),
 )
-
-const normalizeValue = (value: KafkaMessage['value']): Buffer => {
-  if (typeof value === 'string') {
-    return Buffer.from(value)
-  }
-
-  if (Buffer.isBuffer(value)) {
-    return value
-  }
-
-  return Buffer.from(value)
-}
-
-const normalizeHeaders = (headers: KafkaMessage['headers']): Record<string, Buffer> | undefined => {
-  if (!headers) {
-    return undefined
-  }
-
-  return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => {
-      if (typeof value === 'string') {
-        return [key, Buffer.from(value)]
-      }
-
-      if (Buffer.isBuffer(value)) {
-        return [key, value]
-      }
-
-      return [key, Buffer.from(value)]
-    }),
-  )
-}

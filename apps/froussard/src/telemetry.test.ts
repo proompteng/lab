@@ -4,6 +4,9 @@ import { Effect, ManagedRuntime } from 'effect'
 import { OtlpExporter } from 'effect/observability'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import type { AppRuntime } from './effect/runtime'
+import { KafkaProducer, type KafkaMessage } from './services/kafka'
+import { publishAdmission, decodeAdmission } from './webhooks/admission'
 import { makeTelemetryLayer, traceRequest } from './telemetry'
 import { makeLinearWebhookMetrics } from './webhooks/linear-metrics'
 
@@ -131,6 +134,52 @@ describe('native Effect telemetry', () => {
     expect(body).not.toContain('private-query')
     expect(body).not.toContain('private-body')
     expect(requests.every(({ contentType }) => contentType === 'application/json')).toBe(true)
+  })
+
+  it('propagates generated HTTP context through the real admission into its durable record', async () => {
+    const records: KafkaMessage[] = []
+    const publisher = {
+      runPromise: (effect: Effect.Effect<void, unknown, KafkaProducer>) =>
+        runtime.runPromise(
+          Effect.provideService(effect, KafkaProducer, {
+            publish: (message) =>
+              Effect.sync(() => {
+                records.push(message)
+              }),
+            ensureConnected: Effect.void,
+            isReady: Effect.succeed(true),
+          }),
+        ),
+    } as AppRuntime
+    await runtime.runPromise(
+      traceRequest(
+        new Request('http://localhost/webhooks/github', { method: 'POST', body: '{}' }),
+        '/webhooks/:provider',
+        async (request) => {
+          await publishAdmission(publisher, {
+            provider: 'github',
+            deliveryId: 'trace-admission',
+            receivedAt: 123,
+            body: await request.text(),
+            headers: Object.fromEntries(request.headers),
+          })
+          return new Response('', { status: 202 })
+        },
+      ),
+    )
+    await runtime.dispose()
+    const spans = traceBodies().flatMap((body) =>
+      JSON.parse(body).resourceSpans.flatMap(
+        (resource: {
+          scopeSpans: Array<{ spans: Array<{ name: string; traceId: string; spanId: string; parentSpanId?: string }> }>
+        }) => resource.scopeSpans.flatMap((scope) => scope.spans),
+      ),
+    )
+    const http = spans.find((span) => span.name === 'POST /webhooks/:provider')
+    const admission = spans.find((span) => span.name === 'webhook.admit')
+    expect(admission).toMatchObject({ traceId: http.traceId, parentSpanId: http.spanId })
+    const durable = decodeAdmission(String(records[0]!.value))
+    expect(durable.headers.traceparent).toBe(`00-${admission.traceId}-${admission.spanId}-01`)
   })
 
   it.each([200, 401, 503])('preserves HTTP %i while exporting response status and request metrics', async (status) => {
