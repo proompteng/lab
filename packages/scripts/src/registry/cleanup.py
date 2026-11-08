@@ -1,6 +1,6 @@
 """Prepare online; collect only inside a bounded, verified read-only window."""
 
-import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -8,8 +8,6 @@ import re
 import stat
 import sys
 import time
-import urllib.error
-import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,6 +24,15 @@ IMAGE_TYPES = {
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 }
+
+
+@contextmanager
+def worker_pool(count):
+    pool = ThreadPoolExecutor(max_workers=count)
+    try:
+        yield pool
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def encoded(digest):
@@ -237,7 +244,7 @@ class Store:
             tagLinks=len(tag_files),
             revisionLinks=len(revision_files),
         )
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+        with worker_pool(self.workers) as pool:
             for repository, tag, value in pool.map(tag_value, tag_files):
                 tags[repository][tag] = value
             for value in pool.map(recent_value, revision_files):
@@ -347,7 +354,7 @@ class Store:
                     raise ValueError(f"Invalid descriptor size: {digest}")
             return digest, {"signature": current, "raw": raw.decode()}, children, blobs
 
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+        with worker_pool(self.workers) as pool:
             while pending:
                 batch = pending - visited
                 pending = set()
@@ -405,7 +412,7 @@ class Store:
                     result.append({"digest": digest, "signature": value})
             return result
 
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+        with worker_pool(self.workers) as pool:
             blobs = [
                 row
                 for rows in pool.map(candidates, (self.root / "blobs/sha256").iterdir())
@@ -541,7 +548,7 @@ class Store:
             return True
 
         # Tag directories also contain allocated metadata; do not unlink them while frozen.
-        with ThreadPoolExecutor(max_workers=min(self.workers, 16)) as pool:
+        with worker_pool(min(self.workers, 16)) as pool:
             deleted_tags = sum(pool.map(move_tag, deletes))
 
         def move(row):
@@ -559,7 +566,7 @@ class Store:
             return row["signature"][2]
 
         # Rename preserves allocated blocks. Their slow physical release happens after writes reopen.
-        with ThreadPoolExecutor(max_workers=min(self.workers, 16)) as pool:
+        with worker_pool(min(self.workers, 16)) as pool:
             sizes = list(pool.map(move, rows))
         quarantined_blobs = sum(size is not None for size in sizes)
         return {
@@ -651,7 +658,7 @@ class Store:
             emit("purged", digest=row["digest"], bytes=current[2])
             return current[2]
 
-        with ThreadPoolExecutor(max_workers=min(self.workers, 8)) as pool:
+        with worker_pool(min(self.workers, 8)) as pool:
             deleted_tags = sum(pool.map(remove_tag, receipt["tags"]))
             sizes = list(pool.map(remove, receipt["blobs"]))
         for path in quarantine.iterdir():
@@ -674,89 +681,3 @@ class Store:
             "deletedBlobs": sum(size is not None for size in sizes),
             "deletedBytes": sum(size for size in sizes if size is not None),
         }
-
-
-def require_read_only(base_url):
-    base = base_url.rstrip("/") + "/v2/"
-    with urllib.request.urlopen(base, timeout=10) as response:
-        if response.status != 200:
-            raise RuntimeError("Registry read endpoint is unavailable")
-    request = urllib.request.Request(
-        base + "ceph-smoke/registry-gc-check/blobs/uploads/", b"", method="POST"
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10):
-            pass
-    except urllib.error.HTTPError as error:
-        if error.code == 405:
-            return
-        raise
-    raise RuntimeError("Registry accepts uploads; refusing filesystem deletion")
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["prepare", "collect", "purge"])
-    parser.add_argument("--root", default="/var/lib/registry/docker/registry/v2")
-    parser.add_argument(
-        "--references",
-        help="Fresh workload and retained Kargo reference JSON",
-    )
-    parser.add_argument("--workers", type=int, default=16)
-    parser.add_argument("--keep", type=int, default=5)
-    parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--no-prune-tags", action="store_true")
-    parser.add_argument("--plan")
-    parser.add_argument("--quarantine-id")
-    parser.add_argument("--pvc-uid")
-    parser.add_argument("--pv")
-    parser.add_argument(
-        "--base-url", default="http://registry.registry.svc.cluster.local"
-    )
-    parser.add_argument("--max-blobs", type=int, default=2000)
-    parser.add_argument("--seconds", type=int, default=180)
-    args = parser.parse_args()
-    if (
-        not 1 <= args.workers <= 32
-        or args.keep < 5
-        or args.days < 7
-        or args.seconds < 1
-        or args.max_blobs < 1
-    ):
-        parser.error("Use 1..32 workers, keep>=5, days>=7, seconds>=1 and max-blobs>=1")
-    store = Store(args.root, args.workers)
-    if args.operation == "purge":
-        if not args.quarantine_id or not args.pvc_uid or not args.pv:
-            parser.error(
-                "purge requires --quarantine-id, --pvc-uid, --pv and a quarantine-only --root mount"
-            )
-        print(json.dumps(store.purge(args.quarantine_id, args.pvc_uid, args.pv)))
-        return
-    if not args.references:
-        parser.error("prepare and collect require --references")
-    references = json.loads(Path(args.references).read_text())
-    if (
-        not isinstance(references, list)
-        or not references
-        or not all(isinstance(value, str) for value in references)
-    ):
-        parser.error("A nonempty protection reference list is required")
-    if args.operation == "prepare":
-        result = store.prepare(references, args.keep, args.days, not args.no_prune_tags)
-    else:
-        if not args.plan:
-            parser.error("collect requires --plan")
-        plan = json.loads(Path(args.plan).read_text())
-        result = store.collect(
-            plan,
-            references,
-            lambda: require_read_only(args.base_url),
-            args.max_blobs,
-            args.seconds,
-            args.quarantine_id,
-        )
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()

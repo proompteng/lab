@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -16,6 +17,34 @@ spec.loader.exec_module(cleanup)
 
 
 class CleanupTest(unittest.TestCase):
+    def test_failed_phase_cancels_queued_work_before_returning(self):
+        started = threading.Event()
+        release = threading.Event()
+        ran = []
+
+        def active():
+            started.set()
+            release.wait(2)
+
+        with self.assertRaisesRegex(RuntimeError, "interrupted phase"):
+            with cleanup.worker_pool(1) as pool:
+                pool.submit(active)
+                self.assertTrue(started.wait(1))
+                queued = [pool.submit(ran.append, index) for index in range(100)]
+
+                def release_after_cancellation():
+                    deadline = time.monotonic() + 1
+                    while not queued[0].cancelled() and time.monotonic() < deadline:
+                        time.sleep(0.001)
+                    release.set()
+
+                watcher = threading.Thread(target=release_after_cancellation)
+                watcher.start()
+                raise RuntimeError("interrupted phase")
+        watcher.join(timeout=2)
+        self.assertTrue(all(future.cancelled() for future in queued))
+        self.assertEqual(ran, [])
+
     def test_cooperative_deadline_reports_unfinished_quarantine(self):
         orphan = self.blob(b"deadline candidate")
         plan = self.prepare()
