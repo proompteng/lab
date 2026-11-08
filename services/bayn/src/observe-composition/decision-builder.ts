@@ -33,7 +33,7 @@ import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { Clock, Context, Data, Duration, Effect, Option, Result, Schema } from 'effect'
-import type { AutonomousCycleStartup } from '../app'
+import type { AutonomousCycleStartupInput } from '../app'
 import { BrokerRead, type MarketCalendarQuery } from '../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
@@ -938,6 +938,7 @@ const compileObserveStrategyDecision = <R>(
         strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
           ? JevBatchPlanVersion.Ablation
           : JevBatchPlanVersion.V8,
+        { admissionDeadlineAt: admissionExpiresAt },
       )
       const evidence = yield* Effect.fromResult(
         Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
@@ -1956,7 +1957,7 @@ export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExe
   )
 
 export const observePass = (
-  recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
+  recordPass: AutonomousCycleStartupInput['recordPass'],
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const retained = retainAutonomousCyclePassObservation(observation)

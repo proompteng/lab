@@ -202,3 +202,31 @@ export const executeMutationIntent = (
     submitExpiresAt,
     now: currentUtcInstant,
   })
+
+/** A local continuation may confirm an accepted cancel; it cannot issue another broker mutation. */
+export const confirmAcceptedCancellation = <E, R>(
+  intentId: string,
+  executor: Pick<ExecutionMutationExecutor<E, R>, 'recover'>,
+  now: Effect.Effect<string, never, R> = currentUtcInstant,
+): Effect.Effect<{ readonly delayMs: number }, CycleRunnerError, MutationStore | R> =>
+  Effect.gen(function* () {
+    const store = yield* MutationStore
+    const latest = yield* store
+      .latest(intentId, MutationOperation.Cancel)
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'cancellation continuation evidence read failed', cause, failure: 'store' }),
+        ),
+      )
+    if (latest === undefined || latest.intentId !== intentId || latest.operation !== MutationOperation.Cancel)
+      return yield* mutationRunnerError({
+        message: 'cancellation continuation lost its durable identity',
+        failure: 'contract',
+      })
+    // A changed outcome returns to normal reconciliation and recovery, without treating it as settled.
+    if (latest.eventType !== MutationEventType.CancelAccepted) return { delayMs: 0 }
+    const delayMs = Date.parse(latest.occurredAt) + latest.consistencyDelayMs - Date.parse(yield* now)
+    if (delayMs > 0) return { delayMs }
+    yield* executeMutationIntentWithExecutor({ executor, intentId, action: 'RECOVER_CANCEL', now })
+    return { delayMs: 0 }
+  })

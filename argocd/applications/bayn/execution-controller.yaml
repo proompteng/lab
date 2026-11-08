@@ -86,9 +86,11 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "76f0e134e622ada19cb1b087d83da60b54a36d33c86c6c0eee2642ee3fbd3e67"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "fa21a9d606eed0332637937d4d46035ba649d3fef968ab39480af796f13f419b"
+              value: "6b47647a539b3a35971cfbc596c0a431300cababddea3d50ea460b4308a671bb"
             - name: BAYN_BROKER_ACCESS
               value: read-only
+            - name: BAYN_CAPITAL_AUTHORITY
+              value: none
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -97,9 +99,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"588976a7a41ea2b4d64d65597411634e0517cf31869c9051205c739add4c57ed","authoredActivation":{"sourceRevision":"42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a"},"activation":{"sourceRevision":"42e4e27f0ffaf59d92ebd8f5d41b114fb961e78e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:3854b5f41d520ad775a3e0f7f506d4220387ce69ed708a6f44da2a1e6fbcb81a"}}'
-            - name: BAYN_CAPITAL_AUTHORITY
-              value: none
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"248b6bf277de4008709d20f527f0481e0968813c4c6b2898c92eb872b9f1a40c","authoredActivation":{"sourceRevision":"1cebe22dcdf33746b8a6180d63fadeb0d80b1f00","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:20be6be2c16138cb29bce92bea8f4dbf4dd3e8d3d05a5a2792d2c599547c6382"},"activation":{"sourceRevision":"1cebe22dcdf33746b8a6180d63fadeb0d80b1f00","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:20be6be2c16138cb29bce92bea8f4dbf4dd3e8d3d05a5a2792d2c599547c6382"}}'
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_BROKER_PROVIDER

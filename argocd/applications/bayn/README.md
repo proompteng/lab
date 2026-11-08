@@ -1,5 +1,9 @@
 # Bayn deployment
 
+## Jev 1.14 cutover
+
+[The Box cutover](../../../docs/bayn/jev114-box-cutover.md) first settles the exact v39 PAPER identity through migration 186 and native OBSERVE recovery. The old mandate remains absent until the new protocol and verified immutable image have a reviewed same-account activation request.
+
 ## Current trading scope
 
 Native entry discovery and physical broker submission permit equity entries only. Crypto buys are rejected before
@@ -20,6 +24,27 @@ A local capacity measurement of a 279 MB source cut peaked at 2.62 GiB. The nati
 original deadlines and capital enforcement remain unchanged. Historical cuts and financial records are retained.
 
 ## Webull supplementary context
+
+The effective-entry pricing cutover first keeps the v38 runtime and removes the sealed activation request,
+its mandate annotation and all three activation inputs together. When the exact clear v38 PAPER authority
+needs restriction, migration 183 rechecks terminal cycles and
+intents, flat broker and ledger inventory, settled orders, complete accounting, fresh exact reconciliation
+covering the last mutation, and no unexpired unresolved inference claims under the existing writer lock.
+Only then does it restrict the exact clear v38 PAPER identity with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`.
+It preserves every generation and financial record; native settlement and a subsequent fresh reconciliation
+must create the clear OBSERVE successor. Removing configuration alone cannot change durable PAPER authority.
+An operator hold or different strategy identity remains unchanged and cannot be silently cleared.
+An already-OBSERVE or unrelated authority is a no-op, so missing or stale reconciliation cannot prevent its
+worker from starting to refresh evidence. The later v39 protocol migration still requires fresh, settled OBSERVE.
+
+Verify clear OBSERVE authority, naturally advancing controller passes, flat positions, no open orders,
+unchanged fill/accounting totals and fresh exact reconciliation before deploying v39. Keep the old mandate
+absent throughout that source cutover. After the immutable v39 image and native OBSERVE state are verified,
+construct a reviewed request for the same sandbox account with exactly the retained risk policy and limits.
+Restore its ciphertext, derived identity annotation and identical three runtime lineages in one GitOps change.
+Kargo continues to own every image/source binding and the native hook owns activation. A compatible image-only
+rollback retains its mandate; removing a realized mandate requires a guarded restriction for that exact
+protocol and another settled native OBSERVE transition. The v38 restriction is not a v39 deactivation path.
 
 Protocol v38 adds the latest completed Webull M1 bar to each candidate's numerical input v24 and final Jev evidence.
 The native Kafka arrival cut supplies the bar, with a ten-second availability limit and exact provider decimals.

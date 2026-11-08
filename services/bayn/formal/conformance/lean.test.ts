@@ -2998,18 +2998,21 @@ formal('pinned Lean executable conformance', () => {
             ...registration,
             policies: registration.policies.map((definition) => ({
               ...definition,
-              inferenceRateCard: replayRateCardFixture({
-                jev: {
-                  inputMicrosPerMillionTokens: String(sample.inputRate),
-                  outputMicrosPerMillionTokens: String(sample.outputRate),
+              inferenceRateCard: replayRateCardFixture(
+                {
+                  jev: {
+                    inputMicrosPerMillionTokens: String(sample.inputRate),
+                    outputMicrosPerMillionTokens: String(sample.outputRate),
+                  },
+                  chart: {
+                    inputMicrosPerMillionTokens: '1',
+                    outputMicrosPerMillionTokens: '0',
+                    cachedInputMicrosPerMillionTokens: '0',
+                    cacheWriteInputMicrosPerMillionTokens: '0',
+                  },
                 },
-                chart: {
-                  inputMicrosPerMillionTokens: '1',
-                  outputMicrosPerMillionTokens: '0',
-                  cachedInputMicrosPerMillionTokens: '0',
-                  cacheWriteInputMicrosPerMillionTokens: '0',
-                },
-              }),
+                registration.obligations.configuration.protocol.model,
+              ),
             })),
           }),
         ),
@@ -3542,7 +3545,6 @@ formal('pinned Lean executable conformance', () => {
             : null,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: t.tickEpoch, sequence: t.tickSequence },
           testHash('controller'),
-          '2026-11-02T14:30:00.000Z',
           t.workerSource,
         )
         return Result.isFailure(decision)

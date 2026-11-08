@@ -773,7 +773,7 @@ describe('forward performance read program', () => {
           ),
         ),
       )
-      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v7')
       expect(postgresGeneration).toBe(authorityGenerationHash)
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(

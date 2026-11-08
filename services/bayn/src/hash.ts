@@ -71,12 +71,27 @@ class CanonicalJsonError extends Error {
   }
 }
 
-const validationFailure = (path: string, reason: CanonicalJsonValidationReason, actualType: string): never => {
-  throw new CanonicalJsonError({ _tag: 'CanonicalJsonFailure', path, reason, actualType })
+// Successful serialization needs no diagnostic strings; each call owns its path segments.
+type CanonicalJsonPath = (string | number)[]
+
+const renderCanonicalJsonPath = (path: readonly (string | number)[]): string =>
+  '$' + path.map((key) => (typeof key === 'number' ? `[${key}]` : `.${key}`)).join('')
+
+const validationFailure = (
+  path: CanonicalJsonPath,
+  reason: CanonicalJsonValidationReason,
+  actualType: string,
+): never => {
+  throw new CanonicalJsonError({
+    _tag: 'CanonicalJsonFailure',
+    path: renderCanonicalJsonPath(path),
+    reason,
+    actualType,
+  })
 }
 
 const inspect = <A>(
-  path: string,
+  path: CanonicalJsonPath,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
   operation: CanonicalJsonIntrospectionOperation,
   evaluate: () => A,
@@ -86,7 +101,7 @@ const inspect = <A>(
   } catch (cause) {
     throw new CanonicalJsonError({
       _tag: 'CanonicalJsonFailure',
-      path,
+      path: renderCanonicalJsonPath(path),
       reason: 'introspection-failed',
       actualType,
       operation,
@@ -98,7 +113,7 @@ const inspect = <A>(
 const dataProperty = (
   value: object,
   key: PropertyKey,
-  path: string,
+  path: CanonicalJsonPath,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
 ): unknown => {
   const descriptor = inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key))
@@ -107,7 +122,7 @@ const dataProperty = (
     : validationFailure(path, 'non-data-property', `${actualType}-property`)
 }
 
-const serializeArray = (value: readonly unknown[], ancestors: Set<object>, path: string): string => {
+const serializeArray = (value: readonly unknown[], ancestors: Set<object>, path: CanonicalJsonPath): string => {
   if (ancestors.has(value)) return validationFailure(path, 'cycle', 'array')
 
   const length = inspect(path, 'array', 'array-length', () => value.length)
@@ -127,14 +142,22 @@ const serializeArray = (value: readonly unknown[], ancestors: Set<object>, path:
   ancestors.add(value)
   const entries: string[] = []
   for (const key of enumerableKeys) {
-    const nestedPath = `${path}[${key}]`
-    entries.push(serializeCanonicalValue(dataProperty(value, key, nestedPath, 'array'), ancestors, nestedPath))
+    path.push(Number(key))
+    try {
+      entries.push(serializeCanonicalValue(dataProperty(value, key, path, 'array'), ancestors, path))
+    } finally {
+      path.pop()
+    }
   }
   ancestors.delete(value)
   return `[${entries.join(',')}]`
 }
 
-const serializeObject = (value: object, ancestors: Set<object>, path: string): string => {
+// Most evidence keys and scalar values need no JSON escaping.
+const quoteCanonicalString = (value: string): string =>
+  /["\\\u0000-\u001f]/u.test(value) ? JSON.stringify(value) : `"${value}"`
+
+const serializeObject = (value: object, ancestors: Set<object>, path: CanonicalJsonPath): string => {
   if (ancestors.has(value)) return validationFailure(path, 'cycle', 'object')
 
   const prototype = inspect(path, 'object', 'prototype', () => Object.getPrototypeOf(value))
@@ -146,22 +169,28 @@ const serializeObject = (value: object, ancestors: Set<object>, path: string): s
   const entries: string[] = []
   for (const key of keys.sort()) {
     if (!key.isWellFormed()) return validationFailure(path, 'invalid-unicode-key', 'string')
-    const nestedPath = `${path}.${key}`
-    const nested = serializeCanonicalValue(dataProperty(value, key, nestedPath, 'object'), ancestors, nestedPath)
-    entries.push(`${JSON.stringify(key)}:${nested}`)
+    path.push(key)
+    try {
+      const nested = serializeCanonicalValue(dataProperty(value, key, path, 'object'), ancestors, path)
+      entries.push(`${quoteCanonicalString(key)}:${nested}`)
+    } finally {
+      path.pop()
+    }
   }
   ancestors.delete(value)
   return `{${entries.join(',')}}`
 }
 
-const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: string): string => {
+const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: CanonicalJsonPath): string => {
   if (value === null) return 'null'
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') {
-    return value.isWellFormed() ? JSON.stringify(value) : validationFailure(path, 'invalid-unicode-surrogate', 'string')
+    return value.isWellFormed()
+      ? quoteCanonicalString(value)
+      : validationFailure(path, 'invalid-unicode-surrogate', 'string')
   }
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? JSON.stringify(value) : validationFailure(path, 'non-finite-number', 'number')
+    return Number.isFinite(value) ? String(value) : validationFailure(path, 'non-finite-number', 'number')
   }
   if (typeof value !== 'object') return validationFailure(path, 'non-json-type', typeof value)
 
@@ -172,7 +201,7 @@ const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: s
 
 export const canonicalJsonV1Result = (value: unknown): Result.Result<string, CanonicalJsonFailure> => {
   try {
-    return Result.succeed(serializeCanonicalValue(value, new Set(), '$'))
+    return Result.succeed(serializeCanonicalValue(value, new Set(), []))
   } catch (cause) {
     if (cause instanceof CanonicalJsonError) return Result.fail(cause.failure)
     throw cause

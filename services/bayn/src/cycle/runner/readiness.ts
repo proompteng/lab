@@ -1,5 +1,6 @@
 import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
 import { Schema } from 'effect'
+import { decodeInputReadiness, InputReadinessSchema } from '../../market-data/intraday/input-readiness'
 
 import { UtcInstantSchema } from '../../schemas'
 import { Reason as RiskReason } from '../../risk'
@@ -36,6 +37,7 @@ const readinessFields = {
   symbol: Schema.optionalKey(Schema.NonEmptyString),
   eventAt: Schema.optionalKey(UtcInstantSchema),
   requiredFeature: Schema.optionalKey(RequiredMarketFeatureSchema),
+  inputReadiness: Schema.optionalKey(InputReadinessSchema),
   snapshotQuery: Schema.optionalKey(
     Schema.Struct({
       rangeStartAt: UtcInstantSchema,
@@ -68,6 +70,7 @@ export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionRea
   const symbol = failure.facts?.['symbol']
   const eventAt = failure.facts?.['eventAt']
   const requiredFeature = failure.facts?.['requiredFeature']
+  const inputReadiness = decodeInputReadiness(failure.facts?.['inputReadiness'])
   return {
     reason:
       failure.reason === 'watermark'
@@ -79,6 +82,7 @@ export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionRea
     ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
     ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
     ...(Schema.is(RequiredMarketFeatureSchema)(requiredFeature) ? { requiredFeature } : {}),
+    ...(inputReadiness === undefined ? {} : { inputReadiness }),
   }
 }
 
@@ -106,6 +110,7 @@ export const CycleWaitReasonSchema = Schema.Union([
     'PROTECTION_RECOVERY_ONLY',
     'PROTECTION_AWAITING_RECONCILIATION',
     'PROTECTION_CANCEL_PENDING',
+    'PROTECTION_PUBLICATION_PENDING',
     'PROTECTION_AUTHORITY_UNAVAILABLE',
     'PROTECTION_EXIT_COMMITTED',
     'POST_MUTATION_RECONCILIATION',

@@ -1,4 +1,9 @@
-import { HistoricalJevProtocolSchema, RetainedJevProtocolV35Schema } from '../jev/protocol'
+import {
+  HistoricalJevProtocolSchema,
+  retainedJevProtocolV39Document,
+  RetainedJevProtocolV35Schema,
+  RetainedJevProtocolV38Schema,
+} from '../jev/protocol'
 import { retainedIntradayExecutionModel } from '../strategy/intraday-market'
 import {
   frozenDeployedControlIdentity,
@@ -150,13 +155,15 @@ const baseRegistrationFixture = (
             cachedInputMicrosPerMillionTokens: '0',
             cacheWriteInputMicrosPerMillionTokens: '0',
           },
-        }).rates.filter((rate) =>
-          usesJevOnlyInference(protocol)
-            ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
-              rate.provider === 'typesafe'
-            : policy === JevResearchPolicy.Candidate ||
-              (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
-        ),
+        })
+          .rates.map((rate) => (rate.provider === 'typesafe' ? { ...rate, model: protocol.model } : rate))
+          .filter((rate) =>
+            usesJevOnlyInference(protocol)
+              ? (policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation) &&
+                rate.provider === 'typesafe'
+              : policy === JevResearchPolicy.Candidate ||
+                (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
+          ),
       },
       executionModelHash: sha256(`${policy}:execution`),
       ...(policy === JevResearchPolicy.Momentum
@@ -282,18 +289,25 @@ export const registrationFixture = (
   version = JevAcceptanceVersion.Current,
 ): SystemRegistration => {
   const protocol =
-    version === JevAcceptanceVersion.Current || version === JevAcceptanceVersion.RetainedV5
+    version === JevAcceptanceVersion.Current
       ? Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-      : Result.getOrThrow(
-          Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
-            ...defaultJevProtocolDocument,
-            schemaVersion: 'bayn.jev.protocol.v35',
-            inputDefinition: 'bayn.jev-entry-state.v23',
-            entrySignalPolicy: 'openai-decisions-then-jev' as const,
-            entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
-            executionModel: retainedIntradayExecutionModel,
-          }),
-        )
+      : version === JevAcceptanceVersion.RetainedV5
+        ? Result.getOrThrow(
+            Schema.decodeUnknownResult(RetainedJevProtocolV38Schema)({
+              ...retainedJevProtocolV39Document,
+              schemaVersion: 'bayn.jev.protocol.v38',
+            }),
+          )
+        : Result.getOrThrow(
+            Schema.decodeUnknownResult(RetainedJevProtocolV35Schema)({
+              ...retainedJevProtocolV39Document,
+              schemaVersion: 'bayn.jev.protocol.v35',
+              inputDefinition: 'bayn.jev-entry-state.v23',
+              entrySignalPolicy: 'openai-decisions-then-jev' as const,
+              entryQuestionPolicyHash: 'f8972e59e7e09fa67aecc97b57e66d62d0aa4eabdad55fca16d785e50ae44325',
+              executionModel: retainedIntradayExecutionModel,
+            }),
+          )
   let registration = baseRegistrationFixture(sessionCount, protocol)
   if (registeredAt !== undefined) {
     const firstMonday = new Date(registeredAt)

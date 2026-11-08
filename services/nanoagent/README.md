@@ -147,6 +147,10 @@ delivered event streams without duplication. Device login and thread state persi
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
 
+Desktop replay replaces inline MCP, dynamic-tool and native image-generation bytes with an image marker before
+applying its event-size limit. Generated-image completion keeps its status, saved path and prompt. The native image
+and conversation remain unchanged; omitting binary data from replay does not mean generation failed.
+
 Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
 start or resume, including automatic recovery after a native process restart. This excludes remote execution apps
 such as `agents_shell` from the default tool set. Native shell, file editing, Git, and repository setup run inside

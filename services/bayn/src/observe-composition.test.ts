@@ -19,7 +19,6 @@ import * as executionCycleModule from './observe-composition/execution-cycle'
 import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Semaphore, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { AutonomousCycleLoop } from './app'
 import type { AutonomousCyclePassObservation } from './runtime-state'
 import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
@@ -93,7 +92,7 @@ import {
   type ReconciliationStoreShape,
   type ValuationStoreShape,
 } from './db/execution-store'
-import { operationalError, retryableOperationalError, type OperationalError } from './errors'
+import { operationalError, retryableOperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from './execution/authority'
 import {
   IntentStore,
@@ -168,7 +167,7 @@ import {
   type MutationAutonomousCycleInput,
   type ObserveAutonomousCycleInput,
   type RecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverOwner,
+  type RecoveryFirstRuntime,
 } from './observe-composition/model'
 import { runMutationPassWithinTimeout, selectClosingSymbolPass } from './observe-composition/decision-builder'
 import { ensureExecutionCycleClosure, recoverBoundExecutionContext } from './observe-composition/execution-cycle'
@@ -253,6 +252,10 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     }),
   )
 }
+
+type RecoveryFirstCycleDriverOwner = (
+  driver: RecoveryFirstCycleDriver,
+) => Effect.Effect<void, never, RecoveryFirstRuntime>
 
 const ownRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverOwner = (driver) => {
   const run = (): ReturnType<RecoveryFirstCycleDriverOwner> =>
@@ -505,6 +508,7 @@ test('preserves execution authority after the next bound-cycle reconciliation fa
   const intentStore: IntentStoreService = {
     protectionForCycle: () => Effect.succeed([]),
     beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+    recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
     commit: (intent) =>
       Effect.sync(() => {
         const record = storedIntents.get(intent.intentId)
@@ -1454,6 +1458,7 @@ test.each(['complete', 'missing', 'planned', 'planned-risk', 'conflicting'] as c
       Effect.provideService(IntentStore, {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
         commit: (intent, decision) =>
           Effect.sync(() => {
@@ -1521,6 +1526,7 @@ const prepareStoredExecutionStep = async (
   const intentStore: IntentStoreService = {
     protectionForCycle: () => Effect.succeed([]),
     beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+    recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
     commit: () => Effect.succeed({ record, deduplicated: true }),
     commitClosing: () => Effect.succeed({ record, deduplicated: true }),
     read: (intentId) => {
@@ -2321,6 +2327,7 @@ describe('OBSERVE runtime composition', () => {
     const intentStore: IntentStoreService = {
       protectionForCycle: () => Effect.succeed([]),
       beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+      recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
       commit: () =>
         Effect.sync(() => {
           commits += 1
@@ -3191,6 +3198,7 @@ describe('OBSERVE runtime composition', () => {
     const intentStore: IntentStoreService = {
       protectionForCycle: () => Effect.succeed([]),
       beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+      recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
       commit: () =>
         Effect.sync(() => {
           commits += 1
@@ -3263,6 +3271,7 @@ describe('OBSERVE runtime composition', () => {
     const intentStore: IntentStoreService = {
       protectionForCycle: () => Effect.succeed([]),
       beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+      recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
       commit: () =>
         Effect.sync(() => {
           commits += 1
@@ -3532,6 +3541,7 @@ describe('OBSERVE runtime composition', () => {
     const intentStore: IntentStoreService = {
       protectionForCycle: () => Effect.succeed([]),
       beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+      recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
       commit: () =>
         Effect.sync(() => {
           commits += 1
@@ -3767,6 +3777,7 @@ describe('OBSERVE runtime composition', () => {
     const closeIntentStore: IntentStoreService = {
       protectionForCycle: () => Effect.succeed([]),
       beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+      recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
       commit: () => Effect.die(new Error('close admission must use commitClosing')),
       commitClosing: (intent, decision) =>
         Effect.sync(() => {
@@ -3832,6 +3843,7 @@ describe('OBSERVE runtime composition', () => {
     const missedCloseIntentStore: IntentStoreService = {
       protectionForCycle: () => Effect.succeed([]),
       beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+      recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
       commit: () => Effect.die(new Error('missed close admission must use commitClosing')),
       commitClosing: () =>
         Effect.sync(() => {
@@ -4191,6 +4203,8 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             read: (intentId) =>
               Effect.succeed(
                 terminalIntentIds.has(intentId)
@@ -5296,6 +5310,8 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             commit: forbidden,
             read: forbidden,
           }),
@@ -5674,25 +5690,7 @@ describe('OBSERVE runtime composition', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const acquireLoop: Effect.Effect<
-            AutonomousCycleLoop<
-              | BrokerRead
-              | CycleStore
-              | BrokerEventStore
-              | FillAccountingStore
-              | ValuationStore
-              | ReconciliationStore
-              | AuthorityGenerationStore
-              | AuthorityRestrictionStore
-              | IntentStore
-              | MutationStore
-              | WriterFence
-              | CandidateObservationStore
-              | JevTestServices
-            >,
-            OperationalError,
-            AuthorityGenerationStore
-          > = startup({
+          const acquireLoop = startup({
             cycleBindingId: 'c'.repeat(64),
             recordPass: () => Effect.die('driver publication must not execute a cycle pass'),
           })
@@ -6165,6 +6163,7 @@ test.each(['discovery', 'calendar-reuse', 'pending', 'not-ready', 'activation-ex
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           commit: forbidden,
           read: (id) =>
             Effect.succeed(
@@ -6363,6 +6362,7 @@ test('reads the execution closure once without weakening completion evidence', a
       Effect.provideService(IntentStore, {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: forbidden,
         read: (id) => Effect.succeed(Option.fromUndefinedOr(records.find((record) => record.intent.intentId === id))),
       }),
@@ -6582,6 +6582,7 @@ test('settles the committed close after native protection observes a flat accoun
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: forbidden,
+          recordProtectionCancelAccepted: forbidden,
           commit: forbidden,
           commitClosing: forbidden,
           read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
@@ -7009,6 +7010,8 @@ test.each(['preflight', 'cycle'] as const)(
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             commit: forbidden,
             read: forbidden,
           }),
@@ -7032,6 +7035,203 @@ test.each(['preflight', 'cycle'] as const)(
         )
       }).pipe(Effect.provideService(BrokerRead, services.brokerRead), Effect.provide(TestClock.layer())),
     )
+  },
+)
+
+test.each(['confirmed', 'failed', 'restart', 'native-protection'] as const)(
+  'accepted cancellation continuation preserves reconciliation and failure boundaries: %s',
+  async (scenario) => {
+    const fixture = await executionLifecycleFixture()
+    const services = makeExactReconciliationServices(Authority.Execution)
+    const forbidden = () => Effect.die(new Error('cancellation confirmation must not submit, cancel or acquire'))
+    const intentId = 'a'.repeat(64)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'b'.repeat(64),
+      mutationId: 'c'.repeat(64),
+      requestHash: 'd'.repeat(64),
+      intentId,
+      sequence: 2,
+      operation: MutationOperation.Cancel,
+      eventType: MutationEventType.CancelAccepted,
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'cancel-confirmation-order',
+      occurredAt: evaluatedAt,
+    }
+    let pending = false
+    let confirmed = false
+    let passes = 0
+    const order: string[] = []
+    const pass = spyOn(executionCycleModule, 'runRecoveryFirstCyclePass').mockImplementation(() =>
+      Effect.sync(() => {
+        passes += 1
+        if (passes === 1) {
+          pending = true
+          return {
+            _tag: 'PostMutationReconciliation' as const,
+            cycle,
+            delayMs: 1_000,
+            observedAt: evaluatedAt,
+            cancellationConfirmationIntentId: scenario === 'native-protection' ? undefined : intentId,
+            logContext: {
+              cycleId: cycle.identity.cycleId,
+              intentId,
+              mutationAction: 'CANCEL' as const,
+              mutationPhase: 'ENTRY' as const,
+            },
+          }
+        }
+        order.push('cycle')
+        return {
+          outcome: 'RECOVERED' as const,
+          action: 'WAITING' as const,
+          waitReason: 'JEV_POSITION_HELD' as const,
+          observedAt: evaluatedAt,
+          cycle,
+        }
+      }),
+    )
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          const makeDriver = () =>
+            Effect.fromResult(
+              makeRecoveryFirstCycleDriver(
+                fixture.input,
+                { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
+                fixture.preparation,
+                fixture.policy,
+                {
+                  _tag: 'Mutation',
+                  executionProgram: {
+                    ...sandboxExecutionProgram(),
+                    submit: forbidden,
+                    cancel: forbidden,
+                    recover: (id, operation) =>
+                      Effect.sync(() => {
+                        expect(id).toBe(intentId)
+                        expect(operation).toBe(MutationOperation.Cancel)
+                        order.push('confirm')
+                        confirmed = scenario !== 'failed'
+                        return {
+                          ...accepted,
+                          eventId: 'e'.repeat(64),
+                          sequence: 3,
+                          eventType:
+                            scenario === 'failed' ? MutationEventType.RecoveryUnknown : MutationEventType.RecoveryFound,
+                        }
+                      }),
+                  },
+                },
+                forbidden,
+                'mutation autonomous cycle loop',
+              ),
+            ).pipe(Effect.flatten)
+          let driver = yield* makeDriver()
+          yield* driver.advance
+          if (scenario === 'restart') driver = yield* makeDriver()
+          if (scenario === 'restart' || scenario === 'native-protection') {
+            yield* TestClock.adjust(1_000)
+            const result = yield* driver.advance
+            expect(result.observation.result === 'SUCCESS' && result.observation.waitReason).toBe(
+              'BROKER_OBSERVATION_PENDING',
+            )
+            expect(order).toContain('blocked-preflight')
+            expect(order).not.toContain('confirm')
+            expect(passes).toBe(1)
+            return
+          }
+          yield* TestClock.adjust(999)
+          const early = yield* driver.advance
+          expect(early.nextDelayMs).toBe(1)
+          expect(order).toEqual([])
+          yield* TestClock.adjust(1)
+          const result = yield* driver.advance
+          if (scenario === 'failed') {
+            expect(result.observation.result).not.toBe('SUCCESS')
+            expect(order).toEqual(['confirm', 'restrict'])
+            expect(passes).toBe(1)
+            return
+          }
+          expect(result.observation.result).toBe('SUCCESS')
+          expect(order[0]).toBe('confirm')
+          expect(order).toContain('reconcile')
+          expect(order.at(-1)).toBe('cycle')
+          expect(passes).toBe(2)
+        }).pipe(
+          Effect.provideService(BrokerRead, {
+            ...services.brokerRead,
+            account: Effect.suspend(() => {
+              if (pending) {
+                order.push(confirmed ? 'reconcile' : 'blocked-preflight')
+                if (!confirmed)
+                  return Effect.fail(
+                    new BrokerReadError({
+                      operation: 'preflight',
+                      kind: BrokerReadErrorKind.ObservationPending,
+                      retryable: true,
+                      message: 'accepted cancellation has not been confirmed',
+                    }),
+                  )
+              }
+              return services.brokerRead.account
+            }),
+          }),
+          Effect.provideService(CycleStore, {
+            readOldestUnfinished: forbidden,
+            acquire: forbidden,
+            read: forbidden,
+            readAuthoritySlot: forbidden,
+            readDecisionDocument: forbidden,
+            activate: forbidden,
+            bindDecision: forbidden,
+            finish: forbidden,
+            block: forbidden,
+          }),
+          Effect.provideService(BrokerEventStore, services.executionStore),
+          Effect.provideService(FillAccountingStore, services.executionStore),
+          Effect.provideService(ValuationStore, services.executionStore),
+          Effect.provideService(ReconciliationStore, services.executionStore),
+          Effect.provideService(AuthorityGenerationStore, services.executionStore),
+          Effect.provideService(AuthorityRestrictionStore, {
+            ...services.executionStore,
+            restrictAuthority: () =>
+              Effect.sync(() => order.push('restrict')).pipe(
+                Effect.andThen(services.executionStore.readAuthorityState),
+              ),
+          }),
+          Effect.provideService(WriterFence, services.writerFence),
+          Effect.provideService(IntentStore, {
+            protectionForCycle: forbidden,
+            beginProtectionCancel: forbidden,
+            recordProtectionCancelAccepted: forbidden,
+            commit: forbidden,
+            read: forbidden,
+          }),
+          Effect.provideService(MutationStore, {
+            latest: (_id, operation) => Effect.succeed(operation === MutationOperation.Cancel ? accepted : undefined),
+            authorizeSubmit: forbidden,
+            beginSubmit: forbidden,
+            submitAccepted: forbidden,
+            submitRejected: forbidden,
+            submitDenied: forbidden,
+            submitUnknown: forbidden,
+            beginCancel: forbidden,
+            cancelAccepted: forbidden,
+            cancelUnknown: forbidden,
+            recoveryFound: forbidden,
+            recoveryNotFound: forbidden,
+            recoveryUnknown: forbidden,
+          }),
+          Effect.provideService(CandidateObservationStore, { record: forbidden, latestJevWindowEnd: forbidden }),
+          provideJevTestServices,
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+    } finally {
+      pass.mockRestore()
+    }
   },
 )
 
@@ -7190,6 +7390,7 @@ test.each([
         Effect.provideService(IntentStore, {
           protectionForCycle: forbidden,
           beginProtectionCancel: forbidden,
+          recordProtectionCancelAccepted: forbidden,
           commit: forbidden,
           read: forbidden,
         }),
@@ -7300,6 +7501,7 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
       Effect.provideService(IntentStore, {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: forbidden,
         read: forbidden,
       }),
@@ -7417,6 +7619,7 @@ test.each([
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           commit: (intent) =>
             bound
               ? Effect.succeed({
@@ -7888,6 +8091,7 @@ test.each(['empty', 'expired', 'bound'] as const)(
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           commit: forbidden,
           read: forbidden,
         }),
@@ -8029,6 +8233,7 @@ test('cycle-free protection keeps reconciliation and projection checks on the ex
       Effect.provideService(IntentStore, {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: forbidden,
         read: forbidden,
       }),
@@ -8041,10 +8246,11 @@ test('cycle-free protection keeps reconciliation and projection checks on the ex
 })
 
 // Native orders remain owned by the same account controller, including after an entry parent settles.
-test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
+test.each(['known', 'unknown', 'publication', 'filled', 'unaccounted'] as const)(
   'native protection resolves cancellation or a completed disposal: %s',
   async (mode) => {
     const unknown = mode === 'unknown'
+    const publication = mode === 'publication'
     const flat = mode === 'filled' || mode === 'unaccounted'
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
@@ -8138,7 +8344,20 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
               outcome: MutationOutcome.Unknown,
               message: 'injected ambiguous cancellation',
             })
-          return true
+          return {
+            _tag: 'Accepted',
+            phase: publication ? 'Durable' : 'Fresh',
+            receipt: {
+              command: { intentId: owner, accountId, brokerOrderId, requestedAt: observedAt },
+              requestHash: 'a'.repeat(64),
+              evidence: {
+                requestId: 'native-protection-cancel-test',
+                status: 204,
+                contentHash: 'b'.repeat(64),
+                observedAt,
+              },
+            },
+          } as const
         }),
     }
     const result = await Effect.runPromise(
@@ -8165,6 +8384,7 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
           read: (id) => Effect.succeed(Option.some(id === intent.intentId ? held : root)),
           protectionForCycle: () => Effect.succeed([held]),
           beginProtectionCancel: () => unused,
+          recordProtectionCancelAccepted: () => unused,
           commit: () => unused,
         }),
         Effect.provideService(MutationStore, {
@@ -8195,6 +8415,18 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
             : { _tag: 'Wait', observedAt, waitReason: 'PROTECTION_AWAITING_RECONCILIATION' },
       })
       expect(calls).toEqual([])
+    } else if (unknown) {
+      expect(result).toEqual({
+        _tag: 'Step',
+        step: { _tag: 'Wait', observedAt, waitReason: 'PROTECTION_CANCEL_PENDING' },
+      })
+      expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])
+    } else if (publication) {
+      expect(result).toEqual({
+        _tag: 'Step',
+        step: { _tag: 'Wait', observedAt, waitReason: 'PROTECTION_PUBLICATION_PENDING' },
+      })
+      expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])
     } else {
       expect(result._tag).toBe('PostMutationReconciliation')
       expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])

@@ -3,7 +3,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, JevFailure } from './contract'
 import { decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
-import { type EntryHandoff } from './entry-inference'
+import { type EntryHandoffMaterial } from './entry-inference'
 import {
   decodeJevEvaluationRequest,
   JevOutcome,
@@ -28,9 +28,12 @@ import {
   RetainedJevProtocolV35Schema,
   RetainedJevProtocolV36Schema,
   RetainedJevProtocolV37Schema,
+  RetainedJevProtocolV38Schema,
+  RetainedJevProtocolV39Schema,
 } from './protocol'
 import * as retainedChartStages from './retained-filtered-staged-chart-questions'
 import * as currentChartStages from './staged-chart-questions'
+import * as retainedJevChartStages from './retained-jev-staged-chart-questions'
 import * as observedChartStages from './retained-observed-staged-chart-questions'
 import * as retainedCandidateChartStages from './retained-candidate-staged-chart-questions'
 import { makeEntryJudgmentRequest } from './entry-questions'
@@ -67,6 +70,8 @@ const RetainedRequest = Schema.Struct({
         RetainedJevProtocolV35Schema,
         RetainedJevProtocolV36Schema,
         RetainedJevProtocolV37Schema,
+        RetainedJevProtocolV38Schema,
+        RetainedJevProtocolV39Schema,
       ]),
     }),
     Schema.Struct({
@@ -100,11 +105,13 @@ const RetainedRequest = Schema.Struct({
         RetainedJevProtocolV35Schema,
         RetainedJevProtocolV36Schema,
         RetainedJevProtocolV37Schema,
+        RetainedJevProtocolV38Schema,
+        RetainedJevProtocolV39Schema,
       ]),
     }),
   ]),
 })
-const decodeRetainedRequest = (input: unknown) =>
+export const decodeRetainedStagedEvaluationRequest = (input: unknown) =>
   Result.gen(function* () {
     const request = yield* Schema.decodeUnknownResult(RetainedRequest, strictParseOptions)(input)
     const { requestId, ...material } = request
@@ -121,7 +128,10 @@ const decodeRetainedRequest = (input: unknown) =>
   })
 
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
-export const verifyStagedCheckpointHandoff = (checkpoint: StagedCheckpoint, handoff: EntryHandoff) =>
+export const verifyStagedCheckpointHandoff = <H extends EntryHandoffMaterial>(
+  checkpoint: StagedCheckpoint,
+  handoff: H,
+) =>
   Result.gen(function* () {
     for (const row of [...checkpoint.claims, ...checkpoint.terminals, ...checkpoint.skips]) {
       const at = 'claimedAt' in row ? row.claimedAt : row.recordedAt
@@ -141,6 +151,15 @@ export const verifyStagedCheckpointHandoff = (checkpoint: StagedCheckpoint, hand
         return yield* invalid('Staged handoff changes the committed chart outcome')
     }
     const base = handoff.baseStart
+    if (base === undefined) {
+      if (
+        checkpoint.claims.some((row) => row.stage !== 'CHART') ||
+        checkpoint.terminals.some((row) => row.stage !== 'CHART') ||
+        checkpoint.skips.length !== 0
+      )
+        return yield* invalid('Box handoff contains a retired base stage')
+      return handoff
+    }
     if (base.status === 'NOT_REQUESTED') {
       const skip = checkpoint.skips.find((row) => row.stage === 'BASE_START')
       if (skip === undefined || (yield* canonicalHashV1Result(skip)) !== (yield* canonicalHashV1Result(base.skip)))
@@ -199,32 +218,40 @@ export const readStagedInferenceCostEvidence = (row: {
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v39'
     const retainedQuestions =
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v32' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v34' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v36' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v39'
         ? makeEntryJudgmentRequest
         : identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
           ? makeRetainedFundedEntryJudgmentRequest
           : makeRetainedMarketEntryJudgmentRequest
     const decoded = retained
-      ? { _tag: 'Retained' as const, request: yield* decodeRetainedRequest(row.request) }
+      ? { _tag: 'Retained' as const, request: yield* decodeRetainedStagedEvaluationRequest(row.request) }
       : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
     const request = decoded.request
     const stages =
-      decoded._tag === 'Current' || request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37'
+      decoded._tag === 'Current'
         ? currentChartStages.makeFinancialChartStageReplay()
-        : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
-            request.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
-          ? observedChartStages
-          : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
-              request.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
-            ? retainedCandidateChartStages
-            : retainedChartStages
+        : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v37' ||
+            request.request.protocol.schemaVersion === 'bayn.jev.protocol.v38' ||
+            request.request.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+          ? retainedJevChartStages.makeFinancialChartStageReplay()
+          : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v35' ||
+              request.request.protocol.schemaVersion === 'bayn.jev.protocol.v36'
+            ? observedChartStages
+            : request.request.protocol.schemaVersion === 'bayn.jev.protocol.v33' ||
+                request.request.protocol.schemaVersion === 'bayn.jev.protocol.v34'
+              ? retainedCandidateChartStages
+              : retainedChartStages
     const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint, stages)
     const source = {
       requestId: request.requestId,
@@ -292,7 +319,9 @@ export const readStagedInferenceCostEvidence = (row: {
       receipt?.outcome.status === JevOutcome.Failed && receipt.outcome.failure === JevFailure.NotDispatched
     if (expiredUndispatched && checkpoint.claims.length !== 0)
       return yield* invalid('Undispatched receipt omits a committed staged provider claim')
-    const visualStages = (['CHART', 'BASE_START'] as const).map((stage): VisualCostStage => {
+    const stageNames: readonly ('CHART' | 'BASE_START')[] =
+      request.request.protocol.schemaVersion === 'bayn.jev.protocol.v40' ? ['CHART'] : ['CHART', 'BASE_START']
+    const visualStages = stageNames.map((stage): VisualCostStage => {
       const claim = checkpoint.claims.find((value) => value.stage === stage)
       const terminal = checkpoint.terminals.find((value) => value.stage === stage)
       const skip = stage === 'BASE_START' ? checkpoint.skips[0] : undefined

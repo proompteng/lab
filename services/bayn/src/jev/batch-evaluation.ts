@@ -10,7 +10,7 @@ import {
   type JevBatchResult,
 } from './batch'
 import { JevEvaluationStore, type JevDispatch, type JevEvaluationRecord } from './evaluation'
-import { evaluateClaimedEntryInferences } from './entry-inference-batch'
+import { evaluateClaimedEntryInferences, type EntryInferenceEvaluationOptions } from './entry-inference-batch'
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { JevEvidenceError } from './evidence'
@@ -25,6 +25,8 @@ export interface JevBatchEvidence {
 export interface JevBatchAdmission extends JevBatchEvidence {
   readonly dispatches: readonly JevDispatch[]
 }
+
+export type JevBatchEvaluationOptions = EntryInferenceEvaluationOptions
 
 export class JevBatchExpired extends Data.TaggedError('JevBatchExpired')<{
   readonly batchId: string
@@ -55,7 +57,11 @@ export class JevBatchStore extends Context.Service<
   }
 >()('@proompteng/bayn/JevBatchStore') {}
 
-export const evaluateJevBatch = (input: unknown, observation: JevObservation) =>
+export const evaluateJevBatch = (
+  input: unknown,
+  observation: JevObservation,
+  options: JevBatchEvaluationOptions = {},
+) =>
   Effect.gen(function* () {
     // Keep the admitted source private while provider I/O yields to other actors.
     const sourceObservation = structuredClone(observation)
@@ -65,7 +71,7 @@ export const evaluateJevBatch = (input: unknown, observation: JevObservation) =>
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
     const requested = saved.plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
     if (saved.dispatches.length !== requested.length) return yield* store.finish(plan.batchId)
-    const completions = yield* evaluateClaimedEntryInferences(saved.dispatches).pipe(
+    const completions = yield* evaluateClaimedEntryInferences(saved.dispatches, options).pipe(
       Effect.catchTags({
         EntryInferenceError: () => Effect.succeed(null),
         JevContractError: () => Effect.succeed(null),
