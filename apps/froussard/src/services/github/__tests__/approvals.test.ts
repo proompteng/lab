@@ -123,8 +123,14 @@ const server = () => {
   const approve = async () => {
     const prepared = await prepare()
     if (!prepared.ok) return prepared
-    previousReview = { headSha: options.headSha, reviewId: prepared.review.id }
-    return Effect.runPromise(submitPullRequestApproval({ ...options, reviewId: prepared.review.id }))
+    previousReview = {
+      headSha: options.headSha,
+      reviewId: prepared.review.id,
+      state: prepared.review.state === 'APPROVED' ? 'APPROVED' : 'PENDING',
+    }
+    const submitted = await Effect.runPromise(submitPullRequestApproval({ ...options, reviewId: prepared.review.id }))
+    if (submitted.ok) previousReview = { ...previousReview, state: 'APPROVED' }
+    return submitted
   }
   return { state, writes, approve, prepare }
 }
@@ -194,6 +200,15 @@ describe('approvePullRequest', () => {
     api.state.reviews = [{ ...review(), body: 'Human draft' }]
     expect(await api.approve()).toMatchObject({ ok: false, reason: 'pending-review' })
     expect(api.writes).toHaveLength(0)
+  })
+
+  it('retains the approved receipt when its exact lookup is unavailable', async () => {
+    const api = server()
+    expect(await api.approve()).toMatchObject({ ok: true })
+    api.state.reviews = []
+    expect(await api.approve()).toMatchObject({ ok: false, reason: 'http-error', status: 404 })
+    expect(api.state.approvals).toBe(1)
+    expect(api.writes.filter((write) => write.path.endsWith('/reviews'))).toHaveLength(1)
   })
 
   it('replaces only its own obsolete pending draft', async () => {

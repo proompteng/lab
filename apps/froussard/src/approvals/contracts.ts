@@ -15,6 +15,7 @@ export type SignedApprovalCommand = typeof SignedApprovalCommandSchema.Type
 export const ApprovalStateSchema = Schema.Struct({
   headSha: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
   reviewId: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  state: Schema.Literals(['PENDING', 'APPROVED']),
 })
 export type ApprovalState = typeof ApprovalStateSchema.Type
 export interface ReadyApproval {

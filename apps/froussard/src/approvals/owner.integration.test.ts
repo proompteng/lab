@@ -357,6 +357,19 @@ describe.skipIf(!enabled)('real Restate approval ownership', () => {
     expect([...github.state.reviews.values()]).toMatchObject([{ state: 'APPROVED', commit_id: 'b'.repeat(40) }])
   }, 120_000)
 
+  it('replaces a deleted draft after readiness deferred submission', async () => {
+    github.state.afterDraft = async () => {
+      github.state.ci = 'failure'
+    }
+    expect((await call(command())).body).toMatchObject({ status: 'NOT_READY' })
+    github.state.reviews.clear()
+    github.state.afterDraft = async () => {}
+    github.state.ci = 'success'
+    expect((await call(command())).body).toMatchObject({ status: 'APPROVED' })
+    expect(github.state.draftPosts).toBe(2)
+    expect(github.state.approvalPosts).toBe(1)
+  }, 120_000)
+
   it('rejects forged commands and commands sent to a different PR key', async () => {
     expect((await call(command(), { signature: 'sha256=' + '0'.repeat(64) })).status).toBe(403)
     expect((await call(command(), { key: 'owner/repo#999' })).status).toBe(403)

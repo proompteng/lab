@@ -235,10 +235,7 @@ export type ListCommitPullRequestsResult =
   | { ok: true; pullNumbers: number[] }
   | { ok: false; reason: ListBlockingChecksFailureReason; status?: number; detail?: string }
 
-export interface ApprovalReviewReference {
-  headSha: string
-  reviewId: number
-}
+export type ApprovalReviewReference = import('@/approvals/contracts').ApprovalState
 export interface PrepareApprovalOptions extends ApprovalReviewOptions {
   previousReview: ApprovalReviewReference | null
 }

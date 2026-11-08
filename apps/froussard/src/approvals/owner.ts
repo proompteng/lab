@@ -75,6 +75,7 @@ export const makeApprovalOwner = (config: { github: AppConfig['github']; webhook
         const checkpoint = Schema.decodeUnknownSync(ApprovalStateSchema)({
           headSha: prepared.ready.headSha,
           reviewId: prepared.review.id,
+          state: prepared.review.state === 'APPROVED' ? 'APPROVED' : 'PENDING',
         })
         ctx.set(stateKey, checkpoint)
         const result = await ctx.run('submit persisted GitHub review', async (): Promise<ApprovalReviewResult> => {
@@ -89,6 +90,7 @@ export const makeApprovalOwner = (config: { github: AppConfig['github']; webhook
           return submitted
         })
         if (result.ok) {
+          ctx.set(stateKey, { ...checkpoint, state: 'APPROVED' })
           logger.info(
             {
               repository: command.repositoryFullName,

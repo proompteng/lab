@@ -633,18 +633,30 @@ export const preparePullRequestApproval = (options: PrepareApprovalOptions): Eff
     const { fetchFn, prefix, headers } = context
     const reviewsUrl = `${prefix}/pulls/${options.pullNumber}/reviews`
     if (options.previousReview?.headSha === options.headSha) {
-      const known = yield* requestJson(fetchFn, `${reviewsUrl}/${options.previousReview.reviewId}`, { headers }).pipe(
+      const lookup = yield* requestJson(fetchFn, `${reviewsUrl}/${options.previousReview.reviewId}`, { headers }).pipe(
         Effect.flatMap((value) =>
           Schema.decodeUnknownEffect(AutomationReviewSchema)(value).pipe(Effect.mapError(toInvalidJson)),
         ),
+        Effect.result,
       )
-      if (known.user.login.toLowerCase() !== 'tuslagch' || known.commit_id !== options.headSha)
-        return yield* Effect.fail<ApprovalError>({
-          type: 'pending-review',
-          detail: 'Stored review has another owner or commit',
-        })
-      if (known.state === 'APPROVED' || (known.state === 'PENDING' && known.body === options.body))
-        return { ok: true as const, review: known }
+      if (lookup._tag === 'Failure') {
+        // Only an unsubmitted draft can be deleted; an uncertain approval keeps its exact ID.
+        if (
+          lookup.failure.type !== 'http-error' ||
+          lookup.failure.status !== 404 ||
+          options.previousReview.state !== 'PENDING'
+        )
+          return yield* Effect.fail(lookup.failure)
+      } else {
+        const known = lookup.success
+        if (known.user.login.toLowerCase() !== 'tuslagch' || known.commit_id !== options.headSha)
+          return yield* Effect.fail<ApprovalError>({
+            type: 'pending-review',
+            detail: 'Stored review has another owner or commit',
+          })
+        if (known.state === 'APPROVED' || (known.state === 'PENDING' && known.body === options.body))
+          return { ok: true as const, review: known }
+      }
     }
     const readReviews = Effect.gen(function* () {
       const reviews: Array<typeof AutomationReviewSchema.Type> = []
