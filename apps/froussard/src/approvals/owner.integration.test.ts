@@ -16,6 +16,8 @@ const enabled = process.env.FROUSSARD_RESTATE_INTEGRATION === '1'
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 const docker = (...args: string[]) => execFileSync('docker', args, { encoding: 'utf8', timeout: 30_000 }).trim()
 const serviceRoot = fileURLToPath(new URL('../..', import.meta.url))
+const restateImage =
+  'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1'
 type Worker = { process: ChildProcess; port: number; output: string[] }
 
 describe.skipIf(!enabled)('real Restate approval ownership', () => {
@@ -30,6 +32,7 @@ describe.skipIf(!enabled)('real Restate approval ownership', () => {
   let proxyPort = 0
   let nextWorker = 0
   let number = 1000
+  let containerCreated = false
 
   const waitForRestate = async () => {
     admin = `http://127.0.0.1:${docker('port', container, '9070/tcp').split(':').at(-1)}`
@@ -134,6 +137,11 @@ describe.skipIf(!enabled)('real Restate approval ownership', () => {
   }
 
   beforeAll(async () => {
+    try {
+      docker('image', 'inspect', restateImage)
+    } catch {
+      execFileSync('docker', ['pull', restateImage], { encoding: 'utf8', timeout: 120_000 })
+    }
     directory = await mkdtemp(join(tmpdir(), 'froussard-restate-'))
     const data = join(directory, 'data')
     await mkdir(data, { mode: 0o700 })
@@ -162,7 +170,7 @@ describe.skipIf(!enabled)('real Restate approval ownership', () => {
       '-p',
       '127.0.0.1::8080',
       ...gateway,
-      'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
+      restateImage,
       '--base-dir',
       '/restate-data',
       '--listen-mode',
@@ -172,8 +180,9 @@ describe.skipIf(!enabled)('real Restate approval ownership', () => {
       '--log-format',
       'compact',
     )
+    containerCreated = true
     await waitForRestate()
-  }, 90_000)
+  }, 180_000)
 
   beforeEach(async () => {
     number++
@@ -231,8 +240,13 @@ describe.skipIf(!enabled)('real Restate approval ownership', () => {
   })
   afterAll(async () => {
     try {
-      await writeFile(join(tmpdir(), `${container}.log`), docker('logs', container))
-      docker('rm', '-f', container)
+      if (containerCreated) {
+        try {
+          await writeFile(join(tmpdir(), `${container}.log`), docker('logs', container))
+        } finally {
+          docker('rm', '-f', container)
+        }
+      }
     } finally {
       if (directory) await rm(directory, { recursive: true, force: true })
     }
