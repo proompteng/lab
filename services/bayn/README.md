@@ -32,6 +32,16 @@ no trading driver, places no order and changes no authority. A failed rebuild le
 untouched. Shared preparation does not lock current-source ticks. Registering a different source still fences old
 ticks, so the complete replacement pool must warm before registration. Existing handoff and trading deadlines remain unchanged.
 
+An already rejected broker observation read distinguishes a verified foreign source revision from a missing or
+invalidated cut. The diagnostic reads only an account-scoped ownership boolean and exposes no account or revision
+identifier. It does not admit either revision, extend freshness or change authority, recovery markers or deadlines.
+During a staged release, controller activation can invalidate predecessor API observations before replacement APIs
+are ready. A new controller's successful publication does not restore an old API's revision-bound health read.
+Treat those readiness failures as real; alert retention and notification delay do not measure their duration.
+Preparing replacement APIs before handoff needs a separate readiness contract: merely moving their sync wave ahead
+of activation can prevent the activation wave from ever running. Preserve the exact-revision fence until that
+rollout design is independently proven.
+
 Background broker polling brackets account and position reads with two matching complete history scans.
 Consecutive successful tickets with the same latest fill reuse the preceding poll's completed scan as the next
 before-read, and fetch the full after-history again, including old fill or fee corrections. The existing
