@@ -152,3 +152,5 @@ must revoke subsequent mutations.
 ## Codex Runtime
 
 Codex implementation runs use the Agents-owned `agents-codex-runner` image and the `codex-agent` provider. Froussard no longer ships Argo `WorkflowTemplate` runtime definitions for Codex execution.
+
+<!-- Temporary Restate approval canary. This branch is closed after runtime verification. -->
