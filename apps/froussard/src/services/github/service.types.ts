@@ -3,8 +3,6 @@ import type { Effect } from 'effect'
 import type {
   CreateIssueCommentOptions,
   CreateIssueCommentResult,
-  ApprovePullRequestOptions,
-  ApprovePullRequestResult,
   FetchPullRequestOptions,
   FetchPullRequestResult,
   IssueReactionPresenceOptions,
@@ -32,7 +30,6 @@ export interface GithubServiceDefinition {
   readonly createIssueComment: (options: CreateIssueCommentOptions) => Effect.Effect<CreateIssueCommentResult>
   readonly fetchPullRequest: (options: FetchPullRequestOptions) => Effect.Effect<FetchPullRequestResult>
   readonly markPullRequestReadyForReview: (options: ReadyForReviewOptions) => Effect.Effect<ReadyForReviewResult>
-  readonly approvePullRequest: (options: ApprovePullRequestOptions) => Effect.Effect<ApprovePullRequestResult>
   readonly listPullRequestReviewThreads: (options: ListReviewThreadsOptions) => Effect.Effect<ListReviewThreadsResult>
   readonly listPullRequestBlockingChecks: (
     options: ListBlockingChecksOptions,

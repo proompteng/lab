@@ -1,3 +1,4 @@
+import { enqueueApproval } from '@/approvals/ingress'
 import { randomUUID } from 'node:crypto'
 
 import type { Webhooks } from '@octokit/webhooks'
@@ -400,6 +401,12 @@ export const createGithubWebhookHandler = ({
       deliveryId,
       agentRunIdentifier,
       submitAgentRun: makeAgentsServiceSubmitter(config.agents),
+      enqueueApproval: (command) =>
+        enqueueApproval({
+          command: { ...command, deliveryId },
+          ingressOrigin: config.restate.ingressOrigin,
+          sign: (text) => webhooks.sign(text),
+        }),
     }
 
     let codexStageTriggered: WorkflowStage | null = null
@@ -456,7 +463,7 @@ export const createGithubWebhookHandler = ({
       }
 
       if (eventName === 'pull_request') {
-        const stage = await handlePullRequestEvent({
+        await handlePullRequestEvent({
           parsedPayload,
           headers,
           config,
@@ -465,9 +472,6 @@ export const createGithubWebhookHandler = ({
           actionValue,
           senderLogin,
         })
-        if (stage) {
-          codexStageTriggered = stage
-        }
       }
 
       await handleReadinessEvent({
