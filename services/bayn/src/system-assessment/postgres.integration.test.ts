@@ -73,6 +73,7 @@ import { qualificationDeadlines } from './configuration'
 import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
+import { currentEntryMarkets } from '../execution/trading-scope'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
@@ -683,6 +684,21 @@ postgres('PostgreSQL prospective system qualification', () => {
           ),
         ),
       ).toBe(true)
+  })
+
+  test('persists and reproduces an equity-only financial registration with its explicit native entry scope', async () => {
+    const base = registration(1)
+    const value = withRegistrationCommitments({
+      ...base,
+      calendar: { ...base.calendar, tradingMarkets: [...currentEntryMarkets] },
+      obligations: {
+        ...base.obligations,
+        configuration: { ...base.obligations.configuration, entryMarkets: [...currentEntryMarkets] },
+      },
+    })
+    const saved = await runtime.runPromise(asApplication(registerFixture(value)))
+    expect(await runtime.runPromise(readSystemRegistration(saved.registrationHash))).toEqual(value)
+    expect(saved.registration.calendar.tradingMarkets).toEqual(currentEntryMarkets)
   })
 
   test.each([1, 3, 21])('persists a %i-session registration with its actual closing boundary', async (sessionCount) => {
