@@ -63,9 +63,9 @@ do not sync its Kargo revision before its local class and memory headroom exist.
 
 1. Verify the exact merged revision and required CI. Reconcile the reviewed Rook and node-agent changes through their
    existing Argo applications. Confirm Ryzen's Ceph monitor remains in the three-monitor quorum and its node agents are ready.
-2. Sync the manual `local-path` application to that revision. Require `local-path-ryzen`, the admission policy, and its binding
-   to exist before changing Ryzen's scheduling configuration. The new class uses the existing XFS user volume at
-   `/var/mnt/local-path-provisioner` with `WaitForFirstConsumer` and Ryzen-only topology.
+2. Sync the manual `local-path` application to that revision. Require `local-path-ci-amd64`, the admission policy, and its binding
+   to exist before changing Ryzen's scheduling configuration. The CI class uses the existing XFS user volume at
+   `/var/mnt/local-path-provisioner` on Ryzen and the Transcend scratch volume on Turin with `WaitForFirstConsumer`.
 3. Reconcile the reviewed database, SPIRE, and Restate affinity changes through their owning GitOps branches. Confirm all
    replicas are ready before moving any existing storage client. Kargo-managed applications use their Stage-generated branch.
 4. Render, validate, dry-run, and sync the reviewed Omni template using the [Omni procedure](../omni/README.md).
