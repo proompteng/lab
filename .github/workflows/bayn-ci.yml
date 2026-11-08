@@ -426,7 +426,7 @@ jobs:
           bash nix/images/bun-workspace-deps-source.test.sh
       - name: Verify registered replay image membership against a disposable registry
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts
           SCRIPT
@@ -455,7 +455,7 @@ jobs:
           BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
           BAYN_TEST_REPLAY_EXECUTION: '1'
         run: |
-          nix develop --command bash -euo pipefail <<'SCRIPT'
+          nix develop .#bayn-replay --command bash -euo pipefail <<'SCRIPT'
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
           docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
           docker pull "${BAYN_TEST_REGISTRY_IMAGE}"
