@@ -6,8 +6,8 @@ No demonstrated edge, prospective registration, or capital authorization.
 
 ## Decision
 
-CosmosAlpha's graph-guided factor reference remains the first selected reproduction; its required data and
-model-access preflight has not passed. Reproduce it before designing its Bayn adaptation. The first comparison is
+CosmosAlpha's graph-guided factor reference remains the first selected reproduction. Its original data and
+self-hosted model pass preflight. The first Graph arm has restarted with the [recorded source repairs](cosmosalpha-reference-budget-2026-11-07.md#source-repairs); its interrupted predecessor remains inconclusive. Complete the comparison before designing its Bayn adaptation. The first comparison is
 Graph versus the authors' Chain search under the same data, proposals, evaluator, and experiment budget.
 The existing six-bar ridge, momentum, breakout, and crash/VWAP implementations are controls or infrastructure.
 They are not this campaign's new candidate. Reusing ridge as the candidate was considered and rejected before fitting.
@@ -135,9 +135,20 @@ Qlib and LightGBM now import in the supported Python environment; all 13 retaine
 independent graph checks pass. The original bundle is checksum-verified, extracted and loaded by the native provider:
 2,286 dates, 629 historical instruments and 685,511 samples. Independent artifact checks pass, with at least 200 eligible
 instruments per evaluation date. Industry history remains uncertified for strict point-in-time use. Eligible rows contain
-279 null industry IDs, 158 null `free_turn` values and three null `returns` values. Native preflight now fails only on the missing model key. Metered model access,
-a matched Graph/Chain experiment and economic qualification remain unfinished.
+279 null industry IDs, 158 null `free_turn` values and three null `returns` values. The existing self-hosted Flamingo endpoint
+now supplies model access without a paid API key. All six amended configurations pass native preflight. The matched
+Graph/Chain experiment is running; its comparison and economic qualification remain unfinished.
+The original source's normalized-number parser and duplicate-loser constructor failed independently reproduced
+regression cases. The explicit two-file repair passes 16 regression cases plus the 13 upstream tests. The corrected
+six-arm plan preserves data, thresholds, prompts, seeds and budgets; all partial predecessor evidence is retained.
 The earlier missing default local paths did not establish that the authors had not published the dataset.
+
+The [matched reference budget and accounting assessment](cosmosalpha-reference-budget-2026-11-07.md) now specifies
+three paired runs, a shared maximum proposal allowance, declared Qwen sampling settings and complete
+physical-request accounting. Native contract probes exposed missing-usage counters represented as zero and up to
+ten physical requests for one logical call. The active runner uses Flamingo and strips the upstream client's non-secret
+anonymous-auth compatibility marker. The earlier DeepSeek spending proposal is withdrawn. No external model charge
+is required; local compute and research costs remain unallocated.
 
 ## Execution order and outstanding evidence
 
@@ -145,7 +156,7 @@ Proceed in this order: source and data admission, deterministic method parity, r
 frozen Bayn adaptation, prospective source collection, and complete economic assessment. Keep a decision trail and
 all rejected trials. Do not build a new generic strategy platform to perform these experiments.
 
-The source commit and reference design are selected. Market-data admission, the original-model access route,
-reference runs, the Bayn adaptation, operating-cost allocation, and prospective registration remain unproven.
+The source commit and reference design are selected. Original input loading and self-hosted model access are verified.
+Reference results, the Bayn adaptation, operating-cost allocation, and prospective registration remain unproven.
 The duration-flow adaptation was fitted and tested separately as documented above; it is not qualified. The three
-selected reference mechanisms remain unexecuted. The full profitability goal remains active.
+selected reference mechanisms have no completed comparison yet. CosmosAlpha is executing; the other two remain unexecuted. The full profitability goal remains unachieved.

@@ -531,32 +531,31 @@ impl TengriAgentRun {
         ctx.set("snapshot", Json(snapshot.clone()));
         let workspace =
             ctx.object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid);
-        let mut stop = match workspace.claim(Json(admission.claim.clone())).call().await {
-            Ok(stop) => stop.into_inner(),
-            Err(error) => {
-                if error.code() != 409 {
-                    return Err(error.into());
+        // Calls are queued eagerly; preparation can run while this claim is pending.
+        let claim = workspace.claim(Json(admission.claim.clone())).call();
+        let (prepared, started_at) = self.prepare_run(&ctx, &admission).await?;
+        let mut stop = None;
+        snapshot.state = match claim.await {
+            Ok(claimed) => {
+                stop = claimed.into_inner();
+                if stop.is_some() {
+                    State::Cancelled {
+                        turn_id: String::new(),
+                    }
+                } else if matches!(prepared, State::Accepted) {
+                    self.dispatch_prepared(&ctx, &admission).await?
+                } else {
+                    prepared
                 }
-                snapshot.state = State::Rejected {
-                    reason: "conversation already has an active run".into(),
-                };
-                ctx.set("snapshot", Json(snapshot.clone()));
-                return Ok(Json(snapshot.state));
             }
-        };
-        snapshot.state = if stop.is_some() {
-            State::Cancelled {
-                turn_id: String::new(),
-            }
-        } else {
-            self.start_run(&ctx, &admission).await?
+            Err(error) if error.code() == 409 => State::Rejected {
+                reason: "conversation already has an active run".into(),
+            },
+            Err(error) => return Err(error.into()),
         };
         if !snapshot.state.terminal() {
             ctx.set("snapshot", Json(snapshot.clone()));
         }
-        let started_at: u64 = ctx
-            .run(|| async { Ok(crate::ofz::now_ms().map_err(terminal)?) })
-            .await?;
         let mut approval_started_at = None;
         let mut recovery_attempt = 0_u32;
         let mut principal = admission.principal.clone();
@@ -898,21 +897,29 @@ impl TengriAgentRun {
         ctx: &WorkflowContext<'_>,
         admission: &Admission,
     ) -> HandlerResult<State> {
-        let prepared = ctx
-            .run(|| async {
-                Ok(Json(
-                    self.service
-                        .prepare_durable_run(&admission.principal, &admission.input)
-                        .await,
-                ))
-            })
-            .name("prepare_codex_dispatch")
-            .await?
-            .into_inner();
+        let (prepared, _) = self.prepare_run(ctx, admission).await?;
         if !matches!(prepared, State::Accepted) {
             return Ok(prepared);
         }
         self.dispatch_prepared(ctx, admission).await
+    }
+
+    async fn prepare_run(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<(State, u64)> {
+        Ok(ctx
+            .run(|| async {
+                let prepared = self
+                    .service
+                    .prepare_durable_run(&admission.principal, &admission.input)
+                    .await;
+                Ok(Json((prepared, crate::ofz::now_ms().map_err(terminal)?)))
+            })
+            .name("prepare_codex_dispatch")
+            .await?
+            .into_inner())
     }
 
     async fn dispatch_prepared(
