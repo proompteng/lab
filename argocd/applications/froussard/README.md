@@ -22,6 +22,13 @@ the checked commit. Pending CI, unresolved threads, drafts, conflicts, and missi
 or stale Codex review evidence block approval. PR edits, completed checks, commit
 statuses, Codex summary updates, submitted reviews, and resolved threads recheck
 readiness. GitHub reviews provide the durable receipt used to reconcile retries.
+The webhook server durably enqueues commands in the shared Restate cluster.
+`RestateDeployment/froussard-approvals` is the sole approval writer. Its virtual
+object owns each repository/PR and checkpoints the review ID before submission.
+Kargo promotes both workloads to the same digest. Argo registers the worker in
+wave `0` before replacing the public server in wave `1`. The worker accepts only
+Restate-signed requests carrying the webhook server's signed approval command;
+its NetworkPolicy allows ingress from the `restate` namespace only.
 Check readiness uses the newest observed execution of each workflow/job for the same
 event, branch and commit. Superseded executions cannot block a passing replacement;
 checks from other workflows or unknown identities remain independent. Failed metadata

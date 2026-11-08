@@ -12,6 +12,12 @@ contains `bayn-control-study`.
 without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
 Installing the command does not schedule a capture, run a study, or qualify the input.
 
+The [November 9 prospective commitment](prospective/2026-11-09-controls.json) records the plan, design, released
+commands, source inventory query and input metadata hashes for that session. Verify the retained private plan and
+design bytes against those hashes before use. Establish their pre-open commitment through the file's Git commit and
+the matching GitHub CI run's server-recorded creation time and head SHA. Local timestamps do not establish that proof.
+This is a descriptive policy comparison; unknown costs, calibration and statistical qualification remain explicit.
+
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). `entry: "JEV"` adds an independent native entry
 portfolio with mechanical exits. `entry: "DETERMINISTIC"` retains deterministic entries. Only

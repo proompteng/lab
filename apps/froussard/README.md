@@ -8,6 +8,25 @@ and completed passing CI. It skips drafts, conflicts, and PRs authored by
 existing approvals are reconciled per commit. See the
 [GitOps credential configuration](../../argocd/applications/froussard/README.md#github-identity).
 
+Completion webhooks enqueue a signed command in Restate before returning success.
+`FroussardApprovals` serializes commands by lowercase repository and PR number. Its
+dedicated worker persists the pending GitHub review ID before submission. Retries
+read that exact ID and reuse an accepted approval even if GitHub's review list is
+stale. It rechecks readiness before submission and retries transient GitHub read
+and write failures. The webhook server has no direct approval writer.
+
+The worker runs `bun dist/approval-server.mjs` on port 9080 and requires
+`GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, and `RESTATE_REQUEST_IDENTITY_KEYS`.
+The public server sends commands to `FROUSSARD_RESTATE_INGRESS`, defaulting to
+the shared cluster ingress. Both processes use the existing Froussard credentials;
+commands contain no GitHub credential. Restate request identity and a command HMAC
+restrict the worker to authenticated deliveries.
+
+Run `bun run test:restate` with Docker available to test concurrent deliveries
+through two SDK processes, lost GitHub responses, SDK process crashes, an abrupt
+Restate restart, and readiness changes after draft creation. These tests use a
+real isolated Restate 1.8.1 server and a local GitHub fixture.
+
 Froussard uses Effect 4.1.2 for services, schemas, concurrency, and resource lifetimes. Its
 Agents client uses the same version. There is no Effect 3 adapter in the runtime.
 
