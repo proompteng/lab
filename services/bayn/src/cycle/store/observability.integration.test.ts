@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result, Schema } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 import * as Reactivity from 'effect/reactivity/Reactivity'
 import {
   makeCycleDraft,
@@ -837,6 +838,109 @@ describePostgres('PostgreSQL intraday observability projection', () => {
       '(account_id, ingestion_sequence DESC)',
     )
   })
+
+  test.each([false, true])('legacy-only snapshots preserve ambiguity and future exclusion (tied=%s)', async (tied) => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* seedSafetyState
+        yield* seedPositionSnapshots([
+          { snapshotId: 'c'.repeat(64), observedAt: '2026-08-28T14:32:00.000Z', positionCount: 0, trusted: false },
+          { snapshotId: 'd'.repeat(64), observedAt: '2099-08-28T14:32:00.000Z', positionCount: 1, trusted: false },
+          ...(tied
+            ? [{ snapshotId: 'e'.repeat(64), observedAt: '2026-08-28T14:32:00.000Z', positionCount: 1, trusted: false }]
+            : []),
+        ])
+        return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+      }),
+    )
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: tied ? null : '2026-08-28T14:32:00.000Z',
+      positionCount: tied ? null : 0,
+    })
+  })
+
+  test('trusted clock regression avoids retained history without adding an index', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState
+        // Both rows precede the selected snapshot in ingestion order. Neither may reject its clock.
+        yield* seedPositionSnapshots([
+          { snapshotId: 'f'.repeat(64), observedAt: '2099-08-28T14:32:00.000Z', positionCount: 1 },
+        ])
+        yield* sql`INSERT INTO position_snapshots (
+          snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+          ingestion_order_trusted
+        ) VALUES (
+          ${'e'.repeat(64)}, 'bayn.paper-position-snapshot.v1', 'foreign-account', ${'e'.repeat(64)},
+          '2026-08-28T14:32:00Z', 0, ${'e'.repeat(64)}, true
+        )`
+        // Keep every statement inside the existing deadline while retaining a substantial mixed history.
+        for (let first = 1; first <= 60000; first += 1000) {
+          yield* sql`INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+            ingestion_order_trusted
+          ) SELECT md5('snapshot-' || n) || md5(n::text), 'bayn.paper-position-snapshot.v1', ${accountId},
+              md5('source-' || n) || md5(n::text), '2026-08-27T00:00:00Z'::timestamptz + n * interval '1 second',
+              0, md5('content-' || n) || md5(n::text), n > 20000
+            FROM generate_series(${first}::integer, ${first + 999}::integer) AS n ORDER BY n`
+        }
+        expect(yield* sql`SELECT count(*)::integer AS count FROM position_snapshots`).toEqual([{ count: 60002 }])
+        yield* sql`ANALYZE position_snapshots`
+        const lookups: Statement<Record<string, unknown>>[] = []
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (typeof statement.compile === 'function' && statement.compile()[0].includes('WITH scoped_cycles AS'))
+              lookups.push(statement)
+            return statement
+          },
+        })
+        const projection = yield* Effect.gen(function* () {
+          return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+        }).pipe(
+          Effect.provide(Layer.fresh(CycleObservabilityLive)),
+          Effect.provideService(PgClient.PgClient, monitored),
+        )
+        expect(projection.execution).toMatchObject({
+          positionSnapshotObservedAt: '2026-08-27T16:40:00.000Z',
+          positionCount: 0,
+        })
+        expect(lookups).toHaveLength(1)
+        const lookup = lookups[0]
+        if (lookup === undefined) throw new Error('Observability did not execute its projection query')
+        const [query, parameters] = lookup.compile()
+        const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+        const plans = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+        )(explanation)
+        const snapshotScans: Readonly<Record<string, unknown>>[] = []
+        const collectSnapshotScans = (node: unknown): void => {
+          if (node === null || typeof node !== 'object') return
+          if ('Relation Name' in node && node['Relation Name'] === 'position_snapshots') snapshotScans.push(node)
+          if ('Plans' in node && Array.isArray(node.Plans)) node.Plans.forEach(collectSnapshotScans)
+        }
+        collectSnapshotScans(plans[0]?.['QUERY PLAN'][0]?.Plan)
+        const visitedRows = (node: Readonly<Record<string, unknown>>): number =>
+          ['Actual Rows', 'Rows Removed by Filter', 'Rows Removed by Index Recheck'].reduce(
+            (sum, key) => sum + Number(node[key] ?? 0),
+            0,
+          ) * Number(node['Actual Loops'] ?? 0)
+        const clockScans = snapshotScans.filter((node) => node['Alias'] === 'previous')
+        expect(clockScans).toHaveLength(1)
+        const clockScan = clockScans[0]
+        if (clockScan === undefined) throw new Error('PostgreSQL did not return the trusted clock regression scan')
+        expect(Number(clockScan['Actual Loops'])).toBeGreaterThan(0)
+        const clockVisitedRows = visitedRows(clockScan)
+        const totalVisitedRows = snapshotScans.reduce((sum, node) => sum + visitedRows(node), 0)
+        yield* Effect.logInfo('Query-only snapshot fixture plan').pipe(
+          Effect.annotateLogs({ fixtureRows: 60002, clockVisitedRows, totalVisitedRows }),
+        )
+        // The legacy maximum remains unbounded. Only the trusted clock-regression scan is optimized here.
+        expect(clockVisitedRows).toBeLessThan(128)
+      }),
+    )
+  }, 30000)
 
   test('ignores future-dated broker snapshots when selecting observable state', async () => {
     const candidate = draft()

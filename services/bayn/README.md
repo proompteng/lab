@@ -1,5 +1,12 @@
 # Bayn
 
+Position observability bounds trusted clock-regression checks by scalar account, observation-time and ingestion-sequence
+values from the same latest snapshot. This lets PostgreSQL use the existing account/time index while preserving
+durable ingestion order, account isolation, future exclusion and clock-regression rejection. No schema, index,
+migration, database setting, authority or deadline changes are required. The separate legacy maximum lookup still
+scans the newer trusted tail without a legacy-only index, so this is a partial reduction in status-read work, not a
+bounded whole-query guarantee or a demonstrated cure for storage stalls. It does not prove uninterrupted rollout.
+
 Broker read timing separates `bayn.alpaca.read.headers` (request execution through response headers, including
 configured transport retries) from `bayn.alpaca.read.body` (body transfer and JSON parsing). Both remain inside the
 original total read deadline and use only the existing finite operation/dependency/outcome labels. A header-stage
