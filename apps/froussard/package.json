@@ -15,13 +15,15 @@
     "typecheck": "tsc --noEmit",
     "discord:register:guild": "bun ./scripts/register-discord-commands.ts",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "test:restate": "FROUSSARD_RESTATE_INTEGRATION=1 vitest run src/approvals/owner.integration.test.ts --bail=1"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.12.0",
     "@elysiajs/eden": "^1.4.9",
     "@octokit/webhooks": "^14.2.0",
     "@proompteng/agent-contracts": "workspace:*",
+    "@restatedev/restate-sdk": "1.16.5",
     "@sinclair/typebox": "^0.34.49",
     "discord-interactions": "^4.4.0",
     "effect": "4.1.2",
