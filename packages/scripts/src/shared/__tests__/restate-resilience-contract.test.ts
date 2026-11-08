@@ -839,3 +839,98 @@ echo 'INVOCATION_ROWS'
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+const activePartition = {
+  generation: 'N1:91',
+  state: 'alive',
+  worker_state: 'active',
+  partition_id: 0,
+  membership: 'current',
+  replay_status: 'active',
+  updated_at: '2026-11-08T23:00:00.000',
+}
+const advancingPartition = { ...activePartition, updated_at: '2026-11-08T23:00:02.000' }
+const unassignedWorker = {
+  ...activePartition,
+  partition_id: null,
+  membership: null,
+  replay_status: null,
+  updated_at: null,
+}
+
+test.each([
+  { name: 'active and advancing', first: [activePartition], second: [advancingPartition], succeeds: true },
+  { name: 'empty assignments', first: [], second: [], succeeds: false },
+  { name: 'missing processor', first: [{ ...activePartition, replay_status: null }], succeeds: false },
+  { name: 'still catching up', first: [{ ...activePartition, replay_status: 'catching-up' }], succeeds: false },
+  { name: 'next assignment', first: [{ ...activePartition, membership: 'next' }], succeeds: false },
+  { name: 'dead member', first: [{ ...activePartition, state: 'dead' }], succeeds: false },
+  { name: 'no partition', first: [{ ...activePartition, partition_id: null }], succeeds: false },
+  ...['draining', 'disabled', 'provisioning'].map((worker_state) => ({
+    name: `${worker_state} member awaits explicit activation`,
+    first: [{ ...unassignedWorker, worker_state }],
+    second: [{ ...unassignedWorker, worker_state }],
+    succeeds: true,
+  })),
+  {
+    name: 'draining member still has assignments',
+    first: [{ ...activePartition, worker_state: 'draining' }],
+    succeeds: false,
+  },
+  {
+    name: 'member activates without assignments',
+    first: [{ ...unassignedWorker, worker_state: 'draining' }],
+    second: [unassignedWorker],
+    succeeds: false,
+  },
+  { name: 'stale status', first: [activePartition], second: [activePartition], succeeds: false },
+  {
+    name: 'new generation during check',
+    first: [activePartition],
+    second: [{ ...advancingPartition, generation: 'N1:92' }],
+    succeeds: false,
+  },
+  { name: 'lost assignments', first: [activePartition], second: [], succeeds: false },
+  {
+    name: 'one processor stops progressing',
+    first: [activePartition, { ...activePartition, partition_id: 1 }],
+    second: [advancingPartition, { ...activePartition, partition_id: 1 }],
+    succeeds: false,
+  },
+  { name: 'query failure', first: [activePartition], queryFails: true, succeeds: false },
+])('Restate startup recovery rejects incomplete state: $name', (scenario) => {
+  const configMap = YAML.parse(readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml'))
+  const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml'))
+  expect(statefulSet.spec.template.spec.containers[0].startupProbe.exec.command).toEqual([
+    '/bin/bash',
+    '/opt/restate-resilience/partition-startup.sh',
+  ])
+  const tempDir = mkdtempSync('/tmp/restate-startup-')
+  try {
+    writeFileSync(`${tempDir}/first.json`, JSON.stringify(scenario.first))
+    writeFileSync(`${tempDir}/second.json`, JSON.stringify(scenario.second ?? []))
+    writeFileSync(
+      `${tempDir}/restatectl`,
+      '#!/bin/sh\nset -eu\n[ "$QUERY_FAILS" != true ] || exit 17\n' +
+        'if [ -f "$FIXTURE_DIR/read" ]; then cat "$FIXTURE_DIR/second.json"; else\n' +
+        'touch "$FIXTURE_DIR/read"; cat "$FIXTURE_DIR/first.json"; fi\n',
+    )
+    writeFileSync(`${tempDir}/sleep`, '#!/bin/sh\nexit 0\n')
+    chmodSync(`${tempDir}/restatectl`, 0o755)
+    chmodSync(`${tempDir}/sleep`, 0o755)
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', configMap.data['partition-startup.sh']], {
+      env: {
+        ...process.env,
+        POD_NAME: 'restate-0',
+        FIXTURE_DIR: tempDir,
+        QUERY_FAILS: String(scenario.queryFails ?? false),
+        PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode === 0).toBe(scenario.succeeds)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
