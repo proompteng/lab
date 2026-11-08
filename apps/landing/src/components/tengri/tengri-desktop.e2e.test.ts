@@ -10321,7 +10321,8 @@ test('clears a recovered active-run outage when the turn finishes before its ret
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
-  const composer = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  const composer = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
+  await expect(composer).toHaveAccessibleName('Steer the current turn')
   await composer.fill('Keep this unsent follow-up')
   unavailable = true
   await page.clock.runFor(2_100)
@@ -10345,6 +10346,7 @@ test('clears a recovered active-run outage when the turn finishes before its ret
   await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
   await expect(chat.getByText('Agent returned an invalid event', { exact: true })).toHaveCount(0)
   await expect(chat.getByRole('alert')).toHaveCount(0)
+  await expect(composer).toHaveAccessibleName('Message your agent')
   await expect(composer).toHaveValue('Keep this unsent follow-up')
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
   await page.screenshot({ path: testInfo.outputPath('recovered-chat.png'), animations: 'disabled' })
