@@ -86,8 +86,10 @@ import {
   codexEventConfirmsRuntimeReady,
   codexEventDisplayText,
   codexEventActivityTitle,
-  codexEventIsIndependentOfThreadSnapshot,
+  codexEventImageGeneration,
+  codexEventWithThread,
   codexEventIsRuntimeError,
+  codexEventIsIndependentOfThreadSnapshot,
   codexEventKey,
   codexEventMatchesThread,
   codexEventShouldRender,
@@ -926,9 +928,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         return
       }
       const currentThread = threadIdRef.current
-      const event = codexEventIsRuntimeError(parsed)
-        ? parsed
-        : { ...parsed, threadId: parsed.threadId || currentThread }
+      const event = codexEventWithThread(parsed, currentThread)
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       if (
         ['thread/started', 'thread/name/updated', 'thread/archived', 'thread/unarchived', 'turn/completed'].includes(
@@ -1061,6 +1061,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           event,
           text: codexEventDisplayText(event),
           activityTitle: codexEventActivityTitle(event),
+          imageGeneration: codexEventImageGeneration(event),
           questionRequest: codexEventAsyncQuestionRequest(event),
         }))
         .filter(
@@ -1119,6 +1120,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return {
         id: item.id,
         kind: item.kind,
+        imageGeneration: update?.imageGeneration ?? item.imageGeneration,
         text: update?.text ?? item.text,
         card: update ? (
           renderEvent(update)
@@ -1129,6 +1131,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
             agentId={agentId}
             activityTitle={item.activityTitle}
+            imageGeneration={item.imageGeneration}
             kind={item.kind}
             text={item.text}
           />
@@ -1140,6 +1143,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       .map((update) => ({
         id: update.event.itemId || codexEventWrapperKey(update.event),
         kind: update.event.kind,
+        imageGeneration: update.imageGeneration,
         text: update.text,
         card: renderEvent(update),
       })),
@@ -1202,6 +1206,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       id: prompt.id,
       kind: 'user-message',
       text: prompt.text,
+      imageGeneration: undefined,
       card: (
         <CodexEventCard
           key={prompt.id}
@@ -1214,7 +1219,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     })
   }
 
-  function renderEvent({ event, text, activityTitle, questionRequest }: (typeof renderedEvents)[number]) {
+  function renderEvent({
+    event,
+    text,
+    activityTitle,
+    questionRequest,
+    imageGeneration,
+  }: (typeof renderedEvents)[number]) {
     if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest, text)
     const question = codexQuestionRequest(event)
     if (question)
@@ -1239,6 +1250,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         key={codexEventWrapperKey(event)}
         agentId={agentId}
         activityTitle={activityTitle}
+        imageGeneration={imageGeneration}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
         approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
@@ -1552,8 +1564,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     if (!threadId) {
       creatingDraftRef.current = null
       draftsRef.current.delete('')
-      const assignThread = (event: CodexBufferedEvent) =>
-        event.threadId || codexEventIsRuntimeError(event) ? event : { ...event, threadId: thread.id }
+      const assignThread = (event: CodexBufferedEvent) => codexEventWithThread(event, thread.id)
       retainedEvents.current = retainedEvents.current.map(assignThread)
       const retained = retainedEvents.current.filter((event) => codexEventMatchesThread(event, thread.id))
       setEvents((current) => retained.reduce((next, event) => appendCodexEvent(next, event), current.map(assignThread)))
