@@ -1948,7 +1948,7 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
     const thread = await restoredThread('thread-test')
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test' })
     expect(thread).toEqual({
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test","historyMode":"paginated","turns":[]}}',

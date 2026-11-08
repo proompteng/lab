@@ -2217,10 +2217,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   await expect(reasoning).toBeEnabled()
   await expect
     .poll(() => mock.actions.filter((action) => action.action === 'resume-thread').at(-1))
-    .toMatchObject({
-      model: 'gpt-6.1-sol',
-      reasoningEffort: 'high',
-    })
+    .toEqual({ action: 'resume-thread', agentId: 'microvm-ada', threadId: 'thread-1' })
   await selectOption(page, model, 'GPT-5.6 Luna')
   await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Low')
   await reasoning.click()
@@ -2668,10 +2665,10 @@ for (const failure of [
 }
 
 for (const unavailable of ['model', 'effort']) {
-  test(`can replace a saved unavailable ${unavailable} after conversation recovery fails`, async ({ page }) => {
-    const mock = await mockTengri(page, {
-      resumeThreadErrors: [{ status: 400, error: 'Saved Codex settings are unavailable' }],
-    })
+  test(`loads history with a saved unavailable ${unavailable} and requires valid settings to send`, async ({
+    page,
+  }) => {
+    const mock = await mockTengri(page)
     await page.addInitScript((unavailable) => {
       localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing')
       localStorage.setItem(
@@ -2684,23 +2681,30 @@ for (const unavailable of ['model', 'effort']) {
     }, unavailable)
     await page.goto('/')
     const tengri = page.getByRole('region', { name: 'Tengri window' })
-    await expect(tengri.getByText('Saved Codex settings are unavailable', { exact: true })).toBeVisible()
+    await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'resume-thread').at(-1))
+      .toEqual({
+        action: 'resume-thread',
+        agentId: 'microvm-ada',
+        threadId: 'thread-existing',
+      })
+    await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Continue this conversation')
+    await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
     const model = tengri.getByRole('combobox', { name: 'Model', exact: true })
     await expect(model).toBeEnabled()
     if (unavailable === 'model') await selectOption(page, model, 'GPT-6.1 Sol')
     const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
     await expect(reasoning).toBeEnabled()
     await selectOption(page, reasoning, 'Low')
-    await tengri.getByRole('button', { name: 'Retry', exact: true }).click()
-    await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
-    expect(mock.actions.filter((action) => action.action === 'resume-thread').at(-1)).toMatchObject({
-      model: unavailable === 'model' ? 'gpt-6.1-sol' : 'gpt-5.6-luna',
-      reasoningEffort: 'low',
-    })
     expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
-    await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Continue this conversation')
     await tengri.getByRole('button', { name: 'Send message' }).click()
-    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
+    await expect
+      .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+      .toMatchObject({
+        model: unavailable === 'model' ? 'gpt-6.1-sol' : 'gpt-5.6-luna',
+        reasoningEffort: 'low',
+      })
   })
 }
 

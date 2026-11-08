@@ -583,12 +583,11 @@ export async function resumeCodexThread(
   identity: PlatformIdentity,
   agentId: string,
   threadId: string,
-  options: TengriCodexOptions = {},
   signal: AbortSignal = new AbortController().signal,
 ) {
   const source = await stream(
     'resumeCodexThread',
-    { agentId, threadId, ...options },
+    { agentId, threadId },
     identity,
     NO_PRESERVED_SCALAR_DEFAULTS,
     TENGRI_UNARY_TIMEOUT_MS,
