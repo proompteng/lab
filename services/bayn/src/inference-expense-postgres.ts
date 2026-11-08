@@ -3,6 +3,7 @@ import { Context, Effect, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
 import { InferenceCostError } from './inference-costs'
+import { settleExpiredTerminalJevBatches } from './db/jev-batch-postgres'
 import {
   decodeInferenceExpenseQuote,
   inferenceExpenseBatchSize,
@@ -188,5 +189,6 @@ export const makeInferenceExpenseStore = (
         Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
       ),
     )
-  return { newSources, freeze, pending, acknowledge, session, currentSession }
+  const settleExpiredTerminalBatches = settleExpiredTerminalJevBatches(sql, accountId)
+  return { newSources, freeze, pending, acknowledge, session, currentSession, settleExpiredTerminalBatches }
 }

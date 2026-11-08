@@ -193,6 +193,12 @@ post-recovery reconciliation before cycle work. The local hint grants no authori
 lost safely on restart; normal durable recovery remains the fallback. Missing, failed or unresolved confirmation
 retains fail-closed restrictions. Native protective-order cancellations keep their separate reconciliation path.
 
+Native protection retains each broker HTTP 204 cancellation receipt against its exact durable command. Migration 189
+adds append-only receipts without inventing acknowledgments for historical commands. A verified accepted cancellation
+awaiting broker publication uses a continuation of at most five seconds; uncertain outcomes keep normal recovery
+backoff. Acceptance does not prove that an order settled. Fresh exact reconciliation must still show every protective
+sell settled before a standalone exit can proceed, and an ambiguous receipt write is reconciled before another mutation.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
@@ -427,6 +433,9 @@ increments remain enforced; held inventory, current authority and account risk c
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+Every provider stage also uses the earlier of the parent admission deadline and its original request expiry. Store
+admission and handoff commits cannot renew that budget. A paid response that arrives at the boundary retains its
+verified usage and response hash even when it can no longer support an entry.
 An abstention waits for another observation only while that lease has enough finalization headroom.
 Equity session hours cannot extend the unused lease or defer its valid no-trade decision until the closing bell.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
@@ -1597,6 +1606,9 @@ Forward-performance reports discover generation-scoped expense sessions with a d
 the request generation/cycle index. Account-wide discovery retains all generations and the complete-session limit.
 
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
+most four pages of 64 pending terminal-cycle batches for its bound account and settles those past their original request expiry
+through the existing idempotent finalizer. This closes evidence after an admission expires or the process restarts;
+it makes no provider calls and cannot bind a decision or authorize an order. The same pass then reads at
 most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
 requests retain separate `CHART` and `JEV` stage quotes, including unsuccessful calls. Historical requests retain their original `BASE_START` quotes and skips,

@@ -20,10 +20,14 @@ import { InferenceCostError } from './inference-costs'
 import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './tigerbeetle-client'
 
 export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(function* (
-  store: Pick<ReturnType<typeof makeInferenceExpenseStore>, 'newSources' | 'freeze' | 'pending' | 'acknowledge'>,
+  store: Pick<
+    ReturnType<typeof makeInferenceExpenseStore>,
+    'newSources' | 'freeze' | 'pending' | 'acknowledge' | 'settleExpiredTerminalBatches'
+  >,
   client: TigerBeetleRequestClient,
   rateCard: Parameters<typeof makeInferenceExpenseQuotes>[1] = inferenceExpenseRateCard,
 ) {
+  const settlement = yield* store.settleExpiredTerminalBatches
   const sources = yield* store.newSources
   const quotes = (yield* Effect.forEach(sources, (source) =>
     Effect.fromResult(makeInferenceExpenseQuotes(source, rateCard)),
@@ -40,11 +44,15 @@ export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(
     transferCount: plan.transfers.length,
     gapCount: pending.filter((quote) => quote.line.estimatedCostPicoUsd === null).length,
     estimatedCostPicoUsd: plan.transfers.reduce((total, transfer) => total + transfer.amount, 0n).toString(),
+    settledBatchCandidates: settlement.candidates,
+    sealedBatchCount: settlement.sealed,
+    pendingBatchCount: settlement.pending,
+    failedBatchCount: settlement.failed,
     ledger: inferenceExpenseLedger,
     unit: 'USD_PICO',
     invoiceReconciled: false,
   }
-  if (sources.length > 0 || pending.length > 0)
+  if (sources.length > 0 || pending.length > 0 || settlement.candidates > 0)
     yield* Effect.logInfo('Bayn inference expense projection completed').pipe(Effect.annotateLogs(summary))
   return summary
 })

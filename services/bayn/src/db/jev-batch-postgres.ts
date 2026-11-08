@@ -3,7 +3,8 @@ import { makeEntryInferenceWrites } from './entry-inference-postgres'
 import { prepareClaimedEntry } from '../jev/entry-inference'
 import { recordJevEvaluationReceipts } from './jev-evaluation-postgres'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, Option, Schema } from 'effect'
+import { Cause, Clock, Effect, Exit, Layer, Option, Schema } from 'effect'
+import type { Statement } from 'effect/sql'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -40,6 +41,23 @@ const StoredEvaluationRow = Schema.Struct({
   resolution: Schema.NullOr(Schema.Unknown),
 })
 const OneBatch = Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })])
+const SettlementBatchIds = Schema.Array(
+  Schema.Struct({
+    batch_id: Sha256Schema,
+    terminal_at: Schema.Date,
+  }),
+)
+
+/** Keep recovery work bounded; the native expense owner will retry the remainder next pass. */
+export const jevTerminalBatchSettlementLimit = 64
+/**
+ * A malformed historical plan must not pin the first settlement page forever. A
+ * pass can walk four keyset pages when a page contains failures, but never turns
+ * the background owner into an unbounded history scan. The cursor is advanced
+ * over every fetched row, so a fresh owner pass reaches later valid plans even
+ * when the oldest page is permanently undecodable.
+ */
+const jevTerminalBatchSettlementScanPages = 4
 
 export const makeJevBatchStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -607,3 +625,96 @@ export const makeJevBatchStore = Effect.gen(function* () {
 })
 
 export const JevBatchStoreLive = Layer.effect(JevBatchStore, makeJevBatchStore)
+
+export interface JevTerminalBatchSettlementSummary {
+  readonly candidates: number
+  readonly sealed: number
+  readonly pending: number
+  readonly failed: number
+}
+
+/**
+ * Seal expired Jev batches from terminal cycles using the existing finalizer.
+ *
+ * The metadata query is intentionally bounded and does not select plan payloads. Only
+ * those candidate IDs are then decoded by `read`/`finish`, so the account projection
+ * never detoasts or scans every retained historical plan on its 30-second pass.
+ */
+export const settleExpiredTerminalJevBatches = (sql: PgClient.PgClient, accountId: string) =>
+  Effect.gen(function* () {
+    const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
+    let cursor: { readonly terminalAt: Date; readonly batchId: string } | null = null
+    let candidates = 0
+    let sealed = 0
+    let pending = 0
+    let failed = 0
+    for (let page = 0; page < jevTerminalBatchSettlementScanPages; page += 1) {
+      const after: Statement.Fragment =
+        cursor === null
+          ? sql``
+          : sql`AND (
+              cycle.terminal_at > ${cursor.terminalAt}::timestamptz
+              OR (
+                cycle.terminal_at = ${cursor.terminalAt}::timestamptz
+                AND plan.batch_id COLLATE "C" > ${cursor.batchId} COLLATE "C"
+              )
+            )`
+      const rows: ReadonlyArray<{ readonly batch_id: string; readonly terminal_at: Date }> =
+        yield* Schema.decodeUnknownEffect(
+          SettlementBatchIds,
+          strictParseOptions,
+        )(
+          yield* sql`
+          WITH metadata_candidates AS MATERIALIZED (
+            SELECT plan.batch_id, cycle.terminal_at
+            FROM jev_batch_plans AS plan
+            JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.strategy_name = 'jev'
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE', 'BLOCKED')
+              AND cycle.terminal_at IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM jev_batch_results AS result WHERE result.batch_id = plan.batch_id
+              )
+              ${after}
+            ORDER BY cycle.terminal_at, plan.batch_id COLLATE "C"
+            LIMIT ${jevTerminalBatchSettlementLimit}
+          )
+          SELECT batch_id, terminal_at FROM metadata_candidates
+          ORDER BY terminal_at, batch_id COLLATE "C"
+        `,
+        )
+      if (rows.length === 0) break
+
+      for (const { batch_id: batchId, terminal_at: terminalAt } of rows) {
+        cursor = { terminalAt, batchId }
+        candidates += 1
+        const result = yield* Effect.gen(function* () {
+          const saved = yield* batches.read(batchId)
+          if (saved === null) return 'failed' as const
+          if (saved.result !== null) return 'sealed' as const
+          if ((yield* Clock.currentTimeMillis) < Date.parse(saved.plan.expiresAt)) return 'pending' as const
+          const finished = yield* batches.finish(batchId)
+          return finished.result === null ? ('pending' as const) : ('sealed' as const)
+        }).pipe(Effect.exit)
+        if (Exit.isFailure(result)) {
+          if (Cause.hasInterrupts(result.cause) || Cause.hasDies(result.cause))
+            return yield* Effect.failCause(result.cause)
+          failed += 1
+          yield* Effect.logWarning('Jev terminal batch settlement failed').pipe(
+            Effect.annotateLogs({ batchId, settlement: 'FINISH_FAILED', cause: Cause.pretty(result.cause) }),
+          )
+        } else if (result.value === 'sealed') sealed += 1
+        else if (result.value === 'pending') pending += 1
+        else {
+          failed += 1
+          yield* Effect.logWarning('Jev terminal batch plan disappeared during settlement').pipe(
+            Effect.annotateLogs({ batchId, settlement: 'MISSING_PLAN' }),
+          )
+        }
+      }
+
+      if (rows.length < jevTerminalBatchSettlementLimit) break
+    }
+    return { candidates, sealed, pending, failed } satisfies JevTerminalBatchSettlementSummary
+  }).pipe(Effect.provideService(PgClient.PgClient, sql))

@@ -9,14 +9,23 @@ import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevBatchPlanVersion, JevCandidatePlanStatus, usableEntryBatchInferences } from '../jev/batch'
+import {
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  JevSourceExclusion,
+  jevBatchQuestionSetHash,
+  makeJevBatchPlan,
+  makeJevBatchResult,
+  usableEntryBatchInferences,
+} from '../jev/batch'
 import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
-import { makeJevBatchStore } from './jev-batch-postgres'
+import { makeJevBatchStore, settleExpiredTerminalJevBatches } from './jev-batch-postgres'
 import * as observations from '../jev/observation'
 import * as evaluationPersistence from './jev-evaluation-postgres'
 import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
@@ -525,4 +534,110 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
   expect(time).not.toBeNull()
   expect(lookup.parameters[Number(cycle?.[1]) - 1]).toBe(plan.cycleId)
   expect(lookup.parameters[Number(time?.[1]) - 1]).toBe(plan.observedAt)
+})
+
+test('terminal settlement walks past a full page of unexpired batches', async () => {
+  const fixture = nativeJevFixture()
+  const source = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation: fixture.observation.payload,
+      expiresAt: utcInstantFromEpochMillis(Date.parse(fixture.observation.payload.observedAt) + 10_000),
+      planVersion: JevBatchPlanVersion.V8,
+    }),
+  )
+  const { batchId: _, ...sourceMaterial } = source
+  const candidates = source.candidates.map((candidate) => ({
+    status: JevCandidatePlanStatus.Excluded as const,
+    symbol: candidate.symbol,
+    reason: JevSourceExclusion.NotReady,
+    message: 'fairness test exclusion',
+  }))
+  const questionSetHash = Result.getOrThrow(jevBatchQuestionSetHash(candidates))
+  const makePlan = (snapshotId: string, expiresAt: string) =>
+    Result.getOrThrow(
+      makeJevBatchPlan({
+        ...sourceMaterial,
+        snapshotId,
+        expiresAt,
+        candidates,
+        questionSetHash,
+      }),
+    )
+  const pendingPlans = Array.from({ length: 64 }, (_, index) =>
+    makePlan(`${index.toString(16).padStart(2, '0')}${'a'.repeat(62)}`, source.expiresAt),
+  )
+  const expiredPlan = makePlan(`${'f'.repeat(62)}01`, utcInstantFromEpochMillis(Date.parse(source.observedAt) + 1_000))
+  const expiredResult = Result.getOrThrow(
+    makeJevBatchResult(expiredPlan, {
+      schemaVersion: 'bayn.jev-batch-result.v1',
+      batchId: expiredPlan.batchId,
+      completedAt: expiredPlan.expiresAt,
+      candidates: expiredPlan.candidates.map(({ symbol }) => ({
+        symbol,
+        status: JevCandidateResultStatus.Excluded,
+      })),
+    }),
+  )
+  const plans = new Map([...pendingPlans, expiredPlan].map((plan) => [plan.batchId, plan]))
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* SqlClient.make({
+          acquirer: Effect.die('Fairness test must not connect to PostgreSQL'),
+          compiler: PgClient.makeCompiler(undefined, false),
+          spanAttributes: [],
+        })
+        let metadataPage = 0
+        let expiredReads = 0
+        const sql = new Proxy(client, {
+          apply(target, receiver, args) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+            const [query, parameters] = statement.compile()
+            if (query.trim() === '' || query.trimStart().startsWith('AND (')) return statement
+            if (query.includes('WITH metadata_candidates')) {
+              metadataPage += 1
+              return Effect.succeed(
+                metadataPage === 1
+                  ? pendingPlans.map((plan, index) => ({
+                      batch_id: plan.batchId,
+                      terminal_at: new Date(Date.parse(source.observedAt) + index),
+                    }))
+                  : metadataPage === 2
+                    ? [{ batch_id: expiredPlan.batchId, terminal_at: new Date(Date.parse(source.observedAt) + 64) }]
+                    : [],
+              )
+            }
+            if (query.includes('SELECT plan.payload AS plan')) {
+              const batchId = parameters.find(
+                (parameter): parameter is string => typeof parameter === 'string' && /^[0-9a-f]{64}$/.test(parameter),
+              )
+              const plan = batchId === undefined ? undefined : plans.get(batchId)
+              if (plan === undefined) return Effect.succeed([])
+              if (plan.batchId === expiredPlan.batchId) {
+                expiredReads += 1
+                return Effect.succeed([{ plan, result: expiredReads > 1 ? expiredResult : null }])
+              }
+              return Effect.succeed([{ plan, result: null }])
+            }
+            if (query.includes('SELECT batch_id FROM jev_batch_plans WHERE batch_id'))
+              return Effect.succeed([{ batch_id: expiredPlan.batchId }])
+            throw new Error(`Unexpected settlement query: ${query}`)
+          },
+          get(target, property, receiver) {
+            if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
+            return Reflect.get(target, property, receiver)
+          },
+        }) as PgClient.PgClient
+        yield* TestClock.setTime(Date.parse(source.observedAt) + 5_000)
+        const summary = yield* settleExpiredTerminalJevBatches(sql, 'fairness-account')
+        expect(summary).toEqual({ candidates: 65, sealed: 1, pending: 64, failed: 0 })
+        expect(metadataPage).toBe(2)
+      }),
+    ).pipe(
+      Effect.provide(entryInferenceFixtureLayer),
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Reactivity.layer),
+    ),
+  )
 })
