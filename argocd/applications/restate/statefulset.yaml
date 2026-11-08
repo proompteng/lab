@@ -5,7 +5,7 @@ metadata:
   labels:
     app: restate
     app.kubernetes.io/name: restate
-    app.kubernetes.io/version: "1.7.9"
+    app.kubernetes.io/version: "1.8.1"
 spec:
   serviceName: restate-cluster
   replicas: 3
@@ -51,7 +51,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       initContainers:
         - name: snapshot-scale-up-gate
-          image: docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595
+          image: docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash
@@ -199,8 +199,6 @@ spec:
               value: json
             - name: RESTATE_TRACING_ENDPOINT
               value: otlp+http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
-            - name: RESTATE_TRACING_FILTER
-              value: info
             - name: RESTATE_CLUSTER_NAME
               value: proompteng-self-hosted
             - name: RESTATE_AUTO_PROVISION

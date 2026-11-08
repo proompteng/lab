@@ -1,9 +1,9 @@
 # Restate runtime patch
 
-This build retains upstream Restate 1.7.9 at `fb0ca137d5fc1c86cda5a7d8ef653c5ab201fe6c` with two focused patches:
+This build retains upstream Restate 1.8.1 at `20efb1b83a39b8227451e531c366e067588ae9ee` with two focused patches:
 metadata write dispatch uses the existing background I/O executor, and connection-blocked election requests get a
 bounded opportunity to reach a newly connected peer. WAL synchronization, write completion, replication, on-disk
-format, and upstream tools remain unchanged. The source archive and build/runtime images are pinned. Test-only
+format follow upstream 1.8.1. The source archive and build/runtime images are pinned. Test-only
 fault injection and connection barriers are absent from the runtime image.
 
 `docker buildx build --target test services/restate` injects a two-second delay into real WAL `fsync`/`fdatasync` calls in an
@@ -29,7 +29,10 @@ CI retains `election-baseline.log` and `election-patched.log` alongside the stor
 export. The container runtime resilience fixture was removed. CI no longer proves delayed-message, process-pause,
 or node-loss behavior. Production configuration and election timers retain their values.
 
-`docker buildx build services/restate` builds the production server. Release and cluster verification instructions belong
+`docker buildx build services/restate` builds the production server and the same-version `restate-doctor` used by the
+isolated snapshot restore jobs. They are built separately to avoid Cargo feature unification. The final image executes
+both version commands during its build. Kargo selects this single image for the server and recovery jobs, replacing the
+separate July 2026 nightly tools image. Release and cluster verification instructions belong
 in the [application runbook](../../argocd/applications/restate/README.md). CI pushes each native platform directly from
 BuildKit under its preparation tag. The release index, signature, receipt upload and Kargo alias require both successful
 build jobs and their exported build-stage evidence.
