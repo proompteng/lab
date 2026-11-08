@@ -184,4 +184,60 @@ describe('calendar-target artifact generation and independent verification', () 
     expect(checked.exitCode).not.toBe(0)
     expect(checked.stderr.toString()).toContain('Unexpected target filename')
   })
+
+  test('verification rejects an invalid unprojected calendar date even with resealed inputs', () => {
+    const request = fixture()
+    const output = join(root, 'invalid-calendar')
+    generateCosmosalphaTargets(request, output)
+    const changed = days.join('\n').replace('2020-01-06', '2020-01-06x') + '\n'
+    for (const role of ['market', 'masks']) writeFileSync(join(root, 'inputs', role, 'calendars/day.txt'), changed)
+    const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'))
+    for (const input of manifest.identity.inputs) {
+      if (input.path === 'calendars/day.txt') {
+        input.sha256 = sha(changed)
+        input.sizeBytes = Buffer.byteLength(changed)
+      }
+    }
+    manifest.targetId = sha(JSON.stringify(manifest.identity))
+    writeFileSync(join(output, 'manifest.json'), JSON.stringify(manifest))
+    const checked = verify(request, output)
+    expect(checked.exitCode).not.toBe(0)
+    expect(checked.stderr.toString()).toContain('Invalid source date')
+  })
+
+  test('an empty panel cannot be resealed into a zero-mismatch proof', () => {
+    const request = fixture()
+    const output = join(root, 'empty-proof')
+    generateCosmosalphaTargets(request, output)
+    writeFileSync(join(root, 'inputs/market/instruments/csi300.txt'), '')
+    const csvPath = join(output, 'targets.csv')
+    const header = readFileSync(csvPath, 'utf8').split('\n')[0] + '\n'
+    writeFileSync(csvPath, header)
+    const manifest = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'))
+    manifest.identity.inputs = manifest.identity.inputs.filter(
+      (input: { path: string }) => !input.path.startsWith('features/'),
+    )
+    for (const input of manifest.identity.inputs) {
+      if (input.path === 'instruments/csi300.txt') {
+        input.sha256 = sha('')
+        input.sizeBytes = 0
+      }
+    }
+    Object.assign(manifest.identity.targets, {
+      sha256: sha(header),
+      rows: 0,
+      instruments: 0,
+      eligibleRows: 0,
+      unknownEligibleRows: 0,
+      labeledRows: 0,
+      eligibleLabeledRows: 0,
+      statuses: {},
+      splitRows: {},
+    })
+    manifest.targetId = sha(JSON.stringify(manifest.identity))
+    writeFileSync(join(output, 'manifest.json'), JSON.stringify(manifest))
+    const checked = verify(request, output)
+    expect(checked.exitCode).not.toBe(0)
+    expect(checked.stderr.toString()).toContain('No membership rows to verify')
+  })
 })

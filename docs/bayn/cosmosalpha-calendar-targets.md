@@ -58,6 +58,6 @@ CSV SHA-256: `806a92ffe7ce0bee3917883ba0b70b1fd93378708b719fe625b91f936de5bda1`.
 
 The previously identified `sh600176` case on July 29, 2010 now ends on July 30, one trading session later, with return `0.00209464747811694`. The retained membership-filtered reference instead spanned 1,924 sessions and returned `2.0542520408909324`.
 
-Twenty focused tests cover membership gaps, positive and negative suspension clipping, weekends, invalid endpoints, split boundaries and invariance to later-split prices. Integration tests check path-independent identities, unknown masks, source drift and output sealing. Deliberately changed values and deleted rows fail independent verification even after their hashes are resealed.
+Twenty-two focused tests cover membership gaps, positive and negative suspension clipping, weekends, invalid endpoints, split boundaries and invariance to later-split prices. Integration tests check path-independent identities, unknown masks, source drift and output sealing. Deliberately changed values, deleted rows, invalid calendar dates and empty panels fail independent verification even after their hashes are resealed.
 
 This proves target/source agreement under the stated rule. It does not certify industry point-in-time lineage, compare mining methods or establish an economic edge. Existing mining runs have not been migrated to these targets. Their next use requires an explicit new experiment identity.

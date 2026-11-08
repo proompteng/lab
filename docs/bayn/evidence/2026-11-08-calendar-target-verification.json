@@ -1,7 +1,7 @@
 {
   "schemaVersion": "bayn.cosmosalpha-calendar-target-verification.v1",
   "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
-  "verifierSha256": "0629be282fb35b09be552ab6a6b9bc1651a3e9fc2f7d30d275fa5eb9c6e28392",
+  "verifierSha256": "a8ac4ba9fcac6c3f1b07d44250cf0b7077c32446068d61082d412c6a4d05d37e",
   "status": "PASS",
   "unexplainedMismatches": 0,
   "numericTolerance": 0,

@@ -8,8 +8,10 @@ import itertools
 import json
 import math
 from pathlib import Path
+import re
 import struct
 from collections import Counter, defaultdict
+from calendar import monthrange
 
 
 HEADER = [
@@ -33,6 +35,21 @@ RULE = {
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def validate_date(value):
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None
+    ):
+        raise ValueError("Invalid source date")
+    year, month, day = map(int, value.split("-"))
+    try:
+        maximum = monthrange(year, month)[1]
+    except ValueError as error:
+        raise ValueError("Invalid source date") from error
+    if not 1 <= day <= maximum:
+        raise ValueError("Invalid source date")
 
 
 def series(raw, length):
@@ -102,6 +119,8 @@ def verify(request_path, artifact, native_references=()):
         return raw
 
     calendar = read("market", "calendars/day.txt").decode().splitlines()
+    for value in calendar:
+        validate_date(value)
     if calendar != sorted(set(calendar)) or not calendar:
         raise ValueError("Calendar is not strictly ordered")
     if calendar != read("masks", "calendars/day.txt").decode().splitlines():
@@ -109,6 +128,12 @@ def verify(request_path, artifact, native_references=()):
     membership = defaultdict(list)
     for line in read("market", "instruments/csi300.txt").decode().splitlines():
         symbol, first, last = line.split()
+        if re.fullmatch(r"(?:sh|sz)[0-9]{6}", symbol) is None:
+            raise ValueError("Invalid membership instrument")
+        validate_date(first)
+        validate_date(last)
+        if first > last:
+            raise ValueError("Invalid membership interval")
         membership[symbol].append((first, last))
     splits = request["splits"]
     previous_end = ""
@@ -116,6 +141,8 @@ def verify(request_path, artifact, native_references=()):
     windows = []
     for split in splits:
         name, start, end = split["name"], split["startDate"], split["endDate"]
+        validate_date(start)
+        validate_date(end)
         if (
             name not in {"train", "validation", "test"}
             or name in names
@@ -134,6 +161,7 @@ def verify(request_path, artifact, native_references=()):
             raise ValueError("Empty trading split")
         windows.append((name, first, last))
         previous_end = end
+    validate_date(request["fromDate"])
     if not windows or not calendar[0] <= request["fromDate"] <= splits[0]["startDate"]:
         raise ValueError("Invalid projection start")
     first_day = bisect.bisect_left(calendar, request["fromDate"])
@@ -265,6 +293,8 @@ def verify(request_path, artifact, native_references=()):
                     continue
             if actual != expected:
                 mismatch(expected, actual)
+    if rows == 0:
+        raise ValueError("No membership rows to verify")
     expected_counts = {
         "rows": rows,
         "instruments": instruments,
