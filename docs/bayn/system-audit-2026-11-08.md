@@ -221,6 +221,17 @@ exit and reconciliation path. Research supports additional policies; they are no
 | Time                      | First completed equity minute plus two seconds; no extra clock warmup                 | Original ten-second inference validity; ten-second quote age; fifteen-minute maximum hold            |
 | Session end               | Entries stop and flattening starts five minutes before actual close                   | Reconcile residual inventory and order state; an unfilled close is not a completed close             |
 
+Selection has two levels. [`selectSupportedEntryProposal`](../../services/bayn/src/jev/entry-questions.ts) selects a
+proposal within each symbol. [`selectJevEntryCandidates`](../../services/bayn/src/jev/decision.ts) then ranks symbols by
+the same minimum judgment, lower absolute modeled loss, and finally symbol name. It takes only `maximumPositions`,
+currently one. It does not rank by estimated net return, return per unit risk, or a calibrated win probability.
+
+Parallelism also has two boundaries. A candidate's final JEV can overlap another candidate's CHART, but the evaluator
+still settles the batch before deriving the portfolio target. A fast candidate does not immediately become an order.
+The benefit and cost of scoring the entire candidate set for one position must be measured using dispatch counts,
+paid unsuccessful calls, tail latency, and costed matched controls. Pruning candidates or taking the first completed
+answer changes the selection policy; it is not a free concurrency optimization.
+
 The 0.70 threshold, source selection, and target construction are policies, not proof of an economic edge. A useful
 strategy breakdown must join each setup's candidates, exclusions, source feasibility, CHART outcomes, final judgments,
 risk denials, submissions, fills, exits, and all costs. Existing reporting and control code should supply that evidence
