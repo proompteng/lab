@@ -600,6 +600,9 @@ Native approval IDs additionally bind a random process identity, thread, and tur
 Stop is a durable request. The workspace object retains Stop authority separately for each run, ordered by the original
 admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
+The worker queues the conversation claim before preparing the authorized guest, allowing both to progress together.
+It waits for both before dispatch and records the execution-budget timestamp with the preparation result instead of
+adding a separate durable clock step. A rejected claim still removes its own sleep pin through terminal cleanup.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
 Repeated observations return only changed controls. Stop does not release the conversation after an interrupt acknowledgement: the worker waits for
 the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
