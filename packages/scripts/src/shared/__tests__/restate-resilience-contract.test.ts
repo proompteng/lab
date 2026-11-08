@@ -843,12 +843,20 @@ echo 'INVOCATION_ROWS'
 const activePartition = {
   generation: 'N1:91',
   state: 'alive',
+  worker_state: 'active',
   partition_id: 0,
   membership: 'current',
   replay_status: 'active',
   updated_at: '2026-11-08T23:00:00.000',
 }
 const advancingPartition = { ...activePartition, updated_at: '2026-11-08T23:00:02.000' }
+const unassignedWorker = {
+  ...activePartition,
+  partition_id: null,
+  membership: null,
+  replay_status: null,
+  updated_at: null,
+}
 
 test.each([
   { name: 'active and advancing', first: [activePartition], second: [advancingPartition], succeeds: true },
@@ -858,6 +866,23 @@ test.each([
   { name: 'next assignment', first: [{ ...activePartition, membership: 'next' }], succeeds: false },
   { name: 'dead member', first: [{ ...activePartition, state: 'dead' }], succeeds: false },
   { name: 'no partition', first: [{ ...activePartition, partition_id: null }], succeeds: false },
+  ...['draining', 'disabled', 'provisioning'].map((worker_state) => ({
+    name: `${worker_state} member awaits explicit activation`,
+    first: [{ ...unassignedWorker, worker_state }],
+    second: [{ ...unassignedWorker, worker_state }],
+    succeeds: true,
+  })),
+  {
+    name: 'draining member still has assignments',
+    first: [{ ...activePartition, worker_state: 'draining' }],
+    succeeds: false,
+  },
+  {
+    name: 'member activates without assignments',
+    first: [{ ...unassignedWorker, worker_state: 'draining' }],
+    second: [unassignedWorker],
+    succeeds: false,
+  },
   { name: 'stale status', first: [activePartition], second: [activePartition], succeeds: false },
   {
     name: 'new generation during check',

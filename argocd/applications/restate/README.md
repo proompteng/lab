@@ -151,7 +151,10 @@ Before rollout, verify three caught-up members in the same Raft set, replication
 24 partitions. Argo replaces one retained StatefulSet member at a time. A native Kubernetes startup probe checks this
 member's partition assignments through Restate's NodeCtl SQL API. It requires a non-empty assignment set, all-current
 membership and active replay, then advancing status timestamps in the same generation across two observations.
-Empty, stale, partially recovered or changing assignments keep the pod unready. These bounded checks stop after
+Unexpected empty, stale, partially recovered or changing assignments keep an active worker unready. An unassigned
+worker explicitly marked `provisioning`, `draining` or `disabled` may start so the existing replication hook can
+reactivate it. This preserves recovery after singleton contraction without making the probe a configuration writer;
+the hook still requires all 48 active processors before completing. These bounded checks stop after
 startup succeeds; they do not add recurring cluster scans. The probe allows 20 minutes for recovery and each CLI
 request has a three-second deadline. The existing HTTP readiness probe runs only after this recovery gate succeeds.
 This follows the upstream [rolling-update procedure](https://docs.restate.dev/server/upgrading#rolling-updates).
