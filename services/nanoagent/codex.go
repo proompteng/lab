@@ -1580,18 +1580,24 @@ const (
 )
 
 func isMissingCodexConversation(method string, params json.RawMessage, err error) bool {
-	if method != "thread/resume" {
+	var prefix string
+	switch method {
+	case "thread/resume":
+		prefix = codexMissingRolloutMessagePrefix
+	case "thread/read":
+		prefix = "thread not loaded: "
+	default:
 		return false
 	}
 	var rpcError *codexRPCError
 	if !errors.As(err, &rpcError) || rpcError.code != -32600 {
 		return false
 	}
-	threadID, ok := codexResumeThreadID(params)
-	return ok && rpcError.message == codexMissingRolloutMessagePrefix+threadID
+	threadID, ok := codexThreadID(params)
+	return ok && rpcError.message == prefix+threadID
 }
 
-func codexResumeThreadID(params json.RawMessage) (string, bool) {
+func codexThreadID(params json.RawMessage) (string, bool) {
 	var input struct {
 		ThreadID string `json:"threadId"`
 	}

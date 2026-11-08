@@ -156,6 +156,19 @@ completed:
 	if err := json.Unmarshal(call("thread/turns/list", map[string]any{"threadId": created.Thread.ID, "limit": 50, "itemsView": "notLoaded"}), &history); err != nil || len(history.Data) != 1 || history.Data[0].ID == "" {
 		t.Fatal("archive lost the original turn", err)
 	}
+	var continued struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	next := strings.Replace(string(params), "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", 1)
+	if err := json.Unmarshal(call("turn/start", json.RawMessage(next)), &continued); err != nil || continued.Turn.ID == "" || continued.Turn.ID == history.Data[0].ID {
+		t.Fatal("a cold history read must allow a subsequent turn on the same thread", err)
+	}
+	missing := json.RawMessage(`{"threadId":"00000000-0000-4000-8000-000000000000","includeTurns":false}`)
+	if _, err := supervisor.call(ctx, "thread/read", missing); !isMissingCodexConversation("thread/read", missing, err) {
+		t.Fatal("missing persisted history must retain the unavailable-conversation classification", err)
+	}
 }
 
 func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
