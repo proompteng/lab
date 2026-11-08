@@ -59,17 +59,19 @@ const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
 const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeBrokerObservationStore>) =>
   Effect.gen(function* () {
     const unexpected = () => Effect.die('Rollout readiness must not perform direct broker I/O')
+    let directBrokerCalls = 0
+    const directBroker = () => Effect.sync(() => directBrokerCalls++).pipe(Effect.andThen(unexpected()))
     const read = yield* makeProjectedBrokerRead({
-      account: unexpected(),
-      accountConfiguration: unexpected(),
-      positions: unexpected(),
-      orders: unexpected,
-      orderById: unexpected,
-      orderByClientId: unexpected,
-      assetBySymbol: unexpected,
-      feeActivities: unexpected,
-      fillActivities: unexpected,
-      marketCalendar: unexpected,
+      account: directBroker(),
+      accountConfiguration: directBroker(),
+      positions: directBroker(),
+      orders: directBroker,
+      orderById: directBroker,
+      orderByClientId: directBroker,
+      assetBySymbol: directBroker,
+      feeActivities: directBroker,
+      fillActivities: directBroker,
+      marketCalendar: directBroker,
     }).pipe(Effect.provideService(BrokerObservations, store))
     const broker = {
       read,
@@ -140,6 +142,7 @@ const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeB
           }),
       },
     )
+    expect(directBrokerCalls).toBe(0)
     const current = yield* Ref.get(state)
     const freshness = { nowMs: yield* Clock.currentTimeMillis, leaseMs: runtimeHealthFreshnessLeaseMs(runtimeConfig) }
     return {
