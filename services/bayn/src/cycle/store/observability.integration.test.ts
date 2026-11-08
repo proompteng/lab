@@ -920,7 +920,11 @@ describePostgres('PostgreSQL intraday observability projection', () => {
         })
         const projection = yield* Effect.gen(function* () {
           return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
-        }).pipe(Effect.provide(CycleObservabilityLive), Effect.provideService(PgClient.PgClient, monitored))
+        }).pipe(
+          // The runtime already built this layer with the unmonitored client.
+          Effect.provide(Layer.fresh(CycleObservabilityLive)),
+          Effect.provideService(PgClient.PgClient, monitored),
+        )
         expect(projection.execution).toMatchObject({
           positionSnapshotObservedAt: '2026-08-27T16:40:00.000Z',
           positionCount: 0,
@@ -949,7 +953,10 @@ describePostgres('PostgreSQL intraday observability projection', () => {
               : 0)
           )
         }
-        expect(visitedSnapshotRows(plans[0]?.['QUERY PLAN'][0]?.Plan)).toBeLessThan(128)
+        const visitedRows = visitedSnapshotRows(plans[0]?.['QUERY PLAN'][0]?.Plan)
+        yield* Effect.logInfo('Snapshot observation fixture plan').pipe(Effect.annotateLogs('visitedRows', visitedRows))
+        expect(visitedRows).toBeGreaterThan(0)
+        expect(visitedRows).toBeLessThan(128)
       }),
     )
   }, 30000)
