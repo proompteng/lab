@@ -139,6 +139,13 @@ instruments per evaluation date. Industry history remains uncertified for strict
 a matched Graph/Chain experiment and economic qualification remain unfinished.
 The earlier missing default local paths did not establish that the authors had not published the dataset.
 
+The [matched reference budget and accounting assessment](cosmosalpha-reference-budget-2026-11-07.md) now specifies
+three paired runs, shared maximum proposal and fee allowances, explicit maximum reasoning effort and complete
+physical-request accounting. Native contract probes exposed missing-usage counters represented as zero and up to
+ten physical requests for one logical call. The experiment-only cost gate passes offline durability and native-client
+fault checks. All six configurations remain blocked only on the missing model key. The proposed $60 total provider
+ceiling is not approved, and no reference model calls have been made.
+
 ## Execution order and outstanding evidence
 
 Proceed in this order: source and data admission, deterministic method parity, reference comparison, separately
