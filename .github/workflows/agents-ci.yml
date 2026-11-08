@@ -346,7 +346,6 @@ jobs:
             substituters = https://attic.ide-newton.ts.net/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
             fallback = true
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve published Agents images from GitOps values
         id: published_agents_images

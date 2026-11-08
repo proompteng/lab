@@ -420,7 +420,6 @@ jobs:
           extra-nix-config: |
             experimental-features = nix-command flakes
             substituters = https://cache.nixos.org/
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
       - name: Prove dependency source boundary
         run: |
           bash nix/images/normalize-bayn-bun-deps.test.sh
@@ -452,7 +451,6 @@ jobs:
           install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
       - name: Verify replay execution capture against a disposable container and registry
         env:
           BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
