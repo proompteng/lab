@@ -190,6 +190,9 @@ func TestMissingCodexConversationClassificationRejectsUnrelatedErrors(t *testing
 	}{
 		{name: "transport", method: "thread/resume", params: params, err: errors.New("connection reset")},
 		{name: "wrong method", method: "thread/start", params: params, err: validError},
+		{name: "read wrong code", method: "thread/read", params: params, err: &codexRPCError{code: -32602, message: "thread not loaded: thread-1"}},
+		{name: "read different thread", method: "thread/read", params: params, err: &codexRPCError{code: -32600, message: "thread not loaded: thread-2"}},
+		{name: "read unrelated error", method: "thread/read", params: params, err: validError},
 		{name: "wrong code", method: "thread/resume", params: params, err: &codexRPCError{code: -32602, message: validError.message}},
 		{name: "different thread", method: "thread/resume", params: params, err: &codexRPCError{code: -32600, message: "no rollout found for thread id thread-2"}},
 		{name: "missing thread ID", method: "thread/resume", params: json.RawMessage(`{}`), err: validError},
@@ -202,6 +205,17 @@ func TestMissingCodexConversationClassificationRejectsUnrelatedErrors(t *testing
 				t.Fatal("unrelated error was classified as a missing Codex conversation")
 			}
 		})
+	}
+}
+
+func TestMissingCodexConversationClassificationMatchesEachNativeMethod(t *testing.T) {
+	for method, message := range map[string]string{
+		"thread/resume": "no rollout found for thread id thread-1",
+		"thread/read":   "thread not loaded: thread-1",
+	} {
+		if !isMissingCodexConversation(method, json.RawMessage(`{"threadId":"thread-1"}`), &codexRPCError{code: -32600, message: message}) {
+			t.Fatalf("%s did not classify its native missing-conversation error", method)
+		}
 	}
 }
 
