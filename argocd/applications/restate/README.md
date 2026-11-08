@@ -109,9 +109,9 @@ Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-m
 and require all 24 partitions archived before replication changes. In Restate 1.7.9, `ARCHIVED=0` is the invalid-LSN
 sentinel and must be treated as no snapshot; the bootstrap retries only missing/invalid partitions until every partition
 has a positive archived LSN. RGW stores snapshots only; metadata/Raft and logs stay on
-RBD. Preferred host anti-affinity and `ScheduleAnyway` spreading keep three replicas schedulable on Altra and Turin
-when Ryzen is reserved for compute and local storage. This leaves two physical failure domains; losing the host with
-two replicas can remove Raft quorum. The `minAvailable: 3` PDB and 60s/90s shutdown windows bound disruption, so the PDB
+RBD, with log-server WAL on the separate local NVMe claims described above. Required host anti-affinity places one
+member on each of Altra, Turin and Ryzen, preserving three physical failure domains. The `minAvailable: 3` PDB and
+60s/90s shutdown windows bound disruption, so the PDB
 permits zero voluntary evictions until a separately reviewed post-rollout relaxation. Follow the
 [placement migration](../../../devices/galactic/scheduling/README.md) before moving retained Ceph clients.
 `restate-replication-migration` requires three ready nodes, one identical three-member Raft set, and archived snapshots

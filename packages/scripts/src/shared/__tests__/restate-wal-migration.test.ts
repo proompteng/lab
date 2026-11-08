@@ -56,6 +56,29 @@ test('Restate WAL seeding resumes an interrupted copy and refuses another databa
   }
 })
 
+test.each(['retained', 'fresh'] as const)('Restate WAL seeding retries a partial %s identity receipt', (kind) => {
+  const root = mkdtempSync(join(tmpdir(), 'restate-wal-'))
+  const store = join(root, 'store')
+  const wal = join(root, 'wal')
+  try {
+    mkdirSync(store)
+    mkdirSync(wal)
+    writeFileSync(join(wal, '.identity.tmp'), 'partial identity')
+    if (kind === 'retained') {
+      writeFileSync(join(store, 'IDENTITY'), 'original-db')
+      writeFileSync(join(store, '000100.log'), 'acknowledged records')
+    }
+    const result = Bun.spawnSync(['/bin/sh', script, store, wal], { stdout: 'pipe', stderr: 'pipe' })
+    expect(result.exitCode).toBe(0)
+    expect(readFileSync(join(wal, '.restate-source-identity'), 'utf8')).toBe(kind === 'retained' ? 'original-db' : '')
+    if (kind === 'retained') {
+      expect(readFileSync(join(wal, '000100.log'), 'utf8')).toBe('acknowledged records')
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('Restate WAL seeding refuses unrecognized target files and incomplete retained storage', () => {
   const root = mkdtempSync(join(tmpdir(), 'restate-wal-'))
   const store = join(root, 'store')

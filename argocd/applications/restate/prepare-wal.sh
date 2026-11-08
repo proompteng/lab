@@ -19,7 +19,7 @@ if [ -f "$wal/.initializing" ]; then
   else
     test ! -e "$store/IDENTITY"
   fi
-elif [ -n "$(find "$wal" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+elif [ -n "$(find "$wal" -mindepth 1 -maxdepth 1 ! -name .identity.tmp -print -quit)" ]; then
   echo 'Refusing an unrecognized WAL directory' >&2
   exit 1
 else
