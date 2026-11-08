@@ -24,9 +24,7 @@ spec:
       containers:
         - name: registry
           image: registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
-          env:
-            - name: REGISTRY_CONFIGURATION_PATH
-              value: /etc/docker/registry/config.yml
+          command: ["/bin/registry", "serve", "/etc/docker/registry/config.yml"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
