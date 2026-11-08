@@ -750,11 +750,28 @@ beforeAll(async () => {
         }),
         eventSequence: threadId === 'invalid-sequence' ? '18446744073709551615' : '42',
       })
-      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor'
+      const generated = threadId === 'thread-generated'
+      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor' || generated
       call.write({
         part: 'CODEX_HISTORY_PART_ITEMS',
         rawJson: JSON.stringify({
-          data: paged ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }] : [],
+          data: generated
+            ? [
+                {
+                  turnId: 'turn-1',
+                  item: {
+                    id: 'exec-cat',
+                    type: 'imageGeneration',
+                    status: 'completed',
+                    savedPath: '/home/nanoagent/.codex/generated_images/thread-generated/exec-cat.png',
+                    result:
+                      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  },
+                },
+              ]
+            : paged
+              ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }]
+              : [],
           nextCursor: null,
         }),
         eventSequence: threadId === 'outdated-item-cursor' ? '41' : '52',
@@ -1955,6 +1972,35 @@ describe('Tengri gRPC BFF transport', () => {
       eventSequence: 42,
       itemEventSequences: {},
     })
+  })
+
+  test('serves generated image bytes through the authorized native history read', async () => {
+    const { readCodexGeneratedImage } = await import('./grpc')
+    const path = '/home/nanoagent/.codex/generated_images/thread-generated/exec-cat.png'
+    const image = await readCodexGeneratedImage(identity, 'agent-test', path, new AbortController().signal)
+    expect(image.mediaType).toBe('image/png')
+    expect(image.content.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-generated' })
+    expect(
+      await rejection(
+        readCodexGeneratedImage(
+          identity,
+          'agent-test',
+          path.replace('exec-cat', 'other'),
+          new AbortController().signal,
+        ),
+      ),
+    ).toMatchObject({ status: 404 })
+    expect(
+      await rejection(
+        readCodexGeneratedImage(
+          identity,
+          'agent-test',
+          '/home/nanoagent/.codex/auth.json',
+          new AbortController().signal,
+        ),
+      ),
+    ).toMatchObject({ status: 400 })
   })
 
   test('rejects an invalid event cursor returned with a thread snapshot', async () => {

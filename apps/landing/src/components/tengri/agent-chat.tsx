@@ -86,6 +86,7 @@ import {
   codexEventConfirmsRuntimeReady,
   codexEventDisplayText,
   codexEventActivityTitle,
+  codexEventImageGeneration,
   codexEventIsIndependentOfThreadSnapshot,
   codexEventIsRuntimeError,
   codexEventKey,
@@ -1061,6 +1062,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           event,
           text: codexEventDisplayText(event),
           activityTitle: codexEventActivityTitle(event),
+          imageGeneration: codexEventImageGeneration(event),
           questionRequest: codexEventAsyncQuestionRequest(event),
         }))
         .filter(
@@ -1119,6 +1121,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return {
         id: item.id,
         kind: item.kind,
+        imageGeneration: update?.imageGeneration ?? item.imageGeneration,
         text: update?.text ?? item.text,
         card: update ? (
           renderEvent(update)
@@ -1129,6 +1132,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
             agentId={agentId}
             activityTitle={item.activityTitle}
+            imageGeneration={item.imageGeneration}
             kind={item.kind}
             text={item.text}
           />
@@ -1140,6 +1144,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       .map((update) => ({
         id: update.event.itemId || codexEventWrapperKey(update.event),
         kind: update.event.kind,
+        imageGeneration: update.imageGeneration,
         text: update.text,
         card: renderEvent(update),
       })),
@@ -1202,6 +1207,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       id: prompt.id,
       kind: 'user-message',
       text: prompt.text,
+      imageGeneration: undefined,
       card: (
         <CodexEventCard
           key={prompt.id}
@@ -1214,7 +1220,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     })
   }
 
-  function renderEvent({ event, text, activityTitle, questionRequest }: (typeof renderedEvents)[number]) {
+  function renderEvent({
+    event,
+    text,
+    activityTitle,
+    questionRequest,
+    imageGeneration,
+  }: (typeof renderedEvents)[number]) {
     if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest, text)
     const question = codexQuestionRequest(event)
     if (question)
@@ -1239,6 +1251,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         key={codexEventWrapperKey(event)}
         agentId={agentId}
         activityTitle={activityTitle}
+        imageGeneration={imageGeneration}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
         approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}

@@ -1,6 +1,11 @@
 import { parseAgentRunView } from '@/lib/tengri/agent-runs'
 import { codexToolText } from './codex-tool-text'
-import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
+import {
+  codexMessageAttachments,
+  codexGeneratedImageState,
+  type CodexImageGeneration,
+  type TengriCodexImage,
+} from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
 import { codexAsyncQuestionRequest, codexEventAsyncQuestionRequest } from './codex-async-questions'
 import type { QuestionRequest } from './codex-question-model'
@@ -43,6 +48,7 @@ export type CodexTranscriptItem = {
   eventSequence?: number
   activityTitle?: string
   questionRequest?: QuestionRequest
+  imageGeneration?: CodexImageGeneration
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
@@ -304,6 +310,10 @@ export function parseCodexEvent(data: string): TengriCodexEvent | null {
 export function codexEventActivityTitle(event: TengriCodexEvent) {
   if (event.kind !== 'tool-call' && event.kind !== 'tool-output') return undefined
   return codexItemActivityTitle(record(record(parseRawEvent(event.rawJson).params).item))
+}
+
+export function codexEventImageGeneration(event: TengriCodexEvent) {
+  return codexGeneratedImageState(record(record(parseRawEvent(event.rawJson).params).item))
 }
 
 function codexItemActivityTitle(item: Record<string, unknown>): string | undefined {
@@ -625,6 +635,8 @@ export function codexTranscriptFromThread(
         if (transcriptItem && !seen.has(transcriptItem.id)) {
           const activityTitle = codexItemActivityTitle(item)
           if (activityTitle) transcriptItem.activityTitle = activityTitle
+          const imageGeneration = codexGeneratedImageState(item)
+          if (imageGeneration) transcriptItem.imageGeneration = imageGeneration
           if (Object.hasOwn(itemEventSequences, transcriptItem.id)) {
             transcriptItem.eventSequence = itemEventSequences[transcriptItem.id]
           }
@@ -691,7 +703,7 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
   }
   if (type === 'imageView') return transcript(id, 'tool-call', `View image: ${string(item.path)}`)
   if (type === 'imageGeneration') {
-    const result = string(item.savedPath) || string(item.result)
+    const result = string(item.savedPath)
     return transcript(
       id,
       result ? 'tool-output' : 'tool-call',

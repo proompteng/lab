@@ -9410,6 +9410,102 @@ test('keeps image examples in command output as text without requesting missing 
   expect(imageReads).toEqual([])
 })
 
+test('shows native image generation live and restores its inline preview and link', async ({ page }, testInfo) => {
+  const path = '/home/nanoagent/.codex/generated_images/thread-cat/exec-cat.png'
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+    'base64',
+  )
+  const options: MockOptions = { resumeThreadRawJson: JSON.stringify({ thread: { id: 'thread-cat', turns: [] } }) }
+  const mock = await mockTengri(page, options)
+  const reads: string[] = []
+  let failNext = true
+  await page.route('**/api/tengri/generated-images?*', (route) => {
+    const url = new URL(route.request().url())
+    expect(url.searchParams.get('agentId')).toBe('microvm-ada')
+    reads.push(url.searchParams.get('path') ?? '')
+    if (failNext) {
+      failNext = false
+      return route.fulfill({ status: 503, json: { error: 'Temporary image read failure' } })
+    }
+    return route.fulfill({ contentType: 'image/png', body: png })
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-cat'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  const item = { type: 'imageGeneration', id: 'exec-cat', status: 'in_progress', result: '', savedPath: null }
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'tool-call',
+    method: 'item/started',
+    threadId: 'thread-cat',
+    turnId: 'turn-cat',
+    itemId: 'exec-cat',
+    approvalId: '',
+    text: 'Generate image',
+    rawJson: JSON.stringify({ params: { item } }),
+  })
+  await expect(chat.getByRole('status').filter({ hasText: 'Generating image…' })).toBeVisible()
+  expect(reads).toEqual([])
+  const completed = { ...item, status: 'completed', savedPath: path, result: '[Image output]' }
+  await emitCodexEvent(page, {
+    sequence: 2,
+    kind: 'tool-output',
+    method: 'item/completed',
+    threadId: 'thread-cat',
+    turnId: 'turn-cat',
+    itemId: 'exec-cat',
+    approvalId: '',
+    text: path,
+    rawJson: JSON.stringify({ params: { item: completed } }),
+  })
+  await expect(chat.getByRole('button', { name: 'Retry image', exact: true })).toBeVisible()
+  await chat.getByRole('button', { name: 'Retry image', exact: true }).click()
+  const image = chat.getByRole('img', { name: 'Generated image', exact: true })
+  await expect(image).toBeVisible()
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1)
+  await expect(chat.getByRole('button', { name: 'Tools and commands' })).toHaveCount(0)
+  await emitCodexEvent(page, {
+    sequence: 3,
+    kind: 'assistant-text',
+    method: 'item/completed',
+    threadId: 'thread-cat',
+    turnId: 'turn-cat',
+    itemId: 'reply-cat',
+    approvalId: '',
+    text: `[Preview the cat image](${path})`,
+    rawJson: '{}',
+  })
+  await expect(chat.getByRole('link', { name: 'Preview the cat image' })).toHaveAttribute(
+    'href',
+    `/api/tengri/generated-images?${new URLSearchParams({ agentId: 'microvm-ada', path })}`,
+  )
+  options.resumeThreadEventSequence = 3
+  options.resumeThreadRawJson = JSON.stringify({
+    thread: {
+      id: 'thread-cat',
+      turns: [
+        {
+          id: 'turn-cat',
+          status: 'completed',
+          items: [
+            { ...completed, result: png.toString('base64') },
+            { type: 'agentMessage', id: 'reply-cat', text: `[Preview the cat image](${path})` },
+          ],
+        },
+      ],
+    },
+  })
+  await page.reload()
+  await expect(image).toBeVisible()
+  await expect(image).toHaveCount(1)
+  await expect(chat.getByRole('link', { name: 'Preview the cat image' })).toBeVisible()
+  expect(reads.every((value) => value === path)).toBe(true)
+  expect(mock.actions.some((action) => action.action === 'read-file' || action.action === 'send-turn')).toBe(false)
+  await page.screenshot({ path: testInfo.outputPath('generated-image-inline.png'), animations: 'disabled' })
+})
+
 test('renders workspace images sent by the agent inline and in file tabs', async ({ page }) => {
   const mock = await mockTengri(page)
   const png = Buffer.from(

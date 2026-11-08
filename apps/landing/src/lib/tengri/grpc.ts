@@ -5,6 +5,7 @@ import {
   codexImageMatchesMediaType,
   isCodexAttachmentPath,
   isWorkspaceImagePath,
+  parseCodexGeneratedImagePath,
   MAX_CODEX_IMAGE_BYTES,
   type TengriCodexImage,
 } from './codex-images'
@@ -54,7 +55,8 @@ import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import { codexRunSchema, type TengriCodexRun } from './codex-run'
 import { parseCodexThreadPage } from './codex-threads'
-import type { CodexHistoryPage } from './codex-history'
+import { readCodexHistory, type CodexHistoryPage } from './codex-history'
+import { generatedImageContent } from './generated-image-content'
 import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
 
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
@@ -328,6 +330,35 @@ export async function readWorkspaceImage(identity: PlatformIdentity, agentId: st
     throw new TengriUnavailableError('Invalid image attachment', 415)
   }
   return { content: result.content, mediaType }
+}
+
+export async function readCodexGeneratedImage(
+  identity: PlatformIdentity,
+  agentId: string,
+  path: string,
+  signal: AbortSignal,
+) {
+  const image = parseCodexGeneratedImagePath(path)
+  if (!image) throw new TengriUnavailableError('Invalid generated image path', 400)
+  const response = await resumeCodexThread(identity, agentId, image.threadId, signal)
+  const history = await readCodexHistory(
+    response,
+    image.threadId,
+    signal,
+    (record) =>
+      new TengriUnavailableError(
+        'Generated image history is unavailable',
+        record.status === 401 || record.status === 403 ? record.status : 502,
+      ),
+  )
+  let result: ReturnType<typeof generatedImageContent>
+  try {
+    result = generatedImageContent(history.rawJson, image.path)
+  } catch {
+    throw new TengriUnavailableError('Invalid generated image', 415)
+  }
+  if (!result) throw new TengriUnavailableError('Generated image could not be found', 404)
+  return result
 }
 
 async function readFileBytes(identity: PlatformIdentity, agentId: string, filePath: string) {
