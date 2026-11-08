@@ -4,9 +4,7 @@ configMapGenerator:
   - name: registry-cleanup-scripts
     files:
       - cleanup.py
-      - collect.py
-      - prepare.py
+      - maintenance.py
+      - run.py
       - protected_references.py
       - protected_resources.json
-      - purge.py
-      - scheduled.py

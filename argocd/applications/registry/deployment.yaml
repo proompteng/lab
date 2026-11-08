@@ -40,9 +40,6 @@ spec:
             requests:
               cpu: "200m"
               memory: "64Mi"
-          ports:
-            - name: registry-api
-              containerPort: 5000
           volumeMounts:
             - name: registry-config
               mountPath: /etc/docker/registry
@@ -50,6 +47,15 @@ spec:
               mountPath: /var/lib/registry
         - name: registry-proxy
           image: haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              umask 0007
+              if [ ! -f /control/freeze.map ]; then
+                printf 'freeze 0\n' > /control/freeze.map
+              fi
+              exec haproxy -W -db -f /usr/local/etc/haproxy/haproxy.cfg
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -87,6 +93,8 @@ spec:
             failureThreshold: 3
             periodSeconds: 10
           volumeMounts:
+            - name: maintenance-control
+              mountPath: /control
             - name: registry-proxy-config
               mountPath: /usr/local/etc/haproxy/haproxy.cfg
               subPath: haproxy.cfg
@@ -95,6 +103,7 @@ spec:
           image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
           command: ["sleep", "infinity"]
           securityContext:
+            runAsGroup: 99
             allowPrivilegeEscalation: false
             capabilities:
               drop:
@@ -110,11 +119,18 @@ spec:
           volumeMounts:
             - name: registry-data
               mountPath: /var/lib/registry
+            - name: cleanup-scripts
+              mountPath: /scripts
               readOnly: true
-            - name: registry-data
-              mountPath: /quarantine
-              subPath: docker/registry/v2/_gc_quarantine
+            - name: maintenance-control
+              mountPath: /control
       volumes:
+        - name: maintenance-control
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: cleanup-scripts
+          configMap:
+            name: registry-cleanup-scripts
         - name: registry-config
           configMap:
             name: registry-config
