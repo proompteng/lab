@@ -610,6 +610,7 @@ describe('closing market-data fallback boundaries', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: unused,
+            recordProtectionCancelAccepted: unused,
             read: () => Effect.succeed(Option.some(record)),
             commit: unused,
             commitClosing: unused,
@@ -755,6 +756,7 @@ describe('closing market-data fallback boundaries', () => {
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: unused,
+          recordProtectionCancelAccepted: unused,
           read: () =>
             Effect.sync(() =>
               Option.some(
@@ -982,6 +984,8 @@ describe('closing market-data fallback boundaries', () => {
           Effect.provideService(IntentStore, {
             protectionForCycle: () => Effect.succeed([]),
             beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            recordProtectionCancelAccepted: () =>
+              Effect.die(new Error('unexpected protection cancellation acceptance')),
             read: unused,
             commit: unused,
             commitClosing: unused,
@@ -1255,6 +1259,7 @@ describe('closing market-data fallback boundaries', () => {
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die('terminal close must not commit another intent'),
           commitClosing: () => Effect.die('terminal close must not commit another close'),
@@ -1546,6 +1551,7 @@ describe('closing market-data fallback boundaries', () => {
         Effect.provideService(IntentStore, {
           protectionForCycle: () => Effect.succeed([]),
           beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+          recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die(new Error('residual close cannot use entry commit authority')),
           commitClosing: (intent, decision) =>
@@ -1864,6 +1870,21 @@ describe('closing market-data fallback boundaries', () => {
       ).toBeUndefined()
     },
   )
+
+  test('verified protection publication uses the five-second continuation', () => {
+    const waiting = {
+      outcome: 'RECOVERED',
+      action: 'WAITING',
+      waitReason: 'PROTECTION_PUBLICATION_PENDING',
+      observedAt: at,
+      cycle: activeCycle,
+    } as const
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(5_000)
+    expect(executionEvidenceContinuationDelayMs(waiting, 2_000, at)).toBe(2_000)
+    const close = Date.parse(activeCycle.window.executionCloseAt)
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+  })
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
     const request = await fixture()
