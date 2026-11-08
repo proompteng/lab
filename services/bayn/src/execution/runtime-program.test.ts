@@ -361,6 +361,52 @@ describe('same-code execution program composition', () => {
     )
   })
 
+  test('does not report a native cancellation as accepted without a durable receipt', async () => {
+    const fixture = finalLiveFixture()
+    const brokerOrderId = 'native-protection-child'
+    const command = {
+      intentId: fixture.intent.intentId,
+      accountId,
+      brokerOrderId,
+      requestedAt: observedAt,
+    } as const
+    const brokerReceipt = {
+      requestHash: Result.getOrThrow(canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId })),
+      brokerOrderId,
+      evidence: {
+        requestId: 'native-protection-cancel-test',
+        status: 204,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(null)),
+        observedAt,
+      },
+    } as const
+    let cancelCalls = 0
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...dependencies('native-cancel'),
+        brokerMutation: {
+          ...dependencies('native-cancel').brokerMutation,
+          cancel: () =>
+            Effect.sync(() => {
+              cancelCalls += 1
+              return brokerReceipt
+            }),
+        },
+        intentStore: {
+          beginProtectionCancel: () => Effect.succeed({ _tag: 'New', command } as const),
+          recordProtectionCancelAccepted: () => Effect.succeed({ _tag: 'PendingUnknown', command } as const),
+        } as unknown as ExecutionProgramDependencies['intentStore'],
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.cancelProtectionOrder(fixture.intent.intentId, brokerOrderId, undefined),
+    )
+
+    expect(result).toEqual({ _tag: 'PendingUnknown', command })
+    expect(cancelCalls).toBe(1)
+  })
+
   test('produces the same final core safeguard decision for equal sandbox and live broker facts', async () => {
     const live = finalLiveFixture()
     const sandboxAuthority = Result.getOrThrow(
@@ -1146,6 +1192,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('final risk proof must not commit')),
         read: () =>
           Effect.sync(() => {
@@ -1226,6 +1273,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-lock position proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1292,6 +1340,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1387,6 +1436,7 @@ describe('same-code execution program composition', () => {
       intentStore: {
         protectionForCycle: () => Effect.succeed([]),
         beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+        recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
         commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
         read: () => Effect.succeed(Option.some(stored)),
       },
