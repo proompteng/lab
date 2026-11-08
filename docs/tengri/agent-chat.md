@@ -83,7 +83,7 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | `list-threads`        | `ListCodexThreads`       | `thread/list`                          |
 | `set-thread-archived` | `SetCodexThreadArchived` | `thread/archive`, `thread/unarchive`   |
 | `create-thread`       | `CreateCodexThread`      | `thread/start`                         |
-| `resume-thread`       | `ResumeCodexThread`      | `thread/resume`                        |
+| `resume-thread`       | `ResumeCodexThread`      | `thread/read` and history page reads   |
 | `active-codex-runs`   | `GetActiveCodexRuns`     | Restate workspace claim and run state  |
 | `codex-run`           | `GetCodexRun`            | Restate run state                      |
 | `send-turn`           | `SendCodexInput`         | durable admission, then `turn/start`   |
@@ -194,6 +194,14 @@ for protocol 10; draining old runs and pending-operation fences precedes the ret
 - The UI caps retained events and rendered text. It does not render remote Markdown images or raw unbounded app-server
   payloads. Nanoagent projects tool-result images to `[Image output]` before the replay byte limit, retaining the
   tool's identity, status, text, and structured output. Codex receives the original image payload.
+- Native image generation stays visible outside the collapsed tool group, with progress, failure, and completed preview
+  states. Generated-image links open an authenticated image response. The BFF reads the exact saved image's bytes from
+  the existing conversation-history contract, verifies PNG/JPEG/WebP content within 4 MiB, and retains history's
+  retrieval bounds. It does not read arbitrary files from the Codex home. Markdown image previews share the four-image
+  budget with workspace images.
+- Unscoped native SQLite diagnostic-log loss notices are recorded as operational warnings, once per event-stream
+  connection. Their native events and cursors are retained; conversation rendering omits the CLI-only guidance.
+  Scoped warnings, provider warnings and turn failures remain visible.
 
 Closing and reopening Chrome does not terminate Codex. Nanoagent supervises one long-lived `codex app-server` process;
 browser reconnects restore the persisted thread and event state from the same microVM.

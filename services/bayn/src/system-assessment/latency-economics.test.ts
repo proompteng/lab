@@ -13,7 +13,7 @@ import { type ReplayInferenceCall } from '../intraday-replay/inference-timing'
 import { equityMarketProfile } from '../jev/markets'
 import { JevResearchPolicy, JevAcceptanceVersion } from '../jev/acceptance'
 import { nativeJevInference } from '../jev/native.test-support'
-import { jevModel, prepareJevRequest } from '../jev/contract'
+import { prepareJevRequest } from '../jev/contract'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
 import { assessmentFixture, registrationFixture, testHash } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
@@ -33,7 +33,7 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate, histor
       cacheWriteInputMicrosPerMillionTokens: '0',
     },
   }
-  const inferenceTariff = replayRateCardFixture({
+  const rawTariff = replayRateCardFixture({
     jev:
       policy === JevResearchPolicy.Candidate || (!historical && policy === JevResearchPolicy.Ablation)
         ? fullTariff.jev
@@ -43,11 +43,28 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate, histor
         ? fullTariff.chart
         : null,
   })
+  const inferenceTariff = {
+    ...rawTariff,
+    rates: rawTariff.rates.map((rate) =>
+      rate.provider === 'typesafe'
+        ? { ...rate, model: input.registration.obligations.configuration.protocol.model }
+        : rate,
+    ),
+  }
+  const rawOtherTariff = replayRateCardFixture(fullTariff)
+  const otherTariff = {
+    ...rawOtherTariff,
+    rates: rawOtherTariff.rates.map((rate) =>
+      rate.provider === 'typesafe'
+        ? { ...rate, model: input.registration.obligations.configuration.protocol.model }
+        : rate,
+    ),
+  }
   const registration = {
     ...input.registration,
     policies: input.registration.policies.map((p) => ({
       ...p,
-      inferenceRateCard: p.policy === policy ? inferenceTariff : replayRateCardFixture(fullTariff),
+      inferenceRateCard: p.policy === policy ? inferenceTariff : otherTariff,
     })),
   }
   const definition = registration.policies.find((p) => p.policy === policy)
@@ -102,7 +119,7 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate, histor
   })
   const request = Result.getOrThrow(
     prepareJevRequest({
-      model: jevModel,
+      model: registration.obligations.configuration.protocol.model,
       state: { symbol: 'AAPL' },
       questions: { enter: { type: 'noul', instructions: 'Assess retained market information.' } },
     }),

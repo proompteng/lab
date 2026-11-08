@@ -7,30 +7,30 @@ import { JevBatchPlanVersion, JevBatchResultSchema, JevCandidatePlanStatus } fro
 import { JevContractError } from './contract'
 import { ChartEntryTargetFields, makeChartEntryTargetMaterial, selectJevEntryCandidates } from './decision'
 import { deriveJevExitTargetMaterial, JevExitEvidenceSchema, JevExitTargetSchema } from './exit'
-import { reproduceRetainedJevV38CandidateObservation } from './observation'
-import { RetainedJevV38ObservationSchema } from './observation-contract'
+import { reproduceRetainedJevCandidateObservation } from './observation'
+import { RetainedJevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
-import { RetainedJevProtocolV38Schema } from './protocol'
+import { RetainedVisualJevProtocolSchema } from './protocol'
 import {
-  reproduceRetainedJevV38TradingSignalBatchEvidence,
+  reproduceRetainedJevTradingSignalBatchEvidence,
   retainedJevV38BatchInferencesAt,
-  RetainedJevV38BatchPlanSchema,
-} from './retained-v38-trading-signals'
+  RetainedJevBatchPlanSchema,
+} from './retained-jev-trading-signals'
 
-export const RetainedJevV38DecisionEvidenceSchema = Schema.Struct({
-  observation: RetainedJevV38ObservationSchema,
-  batchPlan: RetainedJevV38BatchPlanSchema,
+export const RetainedJevDecisionEvidenceSchema = Schema.Struct({
+  observation: RetainedJevObservationSchema,
+  batchPlan: RetainedJevBatchPlanSchema,
   batchResult: JevBatchResultSchema,
   decidedAt: UtcInstantSchema,
 })
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 
 /** Verify the original complete source once before reproducing its native or control target. */
-export const reproduceRetainedJevV38DecisionSource = (input: unknown, version: JevBatchPlanVersion) =>
+export const reproduceRetainedJevDecisionSource = (input: unknown, version: JevBatchPlanVersion) =>
   Result.gen(function* () {
-    const evidence = yield* Schema.decodeUnknownResult(RetainedJevV38DecisionEvidenceSchema, strictParseOptions)(input)
-    const observation = yield* reproduceRetainedJevV38CandidateObservation(evidence.observation)
-    const plan = yield* reproduceRetainedJevV38TradingSignalBatchEvidence(evidence.observation, evidence.batchPlan)
+    const evidence = yield* Schema.decodeUnknownResult(RetainedJevDecisionEvidenceSchema, strictParseOptions)(input)
+    const observation = yield* reproduceRetainedJevCandidateObservation(evidence.observation)
+    const plan = yield* reproduceRetainedJevTradingSignalBatchEvidence(evidence.observation, evidence.batchPlan)
     if (observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* invalid('Retained v38 entry requires its original flat entry observation')
     const inferences = yield* retainedJevV38BatchInferencesAt(
@@ -59,9 +59,9 @@ export const reproduceRetainedJevV38DecisionSource = (input: unknown, version: J
   })
 
 /** Original v38 target reconstruction for immutable operational evidence; never an admission path. */
-export const reproduceRetainedJevV38EntryTarget = (input: unknown) =>
+export const reproduceRetainedJevEntryTarget = (input: unknown) =>
   Result.gen(function* () {
-    const source = yield* reproduceRetainedJevV38DecisionSource(input, JevBatchPlanVersion.V8)
+    const source = yield* reproduceRetainedJevDecisionSource(input, JevBatchPlanVersion.V8)
     const selection = yield* selectJevEntryCandidates(
       source.observation,
       source.inferences,
@@ -79,14 +79,14 @@ const same = (left: unknown, right: unknown) => {
   return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
 }
 
-export const RetainedJevV38EntryTargetSchema = Schema.Struct({
+export const RetainedJevEntryTargetSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-entry-target.v7'),
   strategy: Schema.Literal('jev'),
   ...ChartEntryTargetFields,
-  evidence: RetainedJevV38DecisionEvidenceSchema,
+  evidence: RetainedJevDecisionEvidenceSchema,
 }).check(
   Schema.makeFilter((target) => {
-    const reproduced = reproduceRetainedJevV38EntryTarget(target.evidence)
+    const reproduced = reproduceRetainedJevEntryTarget(target.evidence)
     return Result.isSuccess(reproduced) && same(reproduced.success, target)
       ? []
       : [{ path: ['evidence'], issue: 'original v38 candidate evidence must reproduce the exact retained target' }]
@@ -95,26 +95,26 @@ export const RetainedJevV38EntryTargetSchema = Schema.Struct({
 
 const RetainedExitEvidenceSchema = Schema.Struct({
   ...JevExitEvidenceSchema.fields,
-  protocol: RetainedJevProtocolV38Schema,
+  protocol: RetainedVisualJevProtocolSchema,
 })
 
-export const reproduceRetainedJevV38ExitTarget = (input: unknown) =>
+export const reproduceRetainedJevExitTarget = (input: unknown) =>
   Schema.decodeUnknownResult(
     RetainedExitEvidenceSchema,
     strictParseOptions,
   )(input).pipe(Result.flatMap(deriveJevExitTargetMaterial))
 
-export const RetainedJevV38ExitTargetSchema = Schema.Struct({
+export const RetainedJevExitTargetSchema = Schema.Struct({
   ...JevExitTargetSchema.fields,
   evidence: RetainedExitEvidenceSchema,
 }).check(
   Schema.makeFilter((target) => {
-    const reproduced = reproduceRetainedJevV38ExitTarget(target.evidence)
+    const reproduced = reproduceRetainedJevExitTarget(target.evidence)
     return Result.isSuccess(reproduced) && same(reproduced.success, target)
       ? []
       : [{ path: ['evidence'], issue: 'original v38 exit evidence must reproduce the exact retained flat target' }]
   }),
 )
 
-export type RetainedJevV38EntryTarget = typeof RetainedJevV38EntryTargetSchema.Type
-export type RetainedJevV38ExitTarget = typeof RetainedJevV38ExitTargetSchema.Type
+export type RetainedJevEntryTarget = typeof RetainedJevEntryTargetSchema.Type
+export type RetainedJevExitTarget = typeof RetainedJevExitTargetSchema.Type

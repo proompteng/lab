@@ -314,9 +314,8 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       makeInferenceCostReport(result.evidence, { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }),
     )
     expect(request.schemaVersion).toBe('bayn.jev-evaluation-request.v3')
-    expect(report.unknownUsageCount).toBe(3)
+    expect(report.unknownUsageCount).toBe(2)
     expect(report.requests.flatMap((line) => ('stage' in line ? [line.stage] : [])).sort()).toEqual([
-      InferenceStage.BaseStart,
       InferenceStage.Chart,
       InferenceStage.Jev,
     ])
