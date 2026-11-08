@@ -97,7 +97,10 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
           }),
         )
     }
-    if (value.protocol.schemaVersion === 'bayn.jev.protocol.v39') {
+    if (
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v40' ||
+      value.protocol.schemaVersion === 'bayn.jev.protocol.v39'
+    ) {
       yield* Schema.decodeUnknownResult(
         Schema.NullOr(
           Schema.Struct({

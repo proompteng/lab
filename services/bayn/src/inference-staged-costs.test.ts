@@ -1,3 +1,4 @@
+import { entryEvaluationRequestFixture, makeJevEvaluationReceipt } from './jev/retained-jev.test-support'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -20,14 +21,13 @@ import {
 } from './inference-expense'
 import { makeNativeChartEvidence } from './jev/chart-evidence'
 import { type JevRequest, type JevResponse } from './jev/contract'
-import {
-  entryEvaluationRequestFixture,
-  entryCompletionFixture,
-  stagedCheckpointFixture,
-} from './jev/entry-inference.test-support'
-import { makeJevEvaluationReceipt, JevOutcome } from './jev/evidence'
+import { entryCompletionFixture, stagedCheckpointFixture } from './jev/entry-inference.test-support'
+import { JevOutcome } from './jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './jev/staged-chart-questions'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+} from './jev/retained-jev-staged-chart-questions'
 import {
   makeStagedDispatchClaim,
   makeStagedTerminalReceipt,
@@ -188,7 +188,7 @@ test('late JEV receipt preserves a frozen abandoned READY prefix and charges onc
   expect(Result.isFailure(verifyInferenceExpenseQuote({ ...after, resolution: replacement }, unknown))).toBe(true)
 })
 
-test('normal completion verifies prior unknown prefixes and books all three metered stages once', () => {
+test('retained v39 completion verifies prior unknown prefixes and books all three metered stages once', () => {
   const checkpoint = stagedCheckpointFixture(request)
   const completion = entryCompletionFixture(request)
   const receipt = Result.getOrThrow(

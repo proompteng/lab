@@ -61,5 +61,5 @@
       }
     ]
   },
-  "include": ["src", "migrations", "tools", "scripts/retained-v38-node.test.ts"]
+  "include": ["src", "migrations", "tools", "scripts/retained-jev-node.test.ts"]
 }

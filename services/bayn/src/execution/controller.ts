@@ -256,7 +256,15 @@ export const completeExecutionControllerTick = (
     )
   }
   const nextDueAt = Result.try({
-    try: () => new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
+    try: () => {
+      const completedAt = Date.parse(result.completedAt)
+      const pollingDueAt = completedAt + result.outcome.nextDelayMs
+      return new Date(
+        result.outcome.nextWakeAt === undefined
+          ? pollingDueAt
+          : Math.min(pollingDueAt, Math.max(completedAt + 1, Date.parse(result.outcome.nextWakeAt))),
+      ).toISOString()
+    },
     catch: () =>
       new ExecutionControllerDecisionError({
         operation: 'complete',

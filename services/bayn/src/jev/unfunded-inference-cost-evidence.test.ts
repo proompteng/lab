@@ -1,3 +1,10 @@
+import {
+  deriveEntryHandoffDisposition,
+  entryEvaluationRequestFixture,
+  makeJevEvaluationReceipt,
+  makeJevEvaluationRequest,
+  prepareEntryInferenceInput,
+} from './retained-jev.test-support'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -12,12 +19,10 @@ import {
 import { summarizeForwardInferenceExpenses } from '../forward-performance/inference-expenses'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { decodeJevResponse, type JevRequest } from './contract'
-import { deriveEntryHandoffDisposition } from './entry-inference'
-import { entryEvaluationRequestFixture } from './entry-inference.test-support'
-import { prepareEntryInferenceInput } from './entry-inference-input'
-import { makeJevEvaluationRequest, makeJevEvaluationReceipt, JevOutcome } from './evidence'
+
+import { JevOutcome } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
+import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './retained-jev-staged-chart-questions'
 import { makeStagedDispatchClaim, makeStagedTerminalReceipt, stageResponseIdentity } from './staged-checkpoint'
 
 const fixture = () => {

@@ -327,6 +327,18 @@ const CheckRunsSchema = Schema.Struct({
       status: Schema.String,
       conclusion: Schema.NullOr(Schema.String),
       details_url: Schema.optional(Schema.NullOr(Schema.String)),
+      check_suite: Schema.optional(Schema.Struct({ id: Schema.Number })),
+    }),
+  ),
+})
+const WorkflowRunsSchema = Schema.Struct({
+  workflow_runs: Schema.Array(
+    Schema.Struct({
+      check_suite_id: Schema.Number,
+      workflow_id: Schema.Number,
+      run_number: Schema.Number,
+      event: Schema.String,
+      head_branch: Schema.NullOr(Schema.String),
     }),
   ),
 })
@@ -345,24 +357,57 @@ const collectBlockingChecks = (
   fetchFn: FetchLike,
   checkRunsUrl: string,
   commitStatusUrl: string,
+  workflowRunsUrl: string,
   headers: Record<string, string>,
 ): Effect.Effect<PullRequestBlockingCheck[], ReviewApiError> =>
   Effect.gen(function* () {
     const blocked: PullRequestBlockingCheck[] = []
+    const runs: (typeof CheckRunsSchema.Type.check_runs)[number][] = []
     let observed = 0
     for (let page = 1; ; page++) {
-      const { check_runs: runs } = yield* requestJson(fetchFn, `${checkRunsUrl}${page}`, { headers }).pipe(
+      const { check_runs: pageRuns } = yield* requestJson(fetchFn, `${checkRunsUrl}${page}`, { headers }).pipe(
         Effect.flatMap((value) =>
           Schema.decodeUnknownEffect(CheckRunsSchema)(value).pipe(Effect.mapError(toInvalidJson)),
         ),
       )
-      observed += runs.length
-      for (const run of runs) {
-        if (run.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(run.conclusion ?? '')) {
-          blocked.push({ name: run.name, conclusion: run.conclusion ?? run.status, url: run.details_url ?? undefined })
-        }
+      runs.push(...pageRuns)
+      if (pageRuns.length < 100) break
+    }
+    observed += runs.length
+    const workflows = new Map<number, (typeof WorkflowRunsSchema.Type.workflow_runs)[number]>()
+    if (runs.some((run) => run.check_suite !== undefined)) {
+      for (let page = 1; ; page++) {
+        const { workflow_runs: pageWorkflows } = yield* requestJson(fetchFn, `${workflowRunsUrl}${page}`, {
+          headers,
+        }).pipe(
+          Effect.flatMap((value) =>
+            Schema.decodeUnknownEffect(WorkflowRunsSchema)(value).pipe(Effect.mapError(toInvalidJson)),
+          ),
+        )
+        for (const workflow of pageWorkflows) workflows.set(workflow.check_suite_id, workflow)
+        if (pageWorkflows.length < 100) break
       }
-      if (runs.length < 100) break
+    }
+    const workflowContext = (run: (typeof runs)[number]) => {
+      const workflow = run.check_suite ? workflows.get(run.check_suite.id) : undefined
+      return workflow?.head_branch
+        ? { key: JSON.stringify([workflow.workflow_id, workflow.event, workflow.head_branch, run.name]), workflow }
+        : undefined
+    }
+    const latestRunNumbers = new Map<string, number>()
+    for (const run of runs) {
+      const context = workflowContext(run)
+      if (context) {
+        latestRunNumbers.set(context.key, Math.max(latestRunNumbers.get(context.key) ?? 0, context.workflow.run_number))
+      }
+    }
+    for (const run of runs) {
+      const context = workflowContext(run)
+      // GitHub's filter=latest still returns checks from superseded workflow executions.
+      if (context && context.workflow.run_number < (latestRunNumbers.get(context.key) ?? 0)) continue
+      if (run.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(run.conclusion ?? '')) {
+        blocked.push({ name: run.name, conclusion: run.conclusion ?? run.status, url: run.details_url ?? undefined })
+      }
     }
     for (let page = 1; ; page++) {
       const { statuses } = yield* requestJson(fetchFn, `${commitStatusUrl}?per_page=100&page=${page}`, {
@@ -451,8 +496,9 @@ export const listPullRequestBlockingChecks = (
 
     const checkRunsUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/commits/${headSha}/check-runs?filter=latest&per_page=100&page=`
     const commitStatusUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/commits/${headSha}/status`
+    const workflowRunsUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=100&page=`
 
-    const failures = yield* collectBlockingChecks(fetchFn, checkRunsUrl, commitStatusUrl, headers)
+    const failures = yield* collectBlockingChecks(fetchFn, checkRunsUrl, commitStatusUrl, workflowRunsUrl, headers)
     return failures
   }).pipe(
     Effect.map((checks) => ({ ok: true as const, checks })),

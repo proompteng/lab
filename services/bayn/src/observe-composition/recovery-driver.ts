@@ -432,11 +432,14 @@ export const executionEvidenceContinuationDelayMs = (
     result.action !== 'WAITING' ||
     (result.waitReason !== 'CLOSE_QUOTE_PENDING' &&
       result.waitReason !== 'BROKER_OBSERVATION_PENDING' &&
-      result.waitReason !== 'JEV_POSITION_AWAITING_RECONCILIATION')
+      result.waitReason !== 'JEV_POSITION_AWAITING_RECONCILIATION' &&
+      result.waitReason !== 'PROTECTION_PUBLICATION_PENDING')
   )
     return undefined
   const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
-  return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
+  return remainingMs > 0
+    ? Math.min(result.waitReason === 'PROTECTION_PUBLICATION_PENDING' ? 5_000 : 1_000, normalDelayMs, remainingMs)
+    : undefined
 }
 
 /** The expired attempt has ended; the next pass must revalidate a distinct attempt before the unchanged cutoff. */
@@ -559,7 +562,7 @@ export const checkAdvancedMarketProjection = <R>(
           }),
         ).pipe(
           Effect.map((failed) => {
-            const { nextDelayMs: _nextDelayMs, ...completed } = advanced
+            const { nextDelayMs: _nextDelayMs, nextWakeAt: _nextWakeAt, ...completed } = advanced
             return { ...completed, ...failed }
           }),
         ),

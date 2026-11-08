@@ -18,7 +18,7 @@ import {
 } from '../execution/mandate'
 import { MICROS } from '../strategy/execution-model/model'
 import { notionalMicros, numberToMicros } from '../strategy/execution-model/fixed-point'
-import type { JevProtocol, RetainedJevProtocolV38Schema } from '../jev/protocol'
+import type { JevProtocol, RetainedVisualJevProtocolSchema } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
@@ -260,7 +260,7 @@ export const triggerControlExit = (input: {
   readonly portfolio: ControlPortfolio
   readonly policy: ControlPolicy
   readonly feeMultiplierPpm: number
-  readonly protocol: JevProtocol | typeof RetainedJevProtocolV38Schema.Type
+  readonly protocol: JevProtocol | typeof RetainedVisualJevProtocolSchema.Type
   readonly atMs: number
   readonly cutoffMs: number
   readonly quote: ControlQuote
