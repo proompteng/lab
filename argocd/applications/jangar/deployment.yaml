@@ -360,6 +360,10 @@ spec:
               value: c9e7e812e662f56fe32d69eefe03db1230d04155
             - name: JANGAR_SERVING_IMAGE_DIGEST
               value: sha256:37a1de689f56a3614b4051063c1d14c797dc1c4552c73d7711dd25ebda517bfa
+            - name: JANGAR_FLAMINGO_MODEL
+              value: qwen38-flamingo
+            - name: JANGAR_FLAMINGO_REASONING_EFFORT
+              value: xhigh
           ports:
             - name: http
               containerPort: 8080

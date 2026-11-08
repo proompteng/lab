@@ -26,7 +26,7 @@ import {
   reproduceJevStudyBatchEvidence,
   decodeJevStudyBatchResult,
   jevStudyBatchInferencesAt,
-  selectRetainedJevV38StudyEntry,
+  selectRetainedJevStudyEntry,
 } from '../jev/study-evidence'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
@@ -121,7 +121,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry
         ? null
         : source._tag === 'RETAINED_V38'
-          ? selectRetainedJevV38StudyEntry(source, batch.batchResult, decidedAt)
+          ? selectRetainedJevStudyEntry(source, batch.batchResult, decidedAt)
           : decideJevEntry({ ...batch, decidedAt })
     const usable =
       batch.batchResult === null ? null : jevStudyBatchInferencesAt(source, batch.batchResult, Date.parse(decidedAt))
@@ -232,6 +232,7 @@ export const summarizeSignalFactorOutcomes = (
       for (const [name, answer] of Object.entries(row.factors.answers)) {
         if (answer.type === 'noul') factors.push([name, bin(answer.noul)])
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
+        else if (answer.type === 'box') factors.push([`${name}.confidence`, bin(answer.confidence)])
         else {
           factors.push([name, answer.choice])
         }

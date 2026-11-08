@@ -4,7 +4,7 @@ import { JevBatchResultSchema } from '../jev/batch'
 import { JevStudyBatchPlanSchema, JevStudyObservationSchema } from '../jev/study-evidence'
 import {
   ExecutionDecisionDocumentSchema,
-  RetainedJevV38ExecutionDecisionDocumentSchema,
+  RetainedJevExecutionDecisionDocumentSchema,
 } from '../shadow-decision-contract'
 import { IsoDateSchema } from '../schemas'
 import { SystemSourceCutSchema } from './source-cut'
@@ -15,7 +15,7 @@ export const RecordedSystemSourceCutSchema = Schema.Struct({
   decisions: Schema.Array(
     Schema.Struct({
       sessionDate: IsoDateSchema,
-      document: Schema.Union([ExecutionDecisionDocumentSchema, RetainedJevV38ExecutionDecisionDocumentSchema]),
+      document: Schema.Union([ExecutionDecisionDocumentSchema, RetainedJevExecutionDecisionDocumentSchema]),
     }),
   ),
   batches: Schema.Array(

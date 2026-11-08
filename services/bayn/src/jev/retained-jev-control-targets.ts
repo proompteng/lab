@@ -12,27 +12,32 @@ import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { JevContractError } from './contract'
 import { makeChartEntryTargetMaterial } from './decision'
 import { EntryAblationTargetSchema, selectFundedEntryAblationProposal } from './entry-ablation'
-import { EntryAblationPolicySchema, makeEntryAblationPolicy } from './entry-ablation-policy'
-import { reproduceRetainedJevV38CandidateObservation } from './observation'
-import { RetainedJevV38ObservationSchema } from './observation-contract'
-import { RetainedJevProtocolV38Schema } from './protocol'
-import { reproduceRetainedJevV38DecisionSource, RetainedJevV38DecisionEvidenceSchema } from './retained-v38-targets'
+import {
+  EntryAblationPolicySchema,
+  makeEntryAblationPolicy,
+  retainedJevAblationQuestionPolicyHash,
+} from './entry-ablation-policy'
+import { reproduceRetainedJevCandidateObservation } from './observation'
+import { RetainedJevObservationSchema } from './observation-contract'
+import { RetainedVisualJevProtocolSchema } from './protocol'
+import { reproduceRetainedJevDecisionSource, RetainedJevDecisionEvidenceSchema } from './retained-jev-targets'
 import { entryProposalExitPlan, type JevFundedExitPlan } from './strategy-exit-plan'
 import { jevEntryQuoteExclusion } from './trading-signals'
 
-export const RetainedJevV38AblationPolicySchema = Schema.Struct({
+export const RetainedJevAblationPolicySchema = Schema.Struct({
   ...EntryAblationPolicySchema.fields,
-  sharedProtocol: RetainedJevProtocolV38Schema,
+  questionPolicyHash: Schema.Literal(retainedJevAblationQuestionPolicyHash),
+  sharedProtocol: RetainedVisualJevProtocolSchema,
 })
-export const RetainedJevV38MomentumPolicySchema = Schema.Struct({
+export const RetainedJevMomentumPolicySchema = Schema.Struct({
   ...RepeatedMomentumPolicySchema.fields,
-  sharedProtocol: RetainedJevProtocolV38Schema,
+  sharedProtocol: RetainedVisualJevProtocolSchema,
 })
 
 /** Preserve the original control's exact funded-loss ranking and omitted Jev stage. */
-export const reproduceRetainedJevV38AblationTarget = (input: unknown) =>
+export const reproduceRetainedJevAblationTarget = (input: unknown) =>
   Result.gen(function* () {
-    const source = yield* reproduceRetainedJevV38DecisionSource(input, JevBatchPlanVersion.Ablation)
+    const source = yield* reproduceRetainedJevDecisionSource(input, JevBatchPlanVersion.Ablation)
     const selected: { symbol: string; weight: number; modeledLossMicros: bigint; exitPlan: JevFundedExitPlan }[] = []
     const entryPlanRejections: Record<string, 'NO_FUNDED_CANDIDATES'> = {}
     for (const candidate of source.evidence.batchPlan.candidates) {
@@ -81,13 +86,13 @@ const same = (left: unknown, right: unknown) => {
   return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
 }
 
-export const RetainedJevV38AblationTargetSchema = Schema.Struct({
+export const RetainedJevAblationTargetSchema = Schema.Struct({
   ...EntryAblationTargetSchema.fields,
-  policy: RetainedJevV38AblationPolicySchema,
-  evidence: RetainedJevV38DecisionEvidenceSchema,
+  policy: RetainedJevAblationPolicySchema,
+  evidence: RetainedJevDecisionEvidenceSchema,
 }).check(
   Schema.makeFilter((target) => {
-    const reproduced = reproduceRetainedJevV38AblationTarget(target.evidence)
+    const reproduced = reproduceRetainedJevAblationTarget(target.evidence)
     return Result.isSuccess(reproduced) && same(reproduced.success, target)
       ? []
       : [{ path: ['evidence'], issue: 'original v38 ablation evidence must reproduce the exact retained target' }]
@@ -96,25 +101,25 @@ export const RetainedJevV38AblationTargetSchema = Schema.Struct({
 
 const RetainedMomentumEvidenceSchema = Schema.Struct({
   ...MomentumDecisionEvidenceSchema.fields,
-  observation: RetainedJevV38ObservationSchema,
+  observation: RetainedJevObservationSchema,
 })
-export const reproduceRetainedJevV38MomentumTarget = (input: unknown, policy: unknown) =>
+export const reproduceRetainedJevMomentumTarget = (input: unknown, policy: unknown) =>
   Result.gen(function* () {
     const verifiedPolicy = yield* Schema.decodeUnknownResult(
-      RetainedJevV38MomentumPolicySchema,
+      RetainedJevMomentumPolicySchema,
       strictParseOptions,
     )(policy)
     const evidence = yield* Schema.decodeUnknownResult(RetainedMomentumEvidenceSchema, strictParseOptions)(input)
-    const observation = yield* reproduceRetainedJevV38CandidateObservation(evidence.observation)
+    const observation = yield* reproduceRetainedJevCandidateObservation(evidence.observation)
     return yield* deriveMomentumTargetMaterial(verifiedPolicy, evidence, observation)
   })
-export const RetainedJevV38MomentumTargetSchema = Schema.Struct({
+export const RetainedJevMomentumTargetSchema = Schema.Struct({
   ...RepeatedMomentumTargetSchema.fields,
-  policy: RetainedJevV38MomentumPolicySchema,
+  policy: RetainedJevMomentumPolicySchema,
   evidence: RetainedMomentumEvidenceSchema,
 }).check(
   Schema.makeFilter((target) => {
-    const reproduced = reproduceRetainedJevV38MomentumTarget(target.evidence, target.policy)
+    const reproduced = reproduceRetainedJevMomentumTarget(target.evidence, target.policy)
     return Result.isSuccess(reproduced) && same(reproduced.success, target)
       ? []
       : [
@@ -126,5 +131,5 @@ export const RetainedJevV38MomentumTargetSchema = Schema.Struct({
   }),
 )
 
-export type RetainedJevV38AblationTarget = typeof RetainedJevV38AblationTargetSchema.Type
-export type RetainedJevV38MomentumTarget = typeof RetainedJevV38MomentumTargetSchema.Type
+export type RetainedJevAblationTarget = typeof RetainedJevAblationTargetSchema.Type
+export type RetainedJevMomentumTarget = typeof RetainedJevMomentumTargetSchema.Type
