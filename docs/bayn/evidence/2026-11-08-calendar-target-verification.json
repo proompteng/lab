@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "bayn.cosmosalpha-calendar-target-verification.v1",
+  "targetId": "685c34e9aaa5f2c9d0d6d2ef380039ace15abd4b47235152102c23da6263e07e",
+  "verifierSha256": "0629be282fb35b09be552ab6a6b9bc1651a3e9fc2f7d30d275fa5eb9c6e28392",
+  "status": "PASS",
+  "unexplainedMismatches": 0,
+  "numericTolerance": 0,
+  "sourceFilesVerified": 2403,
+  "rows": 1165440,
+  "instruments": 800,
+  "eligibleRows": 1127893,
+  "unknownEligibleRows": 0,
+  "labeledRows": 1122941,
+  "eligibleLabeledRows": 1110130,
+  "statuses": {
+    "outside-split": 17267,
+    "ok": 1122941,
+    "invalid-current-close": 24322,
+    "cutoff": 910
+  },
+  "splitRows": {
+    "outside": 17267,
+    "train": 668244,
+    "validation": 116400,
+    "test": 363529
+  },
+  "nativeSnapshots": [
+    {
+      "snapshotId": "dc252d4fd10541b535c8d810e100dc95e87a501e806607bbf3818b700865046f",
+      "referenceSha256": "2de9b274d561607357608756d2e70f715c117ac31c7ae181aa63eaa873a7329e",
+      "marketArtifactSha256": "22cb3eed4bc0df571afeb29eae3fa52b9d6de4ddb9e4d0f9b94d4b596cbf8fb2",
+      "maskArtifactSha256": "8feaeed5f43e6171570b76e52098db1db46478ee51367f4e860865d6e330a656",
+      "priceAndMaskRowsVerified": 1165440,
+      "instrumentCount": 800
+    }
+  ],
+  "examples": [],
+  "scope": "Target/source/coverage agreement under the declared rule. No industry-PIT, predictive, execution or economic qualification."
+}
