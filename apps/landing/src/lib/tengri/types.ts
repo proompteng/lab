@@ -192,7 +192,7 @@ export type TengriAction =
   | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
   | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
-  | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
+  | { action: 'resume-thread'; agentId: string; threadId: string }
   | ({
       action: 'send-turn'
       agentId: string

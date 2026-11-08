@@ -179,7 +179,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   }),
   z.strictObject({ action: z.literal('set-thread-archived'), agentId, threadId: codexId, archived: z.boolean() }),
   z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
-  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
+  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId }),
   z
     .strictObject({
       action: z.literal('send-turn'),

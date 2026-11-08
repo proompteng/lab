@@ -316,10 +316,7 @@ def probe_admission(context):
     ]
     for storage in (
         "local-path",
-        "local-path-ryzen",
         "local-path-ci-amd64",
-        "local-path-turin-nvme-intel",
-        "local-path-turin-nvme-transcend",
         "rook-ceph-block",
         "rook-cephfs",
         "temporal-elasticsearch-snapshot-wsync",
