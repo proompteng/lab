@@ -54,7 +54,7 @@ const fixture = () => {
   }
   const capture = (reconcile = Effect.succeed(pass)) =>
     captureControlStudyOpening(plan, runtime, {
-      readAuthority: Effect.succeed(opening.inputs.authority),
+      readBoundGeneration: Effect.succeed(opening.inputs.authority.generationHash),
       reconcile,
       now: Effect.succeed(observedAt),
     })
@@ -93,11 +93,9 @@ test.each(['live account', 'other request', 'other build', 'changed policy', 'ot
     let reconciliations = 0
     const exit = await Effect.runPromiseExit(
       captureControlStudyOpening(x.plan, x.runtime, {
-        readAuthority: Effect.succeed({
-          ...x.opening.inputs.authority,
-          generationHash:
-            fault === 'other authority' ? sha256('other generation') : x.opening.inputs.authority.generationHash,
-        }),
+        readBoundGeneration: Effect.succeed(
+          fault === 'other authority' ? sha256('other generation') : x.opening.inputs.authority.generationHash,
+        ),
         reconcile: Effect.sync(() => {
           reconciliations++
           return x.pass
@@ -122,6 +120,23 @@ test('capture rejects an authority change during the native pass', async () => {
   }
   const exit = await Effect.runPromiseExit(x.capture(Effect.succeed(changed)))
   expect(exit._tag).toBe('Failure')
+})
+
+test('failed native request-to-generation verification propagates before reconciliation', async () => {
+  const x = fixture()
+  let reconciliations = 0
+  const result = await Effect.runPromise(
+    captureControlStudyOpening(x.plan, x.runtime, {
+      readBoundGeneration: Effect.fail('durable generation belongs to another request'),
+      reconcile: Effect.sync(() => {
+        reconciliations++
+        return x.pass
+      }),
+      now: Effect.succeed(x.opening.inputs.observedAt),
+    }).pipe(Effect.result),
+  )
+  expect(result).toEqual(Result.fail('durable generation belongs to another request'))
+  expect(reconciliations).toBe(0)
 })
 
 test('private capture publishes its receipt last and an existing output prevents repeated reconciliation', async () => {

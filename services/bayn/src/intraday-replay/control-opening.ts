@@ -1,7 +1,6 @@
 import { Effect, FileSystem, Path, Result, Schema } from 'effect'
 
 import { BrokerEnvironment } from '../broker/identity'
-import type { AuthorityState } from '../execution/contracts'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { JevPurpose } from '../jev/portfolio'
 import type { ReconciliationPassResult } from '../reconciler'
@@ -35,15 +34,15 @@ export const captureControlStudyOpening = <E1, R1, E2, R2>(
   plan: Plan,
   runtime: ControlOpeningRuntime,
   dependencies: {
-    readonly readAuthority: Effect.Effect<AuthorityState, E1, R1>
+    readonly readBoundGeneration: Effect.Effect<string, E1, R1>
     readonly reconcile: Effect.Effect<ReconciliationPassResult, E2, R2>
     readonly now: Effect.Effect<string>
   },
 ) =>
   Effect.gen(function* () {
     yield* Effect.fromResult(verifyControlOpeningRuntime(plan, runtime))
-    const before = yield* dependencies.readAuthority
-    if (before.generationHash !== plan.candidate.authorityGenerationHash)
+    const generationHash = yield* dependencies.readBoundGeneration
+    if (generationHash !== plan.candidate.authorityGenerationHash)
       return yield* new ControlStudyFailure({ message: 'Current authority differs from the frozen candidate' })
     const pass = yield* dependencies.reconcile
     const { riskContext, brokerState, report } = pass

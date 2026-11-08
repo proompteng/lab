@@ -57,8 +57,10 @@ bayn-control-opening \
 ```
 
 The command requires an embedded production build, the configured sealed sandbox request and the exact frozen
-account, build and native risk policy. It checks the current authority before running the existing native reconciler
-and checks the returned generation again. It acquires only broker read access; it cannot submit orders or activate
+account, build and native risk policy. Before reconciliation, the existing native generation verifier checks durable
+authority history against the sealed request and its configured continuation or build lineage. Capture requires that
+verified generation to match the frozen plan and checks the reconciler's returned generation again. It acquires only
+broker read access; it cannot submit orders or activate
 capital. Normal reconciliation may retain broker events, accounting and ledger effects, and restrict authority on a
 discrepancy. It does not initialize a new generation, reset balances or change limits. The captured inputs include
 the native accounting hash, original equity peak, actual daily turnover and day-start equity, including used budgets.

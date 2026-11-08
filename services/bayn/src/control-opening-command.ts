@@ -5,7 +5,11 @@ import { loadApplicationPlan } from './application-plan'
 import { embeddedBuildMetadata } from './build'
 import { alpacaHttpLayer } from './broker/alpaca/http'
 import { layer as brokerReadLayer, mapHttpAcquisitionError } from './broker/alpaca/session'
-import { configuredCapitalActivation, validateResearchCapitalRiskPolicy } from './composition/capital-activation'
+import {
+  configuredCapitalActivation,
+  readBoundCapitalActivationGeneration,
+  validateResearchCapitalRiskPolicy,
+} from './composition/capital-activation'
 import { AuthorityGenerationStore, ExecutionStoreLive } from './db/execution-store'
 import { PostgresClientLive } from './db/postgres-client'
 import { WriterFenceLive } from './execution/writer-fence'
@@ -96,7 +100,13 @@ export const runControlOpeningCommand = (args: readonly string[]) =>
     const capture = Effect.gen(function* () {
       const authority = yield* AuthorityGenerationStore
       return yield* captureControlStudyOpening(frozen, runtime, {
-        readAuthority: authority.readAuthorityState,
+        readBoundGeneration: readBoundCapitalActivationGeneration(
+          application,
+          configured.request,
+          configured.buildContinuation,
+          configured.buildLineage,
+          authority,
+        ).pipe(Effect.map((generation) => generation.generationHash)),
         reconcile: runOnce,
         now: currentUtcInstant,
       })
