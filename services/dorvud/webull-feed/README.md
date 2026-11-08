@@ -10,8 +10,21 @@ have no Webull dependency.
 The November 1, 2026 backend probe accepted 500 distinct streaming symbols: 100 on each of five
 simultaneous sessions. Each session rejected an additional single symbol with
 `TOO_MANY_SYMBOLS_SUBSCRIPTION`. That established subscription admission, not live delivery. The
-collector discovers each session's actual capacity and records the quota witness; it does not assume
-that 500 is a permanent plan-wide limit.
+collector records admission separately from delivery. Active-market probes on November 2 showed data
+moving to the most recently updated session: reasserting 100 admitted symbols on session 0 started its
+data; updating session 1 then stopped session 0's data while both connections remained online. The
+verified concurrent delivering set was 100 symbols, despite 500 admissions. The collector therefore
+uses one active connection and discovers its capacity from provider responses instead of assuming a
+permanent total symbol cap. Additional idle connections do not count as delivered coverage.
+
+`WEBULL_PRIORITY_SYMBOLS` gives Bayn's equity universe first access to streaming slots and a separate completed-M1
+polling loop. Priority bar requests repeat one second after the previous round finishes, so they do not wait for
+the full catalog sweep. The remaining catalog continues in the background. Both loops share the same API client,
+per-endpoint request pacing and provider cooldowns; priority polling does not increase the aggregate request limit.
+Bayn's first decision cut is two seconds after minute close. A measured ten-minute premarket window with the former
+five-second interval supplied 159 of 160 core symbol-minutes by ten seconds, but only 31 by that first cut. The shorter
+interval reduces polling delay within the same four-request-per-second budget; provider availability and actual
+consumer receipt still determine whether a bar arrives in time.
 
 Webull documents [five concurrent connections, a one-minute reconnect wait, and at most three pushes
 per second per connection](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/).
@@ -29,17 +42,30 @@ admission and observed data. Catalog identity hashes the sorted symbol/instrumen
 mapping. Refresh happens daily; a failed refresh leaves existing sessions running.
 
 Completed M1 [bars](https://developer.webull.com/apis/docs/reference/historical-bars/) are requested
-for every candidate in batches of 100, with real-time entitlement required and PRE/RTH/ATH sessions.
-Each sweep uses one completed UTC-minute cutoff and a five-minute recovery window. Request pacing is
+for every candidate in batches of 20, with real-time entitlement required and PRE/RTH/ATH sessions.
+The production stock-bar endpoint rejected 100 symbols with `ILLEGAL_PARAMETER` and
+`symbols size must be between 1 and 20.`; a 20-symbol request succeeded. This limit is independent of
+the streaming subscription batch size. A full catalog sweep spans several minutes; cold isolation of unsupported
+symbols can exceed the five-minute recovery window. Such sweeps emit explicit gap intervals with their affected
+background symbols, excluding independently polled priorities and already rejected symbols. An empty background
+does not emit a recovery gap. `/coverage` reports each symbol's actual latest bar time.
+Each batch uses a current completed UTC-minute cutoff and a five-minute recovery window, so later
+batches do not remain pinned to an earlier sweep's window. Request pacing is
 four calls/second for market data and less than one call/second for instrument pages, below the
-[documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). HTTP 429 respects
+[documented endpoint limits](https://developer.webull.com/apis/docs/rate-limits/). Pacing reserves request starts;
+network and capture waits do not hold the endpoint lock, so a stalled catalog response does not block
+independent priority requests. HTTP 429 starts the shared cooldown when response headers arrive and respects
 numeric or HTTP-date Retry-After without truncating long cooldowns, or waits 60 seconds. The final
-429 cooldown also applies to subsequent batches. Bounded 5xx retries apply to read-only calls; uncertain subscription
+429 cooldown also applies to subsequent batches and requests already waiting for a slot. Bounded 5xx retries apply to read-only calls; uncertain subscription
 failures reconnect instead of blindly repeating side effects.
 
 One invalid symbol rejects a whole provider batch. Bisection isolates invalid symbols without
 excluding valid peers. Invalid symbols are retried after catalog refresh. Empty responses remain
-empty: no synthetic bars or implied coverage. Expired recovery windows, disconnects, failures, and
+empty: no synthetic bars or implied coverage. Webull can include an older cached bar outside the
+requested window. The raw response remains intact; coverage and archive observation indexes exclude
+out-of-window and unfinished bars without discarding their completed peers. `/coverage` counts those
+exclusions in `excludedOutOfWindowBars`. Malformed prices or non-minute timestamps still fail validation.
+Expired recovery windows, disconnects, failures, and
 unknown gaps across process starts are archived as collector gap records. Initial invalid-symbol
 discovery can take several minutes; `/coverage` reports requested, observed, invalid, and uncovered
 symbols independently.
@@ -53,13 +79,21 @@ includes session ID and topic. Authentication headers and secrets never enter th
 Numeric strings and raw provider timestamps remain unchanged. The protobuf inspector reads the
 [provider's message fields](https://developer.webull.com/apis/docs/market-data-api/data-streaming-api/)
 without converting prices or sizes to binary floating point.
+MQTT observation indexes and freshness checks use `Basic.timestamp`, which the official SDK converts
+from Unix milliseconds to UTC. Live stock `Tick.time` values contain only a clock such as `04:04:58`;
+they remain in the native payload. MQTT latency measures the provider message timestamp against receipt,
+without inferring a date or timezone for that clock. Completed bars use their native `time` field.
 
 The HTTP signer follows the official Python SDK 3.0.4 HMAC-SHA256 implementation, verified against a
 fixed independent vector and a real provider call. The older SHA1 prose example does not match the
 working backend protocol.
 
-Captures are bounded to 4 MiB, the shared queue to 16 captures, and Kafka records/fetches to 8 MiB.
-Backpressure blocks producers. An MQTT enqueue timeout retains the in-flight capture, disconnects,
+Captures are bounded to 4 MiB and Kafka records/fetches to 8 MiB. At most 17 accepted captures
+are retained across ingress and outstanding Kafka deliveries, matching the previous queue plus its
+one pending delivery. One sender submits records in ingress order; independent acknowledgments return
+capacity without waiting for another partition. Coverage advances only after Kafka acknowledges each
+capture. Backpressure blocks producers. The `webull_kafka_ack_seconds` timer records actual producer
+acknowledgment duration separately from downstream archive lag. An MQTT enqueue timeout retains the in-flight capture, disconnects,
 and transfers it to the publisher before reconnecting, even if normal backpressure lasts beyond five
 seconds. Only service shutdown imposes a drain deadline. Graceful shutdown stops inputs first and allows the independently
 owned publisher up to 20 seconds to drain accepted captures; an exhausted deadline logs a gap.
@@ -110,7 +144,8 @@ isolation, exact decimal/timestamp serialization, unfinished-bar rejection, arch
 unchanged existing Flink operator IDs.
 
 The installed main accepts `probe` for a bounded direct HTTP/MQTT authentication/admission check.
-It opens a provider connection, so do not run it alongside five production sessions.
+Do not run it alongside the production collector: another streaming subscriber using the same backend
+key can take over delivery even when the production connection remains online.
 
 The production service exposes `/healthz`, `/readyz`, `/coverage`, and `/metrics` on port 8080.
 Readiness establishes recent Kafka acknowledgments and admitted connections; actual market delivery
@@ -137,3 +172,14 @@ Runtime acceptance also requires the deployed revision/digest, a controlled rest
 new session/subscription receipts, and archive replay readback. Local tests or admitted subscriptions
 alone do not establish production acceptance. A closed market can leave active-market verification
 pending after infrastructure deployment.
+
+## Normalized research bars
+
+The existing Flink archive additionally indexes validated completed M1 bars in
+`signal.webull_market_events_v1.minute_bars`, preserving native decimal strings and `PRE`/`RTH`/`ATH` sessions.
+`bar_requests` retains per-requested-symbol `OBSERVED`, `EMPTY`, `EXCLUDED`, `OMITTED` and `REJECTED` states.
+Raw envelopes and source coordinates remain the archive identity; recovery repeats are collapsed at research read time.
+The projected `signal.webull_research_events_v1` view excludes raw payload bytes. Bayn's
+[`bayn-webull-research`](../../bayn/README.md#webull-research-ingestion) command reads it without changing trading inputs.
+Existing rows are not rewritten by adding these indexes; retained rejected captures require explicit replay through
+the corrected archive decoder with their original envelope and Kafka coordinates.

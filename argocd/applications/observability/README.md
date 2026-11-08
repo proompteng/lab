@@ -78,6 +78,11 @@ The rules use the existing `notify: email` route. Native Prometheus scenarios in
 exercise firing delays, recovery, idle promotions and missing observations. Argo health and scrape health remain
 infrastructure evidence; application acceptance still requires actual authorized connector results and durable receipts.
 
+`PlatformApplicationUnhealthy` owns Tengri's Argo health alert too, so one unhealthy application produces one alert.
+Restate replica scrape and failure-detector degradation warn after five minutes, allowing a short single-node
+replacement. Missing metadata quorum still pages after two minutes, including when all metadata telemetry disappears.
+[Restate scenarios](tests/restate-alerts.yaml) exercise both recovery and sustained quorum loss.
+
 ## Required buckets
 
 - `loki-data`
@@ -190,6 +195,19 @@ reviewed Alertmanager revision bump, as described in the [email runbook](../../.
 Ceph host read-latency incidents have a dedicated route with ten-second first delivery, fifteen-minute updates and
 four-hour repeats. Their stable node identity and ten-minute recovery hold avoid OSD membership churn while the
 annotations retain individual OSD latencies. Other critical Ceph alerts keep the general critical route.
+
+Ceph queue wait, commit latency, health warning and scrub-debt incidents require ten continuous minutes of recovery
+before resolving. Detection thresholds and firing delays are unchanged. The generic health warning excludes
+scrub-only debt, which has its own thirty-minute alert. Any additional active health check keeps the generic warning,
+and missing detail telemetry cannot suppress it. Its notification lists the active check names. Review a retained
+crash with `ceph crash info <id>` before acknowledging that exact report with `ceph crash archive <id>`;
+archiving preserves the crash evidence and leaves new-crash detection enabled.
+
+PVC free-space alerts retain the 15% warning for thirty minutes and 5% critical for ten minutes.
+The critical rule excludes capacity-only block-device observations with both available and used bytes zero.
+Alloy retains kubelet used bytes alongside available and capacity bytes. Missing used-byte telemetry leaves
+critical detection enabled, and any positive used-byte observation preserves detection of a completely full filesystem.
+Raw block-device capacity does not establish free space inside a VM; that requires guest filesystem telemetry.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`

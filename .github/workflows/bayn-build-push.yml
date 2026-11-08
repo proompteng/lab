@@ -10,8 +10,10 @@ on:
       - main
     paths:
       - 'services/bayn/**'
-      # PR validation covers tests; test-only commits must not reactivate the production controller.
+      # PR validation covers tests and the service README; neither should reactivate the production controller.
       - '!services/bayn/**/*.test.ts'
+      - '!services/bayn/formal/**'
+      - '!services/bayn/README.md'
       - 'packages/scripts/src/bayn/**'
       - 'nix/images/bayn.nix'
       - 'nix/images/opencode-cli.nix'

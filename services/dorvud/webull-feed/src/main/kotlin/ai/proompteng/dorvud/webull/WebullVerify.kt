@@ -173,6 +173,7 @@ internal suspend fun verifyWebullArchive(
   val archiveLags = mutableListOf<Long>()
   var nativeBytes = 0L
   var kafkaBytes = 0L
+  var outOfWindowBars = 0L
   for ((coordinate, record) in sampled) {
     val capture = decodeWebullCapture(record.value())
     nativeBytes += capture.bytes().size
@@ -191,6 +192,7 @@ internal suspend fun verifyWebullArchive(
     archiveLags +=
       Duration.between(Instant.parse(capture.receivedAt), Instant.ofEpochSecond(ns / 1_000_000_000, ns % 1_000_000_000)).toMillis()
     val parsed = runCatching { inspectWebullCapture(capture) }.getOrNull() ?: continue
+    outOfWindowBars += parsed.outOfWindowBars
     val channel = if (capture.source is WebullSource.Mqtt) "mqtt.${parsed.channel}" else parsed.channel
     for (observation in parsed.observations) {
       observed.getOrPut(channel) { mutableSetOf() }.add(observation.symbol)
@@ -246,6 +248,14 @@ internal suspend fun verifyWebullArchive(
       put("pipelineVerified", mismatches == 0)
       put("activeMarketAccepted", activeMarket && mismatches == 0)
       put(
+        "providerTimestampBasis",
+        buildJsonObject {
+          put("mqtt.quotes", "protobuf.Basic.timestamp")
+          put("mqtt.trades", "protobuf.Basic.timestamp")
+          put("bars", "bar.time")
+        },
+      )
+      put(
         "maximumSourceAgeMillis",
         buildJsonObject {
           webullVerificationSourceAgeLimits.forEach { (channel, limit) ->
@@ -255,6 +265,7 @@ internal suspend fun verifyWebullArchive(
       )
       put("sampleNativeBytes", nativeBytes)
       put("sampleKafkaEnvelopeBytes", kafkaBytes)
+      put("sampleExcludedOutOfWindowBars", outOfWindowBars)
       put(
         "sampleObservedSymbols",
         buildJsonObject {

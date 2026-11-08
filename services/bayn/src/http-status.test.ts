@@ -1,3 +1,4 @@
+import { MarketKind } from './instruments'
 import { expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
@@ -6,6 +7,7 @@ import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome, ExecutionControllerStatusSchema } from './execution/controller-status'
 import { statusFacts } from './http'
 import { MarketFeatureDefinition } from './market-data/features/contract'
+import { InputReadinessReason } from './market-data/intraday/input-readiness'
 import { initialState } from './runtime-state'
 import { Reason as RiskReason } from './risk'
 import { strictParseOptions } from './schemas'
@@ -66,7 +68,7 @@ test('status identifies an ordinary holding wait in both pass projections', () =
 
 test('status exposes missing feature evidence without publishing free-form readiness text', () => {
   const readiness = {
-    reason: DecisionReadinessReason.SnapshotUnavailable,
+    reason: DecisionReadinessReason.SnapshotUnavailable as const,
     symbol: 'SPY',
     eventAt: observedAt,
     availableAt: '2026-09-17T14:31:00.000Z',
@@ -107,6 +109,35 @@ test('status retains historical successful pass observations without adding a re
     autonomousCycleLoop: { lastPass },
     executionController: { status: { lastPass } },
   })
+})
+
+test('status exposes fixed-size observed input counts without free-form or raw payload fields', () => {
+  const inputReadiness = {
+    reason: InputReadinessReason.AllCandidatesExcluded,
+    observedAt,
+    windowStartAt: '2026-09-17T14:00:00.000Z',
+    windowEndAt: observedAt,
+    requiredFeatureDefinition: MarketFeatureDefinition.ObservedPriceWindow,
+    candidateCount: 15,
+    matchingFeatureCandidateCount: 0,
+    completedBarCandidateCount: 15,
+  }
+  const response = responseWithPass({
+    result: 'SUCCESS',
+    outcome: 'RECOVERED',
+    observedAt,
+    readiness: {
+      reason: DecisionReadinessReason.SnapshotUnavailable,
+      message: 'private-account-identity',
+      inputReadiness: Object.assign({}, inputReadiness, { rawPayload: 'private-quote-payload' }),
+    },
+  })
+  expect(response).toMatchObject({
+    autonomousCycleLoop: { lastPass: { readiness: { inputReadiness } } },
+    executionController: { status: { lastPass: { readiness: { inputReadiness } } } },
+  })
+  expect(JSON.stringify(response)).not.toContain('private-')
+  expect(JSON.stringify(response)).not.toContain('rawPayload')
 })
 
 test('status exposes breached account limits in both projections and wait modes without publishing the message', () => {
@@ -194,4 +225,11 @@ test('status classifies failures in both pass projections without exposing their
     executionController: { status: { lastPass: projected } },
   })
   expect(JSON.stringify(response)).not.toContain('private-account-identity')
+})
+
+test('status exposes the enforced equity-only entry scope', () => {
+  expect(responseWithPass(undefined).tradingScope).toEqual({
+    entryMarkets: [MarketKind.Equity],
+    existingPositionExits: 'NORMAL_CAPITAL_AND_RISK_CHECKS',
+  })
 })

@@ -142,7 +142,7 @@ describe('KafkaProducerLayer', () => {
 
     const { runtime } = createRuntime()
     const kafka = await runtime.runPromise(
-      Effect.gen(function* (_) {
+      Effect.gen(function* () {
         return yield* KafkaProducer
       }),
     )
@@ -168,7 +168,7 @@ describe('KafkaProducerLayer', () => {
 
     const { runtime } = createRuntime()
     const kafka = await runtime.runPromise(
-      Effect.gen(function* (_) {
+      Effect.gen(function* () {
         return yield* KafkaProducer
       }),
     )
@@ -194,12 +194,43 @@ describe('KafkaProducerLayer', () => {
 
     const { runtime } = createRuntime()
     await runtime.runPromise(
-      Effect.gen(function* (_) {
+      Effect.gen(function* () {
         return yield* KafkaProducer
       }),
     )
 
     await runtime.dispose()
     expect(producer.disconnect).toHaveBeenCalled()
+  })
+
+  it('boots synchronously and acknowledges concurrent publishes in FIFO order', async () => {
+    const producer = createProducer()
+    const firstSend = Promise.withResolvers<void>()
+    producer.send.mockImplementationOnce(() => firstSend.promise)
+    producerFactory.mockReturnValue(producer)
+    const { runtime } = createRuntime()
+    const kafka = runtime.runSync(
+      Effect.gen(function* () {
+        return yield* KafkaProducer
+      }),
+    )
+    const acknowledged: number[] = []
+    try {
+      const published = [1, 2, 3].map((number) =>
+        runtime.runPromise(kafka.publish({ ...baseMessage, key: String(number) })).then(() => {
+          acknowledged.push(number)
+        }),
+      )
+      await vi.waitFor(() => expect(producer.send).toHaveBeenCalledTimes(1))
+      expect(acknowledged).toEqual([])
+      firstSend.resolve()
+      await Promise.all(published)
+      expect(acknowledged).toEqual([1, 2, 3])
+      expect(producer.send.mock.calls.map(([request]) => request.messages[0].key)).toEqual(['1', '2', '3'])
+    } finally {
+      firstSend.resolve()
+      await runtime.dispose()
+    }
+    expect(producer.disconnect).toHaveBeenCalledTimes(1)
   })
 })

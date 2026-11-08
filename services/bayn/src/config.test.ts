@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ConfigProvider, Effect, Redacted, Result } from 'effect'
+import { ConfigProvider, Effect, FileSystem, Redacted, Result } from 'effect'
+import { ValkeyCache } from './valkey-cache'
+import { PgClient } from '@effect/sql-pg'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
@@ -14,11 +16,20 @@ import {
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
-import { executionControllerConfig, executionControllerPlanHash } from './composition/native-execution-runtime'
+import { executionControllerConfig } from './composition/native-execution-runtime'
+import { executionControllerPlanHash } from './execution/controller'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
+import { captureQualificationRuntime, qualificationRuntime } from './system-assessment/configuration'
 import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
+import { MarketKind } from './instruments'
+import { captureSystemSourceCut } from './system-assessment/capture'
+import { registrationFixture } from './system-assessment/fixtures.test-support'
+import { JevAcceptanceVersion } from './jev/acceptance'
+import { operationalRegistrationFixture } from './system-assessment/operational-period.test-support'
+import { qualificationDeadlines } from './system-assessment/configuration'
+import { makeBrokerIdentity } from './broker/identity'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -463,6 +474,175 @@ describe('runtime configuration loading', () => {
     })
   })
 
+  test('reporting binds the native controller plan without an optional read-only status expectation', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.delete('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
+    const config = await Effect.runPromise(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment))
+    expect(config.expectedExecutionControllerPlanHash).toBeUndefined()
+    const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
+    expect(qualificationRuntime(config, protocol).controllerPlanHash).toBe(executionControllerPlanHash)
+    expect(
+      qualificationRuntime({ ...config, expectedExecutionControllerPlanHash: '6'.repeat(64) }, protocol)
+        .controllerPlanHash,
+    ).toBe(executionControllerPlanHash)
+  })
+
+  test.each([false, true])(
+    'captures a retained null-plan registration through the current runtime builder (scoped=%s)',
+    async (scoped) => {
+      const environment = new Map(runtimeEnvironment)
+      environment.delete('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
+      const config = await Effect.runPromise(
+        provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment),
+      )
+      const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
+      const current = qualificationRuntime(config, protocol)
+      const { entryMarkets: _scope, ...unscoped } = current
+      const configuration = { ...(scoped ? current : unscoped), controllerPlanHash: null }
+      const registered = {
+        configuration,
+        runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(configuration)),
+      }
+      const captured = Result.getOrThrow(captureQualificationRuntime(current, registered))
+      expect(captured).toEqual({
+        runtimeConfiguration: configuration,
+        runtimeConfigurationHash: registered.runtimeConfigurationHash,
+      })
+      expect(captured.runtimeConfiguration.controllerPlanHash).toBeNull()
+      expect(captured.runtimeConfiguration.entryMarkets).toEqual(scoped ? current.entryMarkets : undefined)
+      expect(Result.getOrThrow(canonicalHashV1Result(captured.runtimeConfiguration))).toBe(
+        registered.runtimeConfigurationHash,
+      )
+      expect(current.controllerPlanHash).toBe(executionControllerPlanHash)
+      expect(registered.configuration.controllerPlanHash).toBeNull()
+      expect(config.execution.capitalAuthority._tag).toBe(CapitalAuthorityKind.None)
+      expect(
+        Result.isFailure(
+          captureQualificationRuntime({ ...current, operationTimeoutMs: current.operationTimeoutMs + 1 }, registered),
+        ),
+      ).toBe(true)
+      expect(
+        Result.isFailure(
+          captureQualificationRuntime(
+            { ...current, protocol: { ...protocol, maximumDecisionLagMs: protocol.maximumDecisionLagMs + 1 } },
+            registered,
+          ),
+        ),
+      ).toBe(true)
+      if (scoped)
+        expect(
+          Result.isFailure(captureQualificationRuntime({ ...current, entryMarkets: [MarketKind.Crypto] }, registered)),
+        ).toBe(true)
+    },
+  )
+
+  test.each([JevAcceptanceVersion.Current, JevAcceptanceVersion.RetainedV5])(
+    'operational capture preserves version %s clocks after reporting upgrades and still requires registered capital',
+    async (version) => {
+      const loaded = await Effect.runPromise(
+        provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
+      )
+      const config = {
+        ...loaded,
+        execution: {
+          ...loaded.execution,
+          brokerIdentity: Result.getOrThrow(
+            makeBrokerIdentity({
+              schemaVersion: 'bayn.broker-identity.v2',
+              provider: BrokerProvider.Alpaca,
+              environment: BrokerEnvironment.Sandbox,
+              accountId: alpacaAccountId,
+            }),
+          ),
+        },
+      }
+      const current = qualificationRuntime(config, Result.getOrThrow(loadActiveStrategyProtocol()))
+      const base = operationalRegistrationFixture(registrationFixture(undefined, 1, version))
+      const configuration = { ...base.obligations.configuration, controllerPlanHash: null }
+      const registration = {
+        ...base,
+        obligations: {
+          ...base.obligations,
+          ...Result.getOrThrow(qualificationDeadlines(configuration)),
+          configuration,
+        },
+      }
+      const before = JSON.stringify(registration)
+      const registrationHash = Result.getOrThrow(canonicalHashV1Result(registration))
+      let accountReads = 0
+      const run = (runtime: typeof config, payload: unknown = registration) => {
+        const sql = ((strings: TemplateStringsArray) => {
+          const query = strings.join('?')
+          if (query.includes('FROM system_qualification_registrations')) return Effect.succeed([{ payload }])
+          if (query.includes('FROM authority_generations')) {
+            accountReads += 1
+            return Effect.succeed([])
+          }
+          return Effect.die(new Error('Unexpected capture query'))
+        }) as unknown as PgClient.PgClient
+        return Effect.runPromise(
+          captureSystemSourceCut(runtime, registrationHash).pipe(
+            Effect.provideService(ValkeyCache, {
+              get: () => Effect.die('Foreign-account capture must not read broker material'),
+              put: () => Effect.die('Foreign-account capture must not write cache'),
+              putAll: () => Effect.die('Foreign-account capture must not write cache'),
+              remove: () => Effect.die('Foreign-account capture must not remove cache'),
+            }),
+            Effect.provideService(PgClient.PgClient, sql),
+            Effect.provide(FileSystem.layerNoop({})),
+            Effect.flip,
+          ),
+        )
+      }
+      // Stop at the independent account-binding gate, without a broker, ledger, or capture write.
+      const captured = await run(config)
+      expect(captured.cause).toMatchObject({
+        cause: { message: 'Operational capture account differs from its capital binding' },
+      })
+      expect(accountReads).toBe(1)
+      const drifted = await run({ ...config, operationTimeoutMs: config.operationTimeoutMs + 1 })
+      expect(drifted.cause).toMatchObject({
+        cause: { message: 'Operational capture account differs from its capital binding' },
+      })
+      expect(accountReads).toBe(2)
+      const tampered = await run(config, {
+        ...registration,
+        obligations: {
+          ...registration.obligations,
+          configuration: { ...configuration, operationTimeoutMs: configuration.operationTimeoutMs + 1 },
+        },
+      })
+      expect(tampered.cause).toMatchObject({ message: 'System registration read failed' })
+      expect(accountReads).toBe(2)
+      expect(JSON.stringify(registration)).toBe(before)
+      expect(Result.getOrThrow(canonicalHashV1Result(registration))).toBe(registrationHash)
+      expect(registration.obligations.configuration.controllerPlanHash).toBeNull()
+      expect(registration.obligations.configuration.entryMarkets).toEqual(current.entryMarkets)
+    },
+  )
+
+  test('keeps scoped capture bound to the native controller plan from the runtime builder', async () => {
+    const config = await Effect.runPromise(
+      provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
+    )
+    const current = qualificationRuntime(config, Result.getOrThrow(loadActiveStrategyProtocol()))
+    const registered = {
+      configuration: current,
+      runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(current)),
+    }
+    expect(Result.getOrThrow(captureQualificationRuntime(current, registered)).runtimeConfiguration).toEqual(current)
+    for (const controllerPlanHash of [null, expectedExecutionControllerPlanHash]) {
+      const configuration = { ...current, controllerPlanHash }
+      const different = {
+        configuration,
+        runtimeConfigurationHash: Result.getOrThrow(canonicalHashV1Result(configuration)),
+      }
+      if (controllerPlanHash !== null)
+        expect(Result.isFailure(captureQualificationRuntime(current, different))).toBe(true)
+      expect(Result.isFailure(captureQualificationRuntime(configuration, registered))).toBe(true)
+    }
+  })
+
   test('keeps strategy and controller identities independent of stale historical settings', async () => {
     const environment = new Map(runtimeEnvironment)
     const parameterHash = Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(loadActiveStrategyProtocol())))
@@ -506,9 +686,12 @@ describe('runtime configuration loading', () => {
     expect(streaming.kafka?.brokers).toEqual(['one:9092', 'two:9092'])
     expect(streaming.kafka?.bootstrapTimeoutMs).toBe(300000)
     expect(streaming.kafka?.technicalFeaturesTopic).toBeUndefined()
+    expect(streaming.kafka?.webullBarsTopic).toBeUndefined()
     environment.set('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC', 'torghut.technical-features.v1')
+    environment.set('BAYN_KAFKA_WEBULL_BARS_TOPIC', 'dorvud.webull.raw.v1')
     const technical = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
     expect(technical.kafka?.technicalFeaturesTopic).toBe('torghut.technical-features.v1')
+    expect(technical.kafka?.webullBarsTopic).toBe('dorvud.webull.raw.v1')
     expect(JSON.stringify(streaming.kafka)).not.toContain('never-print-kafka-secret')
     for (const unsupportedDeadline of ['1', '120000', '300001']) {
       environment.set('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS', unsupportedDeadline)

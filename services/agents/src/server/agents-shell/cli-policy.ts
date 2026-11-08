@@ -1,3 +1,5 @@
+import { AgentsShellRuntimeError } from './errors'
+
 const READ_ONLY_GIT_COMMANDS = new Set([
   'status',
   'diff',
@@ -201,19 +203,27 @@ export const readOnlyGitArgs = (args: readonly string[]): string[] => {
   throw new Error(`git supports read-only repository inspection only; use git_write for git ${command}`)
 }
 
+const kubectlAdminRequired = (command: string) =>
+  new AgentsShellRuntimeError({
+    code: 'KUBECTL_REQUIRES_ADMIN',
+    message:
+      `kubectl rejects ${command} before execution; use kubectl_admin with the same arguments. ` +
+      'Pod exec requires that tool even for read-only diagnostics. This is a local tool-policy rejection, not a Kubernetes permission failure. ' +
+      'If it is not listed, rediscover kubectl_admin or refresh the full connector catalog before reporting it unavailable. ' +
+      'The handoff does not authorize mutations or broader permissions.',
+  })
+
 export const requireReadOnlyKubectlArgs = (args: readonly string[]) => {
   const index = commandIndex(args, KUBECTL_GLOBAL_VALUES, KUBECTL_GLOBAL_FLAGS)
   const command = args[index]
   const subcommand = () => args[commandIndex(args, KUBECTL_GLOBAL_VALUES, KUBECTL_GLOBAL_FLAGS, index + 1)]
   if (READ_ONLY_KUBECTL_COMMANDS.has(command)) {
     if (command === 'auth' && !READ_ONLY_KUBECTL_AUTH_COMMANDS.has(subcommand() ?? '')) {
-      throw new Error(
-        'kubectl auth supports read-only subcommands only; use kubectl_admin for other kubectl auth calls',
-      )
+      throw kubectlAdminRequired('auth changes')
     }
     return
   }
   if (command === 'rollout' && READ_ONLY_KUBECTL_ROLLOUT_COMMANDS.has(subcommand() ?? '')) return
   if (command === 'config' && subcommand() === 'current-context') return
-  throw new Error(`kubectl supports read-only cluster inspection only; use kubectl_admin for kubectl ${command}`)
+  throw kubectlAdminRequired(command)
 }

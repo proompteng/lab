@@ -2,7 +2,6 @@
 set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-service_dir="$(dirname -- "$project_dir")"
 
 if [[ $# -ne 0 ]]; then
   echo 'Usage: bun run --filter @proompteng/bayn verify:formal' >&2
@@ -34,4 +33,4 @@ lean_prefix="$(lean --print-prefix)"
 bash check.sh
 
 export BAYN_FORMAL_EXECUTABLE="$project_dir/.lake/build/bin/bayn-model"
-bun test "$service_dir/src/system-assessment/formal-conformance.test.ts"
+bun test "$project_dir/conformance/lean.test.ts" "$project_dir/conformance/export.test.ts" "$project_dir/conformance/economics.test.ts" "$project_dir/conformance/reliability.test.ts" "$project_dir/conformance/safety.test.ts"

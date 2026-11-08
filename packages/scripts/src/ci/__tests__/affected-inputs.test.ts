@@ -620,3 +620,69 @@ test('CLI compares a PR against the merge base, retains push publication, and wr
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('Bayn separates formal checks from runtime validation and publication', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-ci.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing Bayn change detection')
+  const inputs = property(
+    steps.find((step) => property(step, 'id') === 'filter'),
+    'with',
+  )
+  const targets = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  const lock = { ...before, workspaces: { ...before.workspaces, 'packages/scripts': { name: 'scripts' } } }
+  for (const path of [
+    'services/bayn/formal/Bayn/Reliability.lean',
+    'services/bayn/formal/tla/Controller.tla',
+    'services/bayn/formal/conformance/economics.test.ts',
+    '.github/workflows/bayn-formal.yml',
+  ])
+    expect(selectAffectedInputs([path], targets, lock, lock)).toEqual({ bayn: false, image: false, formal: true })
+  expect(selectAffectedInputs(['services/bayn/src/execution/controller.ts'], targets, lock, lock)).toEqual({
+    bayn: true,
+    image: true,
+    formal: true,
+  })
+  expect(selectAffectedInputs(['argocd/applications/bayn/configmap.yaml'], targets, lock, lock)).toEqual({
+    bayn: true,
+    image: false,
+    formal: false,
+  })
+  expect(selectAffectedInputs(['apps/landing/src/index.ts'], targets, lock, lock)).toEqual({
+    bayn: false,
+    image: false,
+    formal: false,
+  })
+  const publication: unknown = Bun.YAML.parse(readFileSync('.github/workflows/bayn-build-push.yml', 'utf8'))
+  const paths = property(property(property(publication, 'on'), 'push'), 'paths')
+  if (!Array.isArray(paths) || !paths.every((path): path is string => typeof path === 'string'))
+    throw new Error('Missing publication paths')
+  for (const path of [
+    'services/bayn/formal/Bayn/Reliability.lean',
+    'services/bayn/formal/tla/Controller.tla',
+    'services/bayn/formal/conformance/economics.test.ts',
+    'services/bayn/README.md',
+    'services/bayn/src/jev/entry-economics.test.ts',
+  ])
+    expect(matchesPaths(path, paths)).toBe(false)
+  expect(matchesPaths('services/bayn/src/execution/controller.ts', paths)).toBe(true)
+  for (const path of [
+    'services/bayn/src/jev/entry-economics.ts',
+    'services/bayn/migrations/20261106-cost-evidence.sql',
+    'services/bayn/package.json',
+    'nix/images/bayn.nix',
+    'argocd/applications/bayn/configmap.yaml',
+    'bun.lock',
+  ])
+    expect(['services/bayn/README.md', path].some((changed) => matchesPaths(changed, paths))).toBe(true)
+  expect(selectAffectedInputs(['services/bayn/README.md'], targets, lock, lock)).toEqual({
+    bayn: true,
+    image: true,
+    formal: false,
+  })
+})

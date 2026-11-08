@@ -1,7 +1,7 @@
 import { isProtectedEntryTarget } from '../strategy/runtime-decision'
 import { Effect, Option } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { BrokerMutationError, MutationOperation } from '../broker/alpaca-mutations/model'
 import type { AutonomousCycle } from '../cycle/model'
 import {
   intentPlanSchemaVersion,
@@ -197,27 +197,33 @@ export const advancePositionProtection = (request: {
           management._tag === 'Exit' ? management.target : undefined,
         )
         .pipe(
-          Effect.catchTag('BrokerMutationError', (cause) =>
-            Effect.logWarning('Protective cancellation requires broker reconciliation').pipe(
-              Effect.annotateLogs({ brokerOrderId: order.brokerOrderId, failure: cause._tag }),
-              Effect.as(true),
-            ),
-          ),
+          Effect.catch((cause) => {
+            if (!(cause instanceof BrokerMutationError)) return Effect.fail(cause)
+            return Effect.logWarning('Protective cancellation requires broker reconciliation').pipe(
+              Effect.annotateLogs({
+                brokerOrderId: order.brokerOrderId,
+                failure: cause.failure,
+                outcome: cause.outcome,
+              }),
+              Effect.andThen(Effect.succeed(wait('PROTECTION_CANCEL_PENDING'))),
+            )
+          }),
         )
-      return advanced
-        ? ({
-            _tag: 'PostMutationReconciliation',
-            cycle,
-            delayMs: 5_000,
-            observedAt,
-            logContext: {
-              cycleId: cycle.identity.cycleId,
-              intentId: order.intentId,
-              mutationAction: 'CANCEL',
-              mutationPhase: 'CLOSE',
-            },
-          } as const)
-        : wait('PROTECTION_CANCEL_PENDING')
+      if (advanced._tag === 'Accepted' && advanced.phase === 'Fresh')
+        return {
+          _tag: 'PostMutationReconciliation',
+          cycle,
+          delayMs: 5_000,
+          observedAt,
+          logContext: {
+            cycleId: cycle.identity.cycleId,
+            intentId: order.intentId,
+            mutationAction: 'CANCEL',
+            mutationPhase: 'CLOSE',
+          },
+        } as const
+      if (advanced._tag === 'Accepted') return wait('PROTECTION_PUBLICATION_PENDING')
+      return wait('PROTECTION_CANCEL_PENDING')
     }
     if (action._tag === 'Complete') {
       if (state.positions.some((position) => BigInt(position.quantityAtoms) !== 0n))

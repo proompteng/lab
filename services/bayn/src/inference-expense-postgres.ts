@@ -4,6 +4,11 @@ import { Context, Effect, Schema } from 'effect'
 import { canonicalHashV1Result } from './hash'
 import { InferenceCostError } from './inference-costs'
 import {
+  makeJevTerminalBatchSettlementCursor,
+  settleExpiredTerminalJevBatches,
+  type JevTerminalBatchSettlementCursor,
+} from './db/jev-batch-postgres'
+import {
   decodeInferenceExpenseQuote,
   inferenceExpenseBatchSize,
   inferenceExpenseCoverageFrom,
@@ -27,8 +32,6 @@ const ReportRowSchema = Schema.Struct({
 export const decodeInferenceExpenseSessionRows = (input: unknown, sessionDate: string) =>
   Effect.gen(function* () {
     const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ReportRowSchema), strictParseOptions)(input)
-    if (rows.length > 10_000)
-      return yield* new InferenceCostError({ message: 'Inference expense session exceeds the complete-report limit' })
     return yield* Effect.forEach(rows, (row) =>
       Effect.gen(function* () {
         const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
@@ -43,6 +46,7 @@ export const makeInferenceExpenseStore = (
   sql: PgClient.PgClient,
   accountId: string,
   coverageFrom = inferenceExpenseCoverageFrom,
+  settlementCursor: JevTerminalBatchSettlementCursor = makeJevTerminalBatchSettlementCursor(accountId),
 ) => {
   const source = sql.literal(`jsonb_build_object(
     'accountId', cycle.account_id, 'sessionDate', cycle.execution_session_date::text,
@@ -57,53 +61,32 @@ export const makeInferenceExpenseStore = (
       'terminals',COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb),
       'skips',COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb)
     )) ELSE '{}'::jsonb END`)
-  const newSources = sql<Record<string, unknown>>`
-    WITH pending_requests AS MATERIALIZED (
-      SELECT request.request_id
-      FROM autonomous_cycles AS cycle
-      JOIN jev_evaluation_requests AS request ON request.cycle_id = cycle.cycle_id
-      LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
-      LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
-      LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
-      LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
-      LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
-      LEFT JOIN inference_expense_quotes AS quote ON quote.request_id = request.request_id
-        AND quote.handoff_hash IS NOT DISTINCT FROM CASE
-          WHEN request.schema_version='bayn.jev-evaluation-request.v3' AND (
-            EXISTS (SELECT 1 FROM jev_staged_dispatch_claims WHERE request_id=request.request_id AND stage=quote.provider_stage)
-            OR EXISTS (SELECT 1 FROM jev_staged_skip_receipts WHERE request_id=request.request_id AND stage=quote.provider_stage)) THEN NULL
-          WHEN quote.provider_stage='CHART' AND chart_claim.request_id IS NOT NULL THEN NULL ELSE handoff.handoff_hash END
-        AND quote.chart_claim_hash IS NOT DISTINCT FROM CASE WHEN quote.provider_stage='CHART' THEN chart_claim.claim_hash ELSE NULL END
-        AND quote.chart_terminal_hash IS NOT DISTINCT FROM CASE WHEN quote.provider_stage='CHART' THEN chart_terminal.terminal_hash ELSE NULL END
-        AND quote.stage_claim_hash IS NOT DISTINCT FROM CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3'
-          THEN (SELECT claim_hash FROM jev_staged_dispatch_claims WHERE request_id=request.request_id AND stage=quote.provider_stage) ELSE NULL END
-        AND quote.stage_terminal_hash IS NOT DISTINCT FROM CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3'
-          THEN (SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=request.request_id AND stage=quote.provider_stage) ELSE NULL END
-        AND quote.stage_skip_hash IS NOT DISTINCT FROM CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3'
-          THEN (SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=request.request_id AND stage=quote.provider_stage) ELSE NULL END
-        AND quote.receipt_hash IS NOT DISTINCT FROM CASE
-          WHEN request.schema_version='bayn.jev-evaluation-request.v3' AND (
-            EXISTS (SELECT 1 FROM jev_staged_dispatch_claims WHERE request_id=request.request_id AND stage=quote.provider_stage)
-            OR EXISTS (SELECT 1 FROM jev_staged_skip_receipts WHERE request_id=request.request_id AND stage=quote.provider_stage)) THEN NULL
-          WHEN quote.provider_stage='CHART' AND chart_claim.request_id IS NOT NULL THEN NULL
-          WHEN request.schema_version='bayn.jev-evaluation-request.v3' AND quote.provider_stage IN ('CHART','BASE_START')
-            AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
-          WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
-          WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.payload #>> '{disposition,status}' <> 'READY' THEN NULL
-          ELSE receipt.receipt_hash END
+  const retireCoveredSources = (requestIds?: readonly string[]) =>
+    sql`
+    WITH covered AS MATERIALIZED (
+      SELECT pending.request_id, pending.revision
+      FROM inference_expense_source_pending AS pending
+      JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
+      JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
       WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
-        AND (resolution.request_id IS NOT NULL OR chart_claim.request_id IS NOT NULL
-          OR EXISTS (SELECT 1 FROM jev_staged_dispatch_claims WHERE request_id=request.request_id)
-          OR EXISTS (SELECT 1 FROM jev_staged_skip_receipts WHERE request_id=request.request_id))
-      GROUP BY request.request_id, request.schema_version, resolution.request_id, chart_claim.request_id
-      HAVING count(quote.request_id) < CASE
-        WHEN request.schema_version='bayn.jev-evaluation-request.v3' AND resolution.request_id IS NULL THEN
-          (SELECT count(*) FROM jev_staged_dispatch_claims WHERE request_id=request.request_id) +
-          (SELECT count(*) FROM jev_staged_skip_receipts WHERE request_id=request.request_id)
-        WHEN request.schema_version='bayn.jev-evaluation-request.v3' THEN 3
-        WHEN chart_claim.request_id IS NOT NULL AND resolution.request_id IS NULL THEN 1
-        WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
-      ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
+        AND ${requestIds === undefined ? sql.literal('TRUE') : sql`pending.request_id = ANY(${requestIds}::text[])`}
+        AND NOT inference_expense_source_needs_quotes(pending.request_id)
+    )
+    DELETE FROM inference_expense_source_pending AS pending USING covered
+    WHERE pending.request_id = covered.request_id AND pending.revision = covered.revision
+  `.pipe(Effect.asVoid)
+  const newSources = Effect.andThen(
+    retireCoveredSources(),
+    sql<Record<string, unknown>>`
+    WITH changed_sources AS MATERIALIZED (
+      SELECT request.request_id
+      FROM inference_expense_source_pending AS pending
+      JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
+      JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+      WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
+    ), pending_requests AS MATERIALIZED (
+      SELECT request_id FROM changed_sources WHERE inference_expense_source_needs_quotes(request_id)
+      ORDER BY request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
     )
     SELECT ${source} AS source
     FROM pending_requests AS pending
@@ -116,13 +99,14 @@ export const makeInferenceExpenseStore = (
     LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
     ORDER BY request.request_id COLLATE "C"
   `.pipe(
-    Effect.flatMap(
-      Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ source: InferenceExpenseSourceSchema })),
-        strictParseOptions,
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ source: InferenceExpenseSourceSchema })),
+          strictParseOptions,
+        ),
       ),
+      Effect.map((rows) => rows.map((row) => row.source)),
     ),
-    Effect.map((rows) => rows.map((row) => row.source)),
   )
   const freeze = (quotes: readonly InferenceExpenseQuote[]) =>
     Effect.gen(function* () {
@@ -165,6 +149,7 @@ export const makeInferenceExpenseStore = (
         if (row.quoteHash !== quote.quoteHash || !expected.has(quote.quoteHash))
           return yield* new InferenceCostError({ message: 'Persisted inference expense quote differs' })
       }
+      yield* retireCoveredSources([...new Set(quotes.map((quote) => quote.line.requestId))])
     }).pipe(Effect.asVoid)
   const pending = sql<Record<string, unknown>>`
     SELECT quote.quote_hash AS "quoteHash", quote.payload, ${source} AS source
@@ -198,7 +183,7 @@ export const makeInferenceExpenseStore = (
       SELECT quote_hash AS "quoteHash", payload,
         to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
       FROM inference_expense_quotes WHERE account_id = ${accountId} AND session_date = ${sessionDate}::date
-      ORDER BY quote_hash COLLATE "C" LIMIT 10001
+      ORDER BY quote_hash COLLATE "C"
     `
       return yield* decodeInferenceExpenseSessionRows(rows, sessionDate)
     })
@@ -209,5 +194,9 @@ export const makeInferenceExpenseStore = (
         Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
       ),
     )
-  return { newSources, freeze, pending, acknowledge, session, currentSession }
+  // The owner supplies a cursor that outlives each physical pass/session. Direct
+  // callers get a local hint, while the background projection keeps fair progress
+  // across its reconnects without making the hint authoritative state.
+  const settleExpiredTerminalBatches = settleExpiredTerminalJevBatches(sql, accountId, settlementCursor)
+  return { newSources, freeze, pending, acknowledge, session, currentSession, settleExpiredTerminalBatches }
 }

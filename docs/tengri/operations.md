@@ -28,9 +28,11 @@ runner, Pod-local TAP, private snapshot/root disks, and a retained 32 GiB Ceph r
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
 
-Each 8 GiB guest uses a 9 GiB host runner reservation, matching native acceptance. Artifact-copy initialization is
-bounded separately at 2 GiB. The 56 GiB namespace memory quota includes six runners, their supervisors, and the
-controller and proxy. Repeated unchanged lifecycle failures retain their condition transition time and wait for the
+Each 8 GiB guest uses a 12 GiB host runner reservation, including charged disk/snapshot cache and VMM overhead.
+The former 9 GiB limit killed an awake runner with 2.1 GiB of file cache. Artifact-copy initialization has a separate
+3 GiB limit and a 2 GiB volume. The namespace admits 75 GiB of memory requests and 81 GiB of limits for six runners,
+supervisors, controllers and retained workers. Repeated unchanged lifecycle failures retain their condition transition
+time and wait for the
 controller's retry interval instead of creating another Kubernetes status event.
 
 Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes for this migration. Only the
@@ -56,6 +58,35 @@ Keep immutable controller and guest digests from the same source revision. CRD a
 `Prune=false,Delete=false` protection. Kargo owns eligible images, Freight, and the generated `kargo/tengri` branch.
 The paired publisher must withhold discoverable aliases until both builds, component checks, artifact retention,
 and KVM acceptance pass. No operator-created image alias or digest promotion PR may bypass those gates.
+
+## Accepted runs after process loss
+
+Preserve the MicroVM UID, home PVC UID, filesystem and native operation history. Never submit the accepted input
+again. A Ready pod, journal activity, or a recorded `turn/start` result does not prove the turn completed.
+
+`authorization_required` retains the turn ID and waits for **Resume recovery** or a renewed Stop from the current
+signed-in session. Both controls update authority for the existing run. `needs_reconciliation` retains the same
+identity and backs off to one observation per minute. Neither state releases its conversation or sleep pin.
+Run-worker probes use HTTP `/healthz` on 8080; the Restate HTTP/2 listener remains on 9080.
+
+The `TengriRunStatusFailures` alert counts reads that exhausted their recovery budget. `TengriRunRecoveryBlocked`
+counts actual blocked observations, excluding workflow replay. Check Ofz audit-commit and Restate WAL-fsync latency
+alongside end-to-end reads; healthy storage and pod readiness do not establish responsive product behavior.
+
+Before deploying a changed workflow journal, settle existing accepted work on its pinned worker. If native terminal
+receipts cannot be recovered after confirmed VMM termination, an authorized incident repair must:
+
+1. Verify the exact old VMM termination, different replacement Pod UID, unchanged MicroVM/home UIDs, and original
+   native operation/thread/turn binding. Establish that dispatch occurred exactly once.
+2. Cancel only that Restate invocation through its admin API, retaining its journal. Wait for the writer to finish.
+3. Use versioned state updates to mark the existing snapshot failed with the known turn and an explicit statement
+   that external effects remain unconfirmed. Preserve other state; never fabricate a native completion receipt.
+4. Remove only its exact conversation claim and Stop record with a state-version check. Remove only its run ID
+   from the MicroVM sleep pin using UID/resource-version preconditions.
+5. Read back the retained journal, single dispatch, terminal snapshot, other conversation claims, home identity and
+   native history. Preserve the user's unfinished files. Then register the replacement worker.
+
+This repair ends the dead run; it does not resume its model execution or assert that its external effects were undone.
 
 ## Required secrets and configuration
 

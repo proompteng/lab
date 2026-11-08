@@ -501,6 +501,36 @@ describe('chat completions handler', () => {
     expect(secondClient.stop).toHaveBeenCalledTimes(1)
   })
 
+  it('passes the resolved default model to the Codex factory when the request omits it', async () => {
+    process.env.JANGAR_MODELS = 'qwen38-flamingo,gpt-6-astra'
+    process.env.JANGAR_DEFAULT_MODEL = 'qwen38-flamingo'
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-default',
+        threadId: 'thread-default',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'flamingo-ok' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    const factory = vi.fn(() => mockClient as unknown as CodexAppServerClient)
+    setCodexClientFactory(factory)
+    const response = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }], stream: true }),
+      }),
+    )
+    expect(await response.text()).toContain('flamingo-ok')
+    expect(factory).toHaveBeenCalledWith({ defaultModel: 'qwen38-flamingo' })
+    expect(mockClient.runTurnStream).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ model: 'qwen38-flamingo' }),
+    )
+  })
+
   it('does not start codex for requests that fail model validation', async () => {
     const mockClient = {
       runTurnStream: vi.fn(),
