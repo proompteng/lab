@@ -179,7 +179,7 @@ sequenceDiagram
     participant J as Jev
     participant B as Broker
     R->>W: Account-keyed tick
-    W->>W: Recover unresolved work; reconcile
+    W->>W: Recover unresolved work and reconcile
     W->>P: Persist verified observation and CHART claim
     W->>J: CHART image and verified source context
     J-->>W: Presence judgments and source Boxes
@@ -187,7 +187,7 @@ sequenceDiagram
     W->>P: Commit CHART terminal and final-call handoff
     W->>J: Setup confirmed and stop invalidates?
     J-->>W: Typed judgments
-    W->>W: Select plan; calculate quantity and check risk
+    W->>W: Select plan, calculate quantity and check risk
     W->>P: Commit decision, approved intent and SUBMIT_STARTED
     W->>W: Recheck current authority, quote and deadline
     W->>B: Native LIMIT/DAY bracket
