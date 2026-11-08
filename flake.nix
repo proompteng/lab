@@ -400,6 +400,24 @@
             '';
           };
 
+          devShells.bayn-replay = pkgs.mkShell {
+            packages = [
+              pkgs.nixVersions.nix_2_28
+              nodejs
+              exact.bun
+              pkgs.python312
+              pkgs.git
+              pkgs.docker-client
+              pkgs.docker-buildx
+              pkgs.go-containerregistry
+              pkgs.gnutar
+              pkgs.coreutils
+            ];
+            shellHook = ''
+              export LAB_NIX_TOOLCHAIN=1
+            '';
+          };
+
         };
 
     in
