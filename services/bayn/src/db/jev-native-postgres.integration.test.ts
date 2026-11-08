@@ -37,6 +37,7 @@ import { utcInstantFromEpochMillis } from '../time'
 import { NodeServices } from '@effect/platform-node'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { CryptoFeeTier } from '../broker/crypto-fees'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -632,19 +633,115 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           )
           const store = yield* IntentStore
           expect(
-            yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, {
+            (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, {
               ...management.target,
               entryDecisionHash: '9'.repeat(64),
-            }),
-          ).toBe(false)
-          expect(yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)).toBe(true)
-          expect(yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)).toBe(false)
+            }))._tag,
+          ).toBe('NotEligible')
+          const started = yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)
+          expect(started._tag).toBe('New')
+          if (started._tag !== 'New') throw new Error('Expected a new native protection cancellation command')
+          const pendingBeforeFreshObservation = yield* store.beginProtectionCancel(
+            intentId,
+            brokerOrderId,
+            observedAt,
+            management.target,
+          )
+          expect(pendingBeforeFreshObservation._tag).toBe('PendingUnknown')
+          const pendingBeforeFiveSecondWindowExpires = yield* store.beginProtectionCancel(
+            intentId,
+            brokerOrderId,
+            new Date(Date.parse(observedAt) + 1_000).toISOString(),
+            management.target,
+          )
+          expect(pendingBeforeFiveSecondWindowExpires._tag).toBe('PendingUnknown')
+          const [{ pendingCommandCount }] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ pendingCommandCount: Schema.Number })]),
+          )(
+            yield* sql`SELECT count(*)::int AS "pendingCommandCount"
+              FROM native_protection_cancel_commands
+              WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`,
+          )
+          expect(pendingCommandCount).toBe(1)
+
+          const requestHash = Result.getOrThrow(
+            canonicalHashV1Result({ operation: MutationOperation.Cancel, brokerOrderId }),
+          )
+          const contentHash = Result.getOrThrow(canonicalHashV1Result(null))
+          const validReceipt = {
+            requestHash,
+            brokerOrderId,
+            evidence: {
+              requestId: 'native-protection-cancel-receipt',
+              status: 204,
+              contentHash,
+              observedAt,
+            },
+          }
+          const invalidReceipts = [
+            ['broker order', { ...validReceipt, brokerOrderId: 'different-protective-order' }],
+            ['request hash', { ...validReceipt, requestHash: '0'.repeat(64) }],
+            ['status', { ...validReceipt, evidence: { ...validReceipt.evidence, status: 200 } }],
+            [
+              'observed time',
+              {
+                ...validReceipt,
+                evidence: {
+                  ...validReceipt.evidence,
+                  observedAt: new Date(Date.parse(observedAt) - 1_000).toISOString(),
+                },
+              },
+            ],
+          ] as const
+          for (const [label, invalidReceipt] of invalidReceipts) {
+            const attempted = yield* store
+              .recordProtectionCancelAccepted(started.command, invalidReceipt)
+              .pipe(Effect.exit)
+            if (Exit.isSuccess(attempted)) throw new Error(`Invalid ${label} receipt was accepted`)
+            expect(Cause.pretty(attempted.cause)).toContain('native protection cancel')
+          }
+          const accepted = yield* store.recordProtectionCancelAccepted(started.command, validReceipt)
+          expect(accepted._tag).toBe('Accepted')
+          const duplicate = yield* store.recordProtectionCancelAccepted(started.command, validReceipt)
+          expect(duplicate._tag).toBe('Accepted')
+          const conflicting = yield* store
+            .recordProtectionCancelAccepted(started.command, {
+              ...validReceipt,
+              evidence: { ...validReceipt.evidence, requestId: 'conflicting-native-protection-cancel-receipt' },
+            })
+            .pipe(Effect.exit)
+          if (Exit.isSuccess(conflicting)) throw new Error('Conflicting native protection receipt was accepted')
+          expect(Cause.pretty(conflicting.cause)).toContain('conflicts')
+          expect(
+            Result.isFailure(
+              yield* sql`UPDATE native_protection_cancel_receipts
+                SET request_id = 'mutated-native-protection-cancel-receipt'
+                WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`.pipe(Effect.result),
+            ),
+          ).toBe(true)
+          expect(
+            Result.isFailure(
+              yield* sql`DELETE FROM native_protection_cancel_receipts
+                WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`.pipe(Effect.result),
+            ),
+          ).toBe(true)
+          expect(
+            (yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target))._tag,
+          ).toBe('Accepted')
           const [{ count }] = yield* Schema.decodeUnknownEffect(
             Schema.Tuple([Schema.Struct({ count: Schema.Number })]),
           )(
             yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands WHERE exit_target = ${JSON.stringify(management.target)}::jsonb`,
           )
           expect(count).toBe(1)
+          const [{ receiptCount }] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ receiptCount: Schema.Number })]),
+          )(
+            yield* sql`SELECT count(*)::int AS "receiptCount"
+              FROM native_protection_cancel_receipts
+              WHERE intent_id = ${intentId} AND broker_order_id = ${brokerOrderId}`,
+          )
+          expect(receiptCount).toBe(1)
           const recovered = yield* (yield* JevPositionStore).read({
             cycleId: cycle.identity.cycleId,
             entryDecisionHash: portfolio.entryDecisionHash,
