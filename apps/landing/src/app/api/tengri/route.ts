@@ -213,16 +213,7 @@ async function runAction(request: Request) {
         result = null
         break
       case 'resume-thread':
-        return await resumeCodexThread(
-          identity,
-          action.agentId,
-          action.threadId,
-          {
-            model: action.model,
-            reasoningEffort: action.reasoningEffort,
-          },
-          request.signal,
-        )
+        return await resumeCodexThread(identity, action.agentId, action.threadId, request.signal)
       case 'send-turn':
         result = await sendCodexTurn(
           identity,

@@ -47,6 +47,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import type { Statement } from 'effect/sql/Statement'
 import type { SqlError } from 'effect/sql/SqlError'
 
+import { CycleState, CycleTerminalReason } from '../cycle/model'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { operationalError } from '../errors'
@@ -73,7 +74,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
-import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
+import { JevBatchStoreLive, makeJevBatchStore, settleExpiredTerminalJevBatches } from './jev-batch-postgres'
 import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation-postgres'
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
 import { PostgresClientLive } from './postgres-client'
@@ -1594,6 +1595,63 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             ),
           ),
         ).toBe(true)
+      }).pipe(atObservation),
+    )
+  })
+
+  test('durably settles a terminal batch after its original deadline across a fresh store', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* JevBatchStore
+        const cycles = yield* CycleStore
+        const cycleId = fixture.draft.identity.cycleId
+        const accountId = fixture.draft.identity.accountId
+        const t59 = observed + 4_000
+        const t60 = observed + 5_000
+        const t65 = observed + 10_000
+
+        yield* TestClock.setTime(t59)
+        yield* sql`UPDATE simulated_execution_clocks
+          SET observed_at = ${utcInstantFromEpochMillis(t59)}
+          WHERE account_id = ${accountId}`
+        expect((yield* store.begin(plan, fixture.observation.payload)).result).toBeNull()
+        yield* cycles.activate(cycleId, utcInstantFromEpochMillis(t59))
+        yield* TestClock.setTime(t60)
+        yield* sql`UPDATE simulated_execution_clocks
+          SET observed_at = ${utcInstantFromEpochMillis(t60)}
+          WHERE account_id = ${accountId}`
+        const terminal = yield* cycles.block(cycleId, CycleTerminalReason.Risk, utcInstantFromEpochMillis(t60))
+        expect(terminal.cycle.state).toBe(CycleState.Blocked)
+        expect((yield* store.finish(plan.batchId)).result).toBeNull()
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
+
+        yield* TestClock.setTime(t65)
+        yield* sql`UPDATE simulated_execution_clocks
+          SET observed_at = ${utcInstantFromEpochMillis(t65)}
+          WHERE account_id = ${accountId}`
+        const firstPass = yield* settleExpiredTerminalJevBatches(sql, accountId)
+        expect(firstPass).toEqual({ candidates: 1, sealed: 1, pending: 0, failed: 0 })
+        const restartedStore = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
+        const sealed = yield* restartedStore.read(plan.batchId)
+        if (sealed?.result === null || sealed === null) throw new Error('Restart did not observe the sealed batch')
+        expect(
+          sealed.result.candidates
+            .filter((candidate) => candidate.status === JevCandidateResultStatus.Resolved)
+            .every(
+              (candidate) =>
+                candidate.receipt === null && candidate.resolution.status === JevResolutionStatus.Abandoned,
+            ),
+        ).toBe(true)
+        const resultHash = sealed.result.resultHash
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_batch_results`).toEqual([{ count: 1 }])
+
+        const replay = yield* settleExpiredTerminalJevBatches(sql, accountId)
+        expect(replay).toEqual({ candidates: 0, sealed: 0, pending: 0, failed: 0 })
+        expect(yield* sql`SELECT result_hash FROM jev_batch_results`).toEqual([{ result_hash: resultHash }])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_resolutions`).toEqual([
+          { count: requested.length },
+        ])
       }).pipe(atObservation),
     )
   })

@@ -25,10 +25,9 @@ cannot identify a source. The final Jev call evaluates the resulting funded prop
 fees, risk limits and original ten-second deadline. Independent symbols can commit and continue without waiting for a
 slower chart. Historical codecs are financial readers; the client refuses new v13 dispatches.
 
-Run `node dist/jev-evaluation-command.js --verify-box` inside the verified execution-worker image. It uses that
-worker's existing TypeSafe credential and proxy and makes real image/Box and downstream Jev calls over explicitly
-identified deterministic acceptance fixtures. Its JSON receipt includes source/PNG/request/response hashes, raw
-answers, derived proposals, provider usage, elapsed time and embedded build metadata. PASS requires all cases to
-complete and at least one funded downstream judgment. It acquires no capital authority and issues no broker order.
-This proves the deployed inference path; native controller progress, exact reconciliation and restored same-account
-PAPER authority are separate required live readbacks. It does not establish trading profitability.
+The installed `bayn-jev-evaluate` command is offline: it prints the pinned instructions or verifies retained economic
+evidence. It never acquires provider credentials or dispatches inference. Verify the installed source and image
+metadata, and inspect retained provider receipts rather than spending the production key on release or health checks.
+Paid inference belongs to admitted trading work or explicitly budgeted research with durable requests and receipts.
+Native controller progress, exact reconciliation and restored same-account PAPER authority remain separate required
+live readbacks. Neither image verification nor an inference receipt establishes trading profitability.

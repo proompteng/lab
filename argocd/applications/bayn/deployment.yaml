@@ -100,6 +100,15 @@ spec:
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"248b6bf277de4008709d20f527f0481e0968813c4c6b2898c92eb872b9f1a40c","authoredActivation":{"sourceRevision":"1cebe22dcdf33746b8a6180d63fadeb0d80b1f00","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:20be6be2c16138cb29bce92bea8f4dbf4dd3e8d3d05a5a2792d2c599547c6382"},"activation":{"sourceRevision":"1cebe22dcdf33746b8a6180d63fadeb0d80b1f00","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:20be6be2c16138cb29bce92bea8f4dbf4dd3e8d3d05a5a2792d2c599547c6382"}}'
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "a528c5df0281c4f7ad5fbfcba52fa4e566e5ec49e35a4010b77f23b1c083594a"
             - name: BAYN_CYCLE_POLL_INTERVAL_MS

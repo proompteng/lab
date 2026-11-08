@@ -4,6 +4,44 @@ export const MAX_CODEX_TOTAL_IMAGE_BYTES = 8 * 1024 * 1024
 export const CODEX_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const
 export type TengriCodexImage = { mediaType: (typeof CODEX_IMAGE_MEDIA_TYPES)[number]; data: string }
 
+export type CodexImageGeneration =
+  | { status: 'generating' }
+  | { status: 'completed'; path: string }
+  | { status: 'failed'; message: string }
+  | { status: 'unavailable' }
+
+export function parseCodexGeneratedImagePath(value: string): { threadId: string; path: string } | null {
+  let path: string
+  try {
+    path = decodeURIComponent(value)
+  } catch {
+    return null
+  }
+  const match =
+    /^\/home\/nanoagent\/\.codex\/generated_images\/([a-zA-Z0-9_-]{1,160})\/([a-zA-Z0-9_-]{1,160})\.(png|jpe?g|webp)$/.exec(
+      path,
+    )
+  return match ? { threadId: match[1], path } : null
+}
+
+export function codexGeneratedImageState(item: Record<string, unknown>): CodexImageGeneration | undefined {
+  if (item.type !== 'imageGeneration') return undefined
+  if (item.status === 'failed') {
+    const failure = item.failure
+    const message =
+      failure && typeof failure === 'object' && 'message' in failure && typeof failure.message === 'string'
+        ? failure.message.slice(0, 1000)
+        : 'Image generation failed.'
+    return { status: 'failed', message }
+  }
+  if (item.status === 'in_progress' || item.status === 'inProgress') return { status: 'generating' }
+  if (item.status !== 'completed') return { status: 'unavailable' }
+  const path = typeof item.savedPath === 'string' ? item.savedPath : ''
+  return isWorkspaceImagePath(path) || parseCodexGeneratedImagePath(path)
+    ? { status: 'completed', path }
+    : { status: 'unavailable' }
+}
+
 export function codexImageMatchesMediaType(mediaType: string, bytes: Uint8Array): boolean {
   if (mediaType === 'image/png') {
     return [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)
