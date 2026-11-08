@@ -40,7 +40,13 @@ The paper reports about 1.56 million input and 2.41 million output tokens for a 
 
 The pinned author package’s model extra is installed with Python 3.12.9, Qlib 0.9.7, LightGBM 4.7.0 and NumPy 2.5.4. A checksum-verified, task-local LLVM OpenMP library resolves the macOS LightGBM dependency. Qlib and LightGBM import successfully. All 13 retained upstream offline tests and eight independent graph/numerical checks pass in that environment. The earlier Python 3.14 environment and its results remain retained.
 
-The former preflight’s missing Qlib dependency is resolved. The original bundle download and its data admission remain pending at this report cut. No model key, paid subscription, API credit or provider account has been created. No reference factor search, native strategy qualification or trading authority is established.
+The original 536,128,200-byte bundle was downloaded, matched its publisher MD5 and received SHA-256 `fbe16e9e555562a6d9d4943628aa1dcddd87afcb0be545d7891b08f9cb8882c7`. Every ZIP member passed CRC checks. All three providers were extracted with identical calendar and CSI300 file hashes.
+
+The authors’ native loader completed the unchanged reference window and warmup: 2,286 dates, 629 historical instruments and 685,511 samples. An independent audit verified all four persisted artifact hashes, matching market/exposure/mask keys, no duplicate keys and valid observed OHLC prices. Every evaluation date has at least 200 eligible instruments, exceeding the 100-stock minimum.
+
+The inputs remain sparse. Among eligible rows, 158 lack `free_turn`, three lack `returns` and 279 lack industry IDs. There are 310 missing industry IDs across all rows. Null values remain null; industry-dependent operators and neutralization exclude unknown industries. The industry point-in-time warning remains. These checks establish source integrity and observed cross-section, not factor admission, complete coverage for every expression or profit.
+
+With local path-only configuration overrides, the native Graph and Chain preflights now fail only on `LLM_API_KEY_NOT_CONFIGURED`. The original missing dependency, provider paths and industry-manifest failures are resolved. All non-path experiment settings remain unchanged. The shipped Graph and Chain defaults have different search budgets; they must be frozen to a matched comparison before a paid experiment. No model key, paid subscription, API credit or provider account has been created, and no model calls were made. No reference factor search, native strategy qualification or trading authority is established.
 
 ## Why the other public archives are not the default
 
@@ -52,4 +58,4 @@ Tushare remains a reconstruction route through `daily`, `daily_basic`, `index_me
 
 A rebuild also has a semantic trap: the author field catalog defines `turn` relative to total shares, while Tushare’s [turnover_rate](https://tushare.pro/document/2?doc_id=32) uses unrestricted floating shares. These are not interchangeable. Preserve units and adjustment conventions, and do not blend normalized Qlib volume with raw share counts. Baostock’s live historical-industry probe timed out here; that establishes a transport limitation, not the absence of historical data. A pinned public Dolt listing table was retrieved, but listing dates alone do not complete the reference inputs.
 
-Build the Lever led to reusable archive/field/date checks. Prove It Works required publisher identity, actual package imports and native preflight readback before declaring an input ready. The profitability goal remains active; source availability does not establish economic edge.
+The profitability goal remains active; source availability does not establish economic edge.

@@ -132,7 +132,11 @@ The pinned author README links the original [Zenodo data bundle](https://zenodo.
 Use that route before reconstructing or purchasing the reference data. The [input-source assessment](cosmosalpha-input-sources-2026-11-07.md)
 records the exact archive identity, dependency preparation, model-version distinction and current API pricing.
 Qlib and LightGBM now import in the supported Python environment; all 13 retained upstream tests and eight
-independent graph checks pass. Original-data download/admission and metered model access remain unfinished.
+independent graph checks pass. The original bundle is checksum-verified, extracted and loaded by the native provider:
+2,286 dates, 629 historical instruments and 685,511 samples. Independent artifact checks pass, with at least 200 eligible
+instruments per evaluation date. Industry history remains uncertified for strict point-in-time use. Eligible rows contain
+279 null industry IDs, 158 null `free_turn` values and three null `returns` values. Native preflight now fails only on the missing model key. Metered model access,
+a matched Graph/Chain experiment and economic qualification remain unfinished.
 The earlier missing default local paths did not establish that the authors had not published the dataset.
 
 ## Execution order and outstanding evidence
