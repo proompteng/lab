@@ -5,8 +5,7 @@ import {
   persistEvaluationFixture,
 } from '../jev/evaluation.test-support'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
-import { stageResponseIdentity } from '../jev/staged-checkpoint'
+import { makeInitialChartStageRequest } from '../jev/staged-chart-questions'
 import type { ReplayInferenceCall } from './inference-timing'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -295,7 +294,7 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       if (
         disposition.status !== 'READY' ||
         completion.jev.status !== 'RECEIVED' ||
-        disposition.visual.response.model !== 'jev-1.13.0'
+        disposition.visual.response.model !== 'jev-1.14.0'
       )
         throw Error('Fixture requires both provider stages')
       const visual = Result.getOrThrow(
@@ -331,51 +330,13 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       const checkpoint = stagedCheckpointFixture(request, observation.observedAt)
       const chartClaim = checkpoint.claims.find((row) => row.stage === 'CHART')
       const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
-      const baseClaim = checkpoint.claims.find((row) => row.stage === 'BASE_START')
-      const baseTerminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
-      if (
-        chartClaim === undefined ||
-        chartTerminal?.outcome.status !== 'RECEIVED' ||
-        baseClaim === undefined ||
-        baseTerminal?.outcome.status !== 'RECEIVED'
-      )
-        throw Error('Fixture requires staged evidence')
+      if (chartClaim === undefined || chartTerminal?.outcome.status !== 'RECEIVED')
+        throw Error('Fixture requires chart evidence')
       expect(Result.isFailure(yield* journal.retainCall(chartCall).pipe(Effect.result))).toBe(true)
       yield* seed(journal)
       yield* persistVisualClaimFixture(journal.handoffs, chartClaim)
       yield* journal.retainCall(chartCall)
       yield* persistVisualTransitionFixture(journal.handoffs, { terminal: chartTerminal, successor: { kind: 'NONE' } })
-      const base = Result.getOrThrow(
-        makeSelectedBaseStartStageRequest(
-          {
-            chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
-            protocol: request.request.protocol,
-            funding: request.request.funding,
-          },
-          stageResponseIdentity(chartTerminal.outcome.inference),
-        ),
-      )
-      if (
-        base.status !== 'PREPARED' ||
-        baseTerminal.outcome.status !== 'RECEIVED' ||
-        baseTerminal.outcome.inference.response.model !== 'jev-1.13.0'
-      )
-        throw Error('Fixture requires Jev base start')
-      const baseCall: ReplayInferenceCall = {
-        ...common,
-        schemaVersion: 'bayn.replay-inference-call.v4',
-        stage: 'BASE_START',
-        request: base.request,
-        requestHash: base.requestHash,
-        outcome: {
-          status: 'RECEIVED',
-          inference: { ...baseTerminal.outcome.inference, response: baseTerminal.outcome.inference.response },
-        },
-      }
-      expect(Result.isFailure(yield* journal.retainCall(baseCall).pipe(Effect.result))).toBe(true)
-      yield* persistVisualClaimFixture(journal.handoffs, baseClaim)
-      yield* journal.retainCall(baseCall)
-      yield* persistVisualTransitionFixture(journal.handoffs, { terminal: baseTerminal, successor: { kind: 'NONE' } })
       expect(Result.isFailure(yield* journal.retainCall(jevCall).pipe(Effect.result))).toBe(true)
       expect(
         Result.isFailure(
@@ -384,6 +345,6 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       ).toBe(true)
       yield* persistHandoffFixture(journal.handoffs, completion.handoff)
       yield* journal.retainCall(jevCall)
-      expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'BASE_START', 'JEV'])
+      expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'JEV'])
     }),
   ))

@@ -51,7 +51,7 @@ export const runGapRecoveryStudy = (
     )
     const priorEndpoint = yield* Effect.gen(function* () {
       const source = yield* openBacktestSource(previous.arrivalsPath, input.previousSource, runId, previous.receipt)
-      yield* source.advanceTo(session.priorAtMs)
+      yield* source.advanceTo(session.priorAtMs, (work) => work)
       const endpoint = yield* Effect.fromResult(
         observeGapRecoveryEndpoint(yield* source.cursor, session, GapEndpointKind.PreviousClose),
       )
@@ -60,11 +60,11 @@ export const runGapRecoveryStudy = (
     }).pipe(Effect.scoped)
     const result = yield* Effect.gen(function* () {
       const source = yield* openBacktestSource(current.arrivalsPath, input.currentSource, runId, current.receipt)
-      yield* source.advanceTo(session.openingAtMs)
+      yield* source.advanceTo(session.openingAtMs, (work) => work)
       const opening = yield* Effect.fromResult(
         observeGapRecoveryEndpoint(yield* source.cursor, session, GapEndpointKind.Opening),
       )
-      yield* source.advanceTo(session.decisionAtMs)
+      yield* source.advanceTo(session.decisionAtMs, (work) => work)
       const decision = yield* Effect.fromResult(
         decideGapRecovery(priorEndpoint, opening, yield* source.cursor, session),
       )

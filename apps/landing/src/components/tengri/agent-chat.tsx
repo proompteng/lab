@@ -7,6 +7,7 @@ import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
 import { TENGRI_UNARY_TIMEOUT_MS } from '@/lib/tengri/limits'
 
 import {
+  Button,
   Select,
   SelectContent,
   SelectGroup,
@@ -85,8 +86,10 @@ import {
   codexEventConfirmsRuntimeReady,
   codexEventDisplayText,
   codexEventActivityTitle,
-  codexEventIsIndependentOfThreadSnapshot,
+  codexEventImageGeneration,
+  codexEventWithThread,
   codexEventIsRuntimeError,
+  codexEventIsIndependentOfThreadSnapshot,
   codexEventKey,
   codexEventMatchesThread,
   codexEventShouldRender,
@@ -143,6 +146,8 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
       return 'Reconnecting'
     case 'cancelling':
       return 'Stopping'
+    case 'authorization_required':
+      return 'Recovery needs your current session.'
     case 'needs_reconciliation':
       return "The agent's last action could not be confirmed. Check the conversation before continuing."
     case 'accepted':
@@ -289,6 +294,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     !codexRunIsTerminal(run) &&
     (run.state.phase === 'cancelling' ||
       run.state.phase === 'needs_reconciliation' ||
+      run.state.phase === 'authorization_required' ||
       !(runTurnId && completedTurns.current.has(runTurnId))),
   )
   const showStopAction = Boolean(activeTurnId || canStopRun) && !prompt.trim() && images.length === 0
@@ -825,7 +831,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   )
 
   useEffect(() => {
-    if (!account?.authenticated || !threadId || threadReady || (!models && !modelError)) return
+    if (!account?.authenticated || !threadId || threadReady) return
     const controller = new AbortController()
     threadStartupController.current = controller
     let timer = 0
@@ -841,7 +847,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       const resumeSequence = lastEventSequence.current
       try {
         const thread = await runTengriAction<TengriCodexThread>(
-          { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
+          { action: 'resume-thread', agentId, threadId },
           controller.signal,
         )
         if (!current()) return
@@ -869,16 +875,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (threadStartupController.current === controller) threadStartupController.current = null
     }
-  }, [
-    account?.authenticated,
-    agentId,
-    commitThreadState,
-    modelError,
-    models,
-    threadId,
-    threadReady,
-    threadResumeRevision,
-  ])
+  }, [account?.authenticated, agentId, commitThreadState, threadId, threadReady, threadResumeRevision])
 
   const recoverThreadState = useCallback(() => {
     if (!threadIdRef.current || replayRecoveryRef.current) return
@@ -931,9 +928,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         return
       }
       const currentThread = threadIdRef.current
-      const event = codexEventIsRuntimeError(parsed)
-        ? parsed
-        : { ...parsed, threadId: parsed.threadId || currentThread }
+      const event = codexEventWithThread(parsed, currentThread)
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       if (
         ['thread/started', 'thread/name/updated', 'thread/archived', 'thread/unarchived', 'turn/completed'].includes(
@@ -1066,6 +1061,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           event,
           text: codexEventDisplayText(event),
           activityTitle: codexEventActivityTitle(event),
+          imageGeneration: codexEventImageGeneration(event),
           questionRequest: codexEventAsyncQuestionRequest(event),
         }))
         .filter(
@@ -1124,6 +1120,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return {
         id: item.id,
         kind: item.kind,
+        imageGeneration: update?.imageGeneration ?? item.imageGeneration,
         text: update?.text ?? item.text,
         card: update ? (
           renderEvent(update)
@@ -1134,6 +1131,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
             agentId={agentId}
             activityTitle={item.activityTitle}
+            imageGeneration={item.imageGeneration}
             kind={item.kind}
             text={item.text}
           />
@@ -1145,6 +1143,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       .map((update) => ({
         id: update.event.itemId || codexEventWrapperKey(update.event),
         kind: update.event.kind,
+        imageGeneration: update.imageGeneration,
         text: update.text,
         card: renderEvent(update),
       })),
@@ -1207,6 +1206,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       id: prompt.id,
       kind: 'user-message',
       text: prompt.text,
+      imageGeneration: undefined,
       card: (
         <CodexEventCard
           key={prompt.id}
@@ -1219,7 +1219,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     })
   }
 
-  function renderEvent({ event, text, activityTitle, questionRequest }: (typeof renderedEvents)[number]) {
+  function renderEvent({
+    event,
+    text,
+    activityTitle,
+    questionRequest,
+    imageGeneration,
+  }: (typeof renderedEvents)[number]) {
     if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest, text)
     const question = codexQuestionRequest(event)
     if (question)
@@ -1244,6 +1250,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         key={codexEventWrapperKey(event)}
         agentId={agentId}
         activityTitle={activityTitle}
+        imageGeneration={imageGeneration}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
         approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
@@ -1544,7 +1551,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     }
     const resumeSequence = lastEventSequence.current
     const thread = threadId
-      ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
+      ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
     if (conversationSelection.current !== selectedConversation) {
       if (!threadId && creatingDraftRef.current?.selection === selectedConversation) {
@@ -1557,8 +1564,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     if (!threadId) {
       creatingDraftRef.current = null
       draftsRef.current.delete('')
-      const assignThread = (event: CodexBufferedEvent) =>
-        event.threadId || codexEventIsRuntimeError(event) ? event : { ...event, threadId: thread.id }
+      const assignThread = (event: CodexBufferedEvent) => codexEventWithThread(event, thread.id)
       retainedEvents.current = retainedEvents.current.map(assignThread)
       const retained = retainedEvents.current.filter((event) => codexEventMatchesThread(event, thread.id))
       setEvents((current) => retained.reduce((next, event) => appendCodexEvent(next, event), current.map(assignThread)))
@@ -1637,6 +1643,29 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       setError(cause instanceof Error ? cause.message : 'Codex device login could not be started')
     } finally {
       setLoginBusy(false)
+    }
+  }
+
+  async function recoverRun() {
+    if (!runMatchesThread || interrupting) return
+    const recoveredThread = threadId
+    setInterrupting(true)
+    setError('')
+    const key = `tengri-recover:${runId}`
+    let operationId: string | undefined
+    try {
+      const op = await prepareCodexOperation(key, { runId }, '')
+      operationId = op.id
+      await runTengriAction({ action: 'recover-run', agentId, runId, operationId: op.id })
+      completeCodexOperation(key, op.id)
+      setRunRecoveryRevision((current) => current + 1)
+    } catch (cause) {
+      if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId)
+        completeCodexOperation(key, operationId)
+      if (threadIdRef.current === recoveredThread)
+        setError(cause instanceof Error ? cause.message : 'Run recovery could not be requested')
+    } finally {
+      setInterrupting(false)
     }
   }
 
@@ -2001,9 +2030,24 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                   ),
                 )}
                 {runActivity ? (
-                  <p role="status" aria-label="Agent activity" className="text-copy-14 text-zinc-400">
-                    {runActivity}
-                  </p>
+                  <div
+                    role="status"
+                    aria-label="Agent activity"
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-copy-14 text-zinc-400"
+                  >
+                    <span>{runActivity}</span>
+                    {run?.state.phase === 'authorization_required' || run?.state.phase === 'needs_reconciliation' ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={interrupting}
+                        onClick={() => void recoverRun()}
+                      >
+                        {run.state.phase === 'authorization_required' ? 'Resume recovery' : 'Check again'}
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {responsePending && !approvalPending && !runActivity ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">

@@ -24,6 +24,7 @@ on:
       - 'bun.lock'
       - '.github/scripts/install-tengri-chromium.mjs'
       - 'nix/images/ofz.nix'
+      - 'nix/images/agentrun-tools.nix'
       - 'nix/tengri-schema-hash.py'
       - 'nix/packages.nix'
       - 'flake.nix'
@@ -109,10 +110,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler python3
-      - uses: bufbuild/buf-setup-action@v1
+      - uses: ./.github/actions/setup-nix-toolchain
         with:
-          version: 1.59.0
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Buf
+        run: |
+          set -euo pipefail
+          buf_tools="$(nix build --no-link --print-out-paths .#buf)"
+          echo "${buf_tools}/bin" >> "$GITHUB_PATH"
       - name: Validate typed contract and inventory
         run: |
           set -euo pipefail
@@ -120,6 +125,11 @@ jobs:
           buf format --path proto/proompteng/authz --path proto/proompteng/relay --diff --exit-code
           python3 services/ofz/tests/inventory.py
           python3 -m unittest discover -s services/ofz/tests -p 'test_*.py'
+      - name: Install pinned native platform fixture tools
+        run: |
+          set -euo pipefail
+          tools="$(nix build --no-link --print-out-paths .#ofz-fixture-tools)"
+          echo "${tools}/bin" >> "$GITHUB_PATH"
       - name: Validate Ofz
         working-directory: services/ofz
         run: |
@@ -155,7 +165,8 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
           node .github/scripts/install-tengri-chromium.mjs
-          echo "KEYCLOAK_FIXTURE_BIN=$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")" >> "$GITHUB_ENV"
+          keycloak_fixture_bin="$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")"
+          echo "KEYCLOAK_FIXTURE_BIN=${keycloak_fixture_bin}" >> "$GITHUB_ENV"
       - name: Verify generated authorization client
         run: |
           buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz --path proto/proompteng/relay

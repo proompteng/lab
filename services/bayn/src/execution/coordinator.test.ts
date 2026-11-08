@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { SubmissionDenialReason } from './submission-denial'
 
-import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
+import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 
@@ -36,7 +36,7 @@ import {
   accountConfigurationObservationSource,
 } from '../broker/alpaca/model'
 import { BrokerObservations, observationUnavailable } from '../broker/alpaca/observed-snapshot'
-import { captureBrokerObservation, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
+import { makeBrokerObservationCapture, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -1299,6 +1299,8 @@ const completeEvidence = (response: PartialMutationEvidence | undefined): Mutati
 
 interface HarnessOptions {
   readonly storedUpdatedAt?: string
+  readonly riskExpiresAt?: string
+  readonly storeReadDelayMs?: number
   readonly afterBeginSubmit?: Effect.Effect<void>
   readonly crashAfterSubmit?: boolean
   readonly lostFence?: boolean
@@ -1315,7 +1317,8 @@ interface HarnessOptions {
 const makeHarness = (options: HarnessOptions = {}) => {
   let stored: StoredIntent = {
     intent,
-    decision: riskDecision,
+    decision:
+      options.riskExpiresAt === undefined ? riskDecision : { ...riskDecision, expiresAt: options.riskExpiresAt },
     stateVersion: 3,
     updatedAt: options.storedUpdatedAt ?? initialTime,
   }
@@ -1324,6 +1327,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let cancelCalls = 0
   let lookupCalls = 0
   let lookupClientOrderId: string | undefined
+  let intentReads = 0
+  let mutationReads = 0
+  let submittedIntent: Intent | undefined
 
   const event = (
     operation: MutationOperation,
@@ -1373,8 +1379,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const intentStore: IntentStoreService = {
     protectionForCycle: () => Effect.succeed([]),
     beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+    recordProtectionCancelAccepted: () => Effect.die(new Error('unexpected protection cancellation acceptance')),
     commit: () => Effect.die(new Error('unexpected commit')),
-    read: (id) => Effect.succeed(id === intentId ? Option.some(stored) : Option.none()),
+    read: (id) =>
+      Effect.gen(function* () {
+        intentReads += 1
+        if (options.storeReadDelayMs !== undefined) yield* TestClock.adjust(options.storeReadDelayMs)
+        return id === intentId ? Option.some(stored) : Option.none()
+      }),
   }
 
   const fenceCheck = Effect.suspend(() =>
@@ -1577,7 +1589,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
           completeEvidence(response),
         ),
       ),
-    latest: (_intentId, operation) => Effect.succeed(latest.get(operation)),
+    latest: (_intentId, operation) =>
+      Effect.gen(function* () {
+        mutationReads += 1
+        if (options.storeReadDelayMs !== undefined) yield* TestClock.adjust(options.storeReadDelayMs)
+        return latest.get(operation)
+      }),
   }
 
   const orderByClientId: BrokerReadShape['orderByClientId'] = (clientOrderId) =>
@@ -1633,6 +1650,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const mutation: BrokerMutationShape = {
     submit: (submitted) => {
       submitCalls += 1
+      submittedIntent = submitted
       if (latest.get(MutationOperation.Submit)?.eventType !== MutationEventType.SubmitStarted) {
         return Effect.die(new Error('submit happened before SUBMIT_STARTED was durable'))
       }
@@ -1687,8 +1705,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
     provideIntentRead,
     provideRecovery,
     read,
+    intentStore,
     mutations: mutationStore,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
+    storeReads: () => ({ intent: intentReads, mutation: mutationReads }),
+    submittedIntent: () => submittedIntent,
     lookupClientOrderId: () => lookupClientOrderId,
     intent: () => stored.intent,
     state: () => stored.intent.state,
@@ -1707,6 +1728,133 @@ const mismatchedSubmissionError = () =>
   })
 
 describe('execution coordinator', () => {
+  test.each(['failure', 'defect', 'interruption'] as const)(
+    'does not terminalize a compound submit denial with %s and recovers without retransmitting',
+    async (kind) => {
+      const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected denial' })
+      const cleanup =
+        kind === 'failure'
+          ? Cause.fail(invalidRequest({ operation: MutationOperation.Submit, message: 'injected rollback failure' }))
+          : kind === 'defect'
+            ? Cause.die(new Error('injected rollback defect'))
+            : Cause.interrupt()
+      const harness = makeHarness({ submitError: denied, lookupOrder: brokerOrder(OrderStatus.Filled) })
+      await Effect.runPromise(
+        harness.provide(
+          Effect.gen(function* () {
+            const broker = yield* BrokerMutation
+            const exit = yield* submit(intentId, 1_000).pipe(
+              Effect.provideService(BrokerMutation, {
+                ...broker,
+                submit: (value) =>
+                  broker
+                    .submit(value)
+                    .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.combine(cause, cleanup)))),
+              }),
+              Effect.exit,
+            )
+            if (Exit.isSuccess(exit)) throw new Error('compound failure must not become a terminal submission outcome')
+            expect(exit.cause.reasons).toHaveLength(2)
+            expect(Cause.pretty(exit.cause)).toContain('injected denial')
+            expect(harness.state()).toBe(IntentState.IoStarted)
+            expect((yield* harness.mutations.latest(intentId, MutationOperation.Submit))?.eventType).toBe(
+              MutationEventType.SubmitStarted,
+            )
+            const replay = yield* submit(intentId, 1_000)
+            expect(replay.eventType).toBe(MutationEventType.SubmitStarted)
+            expect(harness.calls().submit).toBe(1)
+            yield* TestClock.adjust(1_100)
+            expect((yield* recover(intentId, MutationOperation.Submit)).eventType).toBe(MutationEventType.RecoveryFound)
+            expect(harness.state()).toBe(IntentState.Terminal)
+            expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 1 })
+          }),
+        ),
+      )
+    },
+  )
+
+  test('preserves a live approval by avoiding redundant reads around durable admission', async () => {
+    const harness = makeHarness({
+      riskExpiresAt: '1970-01-01T00:00:00.100Z',
+      storeReadDelayMs: 40,
+    })
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          const settled = yield* submit(intentId, 1_000)
+          return { settled, elapsedMs: yield* Clock.currentTimeMillis }
+        }),
+      ),
+    )
+
+    expect(result.settled.eventType).toBe(MutationEventType.SubmitAccepted)
+    expect(result.elapsedMs).toBe(40)
+    expect(harness.storeReads()).toEqual({ intent: 1, mutation: 0 })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+  })
+
+  test('owns its approved snapshot even if a reader mutates a shared object during admission', async () => {
+    const shared = structuredClone({ intent, decision: riskDecision, stateVersion: 3, updatedAt: initialTime })
+    const harness = makeHarness({
+      afterBeginSubmit: Effect.sync(() => {
+        Object.assign(shared.intent, { quantityAtoms: '9000000000', policyHash: '0'.repeat(64) })
+        Object.assign(shared.decision, { expiresAt: '1970-01-01T00:00:00.000Z' })
+        Reflect.set(shared.decision.reasonCodes, 0, 'MUTATED_READER_ALIAS')
+      }),
+    })
+    let reads = 0
+    const sharedReader: IntentStoreService = {
+      ...harness.intentStore,
+      read: (id) =>
+        Effect.suspend(() => {
+          reads += 1
+          return reads === 1 ? Effect.succeed(Option.some(shared)) : harness.intentStore.read(id)
+        }),
+    }
+    const accepted = await Effect.runPromise(
+      harness.provide(submit(intentId, 1_000).pipe(Effect.provideService(IntentStore, sharedReader))),
+    )
+
+    expect(accepted.eventType).toBe(MutationEventType.SubmitAccepted)
+    expect(harness.submittedIntent()).toEqual({ ...intent, state: IntentState.IoStarted })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+  })
+
+  test('replays a competing admission after reading an approved snapshot without another send', async () => {
+    const harness = makeHarness()
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          const captured = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          let reads = 0
+          const racedReader: IntentStoreService = {
+            ...harness.intentStore,
+            read: (id) =>
+              harness.intentStore.read(id).pipe(
+                Effect.tap(() => {
+                  reads += 1
+                  return reads === 1
+                    ? Deferred.succeed(captured, undefined).pipe(Effect.andThen(Deferred.await(release)))
+                    : Effect.void
+                }),
+              ),
+          }
+          const raced = submit(intentId, 1_000).pipe(Effect.provideService(IntentStore, racedReader))
+          const first = yield* raced.pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(captured)
+          const second = yield* raced
+          yield* Deferred.succeed(release, undefined)
+          return { first: yield* Fiber.join(first), second }
+        }),
+      ),
+    )
+
+    expect(result.first.eventId).toBe(result.second.eventId)
+    expect(result.second.eventType).toBe(MutationEventType.SubmitAccepted)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+  })
+
   for (const denialDelayMs of [0, 5]) {
     test(`persists a known local denial after its durable start with ${denialDelayMs}ms of elapsed time`, async () => {
       const harness = makeHarness({ storedUpdatedAt: '1970-01-01T00:00:00.001Z' })
@@ -2309,8 +2457,13 @@ describe('execution coordinator', () => {
       await Effect.runPromise(
         harness.provideRecovery(
           Effect.gen(function* () {
+            const captureBrokerObservation = yield* makeBrokerObservationCapture
             let available = true
-            let snapshot = yield* captureBrokerObservation(fresh, yield* currentUtcInstant, 30_000)
+            let snapshot = yield* captureBrokerObservation(
+              fresh,
+              { generation: 1, startedAt: yield* currentUtcInstant },
+              30_000,
+            )
             const observed = Effect.suspend(() =>
               available ? Effect.succeed(snapshot) : Effect.fail(observationUnavailable('invalidated')),
             )
@@ -2357,7 +2510,11 @@ describe('execution coordinator', () => {
             yield* TestClock.adjust(999)
             expect(Result.isFailure(yield* Effect.result(cached.account))).toBe(true)
             yield* TestClock.adjust(1)
-            snapshot = yield* captureBrokerObservation(fresh, yield* currentUtcInstant, 30_000)
+            snapshot = yield* captureBrokerObservation(
+              fresh,
+              { generation: 3, startedAt: yield* currentUtcInstant },
+              30_000,
+            )
             available = true
             const published = yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))
             expect(published.history.orders.rows[0]?.value.brokerOrderId).toBe(orderId)

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -13,9 +13,13 @@ use uuid::Uuid;
 
 use crate::{auth::Principal, grpc::ControlPlane};
 
+pub(crate) mod reader;
+
 // Query expiry limits admission; an authorized response may arrive later.
-const STATUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_RESPONSE_WARNING: Duration = Duration::from_secs(5);
 const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+// Leave room for ingress authorization within the BFF's 130-second RPC deadline.
+const ADMISSION_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 
 async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
 where
@@ -25,9 +29,19 @@ where
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
         let mut backoff = Duration::from_millis(100);
         loop {
-            match tokio::time::timeout(STATUS_RESPONSE_TIMEOUT, request()).await {
-                Ok(Ok(value)) => return Ok(value),
-                Ok(Err(error))
+            let response = request();
+            tokio::pin!(response);
+            let result =
+                match tokio::time::timeout(STATUS_RESPONSE_WARNING, response.as_mut()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        tracing::warn!(operation, "durable run read response remains pending");
+                        response.await
+                    }
+                };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(error)
                     if !matches!(
                         error.code(),
                         tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
@@ -35,8 +49,7 @@ where
                 {
                     return Err(error);
                 }
-                Ok(Err(_)) => {}
-                Err(_) => tracing::warn!(operation, "durable run read response timed out"),
+                Err(_) => {}
             }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(1));
@@ -44,37 +57,10 @@ where
     })
     .await
     .map_err(|_| {
+        crate::metrics::global().record_run_read_failure();
         tracing::warn!(operation, "durable run read recovery timed out");
         Status::unavailable("durable run status recovery timed out")
     })?
-}
-
-fn read_error(error: restate_sdk::ingress::ClientError) -> Status {
-    use restate_sdk::ingress::ClientError;
-    let class = match &error {
-        ClientError::Transport { .. } => "transport",
-        ClientError::Request { .. } => "request",
-        ClientError::Serialization { .. } => "serialization",
-        ClientError::InvalidRequest { .. } => "invalid_request",
-        ClientError::Protocol { .. } => "protocol",
-        ClientError::Status { .. } => "http_status",
-        ClientError::PayloadDecode { .. } => "payload_decode",
-    };
-    let status = error.response().map(|response| response.status().as_u16());
-    tracing::warn!(
-        class,
-        http_status = status,
-        "durable run read attempt failed"
-    );
-    match status {
-        Some(408) => Status::deadline_exceeded("run query expired before admission"),
-        Some(500..=599) => Status::unavailable("durable run status unavailable"),
-        Some(400 | 401 | 403 | 404 | 409 | 422) => client_error(error),
-        _ if matches!(error, ClientError::Transport { .. }) => {
-            Status::unavailable("durable run ingress unavailable")
-        }
-        _ => Status::internal("invalid durable run status response"),
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -166,6 +152,11 @@ pub(crate) enum State {
         turn_id: String,
     },
     NeedsReconciliation {
+        turn_id: Option<String>,
+        reason: String,
+    },
+    AuthorizationRequired {
+        turn_id: Option<String>,
         reason: String,
     },
     Rejected {
@@ -283,6 +274,10 @@ async fn open<T: for<'de> Deserialize<'de>>(
 }
 
 fn ingress() -> Result<ReqwestClient, Status> {
+    static CLIENT: OnceLock<ReqwestClient> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
     let url = env::var("TENGRI_RESTATE_INGRESS")
         .map_err(|_| Status::unavailable("durable run ingress is not configured"))?;
     let url: http::Uri = url
@@ -291,7 +286,9 @@ fn ingress() -> Result<ReqwestClient, Status> {
     if !matches!(url.scheme_str(), Some("http" | "https")) || url.authority().is_none() {
         return Err(Status::internal("invalid durable run ingress"));
     }
-    ReqwestClient::connect(url).map_err(|_| Status::unavailable("durable run ingress unavailable"))
+    let client = ReqwestClient::connect(url)
+        .map_err(|_| Status::unavailable("durable run ingress unavailable"))?;
+    Ok(CLIENT.get_or_init(|| client).clone())
 }
 
 pub(crate) async fn submit(
@@ -315,52 +312,102 @@ pub(crate) async fn submit(
     };
     let envelope = seal(service, "admission", &admission).await?;
     let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, workspace_uid);
-    tokio::time::timeout(Duration::from_secs(10), client.admit(Json(envelope)).call())
-        .await
-        .map_err(|_| {
-            Status::unavailable("durable run acceptance timed out; retry the same operation")
-        })?
-        .map_err(client_error)?
-        .into_body()
-        .map_err(client_error)?;
-    read(service, &principal, &input.id, Some(digest)).await
+    confirm_admission(
+        async {
+            client
+                .admit(Json(envelope))
+                .call()
+                .await
+                .map_err(client_error)?
+                .into_body()
+                .map_err(client_error)
+        },
+        || read(&principal, &input.id, Some(digest.clone())),
+    )
+    .await
+}
+
+async fn confirm_admission<T, A, R, Fut>(admission: A, mut read: R) -> Result<T, Status>
+where
+    A: std::future::Future<Output = Result<(), Status>>,
+    R: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    tokio::time::timeout(ADMISSION_RECOVERY_TIMEOUT, async {
+        tokio::pin!(admission);
+        let accepted = match tokio::time::timeout(Duration::from_secs(10), admission.as_mut()).await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                // Keep the original request alive: the durable admission may still be queued.
+                // A committed snapshot can confirm it sooner when only the acknowledgement is lost.
+                tracing::warn!("durable admission remains pending; reconciling the existing run");
+                let snapshot = read();
+                tokio::pin!(snapshot);
+                tokio::select! {
+                    accepted = admission.as_mut() => {
+                        if let Err(error) = accepted {
+                            require_transient_admission(error)?;
+                        }
+                        return snapshot.await;
+                    }
+                    result = snapshot.as_mut() => match result {
+                        Ok(value) => return Ok(value),
+                        Err(error) => require_transient_admission(error)?,
+                    }
+                }
+                admission.await
+            }
+        };
+        if let Err(error) = accepted {
+            require_transient_admission(error)?;
+        }
+        read().await
+    })
+    .await
+    .map_err(|_| {
+        Status::unavailable("durable run acceptance timed out; retry the same operation")
+    })?
+}
+
+fn require_transient_admission(error: Status) -> Result<(), Status> {
+    if matches!(
+        error.code(),
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+    ) {
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 pub(crate) async fn read(
-    service: &ControlPlane,
     principal: &Principal,
     id: &str,
     digest: Option<String>,
 ) -> Result<Snapshot, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::RunStatus);
-    let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
     recover_status("status", || async {
-        let query = Query {
-            run_id: id.into(),
-            owner_hash: principal.owner_hash.clone(),
-            workspace_uid: principal.context.workspace_uid.clone(),
-            digest: digest.clone(),
-            expires_at_ms: crate::ofz::now_ms()? + 2000,
-        };
-        let query = seal(service, "query", &query).await?;
-        let response = client
-            .status(Json(query))
-            .call()
+        reader::client()?
+            .status(&Query {
+                run_id: id.into(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: digest.clone(),
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            })
             .await
-            .map_err(read_error)?;
-        Ok(response.into_body().map_err(read_error)?.into_inner())
     })
     .await
 }
 
 pub(crate) async fn active(
-    service: &ControlPlane,
     principal: &Principal,
     thread_id: &str,
 ) -> Result<Vec<Snapshot>, Status> {
     let _latency = crate::metrics::global().latency_timer(crate::metrics::Latency::ActiveRuns);
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
-        let claims = active_claims(service, principal).await?;
+        let claims = active_claims(principal).await?;
         futures::future::try_join_all(
             claims
                 .iter()
@@ -368,48 +415,35 @@ pub(crate) async fn active(
                 // Scope before reading snapshots: an unavailable conversation must not
                 // prevent observing another. A failed selected read still fails closed.
                 .filter(|claim| thread_id.is_empty() || claim.thread_id == thread_id)
-                .map(|claim| read(service, principal, &claim.run_id, None)),
+                .map(|claim| read(principal, &claim.run_id, None)),
         )
         .await
     })
     .await
-    .map_err(|_| Status::unavailable("active run recovery timed out"))?
+    .map_err(|_| {
+        crate::metrics::global().record_run_read_failure();
+        Status::unavailable("active run recovery timed out")
+    })?
 }
 
-pub(crate) async fn thread_active(
-    service: &ControlPlane,
-    principal: &Principal,
-    thread_id: &str,
-) -> Result<bool, Status> {
-    Ok(active_claims(service, principal)
+pub(crate) async fn thread_active(principal: &Principal, thread_id: &str) -> Result<bool, Status> {
+    Ok(active_claims(principal)
         .await?
         .iter()
         .any(|claim| claim.thread_id == thread_id))
 }
 
-async fn active_claims(
-    service: &ControlPlane,
-    principal: &Principal,
-) -> Result<Vec<Claim>, Status> {
-    let client = TengriWorkspaceRunsIngressClient::from_client(
-        ingress()?,
-        principal.context.workspace_uid.clone(),
-    );
+async fn active_claims(principal: &Principal) -> Result<Vec<Claim>, Status> {
     recover_status("active", || async {
-        let query = Query {
-            run_id: String::new(),
-            owner_hash: principal.owner_hash.clone(),
-            workspace_uid: principal.context.workspace_uid.clone(),
-            digest: None,
-            expires_at_ms: crate::ofz::now_ms()? + 2000,
-        };
-        let envelope = seal(service, "active-query", &query).await?;
-        let response = client
-            .active(Json(envelope))
-            .call()
+        reader::client()?
+            .active(&Query {
+                run_id: String::new(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: None,
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            })
             .await
-            .map_err(read_error)?;
-        Ok(response.into_body().map_err(read_error)?.into_inner())
     })
     .await
 }
@@ -530,41 +564,44 @@ impl TengriAgentRun {
             digest: admission.digest.clone(),
             state: State::Accepted,
         };
+        // A slow cross-partition claim must not hide an already admitted run from its caller.
+        ctx.set("snapshot", Json(snapshot.clone()));
         let workspace =
             ctx.object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid);
-        let mut stop = match workspace.claim(Json(admission.claim.clone())).call().await {
-            Ok(stop) => stop.into_inner(),
-            Err(error) => {
-                if error.code() != 409 {
-                    return Err(error.into());
+        // Calls are queued eagerly; preparation can run while this claim is pending.
+        let claim = workspace.claim(Json(admission.claim.clone())).call();
+        let (prepared, started_at) = self.prepare_run(&ctx, &admission).await?;
+        let mut stop = None;
+        snapshot.state = match claim.await {
+            Ok(claimed) => {
+                stop = claimed.into_inner();
+                if stop.is_some() {
+                    State::Cancelled {
+                        turn_id: String::new(),
+                    }
+                } else if matches!(prepared, State::Accepted) {
+                    self.dispatch_prepared(&ctx, &admission).await?
+                } else {
+                    prepared
                 }
-                snapshot.state = State::Rejected {
-                    reason: "conversation already has an active run".into(),
-                };
-                ctx.set("snapshot", Json(snapshot.clone()));
-                return Ok(Json(snapshot.state));
             }
-        };
-        ctx.set("snapshot", Json(snapshot.clone()));
-        snapshot.state = if stop.is_some() {
-            State::Cancelled {
-                turn_id: String::new(),
-            }
-        } else {
-            self.start_run(&ctx, &admission).await?
+            Err(error) if error.code() == 409 => State::Rejected {
+                reason: "conversation already has an active run".into(),
+            },
+            Err(error) => return Err(error.into()),
         };
         if !snapshot.state.terminal() {
             ctx.set("snapshot", Json(snapshot.clone()));
         }
-        let started_at: u64 = ctx
-            .run(|| async { Ok(crate::ofz::now_ms().map_err(terminal)?) })
-            .await?;
         let mut approval_started_at = None;
-        let mut reconciliation_attempts = 0;
+        let mut recovery_attempt = 0_u32;
+        let mut principal = admission.principal.clone();
+        let mut recovery_wait = 0_u64;
         while !snapshot.state.terminal() {
             if matches!(
                 snapshot.state,
                 State::Recovering { .. }
+                    | State::AuthorizationRequired { .. }
                     | State::NeedsReconciliation { .. }
                     | State::Cancelling { .. }
             ) && ctx
@@ -582,37 +619,59 @@ impl TengriAgentRun {
                 };
                 break;
             }
-            if matches!(snapshot.state, State::NeedsReconciliation { .. }) {
-                if reconciliation_attempts < 5 || reconciliation_attempts == 19 {
-                    snapshot.state = ctx
-                        .run(|| async {
-                            Ok(Json(
-                                self.service
-                                    .reconcile_durable_run(
-                                        &admission.principal,
-                                        &admission.input,
-                                        &snapshot.state,
-                                    )
-                                    .await,
-                            ))
-                        })
-                        .name("reconcile_dispatch_receipt")
-                        .await?
-                        .into_inner();
-                    if !snapshot.state.terminal() {
-                        ctx.set("snapshot", Json(snapshot.clone()));
-                    }
+            if turn_id(&snapshot.state).is_none()
+                && matches!(
+                    snapshot.state,
+                    State::NeedsReconciliation { .. } | State::AuthorizationRequired { .. }
+                )
+            {
+                snapshot.state = ctx
+                    .run(|| async {
+                        let next = self
+                            .service
+                            .reconcile_durable_run(&principal, &admission.input, &snapshot.state)
+                            .await;
+                        crate::metrics::global().observe_run_recovery(&next);
+                        Ok(Json(next))
+                    })
+                    .name("reconcile_dispatch_receipt")
+                    .await?
+                    .into_inner();
+                if !snapshot.state.terminal() {
+                    ctx.set("snapshot", Json(snapshot.clone()));
                 }
-                reconciliation_attempts = if reconciliation_attempts >= 19 {
-                    5
-                } else {
-                    reconciliation_attempts + 1
-                };
             }
             if snapshot.state.terminal() {
                 break;
             }
-            ctx.sleep(Duration::from_secs(2)).await?;
+            if matches!(
+                snapshot.state,
+                State::NeedsReconciliation { .. } | State::AuthorizationRequired { .. }
+            ) {
+                recovery_wait += 1;
+                let key = format!("recovery/{recovery_wait}");
+                ctx.set("recovery_key", key.clone());
+                let delay = if matches!(snapshot.state, State::AuthorizationRequired { .. }) {
+                    60
+                } else {
+                    2_u64.pow(recovery_attempt.min(5) + 1).min(60)
+                };
+                recovery_attempt = recovery_attempt.saturating_add(1);
+                restate_sdk::select! {
+                    refreshed = ctx.promise::<Json<Principal>>(&key) => {
+                        principal = refreshed?.into_inner();
+                        recovery_attempt = 0;
+                        if let Some(stop) = &mut stop {
+                            stop.principal = principal.clone();
+                        }
+                    },
+                    elapsed = ctx.sleep(Duration::from_secs(delay)) => { elapsed?; },
+                }
+                ctx.clear("recovery_key");
+            } else {
+                recovery_attempt = 0;
+                ctx.sleep(Duration::from_secs(2)).await?;
+            }
             if let Some(latest) = workspace
                 .latest_stop(Json(StopQuery {
                     claim: admission.claim.clone(),
@@ -625,6 +684,7 @@ impl TengriAgentRun {
                 .await?
                 .into_inner()
             {
+                principal = latest.principal.clone();
                 stop = Some(latest);
             }
             let now: u64 = ctx
@@ -660,7 +720,7 @@ impl TengriAgentRun {
                     id: Uuid::from_bytes(bytes).to_string(),
                     run_id: admission.input.id.clone(),
                     agent_id: admission.input.agent_id.clone(),
-                    principal: admission.principal.clone(),
+                    principal: principal.clone(),
                     method: "turn/interrupt".into(),
                     params: serde_json::json!({}),
                 });
@@ -677,13 +737,10 @@ impl TengriAgentRun {
                                 .await
                         } else {
                             self.service
-                                .observe_durable_run(
-                                    &admission.principal,
-                                    &admission.input,
-                                    &snapshot.state,
-                                )
+                                .observe_durable_run(&principal, &admission.input, &snapshot.state)
                                 .await
                         };
+                        crate::metrics::global().observe_run_recovery(&next);
                         Ok(Json((next != snapshot.state).then_some(next)))
                     })
                     .name("observe_codex_turn")
@@ -700,7 +757,7 @@ impl TengriAgentRun {
         if snapshot.state.terminal() {
             ctx.run(|| async {
                 self.service
-                    .pin_run(&admission.principal, &admission.input, false)
+                    .pin_run(&principal, &admission.input, false)
                     .await
                     .map_err(HandlerError::from)?;
                 Ok(())
@@ -735,8 +792,27 @@ impl TengriAgentRun {
         {
             return Err(TerminalError::new_with_code(403, "run unavailable").into());
         }
+        if control.method == "tengri/recoverRun" {
+            if snapshot.state.terminal() {
+                return Ok(Json(ControlResult {
+                    delivered: true,
+                    result: serde_json::json!({}),
+                }));
+            }
+            let key = ctx.get::<String>("recovery_key").await?.ok_or_else(|| {
+                TerminalError::new_with_code(422, "run recovery is already in progress")
+            })?;
+            ctx.resolve_promise(&key, Json(control.principal));
+            return Ok(Json(ControlResult {
+                delivered: true,
+                result: serde_json::json!({}),
+            }));
+        }
         if control.method == "turn/interrupt" {
             if !snapshot.state.terminal() {
+                if let Some(key) = ctx.get::<String>("recovery_key").await? {
+                    ctx.resolve_promise(&key, Json(control.principal.clone()));
+                }
                 ctx.object_client::<TengriWorkspaceRunsClient>(&snapshot.workspace_uid)
                     .store_stop(Json(control))
                     .call()
@@ -750,7 +826,9 @@ impl TengriAgentRun {
         if snapshot.state.terminal()
             || matches!(
                 snapshot.state,
-                State::NeedsReconciliation { .. } | State::Cancelling { .. }
+                State::NeedsReconciliation { .. }
+                    | State::AuthorizationRequired { .. }
+                    | State::Cancelling { .. }
             )
         {
             return Err(TerminalError::new_with_code(422, "run cannot accept this control").into());
@@ -848,47 +926,6 @@ impl TengriAgentRun {
             .name("deliver_run_control")
             .await?)
     }
-
-    #[handler(journal_retention = "0s", idempotency_retention = "0s")]
-    async fn status(
-        &self,
-        ctx: SharedWorkflowContext<'_>,
-        envelope: Json<Envelope>,
-    ) -> HandlerResult<Json<Snapshot>> {
-        let run_id = ctx.key().to_owned();
-        let query: Query = ctx
-            .run(|| async {
-                let query: Query = open(&self.service, "query", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if query.run_id != run_id {
-                    return Err(TerminalError::new_with_code(403, "run unavailable").into());
-                }
-                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
-                    return Err(TerminalError::new_with_code(408, "run query expired").into());
-                }
-                Ok(Json(query))
-            })
-            .await?
-            .into_inner();
-        let snapshot = ctx
-            .get::<Json<Snapshot>>("snapshot")
-            .await?
-            .ok_or_else(|| TerminalError::new_with_code(503, "run is being admitted"))?
-            .into_inner();
-        if snapshot.owner_hash != query.owner_hash || snapshot.workspace_uid != query.workspace_uid
-        {
-            return Err(TerminalError::new_with_code(403, "run unavailable").into());
-        }
-        if query.digest.is_some_and(|digest| digest != snapshot.digest) {
-            return Err(TerminalError::new_with_code(
-                409,
-                "operation ID already has different input",
-            )
-            .into());
-        }
-        Ok(Json(snapshot))
-    }
 }
 
 impl TengriAgentRun {
@@ -897,21 +934,29 @@ impl TengriAgentRun {
         ctx: &WorkflowContext<'_>,
         admission: &Admission,
     ) -> HandlerResult<State> {
-        let prepared = ctx
-            .run(|| async {
-                Ok(Json(
-                    self.service
-                        .prepare_durable_run(&admission.principal, &admission.input)
-                        .await,
-                ))
-            })
-            .name("prepare_codex_dispatch")
-            .await?
-            .into_inner();
+        let (prepared, _) = self.prepare_run(ctx, admission).await?;
         if !matches!(prepared, State::Accepted) {
             return Ok(prepared);
         }
         self.dispatch_prepared(ctx, admission).await
+    }
+
+    async fn prepare_run(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<(State, u64)> {
+        Ok(ctx
+            .run(|| async {
+                let prepared = self
+                    .service
+                    .prepare_durable_run(&admission.principal, &admission.input)
+                    .await;
+                Ok(Json((prepared, crate::ofz::now_ms().map_err(terminal)?)))
+            })
+            .name("prepare_codex_dispatch")
+            .await?
+            .into_inner())
     }
 
     async fn dispatch_prepared(
@@ -1005,7 +1050,10 @@ impl TengriWorkspaceRuns {
                     || Uuid::parse_str(&control.run_id).is_err()
                     || !matches!(
                         control.method.as_str(),
-                        "turn/steer" | "turn/interrupt" | "tengri/resolveApproval"
+                        "turn/steer"
+                            | "turn/interrupt"
+                            | "tengri/resolveApproval"
+                            | "tengri/recoverRun"
                     )
                 {
                     return Err(TerminalError::new_with_code(400, "invalid run control").into());
@@ -1022,35 +1070,6 @@ impl TengriWorkspaceRuns {
         Ok(())
     }
 
-    #[handler(journal_retention = "0s", idempotency_retention = "0s")]
-    async fn active(
-        &self,
-        ctx: SharedObjectContext<'_>,
-        envelope: Json<Envelope>,
-    ) -> HandlerResult<Json<Vec<Claim>>> {
-        let workspace = ctx.key().to_owned();
-        ctx.run(|| async {
-            let query: Query = open(&self.service, "active-query", &envelope.0)
-                .await
-                .map_err(terminal)?;
-            if query.workspace_uid != workspace {
-                return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
-            }
-            if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
-                return Err(TerminalError::new_with_code(408, "run query expired").into());
-            }
-            Ok(())
-        })
-        .await?;
-        Ok(Json(
-            ctx.get::<Json<BTreeMap<String, Claim>>>("active")
-                .await?
-                .map(Json::into_inner)
-                .unwrap_or_default()
-                .into_values()
-                .collect(),
-        ))
-    }
     #[handler(ingress_private = true)]
     async fn store_stop(
         &self,
@@ -1176,8 +1195,20 @@ impl ControlPlane {
         input: &Input,
         state: &State,
     ) -> State {
-        let Ok(guest) = self.run_guest(principal, input).await else {
-            return state.clone();
+        let guest = match self.run_guest(principal, input).await {
+            Ok(guest) => guest,
+            Err(error)
+                if matches!(
+                    error.code(),
+                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+                ) =>
+            {
+                return State::AuthorizationRequired {
+                    turn_id: turn_id(state).map(str::to_owned),
+                    reason: "Use your current session to recover this run.".into(),
+                };
+            }
+            Err(_) => return state.clone(),
         };
         match guest
             .codex_call(
@@ -1186,14 +1217,23 @@ impl ControlPlane {
             )
             .await
         {
-            Ok(value) => value
-                .pointer("/turn/id")
-                .and_then(serde_json::Value::as_str)
-                .filter(|id| !id.is_empty())
-                .map(|turn_id| State::Running {
-                    turn_id: turn_id.into(),
-                })
-                .unwrap_or_else(|| state.clone()),
+            Ok(value) => {
+                let Some(turn_id) = value
+                    .pointer("/turn/id")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|id| !id.is_empty())
+                else {
+                    return state.clone();
+                };
+                self.observe_durable_run(
+                    principal,
+                    input,
+                    &State::Running {
+                        turn_id: turn_id.into(),
+                    },
+                )
+                .await
+            }
             Err(crate::guest::GuestError::CodexOperationRejected) => State::Rejected {
                 reason: "Codex rejected the operation before dispatch".into(),
             },
@@ -1332,6 +1372,7 @@ impl ControlPlane {
     async fn dispatch_durable_run(&self, principal: &Principal, input: &Input) -> State {
         if self.pin_run(principal, input, true).await.is_err() {
             return State::NeedsReconciliation {
+                turn_id: None,
                 reason: "dispatch authority or its sleep fence is unavailable; a previous attempt may already have reached Codex".into(),
             };
         }
@@ -1339,6 +1380,7 @@ impl ControlPlane {
             Ok(guest) => guest,
             Err(_) => {
                 return State::NeedsReconciliation {
+                    turn_id: None,
                     reason: "dispatch authority or transport is unavailable; a previous attempt may already have reached Codex".into(),
                 };
             }
@@ -1382,6 +1424,7 @@ impl ControlPlane {
             {
                 Some(id) => State::Running { turn_id: id.into() },
                 None => State::NeedsReconciliation {
+                    turn_id: None,
                     reason: "Codex accepted a request without a turn identity".into(),
                 },
             },
@@ -1389,6 +1432,7 @@ impl ControlPlane {
                 reason: "Codex rejected the operation before dispatch".into(),
             },
             Err(_) => State::NeedsReconciliation {
+                turn_id: None,
                 reason: "Codex dispatch outcome is uncertain; the request was not resent".into(),
             },
         }
@@ -1411,8 +1455,9 @@ impl ControlPlane {
                     tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
                 ) =>
             {
-                return State::NeedsReconciliation {
-                    reason: "run authority was revoked or expired".into(),
+                return State::AuthorizationRequired {
+                    turn_id: Some(turn_id.to_owned()),
+                    reason: "Use your current session to recover this run.".into(),
                 };
             }
             Err(_) => {
@@ -1475,20 +1520,16 @@ impl ControlPlane {
                 },
             }
         };
-        if matches!(
+        let recorded = bind_native_generation(
             recorded,
-            State::Succeeded { .. } | State::NeedsReconciliation { .. } | State::Recovering { .. }
-        ) {
-            return recorded;
-        }
-        if !operation.as_ref().is_some_and(|value| {
-            value
-                .get("generationAlive")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-        }) {
-            return State::NeedsReconciliation {reason:"the Codex process that accepted this turn ended; external effects require reconciliation".into()};
-        }
+            operation.as_ref().is_some_and(|value| {
+                value
+                    .get("generationAlive")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+            }),
+            turn_id,
+        );
         if !matches!(recorded, State::Running { .. }) {
             return recorded;
         }
@@ -1526,6 +1567,7 @@ impl ControlPlane {
             };
         }
         State::NeedsReconciliation {
+            turn_id: Some(turn_id.to_owned()),
             reason: "the accepted turn is unfinished but its thread is no longer active".into(),
         }
     }
@@ -1555,8 +1597,15 @@ impl ControlPlane {
         } else {
             state.clone()
         };
+        if recovered.terminal()
+            || (turn_id(&recovered).is_none()
+                && matches!(recovered, State::AuthorizationRequired { .. }))
+        {
+            return recovered;
+        }
         let Some(turn) = turn_id(&recovered) else {
             return State::NeedsReconciliation {
+                turn_id: None,
                 reason: "Stop is pending. The accepted turn could not be identified; reconcile its execution before starting new work.".into(),
             };
         };
@@ -1572,7 +1621,12 @@ impl ControlPlane {
                 },
             )
             .await;
-        if observed.terminal() {
+        if observed.terminal()
+            || matches!(
+                observed,
+                State::AuthorizationRequired { .. } | State::NeedsReconciliation { .. }
+            )
+        {
             return observed;
         }
         State::Cancelling {
@@ -1582,12 +1636,30 @@ impl ControlPlane {
     }
 }
 
+fn bind_native_generation(recorded: State, alive: bool, turn_id: &str) -> State {
+    if matches!(
+        recorded,
+        State::Succeeded { .. } | State::NeedsReconciliation { .. } | State::Recovering { .. }
+    ) || alive
+    {
+        return recorded;
+    }
+    State::NeedsReconciliation {
+        turn_id: Some(turn_id.to_owned()),
+        reason:
+            "The process that accepted this turn ended. Its external effects need reconciliation."
+                .into(),
+    }
+}
+
 fn turn_id(state: &State) -> Option<&str> {
     match state {
         State::Running { turn_id }
         | State::WaitingForApproval { turn_id, .. }
         | State::Recovering { turn_id, .. } => Some(turn_id),
-        State::Cancelling { turn_id, .. } => turn_id.as_deref(),
+        State::Cancelling { turn_id, .. }
+        | State::NeedsReconciliation { turn_id, .. }
+        | State::AuthorizationRequired { turn_id, .. } => turn_id.as_deref(),
         _ => None,
     }
 }
@@ -1624,6 +1696,7 @@ async fn recorded_turn(guest: &crate::guest::GuestClient, thread: &str, turn: &s
         }
     }
     State::NeedsReconciliation {
+        turn_id: Some(turn.to_owned()),
         reason: "the accepted turn has no authoritative outcome in the bounded history".into(),
     }
 }
@@ -1656,6 +1729,7 @@ fn observed_turn(value: &serde_json::Value, turn_id: &str) -> State {
             turn_id: turn_id.into(),
         },
         _ => State::NeedsReconciliation {
+            turn_id: Some(turn_id.to_owned()),
             reason: "the accepted turn has no authoritative outcome".into(),
         },
     }
@@ -1713,14 +1787,24 @@ pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
         )
         .build();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:9080").await?;
-    HttpServer::new(endpoint)
-        .serve_with_cancel(listener, async {
-            let mut terminate =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("install termination handler");
-            tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
-        })
-        .await;
+    let health_listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let health = axum::Router::new()
+        .route("/healthz", axum::routing::get(|| async { "ok" }))
+        .route(
+            "/metrics",
+            axum::routing::get(|| async { crate::metrics::global().render() }),
+        );
+    let mut health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
+    let serving = HttpServer::new(endpoint).serve_with_cancel(listener, async {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("install termination handler");
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+    });
+    tokio::select! {
+        _ = serving => { health_task.abort(); },
+        result = &mut health_task => { result??; anyhow::bail!("run worker health listener stopped"); },
+    }
     Ok(())
 }
 

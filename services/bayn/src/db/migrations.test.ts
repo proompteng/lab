@@ -3,6 +3,21 @@ import { Effect } from 'effect'
 
 import { migrationLoader } from './migrations'
 
+test('runtime migration loader schedules Box and native receipt after the retained generation-index migration', () => {
+  const migrations = Effect.runSync(migrationLoader)
+  expect(migrations.filter(([id]) => id >= 187).map(([id, name]) => [id, name])).toEqual([
+    [187, 'inference_request_generation_index'],
+    [188, 'jev_box_inference'],
+    [189, 'native_protection_cancel_receipts'],
+  ])
+  const pending = migrations.filter(([id]) => id > 187).map(([id, name]) => [id, name])
+
+  expect(pending).toEqual([
+    [188, 'jev_box_inference'],
+    [189, 'native_protection_cancel_receipts'],
+  ])
+})
+
 test('runtime migration loader schedules staged transport after the retained chart checkpoint', () => {
   const migrations = Effect.runSync(migrationLoader)
   const identities = migrations.map(([id, name]) => [id, name])

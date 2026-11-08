@@ -41,15 +41,26 @@ describeRestate('Real Restate execution deployment activation', () => {
     let brokerReady = false
     let failedPollNotBeforeMs = 0
     let controllerActivations = 0
+    let warmupGate: Promise<void> | undefined
+    let warmupEntered = () => {}
     const advanced: number[] = []
+    const initialAdvanceAttempts: Array<{ readonly sequence: number; readonly issuedAt: string }> = []
     const controller = makeBaynExecutionController(config, {
       advance: async (command) => {
+        if (initialAdvanceAttempts.length < 2) {
+          initialAdvanceAttempts.push(command)
+          if (initialAdvanceAttempts.length === 1) throw new Error('Injected first advance failure')
+        }
         advanced.push(command.sequence)
         return {
           completedAt: command.issuedAt,
           observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
           outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'd'.repeat(64), nextDelayMs: 500 },
         }
+      },
+      prepareActivation: async () => {
+        warmupEntered()
+        await warmupGate
       },
       projectState: async () => {
         controllerActivations += 1
@@ -237,6 +248,8 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(state.nextSequence).toBe((state.lastCompletion?.sequence ?? -1) + 1)
           expect(advanced.length).toBeGreaterThanOrEqual(2)
           expect(new Set(advanced).size).toBe(advanced.length)
+          expect(initialAdvanceAttempts).toHaveLength(2)
+          expect(initialAdvanceAttempts[1]).toEqual(initialAdvanceAttempts[0])
           expect(brokerPolls).toBeGreaterThanOrEqual(1)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
@@ -246,6 +259,16 @@ describeRestate('Real Restate execution deployment activation', () => {
                 method: 'POST',
                 body: JSON.stringify({
                   query: `SELECT COUNT(*) AS journal_entries,
+                    (SELECT MIN(journal_size) FROM sys_invocation
+                      WHERE target_service_name = 'BaynExecutionController'
+                        AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick'
+                        AND status = 'completed' AND id IN (
+                          SELECT id FROM sys_journal WHERE entry_type = 'Command: SetState')) AS minimum_tick_entries,
+                    (SELECT MAX(journal_size) FROM sys_invocation
+                      WHERE target_service_name = 'BaynExecutionController'
+                        AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick'
+                        AND status = 'completed' AND id IN (
+                          SELECT id FROM sys_journal WHERE entry_type = 'Command: SetState')) AS maximum_tick_entries,
                     (SELECT COUNT(*) FROM sys_journal WHERE entry_type = 'Command: GetLazyState'
                       AND id IN (SELECT id FROM sys_invocation
                         WHERE target_service_name = 'BaynExecutionController'
@@ -260,7 +283,9 @@ describeRestate('Real Restate execution deployment activation', () => {
             },
             catch: (cause) => cause,
           })
-          expect(journal).toMatchObject({ rows: [{ journal_entries: 0, lazy_tick_state_reads: 0 }] })
+          expect(journal).toMatchObject({
+            rows: [{ journal_entries: 0, lazy_tick_state_reads: 0, minimum_tick_entries: 8, maximum_tick_entries: 8 }],
+          })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
           expect(
@@ -272,6 +297,36 @@ describeRestate('Real Restate execution deployment activation', () => {
           ).toEqual(output)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
+
+          let releaseWarmup = () => {}
+          warmupGate = new Promise<void>((resolve) => {
+            releaseWarmup = resolve
+          })
+          const warmingEntered = new Promise<void>((resolve) => {
+            warmupEntered = resolve
+          })
+          yield* Effect.addFinalizer(() => Effect.sync(releaseWarmup))
+          const warmingRequest = restateExecutionActivationRequest(
+            { ...config, ...(yield* loadAttempt(randomUUID())) },
+            token,
+          )
+          const warmingReceipt = yield* sendRestateInvocation(url, warmingRequest.body, {
+            timeoutMs: 5000,
+            headers: warmingRequest.headers,
+          })
+          yield* Effect.promise(() => warmingEntered)
+          const beforeWarm = advanced.length
+          yield* Effect.sleep(1200)
+          expect(advanced.length).toBeGreaterThan(beforeWarm)
+          expect(controllerActivations).toBe(1)
+          expect(brokerActivations).toBe(1)
+          releaseWarmup()
+          yield* awaitRestateInvocation(ingress, warmingReceipt.invocationId, {
+            maximumAttempts: 100,
+            pollIntervalMs: 100,
+            requestTimeoutMs: 5000,
+          })
+          warmupGate = undefined
 
           let previousSource = config.sourceRevision
           let previousNextSequence = state.nextSequence
@@ -300,6 +355,7 @@ describeRestate('Real Restate execution deployment activation', () => {
                   outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'f'.repeat(64), nextDelayMs: 500 },
                 }
               },
+              prepareActivation: () => Promise.resolve(),
               projectState: async (_key, next) => {
                 projected.push(next)
               },

@@ -77,6 +77,43 @@ This telemetry change does not repair PCIe training or establish a client-latenc
 
 ## Diagnose the bottleneck
 
+### Metadata-device latency and scrub progress
+
+Retain the native BlueFS SST/WAL write bytes, read bytes, log-compaction duration,
+BlueStore transaction-throttle duration, and replicated-scrub read/intersection/blocked counters.
+These counters are already exposed by the OSD exporters; their collection needs no OSD restart,
+additional permissions, RocksDB tracing, or change to `osd_max_scrubs=3`.
+The central Alloy allowlist retains 13 additional metric names, bounded by existing daemon identity.
+
+```promql
+ceph_storage:bluefs_sst_write_bytes_per_second:rate5m
+ceph_storage:bluefs_wal_write_bytes_per_second:rate5m
+ceph_storage:bluefs_read_bytes_per_second:rate5m
+ceph_storage:bluefs_fsync_seconds:mean5m
+ceph_storage:bluestore_throttle_seconds:mean5m
+ceph_storage:osd_scrub_read_bytes_per_second:rate5m
+ceph_storage:osd_scrub_blocked_ops_per_second:rate5m
+```
+
+Resolve each OSD's `block.db` through its actual device-mapper slaves before comparing its
+BlueFS fsync and metadata-write rates with NVMe latency. Device names can change after reboot.
+SST writes include both memtable flush and RocksDB compaction; they do not identify the cause alone.
+BlueFS `compact_lat` and `compact_lock_lat` describe BlueFS **log** compaction, not RocksDB
+SST compaction. Missing RocksDB statistics are not evidence of zero compaction.
+The exporter labels cumulative latency sums as gauges; use their paired cumulative counts,
+verify continuity, and exclude reset windows for literal first/last comparisons. Never interpret
+these means as request percentiles or subtract unrelated latency populations.
+
+Scrub read bytes include replica reads. Their cluster sum is not unique logical coverage, and a
+successful-scrub counter can include shallow scrubs. Check PG deep-scrub completion timestamps
+and reservation age independently. Zero direct scrub-blocked operations does not exclude shared
+disk contention. Preserve normal useful workload and all integrity checks during comparisons.
+
+After the configuration-digest rollout, require fresh advancing series from all six OSDs in Mimir
+and successful rule evaluation. Verify active byte counters rather than just `up`. Removing the
+added allowlist alternatives and recording rules through GitOps rolls back this instrumentation;
+it does not change Ceph scheduling or repair a hardware fault.
+
 The objectstore gateways use Beast with `tcp_nodelay=1` through `gateway.rgwCommandFlags.rgw_frontends` in
 `argocd/applications/rook-ceph/cluster-values.yaml`. The explicit frontend retains Rook's existing container port
 8080 behind Service port 80; update that override when changing gateway listeners. Ceph's

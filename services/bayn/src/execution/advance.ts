@@ -1,8 +1,7 @@
 import { Cause, Data, Effect, Exit } from 'effect'
 
 import { CycleState } from '../cycle/model'
-import type { CycleRunnerError } from '../cycle/runner/model'
-import type { CycleRunResult } from '../cycle/runner/model'
+import type { CycleRunResult, CycleRunnerError } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { ExecutionStageTimings, type ExecutionStageTiming, withObservedSpan } from '../telemetry'
@@ -105,9 +104,12 @@ const hashOutcome = (
   const { observation, result } = advance
   const material = {
     schemaVersion:
-      observation.jevObservationReferences === undefined
-        ? 'bayn.execution-advance-receipt.v1'
-        : 'bayn.execution-advance-receipt.v2',
+      observation.executionBuild !== undefined
+        ? 'bayn.execution-advance-receipt.v3'
+        : observation.jevObservationReferences === undefined
+          ? 'bayn.execution-advance-receipt.v1'
+          : 'bayn.execution-advance-receipt.v2',
+    ...(observation.executionBuild === undefined ? {} : { executionBuild: observation.executionBuild }),
     ...(observation.jevObservationReferences === undefined
       ? {}
       : { jevObservationReferences: observation.jevObservationReferences }),
@@ -160,10 +162,10 @@ const hashOutcome = (
   )
 }
 
-export const advanceExecutionOnce = <R>(
+export const advanceExecutionOnce = <E, R>(
   command: AdvanceExecutionCommand,
   driver: {
-    readonly advance: Effect.Effect<AdvancePass, CycleRunnerError, R>
+    readonly advance: Effect.Effect<AdvancePass, E, R>
     readonly nextDelayMs: number
   },
 ): Effect.Effect<AdvanceOutcome, TransientExecutionFailure, R> =>

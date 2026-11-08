@@ -54,6 +54,13 @@ spec:
           port: 443
     - to:
         - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
             cidr: 100.100.244.141/32
         - ipBlock:
             cidr: 100.100.244.142/32
@@ -62,3 +69,17 @@ spec:
       ports:
         - protocol: TCP
           port: 6443
+    - to:
+        - ipBlock:
+            cidr: 100.100.244.181/32
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443

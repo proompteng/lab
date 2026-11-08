@@ -5,16 +5,26 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Clock, Effect, Layer, ManagedRuntime, Redacted, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
-import { observedBrokerState, type BrokerObservationTicket } from '../broker/alpaca/observed-snapshot'
+import {
+  BrokerObservations,
+  observedBrokerState,
+  type BrokerObservationTicket,
+} from '../broker/alpaca/observed-snapshot'
+import { makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
+import { ExecutionControllerOutcome } from '../execution/controller-status'
+import { checkHealth } from '../health/program'
+import { readinessResponseDecision, runtimeHealthFreshnessLeaseMs, statusReadinessResponseDecision } from '../http'
+import { initialState } from '../runtime-state'
+import { config as runtimeConfig } from '../testing/runtime-fixtures'
 import { BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from './broker-observations'
-import { PostgresClientLive } from './postgres-client'
+import { postgresHealthCheck, PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 
 let cacheFixture = valkeyFixture()
@@ -43,6 +53,105 @@ const claim = (store: ReturnType<typeof makeBrokerObservationStore>, captureId =
 const snapshot = (ticket: BrokerObservationTicket) => observedBrokerSnapshotFixture(accountId, ticket.startedAt)
 const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
   TestClock.setTime(Date.parse(ticket.startedAt) + delta)
+
+// Exercise the production projection, health pass and both HTTP readiness decisions.
+// Ledger/cycle/controller probes are healthy fixtures; no broker or ledger I/O is permitted.
+const rolloutReadiness = (sql: PgClient.PgClient, store: ReturnType<typeof makeBrokerObservationStore>) =>
+  Effect.gen(function* () {
+    const unexpected = () => Effect.die('Rollout readiness must not perform direct broker I/O')
+    let directBrokerCalls = 0
+    const directBroker = () => Effect.sync(() => directBrokerCalls++).pipe(Effect.andThen(unexpected()))
+    const read = yield* makeProjectedBrokerRead({
+      account: directBroker(),
+      accountConfiguration: directBroker(),
+      positions: directBroker(),
+      orders: directBroker,
+      orderById: directBroker,
+      orderByClientId: directBroker,
+      assetBySymbol: directBroker,
+      feeActivities: directBroker,
+      fillActivities: directBroker,
+      marketCalendar: directBroker,
+    }).pipe(Effect.provideService(BrokerObservations, store))
+    const broker = {
+      read,
+      expectedAccountId: accountId,
+      executionEligible: false,
+      executionDisabledReason: 'READ_ONLY',
+    }
+    const controller = { controllerKey: 'primary', planHash: 'c'.repeat(64) }
+    const state = yield* Ref.make(
+      initialState({
+        broker,
+        autonomousCycleLoopConfigured: true,
+        autonomousCycleLoopOwner: 'Restate',
+        executionController: controller,
+      }),
+    )
+    const at = yield* currentUtcInstant
+    yield* checkHealth(
+      runtimeConfig,
+      state,
+      {
+        postgresql: postgresHealthCheck(sql),
+        journal: {
+          check: Effect.void,
+          post: unexpected,
+          verifyAccount: unexpected,
+          journalAndReconcile: unexpected,
+          checkRun: unexpected,
+        },
+        cycleObservability: {
+          read: () =>
+            Effect.succeed({
+              current: null,
+              last: null,
+              unfinishedCycleCount: 0,
+              authority: null,
+              reconciliation: null,
+              mutations: {
+                eventCount: 0,
+                recoveryFoundCount: 0,
+                approvedIntentCount: 0,
+                acknowledgedIntentCount: 0,
+                unresolvedCount: 0,
+                oldestUnresolvedAt: null,
+                latestOccurredAt: null,
+              },
+            }),
+        },
+      },
+      broker,
+      undefined,
+      { _tag: 'Exact', bindingId: generationHash },
+      {
+        controllerKey: controller.controllerKey,
+        read: () =>
+          Effect.succeed({
+            schemaVersion: 1,
+            ...controller,
+            active: true,
+            epoch: 1,
+            nextSequence: 2,
+            lastSequence: 1,
+            lastOutcome: ExecutionControllerOutcome.Waiting,
+            lastReceiptHash: 'd'.repeat(64),
+            completedAt: at,
+            nextDueAt: utcInstantFromEpochMillis(Date.parse(at) + 30_000),
+            lastPass: { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: at },
+          }),
+      },
+    )
+    expect(directBrokerCalls).toBe(0)
+    const current = yield* Ref.get(state)
+    const freshness = { nowMs: yield* Clock.currentTimeMillis, leaseMs: runtimeHealthFreshnessLeaseMs(runtimeConfig) }
+    return {
+      current,
+      status: statusReadinessResponseDecision(current, freshness),
+      trading: readinessResponseDecision(current, freshness),
+      freshness,
+    }
+  })
 const reserve = (sql: PgClient.PgClient, id: string, at: string) =>
   Effect.gen(function* () {
     yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
@@ -92,6 +201,23 @@ describePostgres('Durable per-account broker observations', () => {
         return yield* effect(sql, makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache))
       }).pipe(Effect.provide(TestClock.layer())),
     )
+
+  test('consecutive poll tickets share a generation boundary until a durable invalidation', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first), 0)
+        const second = yield* claim(store)
+        expect(second.generation).toBe(first.generation + 1)
+        yield* advanceToTicket(second)
+        yield* store.publish(second, snapshot(second), 0)
+        yield* store.invalidate
+        const next = yield* claim(store)
+        expect(next.generation).toBeGreaterThan(second.generation + 1)
+      }),
+    ))
 
   test('hard migration removes the database payload and compact reads retain the exact parent snapshot', async () =>
     run((sql, store) =>
@@ -194,7 +320,7 @@ describePostgres('Durable per-account broker observations', () => {
         yield* advanceToTicket(ticket)
         const failed = makeBrokerObservationStore(sql, accountId, revision, 60_000, {
           ...cacheFixture.cache,
-          put: () => Effect.fail(new ValkeyCacheError({ operation: 'put', message: 'replica unavailable' })),
+          putAll: () => Effect.fail(new ValkeyCacheError({ operation: 'put', message: 'replica unavailable' })),
         })
         expect(Result.isFailure(yield* failed.publish(ticket, snapshot(ticket), 0).pipe(Effect.result))).toBe(true)
         const rows =
@@ -537,6 +663,126 @@ describePostgres('Durable per-account broker observations', () => {
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
       }),
     ))
+  test.each(['failed', 'interrupted'] as const)(
+    'status routing stays independent of exact-revision trading readiness through a %s handoff poll',
+    async (failure) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          yield* store.activate(0)
+          const first = yield* claim(store)
+          yield* advanceToTicket(first)
+          yield* store.publish(first, snapshot(first), 0)
+          yield* sql`INSERT INTO authority_generations
+          (generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${generationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${first.startedAt})`
+          const authorityBefore = yield* sql`SELECT * FROM authority_generations ORDER BY generation_hash`
+          const successor = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
+          const assertReadiness = (reader: typeof store, tradingStatus: 200 | 503) =>
+            Effect.gen(function* () {
+              const health = yield* rolloutReadiness(sql, reader)
+              expect(health.status).toMatchObject({ status: 200, body: { ready: true } })
+              expect(health.trading).toMatchObject({ status: tradingStatus, body: { ready: tradingStatus === 200 } })
+              if (tradingStatus === 503) expect(health.current.broker?.readAvailable).toBe(false)
+              return health
+            })
+
+          // A prepared status API may route before ownership moves, but cannot read a foreign cut.
+          yield* assertReadiness(store, 200)
+          yield* assertReadiness(successor, 503)
+          expect(yield* store.readState).toEqual(observedBrokerState(snapshot(first)))
+
+          yield* successor.activate(0)
+          const captureId = randomUUID()
+          const pending = yield* claim(successor, captureId)
+          yield* advanceToTicket(pending)
+          if (failure === 'failed') yield* successor.failed(pending, 0)
+          else yield* successor.interrupt(captureId)
+          yield* assertReadiness(store, 503)
+          yield* assertReadiness(successor, 503)
+          expect(yield* store.publish(first, snapshot(first), 0)).toBe(false)
+
+          const next = yield* claim(successor)
+          yield* advanceToTicket(next)
+          yield* successor.publish(next, snapshot(next), 0)
+          yield* assertReadiness(successor, 200)
+          yield* assertReadiness(store, 503)
+
+          yield* advanceToTicket(next, 60_000)
+          const stale = yield* assertReadiness(successor, 503)
+          expect(stale.current.broker?.error).toContain('stale-observation')
+          yield* assertReadiness(store, 503)
+          expect(
+            statusReadinessResponseDecision(stale.current, {
+              ...stale.freshness,
+              nowMs: stale.freshness.nowMs + stale.freshness.leaseMs,
+            }),
+          ).toMatchObject({ status: 503, body: { ready: false } })
+          expect(yield* sql`SELECT * FROM authority_generations ORDER BY generation_hash`).toEqual(authorityBefore)
+        }),
+      ),
+  )
+
+  test('revision handoff blocks both readers until fresh publication and never admits the predecessor again', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const first = yield* claim(store)
+        yield* advanceToTicket(first)
+        const previous = snapshot(first)
+        yield* store.publish(first, previous, 0)
+        expect(yield* store.readState).toEqual(observedBrokerState(previous))
+        yield* sql`INSERT INTO authority_generations
+          (generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${generationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${first.startedAt})`
+        const authorityBefore = yield* sql`SELECT * FROM authority_generations ORDER BY generation_hash`
+
+        const successor = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
+        yield* successor.activate(0)
+        for (const reader of [store, successor]) {
+          const unavailable = yield* Effect.flip(reader.readState)
+          expect(unavailable.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(unavailable.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+        }
+
+        const next = yield* claim(successor)
+        yield* advanceToTicket(next)
+        const current = snapshot(next)
+        yield* successor.publish(next, current, 0)
+        expect(yield* successor.readState).toEqual(observedBrokerState(current))
+        const predecessor = yield* Effect.flip(store.readState)
+        expect(predecessor.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(predecessor.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+        expect(yield* store.publish(first, previous, 0)).toBe(false)
+        expect(yield* successor.readState).toEqual(observedBrokerState(current))
+
+        yield* advanceToTicket(next, 60_000)
+        expect((yield* Effect.flip(successor.readState)).message).toContain('stale-observation')
+        expect(yield* sql`SELECT * FROM authority_generations ORDER BY generation_hash`).toEqual(authorityBefore)
+      }),
+    ))
+
+  test.each(['absent', 'same-revision', 'foreign-revision'] as const)(
+    'unavailable observation identifies only a verified foreign revision: %s',
+    async (state) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          if (state === 'same-revision') yield* store.activate(0)
+          if (state === 'foreign-revision')
+            yield* makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache).activate(0)
+          const unavailable = yield* Effect.flip(store.readState)
+          expect(unavailable.kind).toBe(BrokerReadErrorKind.Timeout)
+          expect(unavailable.retryable).toBe(true)
+          expect(unavailable.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+          expect(unavailable.message).toBe(
+            state === 'foreign-revision'
+              ? 'Broker observation source revision differs from this runtime'
+              : 'Broker observation is unavailable or invalidated by a mutation',
+          )
+          expect(unavailable.message).not.toContain(accountId)
+        }),
+      ),
+  )
+
   test('activation cannot classify a predecessor revision cut as a successful current-revision wait', async () =>
     run((sql, store) =>
       Effect.gen(function* () {

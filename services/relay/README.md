@@ -6,13 +6,42 @@ OpenCode use the same protobuf execution contract. They have separate identities
 The first adapter is Kubernetes: pod status, bounded pod logs, and namespace events. These operations execute against
 the configured cluster API using Relay's projected service-account credential. Pod status omits pod specifications and
 inline environment values. Logs are plain text. The client cannot supply a URL, credential, HTTP method, exec command,
-watch, or arbitrary Kubernetes path. Effectful operations require a separate execution contract and are rejected.
+watch, or arbitrary Kubernetes path. Kubernetes mutations remain unregistered.
 
 Registered HTTP, CLI and upstream MCP adapters use the same authorization, discovery and receipt path. Each operation binds one
 fixed resource, a catalog action and a reviewed JSON input schema. Its target is derived from the registration;
-arguments cannot select another account, destination or command. These adapters support approved read operations.
+arguments cannot select another account, destination or command. CLI and HTTP adapters support approved read operations. Authenticated MCP endpoints can also enroll mutations using the invocation contract below.
 An HTTP POST may represent a read, such as a search; the operator must verify the provider operation before enrollment.
 Registering a transport does not grant resource access or introduce a policy definition into Ofz.
+
+## Onboard a connector
+
+Author one definition in [`connectors/`](connectors/). Both `galactic.ts` and `agents.ts` use the same compiler.
+The definition contains the adapter configuration, exact target/workspace assignments, and action-to-grant policy.
+MCP input schemas can come directly from the provider's existing contracts, as AgentRun's do.
+
+```sh
+bun services/relay/generate.ts
+bash services/ofz/qualify-platform.sh --write
+bun test services/relay/onboarding.test.ts
+bun services/relay/generate.ts --check
+```
+
+Generation owns Relay's `config.json`, the Ofz platform `policies.json`, `schema.zed`, and `services.json`, and the
+`relay_*` approval rules in OpenCode's `opencode.json`. Do not edit those generated fields. Ofz's `*.base.*` files
+retain service identities, workspace membership setup, and platform-specific graph policy. Removing a definition
+removes its generated enrollment; it does not delete execution receipts, provider data, or existing native grants.
+Review removal impact before rollout. The compiler rejects unknown workspaces, conflicting policies, actions without
+policy, and targets outside the declared scope. The runtime parser and native SpiceDB qualification remain authoritative.
+
+HTTP, CLI and MCP connectors use their existing adapters. OAuth2 and workload federation select the adapter's
+authentication configuration. An existing MCP server needs a registration, not a new wrapper service. Native mutation
+providers must honor Relay's authenticated invocation context and their own recovery contract. A new protocol needs
+an adapter; a new provider on an existing protocol does not need changes to Relay's executor, Ofz's evaluator,
+Tengri's connection flow, or OpenCode's bridge. A custom result card is optional.
+
+The generated common policy supports direct human/workload grants and workspace-member grants. Infrastructure
+identity, secrets and network paths still require explicit enrollment. Registering the connector assigns no grants.
 
 Tool discovery uses the same Ofz identity and resource permissions as execution. `ListOperations` requires the
 current human session or the caller's attested workload identity. Relay asks Ofz for approved workspace/resource/action
@@ -101,6 +130,83 @@ is `{ "type": "none" }`, `{ "type": "bearer_file", "path": "/mounted/token" }`, 
 `{ "type": "oauth2", "profile": "inventory" }`. Provider authentication failures remain distinct from Ofz denials.
 OAuth profiles and destinations must match Ofz registrations at startup and every enrollment refresh.
 
+### Workload identity federation
+
+HTTP and HTTP MCP registrations also accept `workload_identity`. Relay obtains a JWT-SVID from its local
+SPIRE Workload API, verifies the exact registered subject and audience plus expiry, asks the agent to validate
+it, and exchanges it for a bearer access token using [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html).
+The token service must support JWT subject tokens, the registered audience and scopes, and return an access token
+with `issued_token_type`, `token_type: Bearer`, and `expires_in` between 1 and 86,400 seconds.
+
+```json
+{
+  "type": "workload_identity",
+  "federation": {
+    "spiffe_id": "spiffe://proompteng.ai/ns/relay/sa/relay",
+    "audience": "//iam.googleapis.com/projects/952507162578/locations/global/workloadIdentityPools/proompteng-ai/providers/spire",
+    "token_endpoint": "https://sts.googleapis.com/v1/token",
+    "scopes": ["https://www.googleapis.com/auth/cloud-platform.read-only"]
+  }
+}
+```
+
+This registration uses the same value for the JWT audience and the token-exchange audience. The issuer is
+`https://oidc.proompteng.ai`. The Google pool `proompteng-ai` uses one provider, `spire`, with that exact issuer and
+audience, `google.subject = assertion.sub`, and `assertion.sub.startsWith('spiffe://proompteng.ai/')` as its admission
+condition. Pool admission authenticates identities from our trust domain. Grant resource permissions to each workload's
+exact SPIFFE subject; do not grant roles to the whole pool. This follows
+[Google's WIF guidance](https://docs.cloud.google.com/iam/docs/best-practices-for-using-workload-identity-federation)
+on sharing a provider while keeping authorization specific to external identities.
+For the Google test project `lab-wif-test-20261105`, the intended proof is a custom role containing only
+`resourcemanager.projects.get`, then an authorized HTTP GET to
+`https://cloudresourcemanager.googleapis.com/v3/projects/952507162578`.
+[Google's STS contract](https://docs.cloud.google.com/iam/docs/reference/sts/rest/v1/TopLevel/token) defines the
+exchange; [Resource Manager calls are free](https://cloud.google.com/resource-manager/pricing).
+Creating a Google project alone does not configure its pool, provider, permission binding or Relay operation.
+
+The production registration in [`config.json`](../../argocd/applications/relay/config.json) exposes
+`google-project__read` through normal Relay discovery and execution. Ofz owns its `google.project.read` permission
+and resource enrollment in the Proompteng workspace. Assign its `reader` relationship through workspace administration
+before use. The [deployment acceptance steps](../../argocd/applications/relay/README.md#google-project-metadata)
+exercise the deployed MCP client, Ofz authorization, Google API response and durable execution receipts.
+
+Operators can run `relay-federation-probe` inside the deployed Relay container to verify the Workload API,
+token exchange and destination permission before enrolling a connector. It reads a Relay configuration from stdin,
+requires exactly one HTTP connector with workload identity authentication and one GET operation accepting `{}`,
+and prints the bounded resource response. It uses the same JWT, token exchange and HTTP implementation as Relay.
+Tokens remain in memory. Errors produce a nonzero exit status without printing credentials.
+
+```sh
+kubectl --context galactic-tailscale -n relay exec -i deployment/relay -c relay -- \
+  /bin/relay-federation-probe < services/relay/examples/google-project.json
+```
+
+This is an operator diagnostic under Kubernetes exec authority, not a Relay API operation. It does not create Ofz
+relationships or expose the probe to application clients. The checked example reads only the test project's metadata.
+Relay permits public IPv4 HTTPS egress for provider endpoints, using the same private-address exclusions as OpenCode.
+Applications still use fixed reviewed HTTPS destinations, verified certificates and no redirects or environment proxies.
+Roll out the reviewed image and network policy through Kargo before probing. Recovery is a Git revert and normal
+promotion; no identity, signing key, datastore or existing connector changes are required.
+
+The connector owns its fixed destination, federation registration, operation paths and Ofz resource/action mappings.
+Callers cannot supply any of these in tool arguments. Federation runs only after the existing Ofz authorization and
+durable execution start. It represents Relay's machine identity; it does not replace per-user OAuth accounts or grant
+the calling human/workload any Ofz permission. Register and authorize the corresponding Ofz operation before enabling
+the connector, and permit its token and resource hosts in deployment egress policy.
+
+Access tokens are held only in memory, separately for each connector. Concurrent requests share one successful
+refresh. Renewal starts 10% before expiry, capped at 30 seconds, using a newly fetched JWT. Failed renewal fails the
+operation; no expired cached token is used. A provider denial does not replay the resource request. JWT acquisition
+has a five-second deadline; the entire exchange, including cache-lock wait, has a ten-second deadline and a 32 KiB
+response budget. Redirects, environment proxies and automatic retries are disabled. Provider response bodies and
+tokens are never included in errors. Optional federation `ca_file` is an absolute CA path independent of the resource
+server's CA; production Google registrations use the system trust store.
+
+The isolated test in `test-client.sh` uses real Unix-socket Workload API RPCs, signed JWTs, HTTPS OIDC discovery/JWKS,
+token exchange and both actual adapters. It checks concurrent refresh, signing-key rotation, expiry, wrong
+subject/audience/issuer/signature, provider denial, redirect/lost responses and malformed credentials. It does not
+establish that Google trust or production Ofz grants have been enrolled; those require separate live proof.
+
 For example, after enrolling `inventory.account` and `inventory.items.read` in Ofz:
 
 ```json
@@ -119,6 +225,7 @@ For example, after enrolling `inventory.account` and `inventory.items.read` in O
             "description": "Search the approved inventory account",
             "action": "inventory.items.read",
             "target": { "name": "Team inventory", "kind": "inventory.account", "id": "inventory/team" },
+            "read_only": true,
             "input_schema": {
               "type": "object",
               "properties": { "query": { "type": "string", "maxLength": 128 } },
@@ -152,11 +259,14 @@ An upstream MCP connector uses `type: "mcp"`, an `id`, a `transport` and `operat
 - Stdio transport uses `{ "type": "stdio", "process": { ... } }`, with the same fixed process profile, cleared
   environment, projected credentials and process-group lifetime as CLI operations. Provider stderr is discarded.
 
-The maintained MCP SDK owns protocol negotiation, message correlation and tool calls. Registration requires an
-operator-reviewed read operation. Relay checks the upstream tool's exact input schema before dispatch and rejects
-explicit effectful or destructive hints. Optional MCP annotations do not grant authority. A changed or missing tool
+The maintained MCP SDK owns protocol negotiation, message correlation and tool calls. Registration requires
+an explicit `read_only` flag. Relay checks the upstream tool's exact input schema before dispatch. Reads reject
+explicit effectful or destructive hints. Writes require `readOnlyHint: false`, authenticated HTTPS and
+`relay_context: true`. Relay passes its authorized operation ID, client, actor, action, resources and authorization
+receipt in `_meta["io.proompteng.relay"]`; user arguments cannot supply or replace it. The provider must authenticate
+Relay and durably reconcile this operation ID without replaying side effects. Optional MCP annotations do not grant authority. A changed or missing tool
 requires reviewing the registration; provider descriptions and instructions cannot replace the approved catalog. An MCP tool error
-remains a failed execution. The complete invocation has a ten-second deadline, and JSON messages, HTTP bodies and
+is returned as an error; writes remain unconfirmed when no outcome can be established. The complete invocation has a ten-second deadline, and JSON messages, HTTP bodies and
 SSE streams have a 256 KiB limit. Automatic session reinitialization, SSE reconnection, redirects and HTTP retries
 are disabled. A lost reply or expired provider session cannot repeat a tool call. Provider credentials are reread
 for each invocation. OAuth credentials come from Ofz after an authorized execution starts, and never enter the client
@@ -186,3 +296,39 @@ lookup after lost responses without another execution. Interactive stdio paginat
 once, check full and partial final pages and an empty catalog, reject malformed, out-of-range and stale cursors,
 and change authorized discovery between pages while asserting zero execution dispatches or lookups. Production cluster
 acceptance is a distinct rollout gate.
+
+## AgentRun connector
+
+`agents` is the first enrolled MCP mutation provider. The existing Agents service serves `/mcp/relay/lab`; no extra
+scheduler or runner is introduced. Its `spiffe_jwt` authentication obtains a fresh Relay JWT-SVID for the exact
+`https://agents.k8s.proompteng.ai/mcp/relay` audience. Agents verifies the signed token against the SPIRE JWKS,
+expiry, audience and exact Relay workload identity. TLS reaches the existing private ingress; the deployment's
+host alias pins that hostname to the configured ingress VIP rather than the public DNS route.
+
+The reviewed profile in `argocd/applications/agents/relay-targets.json` fixes workspace, namespace UID, agent,
+repository, base branch, VCS and credential bindings, and a two-hour Job deadline. Callers supply task text and an
+optional token budget. `start_run`, `list_runs`, `get_run`, `read_logs`, `get_result` and `cancel_run` are generated
+from the Agents Zod contracts by `bun services/relay/generate.ts`; CI runs `--check`.
+
+Ofz owns `agents.target` policy with separate `agents.runs.read`, `agents.runs.logs`, `agents.runs.start` and
+`agents.runs.cancel` actions. Registering `agents/lab` does not grant these actions. Workspace administrators assign
+them in the existing admin portal. Starting a run permits code execution using that profile's repository credentials;
+review this authority independently from Kubernetes read access.
+
+The public run ID is the original Relay operation UUID. Agents reserves it durably before calling its existing
+submission handler with a deterministic resource name. After any uncertain response, use `get_run` with that ID.
+Observation can repair the database projection from the accepted Kubernetes object, but never submits another run.
+An unconfirmed write stays `started` in Relay until it has a confirmed outcome; a timeout is not a confirmed failure.
+Cancellation uses the existing UID-fenced handler. Logs select the original run UID and fall back to retained logs;
+results read the recorded artifact key. Namespace recreation invalidates the target profile.
+
+Tengri installs the registered operations through Connections and preserves read/write annotations. Its compact run
+card refreshes through Relay and can cancel with current permission; uncertain cancellation is never automatically
+retried. Standalone OpenCode discovers the same tools through its existing `relay-client` bridge. Both use Ofz
+permissions and their existing client approval flow. AgentRun workers consuming Relay are a separate feature.
+
+Rollout: qualify/install the Ofz schema, migrate and release Agents, then release Relay and the clients through their
+existing Kargo stages. Run the database migration before enabling the endpoint. A reader grant must work before a
+start/cancel grant is exercised. Verify a harmless task to completion in each client, including logs and result,
+then verify that lost-response lookup preserves its original run ID. Revoke target permissions or remove its
+registration to disable new connector use; retain submission receipts, AgentRun projections and artifacts for recovery.

@@ -1,13 +1,27 @@
 package ai.proompteng.dorvud.webull
 
+import ai.proompteng.dorvud.platform.WEBULL_BARS_PATH
 import ai.proompteng.dorvud.platform.WEBULL_QUOTES_PATH
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
 import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -16,6 +30,125 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WebullApiTest {
+  @Test
+  fun `a stalled catalog response does not block paced priority bar requests`() =
+    runBlocking {
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      val executor = Executors.newFixedThreadPool(3)
+      server.executor = executor
+      val backgroundStarted = CompletableDeferred<Unit>()
+      val releaseBackground = CountDownLatch(1)
+      val requestTimes = ConcurrentLinkedQueue<Long>()
+      server.createContext(WEBULL_BARS_PATH) { exchange ->
+        requestTimes.add(System.nanoTime())
+        if (exchange.requestURI.rawQuery == "batch=catalog") {
+          backgroundStarted.complete(Unit)
+          releaseBackground.await(5, TimeUnit.SECONDS)
+        }
+        val body = "{}".toByteArray()
+        exchange.sendResponseHeaders(200, body.size.toLong())
+        exchange.responseBody.use { it.write(body) }
+      }
+      server.start()
+      try {
+        val api = WebullApi(WebullCredentials("key", "secret"), origin = URI("http://127.0.0.1:${server.address.port}"))
+        val background = async { api.request(WEBULL_BARS_PATH, query = mapOf("batch" to "catalog")) }
+        withTimeout(2_000) { backgroundStarted.await() }
+        withTimeout(2_000) {
+          repeat(2) { api.request(WEBULL_BARS_PATH, query = mapOf("batch" to "priority")) }
+        }
+        assertFalse(background.isCompleted)
+        assertEquals(3, requestTimes.size)
+        assertTrue(requestTimes.toList().zipWithNext().all { (previous, next) -> next - previous >= 240_000_000 })
+        releaseBackground.countDown()
+        assertEquals(Json.parseToJsonElement("{}"), background.await())
+      } finally {
+        releaseBackground.countDown()
+        server.stop(0)
+        executor.shutdownNow()
+      }
+    }
+
+  @Test
+  fun `rate limit responses extend the cooldown of requests already waiting for a slot`() =
+    runBlocking {
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      val executor = Executors.newFixedThreadPool(3)
+      server.executor = executor
+      val firstStarted = CompletableDeferred<Unit>()
+      val releaseLimit = CountDownLatch(1)
+      val releaseLimitBody = CountDownLatch(1)
+      val requests = AtomicInteger()
+      val limitedAt = AtomicLong()
+      val priorityAt = AtomicLong()
+      server.createContext(WEBULL_BARS_PATH) { exchange ->
+        val limited = requests.incrementAndGet() == 1
+        if (limited) {
+          firstStarted.complete(Unit)
+          releaseLimit.await(5, TimeUnit.SECONDS)
+          limitedAt.set(System.nanoTime())
+          exchange.responseHeaders.add("Retry-After", "1")
+        }
+        if (exchange.requestURI.rawQuery == "batch=priority") priorityAt.set(System.nanoTime())
+        val body = (if (limited) """{"error_code":"RATE_LIMITED"}""" else "{}").toByteArray()
+        exchange.sendResponseHeaders(if (limited) 429 else 200, body.size.toLong())
+        if (limited) releaseLimitBody.await(5, TimeUnit.SECONDS)
+        exchange.responseBody.use { it.write(body) }
+      }
+      server.start()
+      try {
+        val api = WebullApi(WebullCredentials("key", "secret"), origin = URI("http://127.0.0.1:${server.address.port}"))
+        val background = async { api.request(WEBULL_BARS_PATH, query = mapOf("batch" to "catalog")) }
+        withTimeout(2_000) { firstStarted.await() }
+        val priority = async(start = CoroutineStart.UNDISPATCHED) { api.request(WEBULL_BARS_PATH, query = mapOf("batch" to "priority")) }
+        delay(50)
+        releaseLimit.countDown()
+        withTimeout(4_000) {
+          priority.await()
+          releaseLimitBody.countDown()
+          background.await()
+        }
+        assertEquals(3, requests.get())
+        assertTrue(priorityAt.get() - limitedAt.get() >= 1_000_000_000)
+      } finally {
+        releaseLimit.countDown()
+        releaseLimitBody.countDown()
+        server.stop(0)
+        executor.shutdownNow()
+      }
+    }
+
+  @Test
+  fun `bar requests accept twenty symbols and reject an oversized batch before sending`() =
+    runBlocking {
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      val requestedSizes = mutableListOf<Int>()
+      server.createContext(WEBULL_BARS_PATH) { exchange ->
+        val request = Json.parseToJsonElement(exchange.requestBody.readAllBytes().decodeToString()).jsonObject
+        val size = (request.getValue("symbols") as JsonArray).size
+        requestedSizes += size
+        val body =
+          if (size <= 20) {
+            """{"result":[]}"""
+          } else {
+            """{"error_code":"ILLEGAL_PARAMETER","message":"symbols size must be between 1 and 20."}"""
+          }
+        val bytes = body.toByteArray()
+        exchange.sendResponseHeaders(if (size <= 20) 200 else 417, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
+      }
+      server.start()
+      try {
+        val api = WebullApi(WebullCredentials("key", "secret"), origin = URI("http://127.0.0.1:${server.address.port}"))
+        val cutoff = Instant.parse("2026-11-02T08:00:00Z")
+        api.completedBars((1..20).map { "S$it" }, cutoff)
+        assertFailsWith<IllegalArgumentException> { api.completedBars((1..21).map { "S$it" }, cutoff) }
+        assertEquals(listOf(20), requestedSizes)
+      } finally {
+        server.stop(0)
+      }
+    }
+
   @Test
   fun `exhausted rate limit retries still delay the next batch until the final cooldown expires`() =
     runBlocking {
@@ -70,7 +203,7 @@ class WebullApiTest {
   }
 
   @Test
-  fun `HTTP capture retains exact response bytes and rejects credential redirects`() =
+  fun `HTTP capture retains exact response bytes and rejects credential redirects`(): Unit =
     runBlocking {
       val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
       val body = "{\"price\":\"0.123456789123456789\"}".toByteArray(UTF_8)

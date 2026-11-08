@@ -532,6 +532,14 @@ beforeAll(async () => {
               ],
       })
     },
+    recoverCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -742,11 +750,28 @@ beforeAll(async () => {
         }),
         eventSequence: threadId === 'invalid-sequence' ? '18446744073709551615' : '42',
       })
-      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor'
+      const generated = threadId === 'thread-generated'
+      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor' || generated
       call.write({
         part: 'CODEX_HISTORY_PART_ITEMS',
         rawJson: JSON.stringify({
-          data: paged ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }] : [],
+          data: generated
+            ? [
+                {
+                  turnId: 'turn-1',
+                  item: {
+                    id: 'exec-cat',
+                    type: 'imageGeneration',
+                    status: 'completed',
+                    savedPath: '/home/nanoagent/.codex/generated_images/thread-generated/exec-cat.png',
+                    result:
+                      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  },
+                },
+              ]
+            : paged
+              ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }]
+              : [],
           nextCursor: null,
         }),
         eventSequence: threadId === 'outdated-item-cursor' ? '41' : '52',
@@ -802,6 +827,15 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('recovers the exact accepted run through the current signed session without sending input', async () => {
+    const { recoverCodexRun } = await import('./grpc')
+    const runId = '11111111-1111-4111-8111-111111111111'
+    const operationId = '22222222-2222-4222-8222-222222222222'
+    await recoverCodexRun(identity, 'agent-test', runId, operationId)
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', runId, operationId })
+    expect(receivedMetadata?.get('x-tengri-signature')).toHaveLength(1)
+  })
+
   test('identifies a recorded control that was rejected before native dispatch', async () => {
     const { steerCodexTurn } = await import('./grpc')
     expect(
@@ -1931,13 +1965,42 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
     const thread = await restoredThread('thread-test')
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test' })
     expect(thread).toEqual({
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test","historyMode":"paginated","turns":[]}}',
       eventSequence: 42,
       itemEventSequences: {},
     })
+  })
+
+  test('serves generated image bytes through the authorized native history read', async () => {
+    const { readCodexGeneratedImage } = await import('./grpc')
+    const path = '/home/nanoagent/.codex/generated_images/thread-generated/exec-cat.png'
+    const image = await readCodexGeneratedImage(identity, 'agent-test', path, new AbortController().signal)
+    expect(image.mediaType).toBe('image/png')
+    expect(image.content.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-generated' })
+    expect(
+      await rejection(
+        readCodexGeneratedImage(
+          identity,
+          'agent-test',
+          path.replace('exec-cat', 'other'),
+          new AbortController().signal,
+        ),
+      ),
+    ).toMatchObject({ status: 404 })
+    expect(
+      await rejection(
+        readCodexGeneratedImage(
+          identity,
+          'agent-test',
+          '/home/nanoagent/.codex/auth.json',
+          new AbortController().signal,
+        ),
+      ),
+    ).toMatchObject({ status: 400 })
   })
 
   test('rejects an invalid event cursor returned with a thread snapshot', async () => {

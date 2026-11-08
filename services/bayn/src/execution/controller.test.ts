@@ -152,7 +152,6 @@ describe('execution controller decisions', () => {
         state,
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
         controllerKey,
-        '2026-08-13T17:59:00.000Z',
         sourceRevision,
       ),
     )
@@ -162,7 +161,6 @@ describe('execution controller decisions', () => {
         controllerKey,
         epoch: 1,
         sequence: 0,
-        issuedAt: '2026-08-13T17:59:00.000Z',
         sourceRevision,
       },
     })
@@ -172,7 +170,6 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 2, sequence: 0 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
           sourceRevision,
         ),
       ),
@@ -183,7 +180,6 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
           sourceRevision,
         ),
       ),
@@ -194,7 +190,6 @@ describe('execution controller decisions', () => {
           { ...state, active: false },
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
           controllerKey,
-          '2026-08-13T17:59:00.000Z',
           sourceRevision,
         ),
       ),
@@ -318,7 +313,6 @@ describe('execution controller decisions', () => {
         sequence: Number.MAX_SAFE_INTEGER,
       },
       controllerKey,
-      '2026-08-13T17:59:00.000Z',
       sourceRevision,
     )
 
@@ -416,11 +410,37 @@ describe('execution controller decisions', () => {
             sequence: resumed.nextSequence,
           },
           controllerKey,
-          nextDueAt,
           sourceRevision,
         ),
       ),
     ).toMatchObject({ _tag: 'Advance' })
+  })
+
+  test.each([
+    { wakeAt: '2026-08-13T18:00:04.000Z', dueAt: '2026-08-13T18:00:04.000Z' },
+    { wakeAt: '2026-08-13T18:00:02.000Z', dueAt: '2026-08-13T18:00:03.001Z' },
+    { wakeAt: '2026-08-13T18:00:03.000Z', dueAt: '2026-08-13T18:00:03.001Z' },
+    { wakeAt: '2026-08-13T18:00:20.000Z', dueAt: '2026-08-13T18:00:07.000Z' },
+  ])('persists the earlier absolute wake without extending the polling bound (%j)', ({ wakeAt, dueAt }) => {
+    const state = Result.getOrThrow(
+      completeExecutionControllerTick(
+        activated(),
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        {
+          completedAt: '2026-08-13T18:00:03.000Z',
+          outcome: {
+            _tag: ExecutionControllerOutcome.Waiting,
+            receiptHash: '1'.repeat(64),
+            nextDelayMs: 4_000,
+            nextWakeAt: wakeAt,
+          },
+        },
+        sourceRevision,
+      ),
+    )
+
+    expect(state.nextDueAt).toBe(dueAt)
+    expect(Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))).toEqual(state)
   })
 
   test('rejects a computed next due time outside the canonical UTC range', () => {

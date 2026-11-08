@@ -37,6 +37,7 @@ service MicroVMControlPlane {
   rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
   rpc SendCodexInput(SendCodexInputRequest) returns (CodexRun);
   rpc GetCodexRun(GetCodexRunRequest) returns (CodexRun);
+  rpc RecoverCodexRun(InterruptCodexTurnRequest) returns (Empty);
   rpc GetActiveCodexRuns(GetActiveCodexRunsRequest) returns (CodexRuns);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
@@ -235,8 +236,8 @@ message CreateCodexThreadRequest {
 message ResumeCodexThreadRequest {
   string agent_id = 1;
   string thread_id = 2;
-  string model = 3;
-  string reasoning_effort = 4;
+  reserved 3, 4;
+  reserved "model", "reasoning_effort";
 }
 message SendCodexInputRequest {
   string agent_id = 1;

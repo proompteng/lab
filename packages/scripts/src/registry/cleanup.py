@@ -1,20 +1,18 @@
-#!/usr/bin/env python3
 """Prepare online; collect only inside a bounded, verified read-only window."""
 
-import argparse
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
-import shutil
+import signal
 import stat
 import sys
+import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 DIGEST = re.compile(r"sha256:([0-9a-f]{64})\Z")
 BUILD_TAG = re.compile(
@@ -30,6 +28,54 @@ IMAGE_TYPES = {
 }
 
 
+@contextmanager
+def worker_pool(count):
+    pending = set()
+    handlers = {}
+    executor = None
+    failure = None
+
+    def record(signum, _frame):
+        pending.add(signum)
+
+    def check_pending():
+        if pending & {signal.SIGTERM, signal.SIGINT}:
+            raise InterruptedError("Filesystem worker phase interrupted")
+        if signal.SIGALRM in pending:
+            raise TimeoutError("Filesystem worker phase exceeded its budget")
+
+    def map_work(function, values):
+        check_pending()
+        for result in executor.map(function, values):
+            check_pending()
+            yield result
+
+    try:
+        # Install non-raising handlers before spawning workers, and restore them only after join.
+        if threading.current_thread() is threading.main_thread():
+            for signum in [signal.SIGTERM, signal.SIGINT, signal.SIGALRM]:
+                previous = signal.getsignal(signum)
+                if previous != signal.SIG_IGN:
+                    handlers[signum] = previous
+                    signal.signal(signum, record)
+        executor = ThreadPoolExecutor(max_workers=count)
+        yield map_work
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        if executor is not None:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except BaseException:
+                # A failed join must kill every mutation thread before its lock can be released.
+                os._exit(70)
+        for signum, previous in handlers.items():
+            signal.signal(signum, previous)
+        if failure is None or isinstance(failure, TimeoutError):
+            check_pending()
+
+
 def encoded(digest):
     match = DIGEST.fullmatch(digest)
     if not match:
@@ -42,6 +88,100 @@ def signature(path):
     if not stat.S_ISREG(value.st_mode):
         raise ValueError(f"Expected a regular file: {path}")
     return [value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns]
+
+
+def checked_path(path):
+    if path.resolve() != path.absolute():
+        raise ValueError("Symlink in quarantine path")
+    return path
+
+
+def content_digest(path):
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def tag_inventory(path):
+    """Record every metadata inode before rename, so partial purges remain verifiable."""
+    result = {}
+    for current, directories, files in os.walk(checked_path(path), followlinks=False):
+        directory = Path(current)
+        checked_path(directory)
+        result[directory.relative_to(path).as_posix()] = {
+            "inode": directory.stat().st_ino
+        }
+        for name in directories + files:
+            checked_path(directory / name)
+        for name in files:
+            file = directory / name
+            before = signature(file)
+            digest = content_digest(file)
+            if signature(file) != before:
+                raise ValueError("Tag metadata changed while hashing")
+            result[file.relative_to(path).as_posix()] = {
+                "signature": before,
+                "sha256": digest,
+            }
+    return result
+
+
+def validate_receipt(receipt, batch, pvc_uid, pv):
+    if not isinstance(receipt, dict) or receipt.get("version") != 3:
+        raise ValueError(
+            "Invalid quarantine receipt: version 3 required; older receipts need "
+            "verified recovery (see docs/registry/manual-garbage-collection.md)"
+        )
+    if not pvc_uid or not pv or receipt.get("storage") != {"pvcUid": pvc_uid, "pv": pv}:
+        raise ValueError("Quarantine receipt belongs to a different registry claim/PV")
+    if receipt.get("batch") != batch or type(receipt.get("inode")) is not int:
+        raise ValueError("Invalid quarantine receipt ownership")
+    for key in ("blobs", "tags"):
+        if not isinstance(receipt.get(key), list):
+            raise TypeError("Invalid quarantine receipt entries")
+
+    def valid_signature(value):
+        if (
+            not isinstance(value, list)
+            or len(value) != 4
+            or any(type(item) is not int or item < 0 for item in value)
+        ):
+            raise ValueError("Invalid quarantine receipt signature")
+
+    seen = set()
+    for row in receipt["blobs"]:
+        value = encoded(row["digest"])
+        valid_signature(row["signature"])
+        if value in seen:
+            raise ValueError("Duplicate quarantine blob")
+        seen.add(value)
+    seen = set()
+    for row in receipt["tags"]:
+        key = (row["repository"], row["tag"])
+        if key in seen:
+            raise ValueError("Duplicate quarantine tag")
+        seen.add(key)
+        encoded(row["value"]["digest"])
+        valid_signature(row["value"]["signature"])
+        entries = row["entries"]
+        if (
+            not isinstance(entries, dict)
+            or "." not in entries
+            or "current/link" not in entries
+        ):
+            raise ValueError("Invalid quarantined tag inventory")
+        for name, entry in entries.items():
+            if name != "." and (
+                not name or any(part in ("", ".", "..") for part in name.split("/"))
+            ):
+                raise ValueError("Unsafe quarantined tag path")
+            if "inode" in entry:
+                if type(entry["inode"]) is not int or entry["inode"] < 1:
+                    raise ValueError("Invalid quarantined directory inode")
+            else:
+                valid_signature(entry["signature"])
+                encoded("sha256:" + entry["sha256"])
+        if entries["current/link"].get("signature") != row["value"]["signature"]:
+            raise ValueError("Quarantined tag inventory disagrees with its link")
 
 
 def emit(event, **values):
@@ -145,10 +285,10 @@ class Store:
             tagLinks=len(tag_files),
             revisionLinks=len(revision_files),
         )
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            for repository, tag, value in pool.map(tag_value, tag_files):
+        with worker_pool(self.workers) as map_work:
+            for repository, tag, value in map_work(tag_value, tag_files):
                 tags[repository][tag] = value
-            for value in pool.map(recent_value, revision_files):
+            for value in map_work(recent_value, revision_files):
                 if value:
                     recent.add(value)
         return tags, recent
@@ -255,11 +395,11 @@ class Store:
                     raise ValueError(f"Invalid descriptor size: {digest}")
             return digest, {"signature": current, "raw": raw.decode()}, children, blobs
 
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+        with worker_pool(self.workers) as map_work:
             while pending:
                 batch = pending - visited
                 pending = set()
-                for digest, manifest, children, blobs in pool.map(inspect, batch):
+                for digest, manifest, children, blobs in map_work(inspect, batch):
                     manifests[digest] = manifest
                     visited.add(digest)
                     marked.add(digest)
@@ -276,7 +416,7 @@ class Store:
                 if signature(self.blob(digest))[2] != size:
                     raise ValueError(f"Missing or truncated retained blob: {digest}")
 
-            list(pool.map(verify, expected_sizes.items()))
+            list(map_work(verify, expected_sizes.items()))
         return marked, {digest: manifests[digest] for digest in visited}
 
     def prepare(self, references, keep=5, days=7, prune_tags=True):
@@ -313,10 +453,10 @@ class Store:
                     result.append({"digest": digest, "signature": value})
             return result
 
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+        with worker_pool(self.workers) as map_work:
             blobs = [
                 row
-                for rows in pool.map(candidates, (self.root / "blobs/sha256").iterdir())
+                for rows in map_work(candidates, (self.root / "blobs/sha256").iterdir())
                 for row in rows
             ]
         blobs.sort(key=lambda row: row["signature"][2], reverse=True)
@@ -408,14 +548,29 @@ class Store:
             )
             if signature(link) != row["value"]["signature"]:
                 raise ValueError("Tag changed during frozen validation")
+        if not plan.get("pvcUid") or not plan.get("pv"):
+            raise ValueError("Collection requires the prepared claim/PV identity")
         quarantine_id = quarantine_id or "registry-collect-" + uuid.uuid4().hex
         if not re.fullmatch(r"[a-z0-9-]{1,80}", quarantine_id):
             raise ValueError("Invalid quarantine identifier")
-        quarantine = self.root / "_gc_quarantine" / quarantine_id
+        quarantine = checked_path(self.root / "_gc_quarantine" / quarantine_id)
         quarantine.mkdir(parents=True, exist_ok=False)
         receipt = quarantine / "receipt.json"
+        tag_rows = []
+        for row in deletes:
+            path = self.repository(row["repository"]) / "_manifests/tags" / row["tag"]
+            tag_rows.append({**row, "entries": tag_inventory(path)})
+        document = {
+            "version": 3,
+            "batch": quarantine_id,
+            "storage": {"pvcUid": plan["pvcUid"], "pv": plan["pv"]},
+            "inode": quarantine.stat().st_ino,
+            "blobs": rows,
+            "tags": tag_rows,
+        }
+        validate_receipt(document, quarantine_id, plan["pvcUid"], plan["pv"])
         with receipt.open("x") as output:
-            json.dump({"version": 2, "blobs": rows, "tags": deletes}, output)
+            json.dump(document, output)
             output.flush()
             os.fsync(output.fileno())
         directory_fd = os.open(quarantine, os.O_RDONLY)
@@ -434,8 +589,8 @@ class Store:
             return True
 
         # Tag directories also contain allocated metadata; do not unlink them while frozen.
-        with ThreadPoolExecutor(max_workers=min(self.workers, 16)) as pool:
-            deleted_tags = sum(pool.map(move_tag, deletes))
+        with worker_pool(min(self.workers, 16)) as map_work:
+            deleted_tags = sum(map_work(move_tag, deletes))
 
         def move(row):
             if time.monotonic() >= deadline or deleted_tags != len(deletes):
@@ -452,8 +607,8 @@ class Store:
             return row["signature"][2]
 
         # Rename preserves allocated blocks. Their slow physical release happens after writes reopen.
-        with ThreadPoolExecutor(max_workers=min(self.workers, 16)) as pool:
-            sizes = list(pool.map(move, rows))
+        with worker_pool(min(self.workers, 16)) as map_work:
+            sizes = list(map_work(move, rows))
         quarantined_blobs = sum(size is not None for size in sizes)
         return {
             "deletedTags": deleted_tags,
@@ -467,34 +622,62 @@ class Store:
             - quarantined_blobs,
         }
 
-    def purge(self, quarantine_id):
+    def purge(self, quarantine_id, pvc_uid, pv):
         if not re.fullmatch(r"[a-z0-9-]{1,80}", quarantine_id):
             raise ValueError("Invalid quarantine identifier")
-        quarantine = self.root / quarantine_id
-        if quarantine.resolve() != quarantine.absolute():
-            raise ValueError("Symlink in quarantine path")
-        receipt = json.loads((quarantine / "receipt.json").read_text())
-        if receipt["version"] != 2:
-            raise ValueError("Unknown quarantine receipt version")
+        quarantine = checked_path(self.root / quarantine_id)
+        finished = checked_path(self.root / (".purged-" + quarantine_id))
+        if finished.exists():
+            if quarantine.exists():
+                raise ValueError("Conflicting quarantine finalization")
+            # Only an atomic rename of an emptied, verified batch enters this
+            # state. Never traverse or recursively delete an unexpected file.
+            if list(finished.iterdir()) not in ([], [finished / "receipt.json"]):
+                raise ValueError("Unexpected files in finalized quarantine")
+            receipt_path = checked_path(finished / "receipt.json")
+            if receipt_path.exists():
+                signature(receipt_path)
+                receipt = json.loads(receipt_path.read_text())
+                validate_receipt(receipt, quarantine_id, pvc_uid, pv)
+                if finished.stat().st_ino != receipt["inode"]:
+                    raise ValueError("Quarantine directory identity changed")
+                receipt_path.unlink()
+            finished.rmdir()
+            return {"deletedTags": 0, "deletedBlobs": 0, "deletedBytes": 0}
+        receipt_path = checked_path(quarantine / "receipt.json")
+        signature(receipt_path)
+        receipt = json.loads(receipt_path.read_text())
+        validate_receipt(receipt, quarantine_id, pvc_uid, pv)
+        if quarantine.stat().st_ino != receipt["inode"]:
+            raise ValueError("Quarantine directory identity changed")
 
         def remove_tag(row):
-            path = self.quarantined_tag(quarantine, row)
-            if path.resolve() != path.absolute():
-                raise ValueError("Symlink in quarantined tag path")
+            path = checked_path(self.quarantined_tag(quarantine, row))
             if not path.exists():
                 return False
-            link = path / "current/link"
-            if link.exists() and (
-                signature(link) != row["value"]["signature"]
-                or link.read_text().strip() != row["value"]["digest"]
+            # Missing entries were already removed on a previous attempt. Never
+            # infer ownership from a missing current/link or adopt new metadata.
+            current = tag_inventory(path)
+            for name, entry in current.items():
+                expected = row["entries"].get(name)
+                if expected is None:
+                    raise ValueError("Quarantined tag changed")
+                if "inode" in entry:
+                    unchanged = entry == expected
+                else:
+                    unchanged = entry["signature"][1:] == expected.get("signature", [])[
+                        1:
+                    ] and entry["sha256"] == expected.get("sha256")
+                if not unchanged:
+                    raise ValueError("Quarantined tag changed")
+            for name, entry in current.items():
+                if "signature" in entry:
+                    (path / name).unlink()
+            for name in sorted(
+                current, key=lambda name: len(Path(name).parts), reverse=True
             ):
-                raise ValueError("Quarantined tag changed")
-            for current, directories, files in os.walk(path, followlinks=False):
-                if any(
-                    (Path(current) / name).is_symlink() for name in directories + files
-                ):
-                    raise ValueError("Symlink in quarantined tag contents")
-            shutil.rmtree(path)
+                if "inode" in current[name]:
+                    (path / name).rmdir()
             return True
 
         def remove(row):
@@ -506,106 +689,36 @@ class Store:
                 current = signature(path)
             except FileNotFoundError:
                 return None
-            if current != row["signature"]:
+            # Device numbers are mount-local, unlike the claim/PV binding and
+            # inode. Keep the full signature checks in prepare/collect unchanged.
+            if current[1:] != row["signature"][1:] or content_digest(path) != value:
                 raise ValueError("Quarantined file changed: " + row["digest"])
+            if signature(path) != current:
+                raise ValueError("Quarantined file changed while hashing")
             path.unlink()
             emit("purged", digest=row["digest"], bytes=current[2])
             return current[2]
 
-        with ThreadPoolExecutor(max_workers=min(self.workers, 8)) as pool:
-            deleted_tags = sum(pool.map(remove_tag, receipt["tags"]))
-            sizes = list(pool.map(remove, receipt["blobs"]))
+        with worker_pool(min(self.workers, 8)) as map_work:
+            deleted_tags = sum(map_work(remove_tag, receipt["tags"]))
+            sizes = list(map_work(remove, receipt["blobs"]))
         for path in quarantine.iterdir():
             if path.is_dir():
                 path.rmdir()
-        (quarantine / "receipt.json").unlink()
-        quarantine.rmdir()
+        if list(quarantine.iterdir()) != [receipt_path]:
+            raise ValueError("Unexpected files in quarantine")
+        # Persist the terminal state before removing the receipt. A process/Pod
+        # interruption here can only leave a receipt or an empty finalizer directory.
+        quarantine.rename(finished)
+        directory_fd = os.open(self.root, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        (finished / "receipt.json").unlink()
+        finished.rmdir()
         return {
             "deletedTags": deleted_tags,
             "deletedBlobs": sum(size is not None for size in sizes),
             "deletedBytes": sum(size for size in sizes if size is not None),
         }
-
-
-def require_read_only(base_url):
-    base = base_url.rstrip("/") + "/v2/"
-    with urllib.request.urlopen(base, timeout=10) as response:
-        if response.status != 200:
-            raise RuntimeError("Registry read endpoint is unavailable")
-    request = urllib.request.Request(
-        base + "ceph-smoke/registry-gc-check/blobs/uploads/", b"", method="POST"
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10):
-            pass
-    except urllib.error.HTTPError as error:
-        if error.code == 405:
-            return
-        raise
-    raise RuntimeError("Registry accepts uploads; refusing filesystem deletion")
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["prepare", "collect", "purge"])
-    parser.add_argument("--root", default="/var/lib/registry/docker/registry/v2")
-    parser.add_argument(
-        "--references",
-        help="Fresh workload and retained Kargo reference JSON",
-    )
-    parser.add_argument("--workers", type=int, default=16)
-    parser.add_argument("--keep", type=int, default=5)
-    parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--no-prune-tags", action="store_true")
-    parser.add_argument("--plan")
-    parser.add_argument("--quarantine-id")
-    parser.add_argument(
-        "--base-url", default="http://registry.registry.svc.cluster.local"
-    )
-    parser.add_argument("--max-blobs", type=int, default=2000)
-    parser.add_argument("--seconds", type=int, default=180)
-    args = parser.parse_args()
-    if (
-        not 1 <= args.workers <= 32
-        or args.keep < 5
-        or args.days < 7
-        or args.seconds < 1
-        or args.max_blobs < 1
-    ):
-        parser.error("Use 1..32 workers, keep>=5, days>=7, seconds>=1 and max-blobs>=1")
-    store = Store(args.root, args.workers)
-    if args.operation == "purge":
-        if not args.quarantine_id:
-            parser.error(
-                "purge requires --quarantine-id and a quarantine-only --root mount"
-            )
-        print(json.dumps(store.purge(args.quarantine_id)))
-        return
-    if not args.references:
-        parser.error("prepare and collect require --references")
-    references = json.loads(Path(args.references).read_text())
-    if (
-        not isinstance(references, list)
-        or not references
-        or not all(isinstance(value, str) for value in references)
-    ):
-        parser.error("A nonempty protection reference list is required")
-    if args.operation == "prepare":
-        result = store.prepare(references, args.keep, args.days, not args.no_prune_tags)
-    else:
-        if not args.plan:
-            parser.error("collect requires --plan")
-        plan = json.loads(Path(args.plan).read_text())
-        result = store.collect(
-            plan,
-            references,
-            lambda: require_read_only(args.base_url),
-            args.max_blobs,
-            args.seconds,
-            args.quarantine_id,
-        )
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()

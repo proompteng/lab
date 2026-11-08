@@ -6,7 +6,7 @@ import { PostgresClientLive } from './db/postgres-client'
 import { researchLedgerReaderConfig, researchReaderConfig } from './db/research-reader-config'
 import { canonicalJsonV1Result } from './hash'
 import { InferenceCostError, decodeInferenceCostEvidence, makeInferenceCostReport } from './inference-costs'
-import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
+import { acquireInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeOperatingCostReport } from './operating-costs'
 import { readOperatingCostPacket } from './operating-cost-files'
 import { IsoDateSchema } from './schemas'
@@ -85,7 +85,9 @@ const readSession = (sessionDate: string) =>
     const config = yield* researchReaderConfig
     const read = Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      return (yield* readInferenceExpenseSnapshot(sql, Redacted.value(config.accountId), sessionDate)).evidence
+      return (yield* acquireInferenceExpenseSnapshot(sql, Redacted.value(config.accountId), sessionDate).pipe(
+        Effect.flatMap(({ verify }) => verify),
+      )).evidence
     })
     return yield* read.pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- read-only command owns the scoped database layer
@@ -104,6 +106,17 @@ const print = (value: string) =>
     yield* Stream.run(Stream.make(`${value}\n`), stdio.stdout())
   })
 
+export const makeInferenceExpenseSessionReport = (
+  ledger: Effect.Success<ReturnType<typeof readInferenceExpenseLedger>>,
+  coverage: Extract<ReturnType<typeof verifyInferenceExpenseCoverage>, { readonly _tag: 'Success' }>['success'],
+  ledgerObservedAt: string,
+) => ({
+  ...ledger,
+  schemaVersion: 'bayn.inference-expense-ledger-report.v3' as const,
+  coverage,
+  ledgerObservedAt,
+})
+
 export const readInferenceExpenseSession = (sessionDate: string) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -112,7 +125,9 @@ export const readInferenceExpenseSession = (sessionDate: string) =>
       const read = Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const accountId = Redacted.value(config.accountId)
-        const snapshot = yield* readInferenceExpenseSnapshot(sql, accountId, sessionDate)
+        const snapshot = yield* acquireInferenceExpenseSnapshot(sql, accountId, sessionDate).pipe(
+          Effect.flatMap(({ verify }) => verify),
+        )
         const { evidence, quotes: rows } = snapshot
         const store = makeInferenceExpenseStore(sql, accountId)
         const coverage = yield* Effect.fromResult(verifyInferenceExpenseCoverage(evidence, accountId, rows))
@@ -121,7 +136,7 @@ export const readInferenceExpenseSession = (sessionDate: string) =>
           tigerBeetle: { ...tigerBeetle, ledger: inferenceExpenseLedger },
         })
         const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
-        return { ...ledger, coverage, ledgerObservedAt: DateTime.formatIso(yield* DateTime.now) }
+        return makeInferenceExpenseSessionReport(ledger, coverage, DateTime.formatIso(yield* DateTime.now))
       })
       return yield* read.pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- read-only command owns the database and ledger clients
