@@ -37,10 +37,13 @@ invalidated cut. The diagnostic reads only an account-scoped ownership boolean a
 identifier. It does not admit either revision, extend freshness or change authority, recovery markers or deadlines.
 During a staged release, controller activation can invalidate predecessor API observations before replacement APIs
 are ready. A new controller's successful publication does not restore an old API's revision-bound health read.
-Treat those readiness failures as real; alert retention and notification delay do not measure their duration.
-Preparing replacement APIs before handoff needs a separate readiness contract: merely moving their sync wave ahead
-of activation can prevent the activation wave from ever running. Preserve the exact-revision fence until that
-rollout design is independently proven.
+Those failures reduce runtime/trading readiness; they do not establish an HTTP routing outage. Kubernetes uses
+`/status-readyz`, which can route a degraded read-only status API while its PostgreSQL, ledger and cycle reads remain
+available and its health lease is fresh. `/readyz` and `bayn_runtime_ready` still fail closed on rejected broker cuts.
+The PostgreSQL handoff tests exercise both readiness decisions across prepared, failed/interrupted initial-poll,
+fresh-successor and stale/foreign-cut states without changing authority. They do not simulate Argo scheduling or
+prove continuous service. Any earlier API preparation must independently verify its cycle/authority projection,
+rollout ordering and live effect; do not relax revision, freshness or authority fences to make preparation succeed.
 
 Background broker polling brackets account and position reads with two matching complete history scans.
 Consecutive successful tickets with the same latest fill reuse the preceding poll's completed scan as the next
