@@ -544,6 +544,8 @@ returns its current state. The public controller stages content-addressed image 
 after Restate accepts the signed admission under its stable workflow key. The accepted snapshot is persisted before waiting for the workspace claim, so a slow claim remains observable
 without sending the input again. A conflicting claim still produces a rejected run. The `run-worker` command runs the Restate
 endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
+After ten seconds, submission races the original admission response against a committed snapshot read, preserving
+the in-flight request if admission is still queued. Recovery remains bounded to 120 seconds and never resubmits input.
 
 `TengriWorkspaceRuns` holds active runs by conversation within each immutable workspace UID. Different conversations
 execute concurrently; a second run in the same conversation is rejected until its first run settles. Its short claim
