@@ -44,7 +44,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ fromJSON(steps.filter.outputs.affected).image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/bayn-build-push.yml
+          workspaces: |
+            image: ['', 'services/bayn']
+
   validation:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     uses: ./.github/workflows/bayn-ci.yml
     secrets: inherit
 

@@ -116,6 +116,33 @@ test('Bayn CI does not run trading qualification or native images for orchestrat
   }
 })
 
+test('Bayn publication ignores Froussard-only dependencies and still selects Bayn runtime changes', () => {
+  const configured = parseTargets("image: ['', 'services/bayn']", '', '.github/workflows/bayn-build-push.yml', 'push')
+  const prior = {
+    ...before,
+    workspaces: { ...before.workspaces, 'apps/froussard': { name: 'froussard', dependencies: {} } },
+  }
+  const next = {
+    ...prior,
+    workspaces: {
+      ...prior.workspaces,
+      'apps/froussard': { name: 'froussard', dependencies: { '@restatedev/restate-sdk': '1.16.5' } },
+    },
+    packages: {
+      ...prior.packages,
+      '@restatedev/restate-sdk': ['@restatedev/restate-sdk@1.16.5', '', {}, 'sdk-integrity'],
+    },
+  }
+  expect(selectAffectedInputs(['bun.lock', 'apps/froussard/package.json'], configured, prior, next).image).toBe(false)
+  expect(selectAffectedInputs(['services/bayn/src/runtime.ts'], configured, prior, next).image).toBe(true)
+  expect(selectAffectedInputs(['services/bayn/package.json'], configured, prior, next).image).toBe(true)
+  const changedDependency = {
+    ...next,
+    packages: { ...next.packages, client: ['client@1.1.0', '', {}, 'new-integrity'] },
+  }
+  expect(selectAffectedInputs(['bun.lock'], configured, prior, changedDependency).image).toBe(true)
+})
+
 test('App source changes do not force dependency downloads; dependency input changes still do', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const jobs = property(workflow, 'jobs')
