@@ -35,4 +35,6 @@ The [actual frozen-plan audit](evidence/2026-11-08-cosmosalpha-config-audit.json
 
 ## Next implementation boundary
 
-Resolve the target-label calendar behavior on original inputs and prove the resulting target against complete-calendar binaries, including membership gaps, suspensions and the evaluation-window tail. Freeze the changed data identity and retain the original-label trial. Then verify the multi-tree MCTS entry point and freeze the three-arm study with an explicit budget comparison. Do not reinterpret an existing trial or silently change its inputs.
+The [calendar-correct target generator and independent verification](cosmosalpha-calendar-targets.md) now produce a separately identified artifact. The full 2010–2025 panel passes with zero unexplained target mismatches. Existing trials retain their original labels; they have not been migrated or reinterpreted.
+
+Next verify the multi-tree MCTS entry point and freeze the three-arm study with an explicit budget comparison and target identity. Industry-history admission and economic qualification remain separate requirements.
