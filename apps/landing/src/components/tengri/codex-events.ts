@@ -1,4 +1,5 @@
 import { parseAgentRunView } from '@/lib/tengri/agent-runs'
+import { isCodexDiagnosticLogWarning } from '@/lib/tengri/codex-diagnostics'
 import { codexToolText } from './codex-tool-text'
 import {
   codexMessageAttachments,
@@ -447,6 +448,7 @@ export function codexEventShouldRender(
   restoredItemIds: ReadonlySet<string>,
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
+  if (isCodexDiagnosticLogWarning(event)) return false
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'usage' || event.method.toLowerCase() === 'deprecationnotice') return false
   if (codexEventIsIndependentOfThreadSnapshot(event)) return true

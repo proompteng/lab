@@ -199,6 +199,9 @@ for protocol 10; draining old runs and pending-operation fences precedes the ret
   the existing conversation-history contract, verifies PNG/JPEG/WebP content within 4 MiB, and retains history's
   retrieval bounds. It does not read arbitrary files from the Codex home. Markdown image previews share the four-image
   budget with workspace images.
+- Unscoped native SQLite diagnostic-log loss notices are recorded as operational warnings, once per event-stream
+  connection. Their native events and cursors are retained; conversation rendering omits the CLI-only guidance.
+  Scoped warnings, provider warnings and turn failures remain visible.
 
 Closing and reopening Chrome does not terminate Codex. Nanoagent supervises one long-lived `codex app-server` process;
 browser reconnects restore the persisted thread and event state from the same microVM.

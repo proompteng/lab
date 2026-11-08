@@ -9410,6 +9410,56 @@ test('keeps image examples in command output as text without requesting missing 
   expect(imageReads).toEqual([])
 })
 
+test('keeps replayed logging diagnostics out of chat while retaining ordinary warnings and failures', async ({
+  page,
+}) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByLabel('Model', { exact: true })).toBeEnabled()
+  const message =
+    "Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics."
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'warning',
+    method: 'warning',
+    threadId: '',
+    turnId: '',
+    itemId: '',
+    approvalId: '',
+    text: message,
+    rawJson: JSON.stringify({ emittedAtMs: 1794122949761, method: 'warning', params: { message, threadId: null } }),
+  })
+  await expect(chat.getByText(message, { exact: true })).toHaveCount(0)
+  await emitCodexEvent(page, {
+    sequence: 2,
+    kind: 'warning',
+    method: 'warning',
+    threadId: '',
+    turnId: '',
+    itemId: '',
+    approvalId: '',
+    text: 'Provider connection interrupted',
+    rawJson: '{}',
+  })
+  await expect(chat.getByText('Provider connection interrupted', { exact: true })).toBeVisible()
+  await page.reload()
+  await expect(chat.getByLabel('Model', { exact: true })).toBeEnabled()
+  await expect(chat.getByText(message, { exact: true })).toHaveCount(0)
+  await emitCodexEvent(page, {
+    sequence: 3,
+    kind: 'error',
+    method: 'turn/failed',
+    threadId: '',
+    turnId: '',
+    itemId: '',
+    approvalId: '',
+    text: 'This turn failed',
+    rawJson: '{}',
+  })
+  await expect(chat.getByRole('alert')).toContainText('This turn failed')
+})
+
 test('shows native image generation live and restores its inline preview and link', async ({ page }, testInfo) => {
   const path = '/home/nanoagent/.codex/generated_images/thread-cat/exec-cat.png'
   const png = Buffer.from(
