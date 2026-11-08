@@ -549,6 +549,7 @@ test.each(['cash', 'filled'] as const)(
         const input = {
           schemaVersion: 'bayn.control-study-input.v10',
           riskEnvironment: BrokerEnvironment.Live,
+          openingPeakEquityMicros: '100000000000',
           costObjective: 'ALL_COSTS',
           entry: 'DETERMINISTIC',
           repeatedTargetWeightPpm: 100000,

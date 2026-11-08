@@ -277,6 +277,7 @@ claim that controls made Jev calls or executed the production interpreter.
 {
   "schemaVersion": "bayn.control-study-input.v10",
   "riskEnvironment": "live",
+  "openingPeakEquityMicros": "100000000000",
   "costObjective": "ALL_COSTS",
   "entry": "DETERMINISTIC",
   "turnoverPolicy": "ENTRY_AND_EXPECTED_EXIT",
@@ -312,6 +313,10 @@ The native sandbox profile allows $1,000,000 daily turnover and $10,000 drawdown
 and $5,000. Order, symbol and gross limits retain their existing values. Choose the candidate's actual profile
 before outcomes and retain the resulting `risk` object and input hash. This changes simulated controls only.
 Existing input files must explicitly migrate to v10; there is no environment inference or compatibility default.
+
+The required `openingPeakEquityMicros` carries the candidate's pre-existing broker risk peak into every control.
+It must be at least the flat opening cash. Starting a comparison never resets the account's inherited drawdown.
+The experiment's external-cost accrual starts at its observation boundary and stays separate from broker risk.
 
 ### Export original deliveries for the controls
 

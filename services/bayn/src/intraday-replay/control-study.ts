@@ -29,7 +29,13 @@ import {
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { BrokerEnvironment } from '../broker/identity'
 import type { Policy } from '../risk'
-import { IsoDateSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  PositiveMicrosSchema,
+  strictParseOptions,
+} from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
@@ -79,6 +85,7 @@ export type ControlStudyManagement =
 export const ControlStudyInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.control-study-input.v10'),
   riskEnvironment: Schema.Enum(BrokerEnvironment),
+  openingPeakEquityMicros: PositiveMicrosSchema,
   costObjective: Schema.Literals(['ALL_COSTS', 'KNOWN_COST_DIAGNOSTIC']),
   entry: Schema.Enum(ControlEntryMode),
   management: Schema.Enum(ControlManagementMode),
@@ -122,6 +129,8 @@ export const controlStudyDefinition = {
   turnover:
     'The input selects immediate adjustment or entry plus expected exit at the reference price and adverse allowance. The reserve is not a hard bound on future prices; mandatory reducing exits are unchanged.',
   risk: 'The frozen input explicitly selects the native live or sandbox risk profile. No implicit environment default may change turnover or drawdown limits relative to the candidate.',
+  openingRisk:
+    'Every portfolio starts with the declared pre-existing broker equity peak. An inherited drawdown cannot be erased by starting the comparison. External-cost accrual starts at this experiment boundary and remains separate from broker risk.',
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   management:
@@ -909,6 +918,10 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
         new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
       )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    if (BigInt(input.openingPeakEquityMicros) < BigInt(prepared.input.openingCashMicros))
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Opening broker peak cannot be below flat opening equity' }),
+      )
     if (prepared.brokerSessions.length === 0)
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control interval must contain a complete regular broker session' }),
@@ -1075,8 +1088,8 @@ export const runControlStudy = (
         const results = []
         let capital: ControlCapital = {
           cashMicros: prepared.input.openingCashMicros,
-          peakBrokerEquityMicros: prepared.input.openingCashMicros,
-          peakNetEquityMicros: prepared.input.openingCashMicros,
+          peakBrokerEquityMicros: input.openingPeakEquityMicros,
+          peakNetEquityMicros: input.openingPeakEquityMicros,
           accruedExternalCostMicros: '0',
         }
         for (const session of prepared.brokerSessions) {

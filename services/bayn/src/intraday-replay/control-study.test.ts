@@ -786,6 +786,7 @@ const frozenControlFixture = () => {
   const input = {
     schemaVersion: 'bayn.control-study-input.v10',
     riskEnvironment: BrokerEnvironment.Live,
+    openingPeakEquityMicros: '100000000000',
     costObjective: 'ALL_COSTS',
     entry: 'DETERMINISTIC',
     turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
@@ -867,6 +868,9 @@ test('a frozen control input cannot silently inherit the live risk default', () 
   const { input, receipt } = frozenControlFixture()
   const { riskEnvironment: _riskEnvironment, ...missing } = input
   expect(Result.isFailure(prepareControlStudy(missing, receipt))).toBe(true)
+  expect(Result.isFailure(prepareControlStudy({ ...input, openingPeakEquityMicros: '99999999999' }, receipt))).toBe(
+    true,
+  )
   expect(
     Result.isFailure(prepareControlStudy({ ...input, schemaVersion: 'bayn.control-study-input.v9' }, receipt)),
   ).toBe(true)
@@ -922,7 +926,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       expect(report.risk.maxDailyTradedNotionalMicros).toBe('200000000000')
       expect(report.risk.maxDrawdownMicros).toBe('5000000000')
       const sandbox = yield* runControlStudy(
-        { ...input, riskEnvironment: BrokerEnvironment.Sandbox },
+        { ...input, riskEnvironment: BrokerEnvironment.Sandbox, openingPeakEquityMicros: '120000000000' },
         arrivals,
         receipt,
         {
@@ -931,6 +935,9 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       )
       expect(sandbox.risk.maxDailyTradedNotionalMicros).toBe('1000000000000')
       expect(sandbox.risk.maxDrawdownMicros).toBe('10000000000')
+      expect(
+        sandbox.sessions.every((session) => session.closingCapital.peakBrokerEquityMicros === '120000000000'),
+      ).toBe(true)
       expect(sandbox.reportHash).not.toBe(report.reportHash)
       expect(report.schemaVersion).toBe('bayn.control-study-report.v7')
       expect(report.sessions).toHaveLength(6)

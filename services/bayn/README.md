@@ -2220,7 +2220,7 @@ no production registration, qualification or capital authority.
 ### Bounded mechanical control and turnover comparison
 
 The sole development contract is `bayn.control-study-input.v10`, with explicit `entry`, `management`,
-`turnoverPolicy`, `costObjective` and `riskEnvironment`. The risk environment selects the native live or sandbox
+`turnoverPolicy`, `costObjective`, `riskEnvironment` and `openingPeakEquityMicros`. The risk environment selects the native live or sandbox
 profile instead of silently defaulting to live limits for a PAPER comparison. It retains the deterministic
 controls, optional frozen residual-shock candidate and Ridge pair.
 Older development input versions are rejected. See [control portfolios](../../docs/bayn/control-portfolios.md).
