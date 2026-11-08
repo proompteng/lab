@@ -1608,8 +1608,11 @@ the request generation/cycle index. Account-wide discovery retains all generatio
 The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
 most four pages of 64 pending terminal-cycle batches for its bound account and settles those past their original request expiry
 through the existing idempotent finalizer. This closes evidence after an admission expires or the process restarts;
-it makes no provider calls and cannot bind a decision or authorize an order. The same pass then reads at
-most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
+it makes no provider calls and cannot bind a decision or authorize an order.
+An account-bound cursor survives physical session recreation and wraps at the end of the sweep, so failed batches
+remain retryable without starving later work. Process restart may reset this progress hint; committed results remain authoritative.
+
+The same pass then reads at most 64 changed, billable sources for its bound account, freezes the original request/receipt/resolution hashes and tariff
 in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. Current Jev-only
 requests retain separate `CHART` and `JEV` stage quotes, including unsuccessful calls. Historical requests retain their original `BASE_START` quotes and skips,
 with batches of at most 64 quotes per write. Their transfer identities include the

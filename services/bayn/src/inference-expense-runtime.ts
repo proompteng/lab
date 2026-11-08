@@ -16,6 +16,7 @@ import {
 } from './inference-expense'
 import { postInferenceExpenses } from './inference-expense-journal'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
+import { makeJevTerminalBatchSettlementCursor } from './db/jev-batch-postgres'
 import { InferenceCostError } from './inference-costs'
 import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './tigerbeetle-client'
 
@@ -138,6 +139,10 @@ export const startInferenceExpenseProjection = (config: LoadedRuntimeConfig) =>
           ),
         )
         const client = yield* makeTigerBeetleRequestClient(config)
+        // Keep the settlement hint outside each pass's store and physical PostgreSQL
+        // session. It is only a fairness hint; committed batch results remain the
+        // authority and a process restart may safely reset this cursor.
+        const settlementCursor = makeJevTerminalBatchSettlementCursor(config.alpaca.expectedAccountId)
         yield* inferenceExpenseLoop(
           withInferenceExpenseOwner(postgres, 'research', (sql) =>
             projectResearchExpenses(makeResearchStore(sql), client),
@@ -145,7 +150,10 @@ export const startInferenceExpenseProjection = (config: LoadedRuntimeConfig) =>
         ).pipe(Effect.forkScoped)
         return yield* inferenceExpenseLoop(
           withInferenceExpenseOwner(postgres, `account:${config.alpaca.expectedAccountId}`, (sql) =>
-            runInferenceExpensePass(makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId), client),
+            runInferenceExpensePass(
+              makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId, undefined, settlementCursor),
+              client,
+            ),
           ),
         )
       }),

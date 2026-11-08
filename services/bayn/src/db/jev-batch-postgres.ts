@@ -633,6 +633,18 @@ export interface JevTerminalBatchSettlementSummary {
   readonly failed: number
 }
 
+export interface JevTerminalBatchSettlementCursor {
+  /** The account binding prevents a progress hint from being reused across owners. */
+  readonly accountId: string
+  /** A non-authoritative keyset position; null means the next pass starts at the oldest row. */
+  position: { readonly terminalAt: Date; readonly batchId: string } | null
+}
+
+export const makeJevTerminalBatchSettlementCursor = (accountId: string): JevTerminalBatchSettlementCursor => ({
+  accountId,
+  position: null,
+})
+
 /**
  * Seal expired Jev batches from terminal cycles using the existing finalizer.
  *
@@ -640,23 +652,32 @@ export interface JevTerminalBatchSettlementSummary {
  * those candidate IDs are then decoded by `read`/`finish`, so the account projection
  * never detoasts or scans every retained historical plan on its 30-second pass.
  */
-export const settleExpiredTerminalJevBatches = (sql: PgClient.PgClient, accountId: string) =>
+export const settleExpiredTerminalJevBatches = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  cursor: JevTerminalBatchSettlementCursor = makeJevTerminalBatchSettlementCursor(accountId),
+) =>
   Effect.gen(function* () {
+    if (cursor.accountId !== accountId)
+      return yield* operationalError({
+        component: 'database',
+        operation: 'jev-terminal-batch-settlement',
+        message: 'Jev terminal batch settlement cursor belongs to another account',
+      })
     const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-    let cursor: { readonly terminalAt: Date; readonly batchId: string } | null = null
     let candidates = 0
     let sealed = 0
     let pending = 0
     let failed = 0
     for (let page = 0; page < jevTerminalBatchSettlementScanPages; page += 1) {
       const after: Statement.Fragment =
-        cursor === null
+        cursor.position === null
           ? sql``
           : sql`AND (
-              cycle.terminal_at > ${cursor.terminalAt}::timestamptz
+              cycle.terminal_at > ${cursor.position.terminalAt}::timestamptz
               OR (
-                cycle.terminal_at = ${cursor.terminalAt}::timestamptz
-                AND plan.batch_id COLLATE "C" > ${cursor.batchId} COLLATE "C"
+                cycle.terminal_at = ${cursor.position.terminalAt}::timestamptz
+                AND plan.batch_id COLLATE "C" > ${cursor.position.batchId} COLLATE "C"
               )
             )`
       const rows: ReadonlyArray<{ readonly batch_id: string; readonly terminal_at: Date }> =
@@ -684,10 +705,15 @@ export const settleExpiredTerminalJevBatches = (sql: PgClient.PgClient, accountI
           ORDER BY terminal_at, batch_id COLLATE "C"
         `,
         )
-      if (rows.length === 0) break
+      if (rows.length === 0) {
+        // Reaching the end wraps the non-authoritative hint. A later pass retries
+        // failures from the beginning without allowing this pass to rescan them.
+        cursor.position = null
+        break
+      }
 
       for (const { batch_id: batchId, terminal_at: terminalAt } of rows) {
-        cursor = { terminalAt, batchId }
+        cursor.position = { terminalAt, batchId }
         candidates += 1
         const result = yield* Effect.gen(function* () {
           const saved = yield* batches.read(batchId)
@@ -714,7 +740,12 @@ export const settleExpiredTerminalJevBatches = (sql: PgClient.PgClient, accountI
         }
       }
 
-      if (rows.length < jevTerminalBatchSettlementLimit) break
+      if (rows.length < jevTerminalBatchSettlementLimit) {
+        // The next invocation starts a fresh cycle. This keeps failed rows retryable
+        // while giving later rows a bounded opportunity on this pass.
+        cursor.position = null
+        break
+      }
     }
     return { candidates, sealed, pending, failed } satisfies JevTerminalBatchSettlementSummary
   }).pipe(Effect.provideService(PgClient.PgClient, sql))

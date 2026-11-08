@@ -25,7 +25,11 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
-import { makeJevBatchStore, settleExpiredTerminalJevBatches } from './jev-batch-postgres'
+import {
+  makeJevBatchStore,
+  makeJevTerminalBatchSettlementCursor,
+  settleExpiredTerminalJevBatches,
+} from './jev-batch-postgres'
 import * as observations from '../jev/observation'
 import * as evaluationPersistence from './jev-evaluation-postgres'
 import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
@@ -638,6 +642,230 @@ test('terminal settlement walks past a full page of unexpired batches', async ()
       Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
       Effect.provide(Reactivity.layer),
+    ),
+  )
+})
+
+test('terminal settlement carries bounded progress across passes and retries after wrap', async () => {
+  const fixture = nativeJevFixture()
+  const observed = Date.parse(fixture.observation.payload.observedAt)
+  const source = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation: fixture.observation.payload,
+      expiresAt: utcInstantFromEpochMillis(observed + 10_000),
+      planVersion: JevBatchPlanVersion.V8,
+    }),
+  )
+  const { batchId: _, ...sourceMaterial } = source
+  const candidates = source.candidates.map((candidate) => ({
+    status: JevCandidatePlanStatus.Excluded as const,
+    symbol: candidate.symbol,
+    reason: JevSourceExclusion.NotReady,
+    message: 'cursor fairness test exclusion',
+  }))
+  const questionSetHash = Result.getOrThrow(jevBatchQuestionSetHash(candidates))
+  const makePlan = (snapshotId: string, expiresAt: string) =>
+    Result.getOrThrow(
+      makeJevBatchPlan({
+        ...sourceMaterial,
+        snapshotId,
+        expiresAt,
+        candidates,
+        questionSetHash,
+      }),
+    )
+  const pendingPlans = Array.from({ length: 257 }, (_, index) =>
+    makePlan(index.toString(16).padStart(64, '0'), source.expiresAt),
+  )
+  const expiredPlan = makePlan('f'.repeat(64), utcInstantFromEpochMillis(observed + 1_000))
+  const expiredResult = Result.getOrThrow(
+    makeJevBatchResult(expiredPlan, {
+      schemaVersion: 'bayn.jev-batch-result.v1',
+      batchId: expiredPlan.batchId,
+      completedAt: expiredPlan.expiresAt,
+      candidates: expiredPlan.candidates.map(({ symbol }) => ({
+        symbol,
+        status: JevCandidateResultStatus.Excluded,
+      })),
+    }),
+  )
+  const ordered = [...pendingPlans, expiredPlan]
+  const accountId = 'cursor-fairness-account'
+  const cursor = makeJevTerminalBatchSettlementCursor(accountId)
+  const readCounts = new Map<string, number>()
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* SqlClient.make({
+          acquirer: Effect.die('Cursor fairness test must not connect to PostgreSQL'),
+          compiler: PgClient.makeCompiler(undefined, false),
+          spanAttributes: [],
+        })
+        const orderedIds = new Set(ordered.map((plan) => plan.batchId))
+        const sql = new Proxy(client, {
+          apply(target, receiver, args) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+            const [query, parameters] = statement.compile()
+            if (query.trim() === '' || query.trimStart().startsWith('AND (')) return statement
+            if (query.includes('WITH metadata_candidates')) {
+              const afterId = parameters.find(
+                (parameter): parameter is string => typeof parameter === 'string' && orderedIds.has(parameter),
+              )
+              const start = afterId === undefined ? 0 : ordered.findIndex((plan) => plan.batchId === afterId) + 1
+              return Effect.succeed(
+                ordered.slice(start, start + 64).map((plan, offset) => ({
+                  batch_id: plan.batchId,
+                  terminal_at: new Date(observed + start + offset),
+                })),
+              )
+            }
+            if (query.includes('SELECT plan.payload AS plan')) {
+              const batchId = parameters.find(
+                (parameter): parameter is string => typeof parameter === 'string' && orderedIds.has(parameter),
+              )
+              if (batchId === undefined) throw new Error('Settlement read did not bind a batch id')
+              const plan = ordered.find((candidate) => candidate.batchId === batchId)
+              if (plan === undefined) throw new Error('Settlement plan is absent from the fixture')
+              const reads = (readCounts.get(batchId) ?? 0) + 1
+              readCounts.set(batchId, reads)
+              if (pendingPlans.slice(0, 2).some((candidate) => candidate.batchId === batchId)) return Effect.succeed([])
+              return Effect.succeed([
+                { plan, result: batchId === expiredPlan.batchId && reads > 1 ? expiredResult : null },
+              ])
+            }
+            throw new Error(`Unexpected cursor fairness query: ${query}`)
+          },
+          get(target, property, receiver) {
+            if (property === 'withTransaction') return <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
+            return Reflect.get(target, property, receiver)
+          },
+        }) as PgClient.PgClient
+        yield* TestClock.setTime(observed + 5_000)
+        expect(yield* settleExpiredTerminalJevBatches(sql, accountId, cursor)).toEqual({
+          candidates: 256,
+          sealed: 0,
+          pending: 254,
+          failed: 2,
+        })
+        expect(cursor.position?.batchId).toBe(pendingPlans[255]?.batchId)
+
+        expect(yield* settleExpiredTerminalJevBatches(sql, accountId, cursor)).toEqual({
+          candidates: 2,
+          sealed: 1,
+          pending: 1,
+          failed: 0,
+        })
+        expect(cursor.position).toBeNull()
+
+        expect(yield* settleExpiredTerminalJevBatches(sql, accountId, cursor)).toEqual({
+          candidates: 256,
+          sealed: 0,
+          pending: 254,
+          failed: 2,
+        })
+        expect(readCounts.get(pendingPlans[0]?.batchId ?? '')).toBe(2)
+      }),
+    ).pipe(
+      Effect.provide(entryInferenceFixtureLayer),
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Reactivity.layer),
+      Effect.provide(Logger.layer([])),
+    ),
+  )
+})
+
+test('terminal settlement progress is isolated by account', async () => {
+  const fixture = nativeJevFixture()
+  const observed = Date.parse(fixture.observation.payload.observedAt)
+  const source = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation: fixture.observation.payload,
+      expiresAt: utcInstantFromEpochMillis(observed + 10_000),
+      planVersion: JevBatchPlanVersion.V8,
+    }),
+  )
+  const { batchId: _, ...sourceMaterial } = source
+  const candidates = source.candidates.map((candidate) => ({
+    status: JevCandidatePlanStatus.Excluded as const,
+    symbol: candidate.symbol,
+    reason: JevSourceExclusion.NotReady,
+    message: 'account cursor isolation test exclusion',
+  }))
+  const questionSetHash = Result.getOrThrow(jevBatchQuestionSetHash(candidates))
+  const makePlan = (snapshotId: string) =>
+    Result.getOrThrow(
+      makeJevBatchPlan({
+        ...sourceMaterial,
+        snapshotId,
+        expiresAt: source.expiresAt,
+        candidates,
+        questionSetHash,
+      }),
+    )
+  const accountA = 'cursor-account-a'
+  const accountB = 'cursor-account-b'
+  const planA = makePlan('a'.repeat(64))
+  const planB = makePlan('b'.repeat(64))
+  const cursorA = makeJevTerminalBatchSettlementCursor(accountA)
+  const cursorB = makeJevTerminalBatchSettlementCursor(accountB)
+  const firstBatchByAccount = new Map<string, string>()
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* SqlClient.make({
+          acquirer: Effect.die('Account cursor isolation test must not connect to PostgreSQL'),
+          compiler: PgClient.makeCompiler(undefined, false),
+          spanAttributes: [],
+        })
+        const sql = new Proxy(client, {
+          apply(target, receiver, args) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+            const [query, parameters] = statement.compile()
+            if (query.trim() === '' || query.trimStart().startsWith('AND (')) return statement
+            if (query.includes('WITH metadata_candidates')) {
+              const account = parameters.find(
+                (parameter): parameter is string => parameter === accountA || parameter === accountB,
+              )
+              if (account === undefined) throw new Error('Settlement metadata query lost its account binding')
+              const plan = account === accountA ? planA : planB
+              firstBatchByAccount.set(account, plan.batchId)
+              return Effect.succeed([{ batch_id: plan.batchId, terminal_at: new Date(observed) }])
+            }
+            if (query.includes('SELECT plan.payload AS plan')) return Effect.succeed([])
+            throw new Error(`Unexpected account isolation query: ${query}`)
+          },
+        }) as PgClient.PgClient
+        yield* TestClock.setTime(observed + 5_000)
+        expect(yield* settleExpiredTerminalJevBatches(sql, accountA, cursorA)).toEqual({
+          candidates: 1,
+          sealed: 0,
+          pending: 0,
+          failed: 1,
+        })
+        const mismatched = yield* settleExpiredTerminalJevBatches(sql, accountB, cursorA).pipe(Effect.result)
+        expect(Result.isFailure(mismatched)).toBe(true)
+        expect(yield* settleExpiredTerminalJevBatches(sql, accountB, cursorB)).toEqual({
+          candidates: 1,
+          sealed: 0,
+          pending: 0,
+          failed: 1,
+        })
+        expect(firstBatchByAccount).toEqual(
+          new Map([
+            [accountA, planA.batchId],
+            [accountB, planB.batchId],
+          ]),
+        )
+        expect(cursorA.accountId).toBe(accountA)
+        expect(cursorB.accountId).toBe(accountB)
+      }),
+    ).pipe(
+      Effect.provide(entryInferenceFixtureLayer),
+      Effect.provide(TestClock.layer()),
+      Effect.provide(Reactivity.layer),
+      Effect.provide(Logger.layer([])),
     ),
   )
 })

@@ -3,7 +3,11 @@ import { Context, Effect, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
 import { InferenceCostError } from './inference-costs'
-import { settleExpiredTerminalJevBatches } from './db/jev-batch-postgres'
+import {
+  makeJevTerminalBatchSettlementCursor,
+  settleExpiredTerminalJevBatches,
+  type JevTerminalBatchSettlementCursor,
+} from './db/jev-batch-postgres'
 import {
   decodeInferenceExpenseQuote,
   inferenceExpenseBatchSize,
@@ -42,6 +46,7 @@ export const makeInferenceExpenseStore = (
   sql: PgClient.PgClient,
   accountId: string,
   coverageFrom = inferenceExpenseCoverageFrom,
+  settlementCursor: JevTerminalBatchSettlementCursor = makeJevTerminalBatchSettlementCursor(accountId),
 ) => {
   const source = sql.literal(`jsonb_build_object(
     'accountId', cycle.account_id, 'sessionDate', cycle.execution_session_date::text,
@@ -189,6 +194,9 @@ export const makeInferenceExpenseStore = (
         Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
       ),
     )
-  const settleExpiredTerminalBatches = settleExpiredTerminalJevBatches(sql, accountId)
+  // The owner supplies a cursor that outlives each physical pass/session. Direct
+  // callers get a local hint, while the background projection keeps fair progress
+  // across its reconnects without making the hint authoritative state.
+  const settleExpiredTerminalBatches = settleExpiredTerminalJevBatches(sql, accountId, settlementCursor)
   return { newSources, freeze, pending, acknowledge, session, currentSession, settleExpiredTerminalBatches }
 }
