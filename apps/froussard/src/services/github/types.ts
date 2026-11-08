@@ -210,12 +210,12 @@ export type ListBlockingChecksResult =
   | { ok: true; checks: PullRequestBlockingCheck[] }
   | { ok: false; reason: ListBlockingChecksFailureReason; status?: number; detail?: string }
 
-export interface ApprovePullRequestOptions extends FetchPullRequestOptions {
+export interface ApprovalReviewOptions extends FetchPullRequestOptions {
   headSha: string
   body: string
 }
 
-export type ApprovePullRequestResult =
+export type ApprovalReviewResult =
   | { ok: true; reviewUrl: string }
   | {
       ok: false
@@ -234,3 +234,24 @@ export type ApprovePullRequestResult =
 export type ListCommitPullRequestsResult =
   | { ok: true; pullNumbers: number[] }
   | { ok: false; reason: ListBlockingChecksFailureReason; status?: number; detail?: string }
+
+export type ApprovalReviewReference = import('@/approvals/contracts').ApprovalState
+export interface PrepareApprovalOptions extends ApprovalReviewOptions {
+  previousReview: ApprovalReviewReference | null
+}
+export interface SubmitApprovalOptions extends ApprovalReviewOptions {
+  reviewId: number
+}
+export type PrepareApprovalResult =
+  | {
+      ok: true
+      review: {
+        id: number
+        commit_id: string
+        state: string
+        body: string | null
+        user: { login: string }
+        html_url: string
+      }
+    }
+  | Extract<ApprovalReviewResult, { ok: false }>

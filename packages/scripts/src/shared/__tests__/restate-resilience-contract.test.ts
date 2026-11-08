@@ -75,7 +75,7 @@ test.each([
   expect(matchesPaths(path, workflow.on.push.paths)).toBe(affected)
 })
 
-test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runtime image selection', () => {
+test('Restate 1.8.1 preserves retained HA state while Kargo owns runtime image selection', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -91,8 +91,8 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
     {
       name: 'restate-runtime',
       newName: 'docker.restate.dev/restatedev/restate',
-      newTag: '1.7.9',
-      digest: 'sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+      newTag: '1.8.1',
+      digest: 'sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
     },
   ])
   expect(env.get('RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK')).toBe('450')
@@ -106,6 +106,7 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT')).toBe('10s')
   expect(env.get('RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
+  expect(env.has('RESTATE_TRACING_FILTER')).toBe(false)
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('ScheduleAnyway')
@@ -135,7 +136,7 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(statefulSet.spec.template.spec.initContainers[0]).toMatchObject({
     name: 'snapshot-scale-up-gate',
     image:
-      'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+      'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   })
 })
 
@@ -272,7 +273,7 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(migration).toContain('rows != 48')
   expect(migration).toContain('if nodes_ready && \\')
   expect(migration).toContain(
-    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+    'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   )
   expect(migration).toContain('activeDeadlineSeconds: 1500')
   expect(migration).toContain('nodes set-storage-state --nodes "$id" --storage-state read-write')
@@ -597,7 +598,7 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(bootstrap).toContain('if (!(i in seen) || !(i in archived)) exit 1')
   expect(bootstrap).toContain('Transient failure reading partition snapshot status; retrying')
   expect(bootstrap).toContain(
-    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+    'docker.restate.dev/restatedev/restate:1.8.1@sha256:cd5ee1abb1b3f91e813e327a024779280938aaff991ccdc5b241a3a3a4bddce1',
   )
   expect(rollback).toContain('argocd.argoproj.io/hook: PreSync')
   expect(rollback).toContain('config set --replication 1')
@@ -775,11 +776,11 @@ test('Restate recovery proof opens all snapshots offline without exposing OBC cr
   const drill = readRepoFile('argocd/applications/restate/snapshot-restore-drill-cronjob.yaml')
   const scripts = readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')
   const kustomization = readRepoFile('argocd/applications/restate/kustomization.yaml')
-  const toolsDigest =
-    'ghcr.io/restatedev/restate-tools@sha256:db618f42dbad37a79d8d4c543968f32d8d07aaa71cbcc8736f700f6c5f517209'
-
-  expect(proof).toContain(toolsDigest)
-  expect(drill).toContain(toolsDigest)
+  expect(YAML.parse(proof).spec.template.spec.containers[0].image).toBe('restate-runtime')
+  expect(YAML.parse(drill).spec.jobTemplate.spec.template.spec.containers[0].image).toBe('restate-runtime')
+  const dockerfile = readRepoFile('services/restate/Dockerfile')
+  expect(dockerfile).toContain('cargo build --locked --release -p restate-doctor')
+  expect(dockerfile).toContain('COPY --from=builder /tmp/restate-doctor /usr/local/bin/restate-doctor')
   expect(proof).toContain('secretKeyRef:')
   expect(proof).not.toContain('--aws-access-key-id')
   expect(proof).not.toContain('--aws-secret-access-key')
