@@ -262,6 +262,14 @@ spec:
                   key: AWS_SECRET_ACCESS_KEY
             - name: RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE
               value: /var/run/secrets/restate/request-identity/private.pem
+          startupProbe:
+            exec:
+              command:
+                - /bin/bash
+                - /opt/restate-resilience/partition-startup.sh
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 120
           readinessProbe:
             httpGet:
               path: /restate/health
@@ -269,6 +277,9 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:
+            - name: resilience-scripts
+              mountPath: /opt/restate-resilience
+              readOnly: true
             - mountPath: /restate-data
               name: storage
             - mountPath: /tmp
@@ -277,6 +288,10 @@ spec:
               name: request-identity
               readOnly: true
       volumes:
+        - name: resilience-scripts
+          configMap:
+            name: restate-resilience-scripts
+            defaultMode: 0555
         - name: request-identity
           secret:
             secretName: restate-request-identity

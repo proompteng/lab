@@ -148,7 +148,14 @@ Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` 
 The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).
 
 Before rollout, verify three caught-up members in the same Raft set, replication two and positive archived LSNs for all
-24 partitions. Argo replaces one retained StatefulSet member at a time. Verify the promoted digest, each replacement's
+24 partitions. Argo replaces one retained StatefulSet member at a time. A native Kubernetes startup probe checks this
+member's partition assignments through Restate's NodeCtl SQL API. It requires a non-empty assignment set, all-current
+membership and active replay, then advancing status timestamps in the same generation across two observations.
+Empty, stale, partially recovered or changing assignments keep the pod unready. These bounded checks stop after
+startup succeeds; they do not add recurring cluster scans. The probe allows 20 minutes for recovery and each CLI
+request has a three-second deadline. The existing HTTP readiness probe runs only after this recovery gate succeeds.
+This follows the upstream [rolling-update procedure](https://docs.restate.dev/server/upgrading#rolling-updates).
+Verify the promoted digest, each replacement's
 membership, distributed dashboard queries, consecutive Bayn ticks with fresh exact reconciliation, both Bayn status
 replicas, and resolution of the existing alerts. An empty query, a healthy Application or a build alone is insufficient.
 Within 1.8, use the prior verified Kargo Freight for a targeted image rollback. Returning to 1.7 requires the VQueue
