@@ -29,6 +29,39 @@ session before any model dispatch.
 
 ## Offline input preflight
 
+### Bind a frozen plan to native opening evidence
+
+Run `bun run --filter @proompteng/bayn control:bind` to construct the sole v10 input from a
+`bayn.control-study-plan.v1`, a retained `bayn.control-study-opening.v1`, and the native export directory:
+
+```sh
+bun run --filter @proompteng/bayn control:bind \
+  --plan /private/plan.json --plan-sha256 <independently-retained-plan-sha256> \
+  --opening /private/opening.json --opening-sha256 <retained-native-opening-sha256> \
+  --export /private/native-export --source-receipt-sha256 <independently-retained-receipt-sha256> \
+  --output /private/new-bound-input
+```
+
+Freeze the plan bytes and independently establish their existence before the first session opens. The plan contains
+the deterministic mechanical control template and the candidate's broker identity, request, authority generation and
+native risk policy. It omits source, opening cash and opening equity peak. The opening file carries the candidate's
+retained native preflight inputs, physical build, broker identity, request and actual daily turnover. Capture those
+inputs from the native broker/PostgreSQL/TigerBeetle evidence path; never hand-enter or reset balances.
+
+Binding requires the same account, build and risk policy, exact flat native state, fully available cash, fresh observations
+available before the first regular open, zero used daily turnover and unchanged day-start equity. The comparison interval
+must start and finish at regular-session boundaries. It inherits the actual cash and original peak, including
+used drawdown. A different request, stale state, noncash equity or a changed export is rejected. Unknown costs remain
+null and every execution assumption stays frozen. `input.json` and the final `binding.json` use private permissions in
+a new directory. Existing output is never overwritten. Pass `input.json` and its printed SHA-256 to the existing study
+or preflight command below.
+
+The binding records byte identities and capital derivation. It does not authenticate when files existed or validate
+the market-data file. The study reader retains whole-file replay verification. Source and opening provenance,
+prospective completeness, calibration, full costs and economic qualification still require their own evidence.
+
+### Check complete input coverage
+
 Run the command with `--mode preflight` and the same pinned input, arrivals and source receipt before an economic
 study. It writes `bayn.control-input-preflight.v1` to the new `--output` path without selecting signals, constructing
 a portfolio, computing returns, calling Jev or opening a broker or database connection. This also works for a `JEV`

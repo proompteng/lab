@@ -11,6 +11,7 @@
     "inference:cost": "node dist/inference-cost-command.js",
     "jev:study-export": "node dist/research/jev-study-export-command.js",
     "control:study": "node dist/research/control-study-command.js",
+    "control:bind": "bun tools/bind-control-input.ts",
     "capital:study": "node dist/research/capital-study.js",
     "entry:timing-export": "node dist/research/entry-timing-export.js",
     "entry:matched-study": "node dist/research/matched-entry-study.js",
