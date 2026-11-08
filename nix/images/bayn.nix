@@ -73,7 +73,8 @@ let
       version = "0.1.4";
       pyproject = true;
       src = pkgs.fetchurl {
-        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        name = "8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        url = "https://codeload.github.com/gepa-ai/gepa/tar.gz/8f287de942f41a6d1e0e7e5b2d576247c4bedee9";
         hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
       };
       build-system = [ ps.setuptools ps.wheel ps.build ];
