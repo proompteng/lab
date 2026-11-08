@@ -2009,6 +2009,69 @@ postgres('PostgreSQL prospective system qualification', () => {
     },
   )
 
+  test('controller evidence keeps exact distinct observations and original window and identity filters', async () => {
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const controllerKey = sha256('controller evidence identity')
+          const planHash = sha256('controller evidence plan')
+          const open = '2026-11-04T14:30:00.000Z'
+          const close = '2026-11-04T14:31:00.000Z'
+          const asOf = '2026-11-04T14:32:00.000Z'
+          const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: open } as const
+          const base = {
+            controller_key: controllerKey,
+            plan_hash: planHash,
+            active: true,
+            epoch: 3,
+            last_sequence: 7,
+            last_receipt_hash: sha256('original controller receipt'),
+            completed_at: open,
+            last_pass: observation,
+          }
+          const conflict = { ...base, last_pass: { ...observation, outcome: 'ALREADY_ACQUIRED' } }
+          const tail = {
+            ...base,
+            last_receipt_hash: sha256('controller original deadline tail'),
+            completed_at: asOf,
+            last_pass: { ...observation, observedAt: asOf, executionIssuedAt: close },
+          }
+          for (const status of [
+            base,
+            base,
+            conflict,
+            tail,
+            { ...base, active: false },
+            { ...base, plan_hash: sha256('foreign plan'), epoch: 'malformed excluded counter' },
+            { ...base, controller_key: sha256('foreign controller') },
+            { ...base, last_receipt_hash: null },
+            { ...base, last_pass: null },
+            { ...base, completed_at: '2026-11-04T14:29:59.999Z' },
+            { ...tail, completed_at: '2026-11-04T14:32:00.001Z' },
+          ])
+            yield* sql`INSERT INTO execution_controller_observations(controller_key, status)
+              VALUES (${status.controller_key}, ${JSON.stringify(status)}::jsonb)`
+          const passes = yield* readSystemControllerPasses(controllerKey, planHash, open, close, asOf)
+          expect(passes).toHaveLength(3)
+          expect(
+            passes.filter((pass) => pass.receiptHash === base.last_receipt_hash).map((pass) => pass.observation),
+          ).toEqual(expect.arrayContaining([observation, conflict.last_pass]))
+          expect(passes.find((pass) => pass.receiptHash === tail.last_receipt_hash)).toEqual({
+            controllerKey,
+            planHash,
+            epoch: base.epoch,
+            sequence: base.last_sequence,
+            receiptHash: tail.last_receipt_hash,
+            completedAt: asOf,
+            observation: tail.last_pass,
+          })
+          expect(passes.map((pass) => pass.receiptHash)).toEqual(passes.map((pass) => pass.receiptHash).toSorted())
+        }),
+      ),
+    )
+  })
+
   test('controller observations survive projection updates and are immutable', async () => {
     await runtime.runPromise(
       asApplication(

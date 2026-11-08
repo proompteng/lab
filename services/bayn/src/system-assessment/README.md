@@ -84,6 +84,9 @@ New operational cuts use `bayn.operational-source-cut.v1`. Capture reads native 
 one row at a time in the original repeatable-read snapshot, spools their complete canonical bytes privately, and
 archives each source once in append-only `system_source_records`. The immutable cut retains their hashes and native
 identities. This avoids constructing a whole-period JSON string containing repeated multi-megabyte decision bodies.
+The shared controller-evidence query expands each retained JSON status once before filtering and deduplication,
+avoiding repeated decompression of large pass payloads. It preserves distinct observations, identity and window
+filters, cross-boundary execution starts, and the original database deadline.
 Operational capture uses the verified registration's original runtime configuration, even after the reporting service
 has upgraded. The capture build is recorded separately. Replay still binds every execution source to the registered
 policy, generation, build and original deadlines; a reporting upgrade cannot substitute new clocks or certify work
