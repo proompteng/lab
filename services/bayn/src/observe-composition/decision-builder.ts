@@ -104,7 +104,7 @@ import {
   type StrategyRuntime,
 } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
-import type { DecisionPlan, IsoDate } from '../types'
+import type { IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import {
   adverseClosingQuotePrices,
@@ -325,7 +325,7 @@ type ObservePlannerPreparation = {
 
 type ObservePlannerOverrides = {
   readonly allocationCapitalMicros?: string
-  readonly targetWeights?: DecisionPlan['targetWeights']
+  readonly targetWeights?: RuntimeStrategyDecision['targetWeights']
   readonly submissionCutoffAt?: string
 }
 
@@ -803,7 +803,7 @@ type CompiledObserveStrategyDecision = {
   readonly askPriceMicros?: Readonly<Record<string, string>>
   readonly maximumBuyQuantityAtoms?: Readonly<Record<string, string>>
   readonly maximumSellQuantityAtoms?: Readonly<Record<string, string>>
-  readonly planningTargetWeights?: DecisionPlan['targetWeights']
+  readonly planningTargetWeights?: RuntimeStrategyDecision['targetWeights']
   readonly decisionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
   readonly executionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
 }
