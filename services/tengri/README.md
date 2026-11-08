@@ -308,15 +308,18 @@ revision matches the content and rejects missing, malformed, or mismatched revis
 contacting the guest. Nanoagent reports stale writes as `ABORTED` with the current revision. Successful writes return
 the new path, size, and revision.
 
-Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
+Opening a conversation reads persisted native history with `thread/read` and `includeTurns: false`; it does not
+resume a model session or change its settings. History loading proceeds independently of the model catalog.
+Paginated conversations then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
-that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
+that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial read
 cursor remains the baseline for new items. The controller streams metadata, item pages, and turn pages through `ResumeCodexThread`; the BFF forwards bounded
 NDJSON records and the desktop assembles the complete snapshot. Retrieval is bounded to 90 seconds, 256 pages,
 10 MiB per native page, and 64 MiB of total native JSON. The desktop enforces the same aggregate byte budget before
 parsing each page. An explicit completion record is required, and any
 failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
+History retains `control_codex` authorization and fresh policy checks, while reusing bounded observation audit receipts.
 
 The guest pins Codex 0.164.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest

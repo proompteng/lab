@@ -135,6 +135,19 @@ completed:
 	if !listed(false) || listed(true) {
 		t.Fatal("restore did not return the persisted thread")
 	}
+	supervisor.close()
+	supervisor = newCodexSupervisor(binary, workspace)
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	var metadata struct {
+		Thread struct {
+			ID          string `json:"id"`
+			HistoryMode string `json:"historyMode"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(call("thread/read", map[string]any{"threadId": created.Thread.ID, "includeTurns": false}), &metadata); err != nil || metadata.Thread.ID != created.Thread.ID || metadata.Thread.HistoryMode != "paginated" {
+		t.Fatal("cold history must be readable without resuming the native thread", err)
+	}
 	var history struct {
 		Data []struct {
 			ID string `json:"id"`

@@ -26,7 +26,7 @@ pub struct Principal {
     pub action: Action,
     #[serde(skip)]
     verified_rpc_admission: bool,
-    // The signed RPC classifies run reads; stored workflow authority cannot inherit that classification.
+    // The signed RPC classifies reads; stored workflow authority cannot inherit that classification.
     #[serde(skip)]
     pub(crate) observation: bool,
 }
@@ -308,7 +308,10 @@ impl Authenticator {
             recovery_generation,
             action,
             verified_rpc_admission: true,
-            observation: matches!(method, "GetActiveCodexRuns" | "GetCodexRun"),
+            observation: matches!(
+                method,
+                "GetActiveCodexRuns" | "GetCodexRun" | "ResumeCodexThread"
+            ),
         })
     }
 }
@@ -375,6 +378,7 @@ mod tests {
         for (method, observation) in [
             ("GetActiveCodexRuns", true),
             ("GetCodexRun", true),
+            ("ResumeCodexThread", true),
             ("SendCodexInput", false),
             ("RecoverCodexRun", false),
         ] {

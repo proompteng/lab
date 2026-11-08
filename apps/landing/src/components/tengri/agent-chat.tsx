@@ -829,7 +829,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   )
 
   useEffect(() => {
-    if (!account?.authenticated || !threadId || threadReady || (!models && !modelError)) return
+    if (!account?.authenticated || !threadId || threadReady) return
     const controller = new AbortController()
     threadStartupController.current = controller
     let timer = 0
@@ -845,7 +845,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       const resumeSequence = lastEventSequence.current
       try {
         const thread = await runTengriAction<TengriCodexThread>(
-          { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
+          { action: 'resume-thread', agentId, threadId },
           controller.signal,
         )
         if (!current()) return
@@ -873,16 +873,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (threadStartupController.current === controller) threadStartupController.current = null
     }
-  }, [
-    account?.authenticated,
-    agentId,
-    commitThreadState,
-    modelError,
-    models,
-    threadId,
-    threadReady,
-    threadResumeRevision,
-  ])
+  }, [account?.authenticated, agentId, commitThreadState, threadId, threadReady, threadResumeRevision])
 
   const recoverThreadState = useCallback(() => {
     if (!threadIdRef.current || replayRecoveryRef.current) return
@@ -1548,7 +1539,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     }
     const resumeSequence = lastEventSequence.current
     const thread = threadId
-      ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
+      ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
     if (conversationSelection.current !== selectedConversation) {
       if (!threadId && creatingDraftRef.current?.selection === selectedConversation) {

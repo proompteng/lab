@@ -1020,13 +1020,11 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
-        let options = CodexOptions::parse(request.model, request.reasoning_effort)
-            .map_err(Status::invalid_argument)?;
         let (_, guest, access) = self
             .guest_access(&principal, &request.agent_id, &request.thread_id)
             .await?;
         let history = guest
-            .resume_codex_thread(&request.thread_id, &options)
+            .read_codex_thread(&request.thread_id)
             .await
             .map_err(map_guest_error)?;
         access.require().await?;
@@ -2964,7 +2962,6 @@ pub(crate) mod tests {
                                 ResumeCodexThreadRequest {
                                     agent_id: "agent-current".into(),
                                     thread_id: "thread-current".into(),
-                                    ..Default::default()
                                 },
                                 &principal,
                                 &path,

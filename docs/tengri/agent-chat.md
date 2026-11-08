@@ -83,7 +83,7 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | `list-threads`        | `ListCodexThreads`       | `thread/list`                          |
 | `set-thread-archived` | `SetCodexThreadArchived` | `thread/archive`, `thread/unarchive`   |
 | `create-thread`       | `CreateCodexThread`      | `thread/start`                         |
-| `resume-thread`       | `ResumeCodexThread`      | `thread/resume`                        |
+| `resume-thread`       | `ResumeCodexThread`      | `thread/read` and history page reads   |
 | `active-codex-runs`   | `GetActiveCodexRuns`     | Restate workspace claim and run state  |
 | `codex-run`           | `GetCodexRun`            | Restate run state                      |
 | `send-turn`           | `SendCodexInput`         | durable admission, then `turn/start`   |
