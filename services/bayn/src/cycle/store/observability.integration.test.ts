@@ -2,8 +2,24 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result, Schema } from 'effect'
+import {
+  Cause,
+  Clock,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  ManagedRuntime,
+  Redacted,
+  References,
+  Result,
+  Schema,
+} from 'effect'
+import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
+import legacyPositionSnapshotIndex from '../../../migrations/0190_legacy_position_snapshot_index'
 import * as Reactivity from 'effect/reactivity/Reactivity'
 import {
   makeCycleDraft,
@@ -871,6 +887,17 @@ describePostgres('PostgreSQL intraday observability projection', () => {
             md5('source-' || n) || md5(n::text), '2026-08-27T00:00:00Z'::timestamptz + n * interval '1 second',
             0, md5('content-' || n) || md5(n::text), n > 20000
           FROM generate_series(1, 60000) AS n ORDER BY n`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`DROP INDEX position_snapshots_legacy_account_observed_at_idx`
+            const startedAt = yield* Clock.currentTimeMillis
+            yield* legacyPositionSnapshotIndex.pipe(Effect.provideService(SqlClient.SqlClient, sql))
+            yield* Effect.logInfo('Legacy snapshot index fixture build').pipe(
+              Effect.annotateLogs('fixtureRows', 60000),
+              Effect.annotateLogs('elapsedMs', (yield* Clock.currentTimeMillis) - startedAt),
+            )
+          }),
+        )
         yield* sql`ANALYZE position_snapshots`
         const lookups: Statement<Record<string, unknown>>[] = []
         const monitored = new Proxy(sql, {
@@ -916,6 +943,81 @@ describePostgres('PostgreSQL intraday observability projection', () => {
       }),
     )
   }, 30000)
+
+  test.each([
+    { statement: '900s', lock: '900s', expectedStatement: '5s', expectedLock: '1s' },
+    { statement: '2500ms', lock: '250ms', expectedStatement: '2500ms', expectedLock: '250ms' },
+  ])('legacy index build caps limits without weakening existing settings (%j)', async (limits) => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`DROP INDEX position_snapshots_legacy_account_observed_at_idx`
+            yield* sql`SELECT set_config('statement_timeout', ${limits.statement}, true),
+          set_config('lock_timeout', ${limits.lock}, true)`
+            const before = yield* sql`SELECT current_setting('statement_timeout') AS statement_timeout,
+          current_setting('lock_timeout') AS lock_timeout`
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (typeof statement.compile !== 'function' || !statement.compile()[0].includes('CREATE INDEX'))
+                  return statement
+                return Effect.gen(function* () {
+                  expect(
+                    yield* sql`SELECT current_setting('statement_timeout') AS statement_timeout,
+                current_setting('lock_timeout') AS lock_timeout`,
+                  ).toEqual([{ statement_timeout: limits.expectedStatement, lock_timeout: limits.expectedLock }])
+                  return yield* statement
+                })
+              },
+            })
+            yield* legacyPositionSnapshotIndex.pipe(Effect.provideService(SqlClient.SqlClient, monitored))
+            expect(
+              yield* sql`SELECT current_setting('statement_timeout') AS statement_timeout,
+          current_setting('lock_timeout') AS lock_timeout`,
+            ).toEqual(before)
+          }),
+        )
+      }),
+    )
+  })
+
+  test('a timed-out index migration rolls back its index and restores enclosing settings', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`DROP INDEX position_snapshots_legacy_account_observed_at_idx`
+            yield* sql`SELECT set_config('statement_timeout', '100ms', true)`
+            const before = yield* sql`SELECT current_setting('statement_timeout') AS statement_timeout,
+          current_setting('lock_timeout') AS lock_timeout`
+            const delayed = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                return typeof statement.compile === 'function' && statement.compile()[0].includes('CREATE INDEX')
+                  ? statement.pipe(Effect.tap(() => sql`SELECT pg_sleep(0.5)`))
+                  : statement
+              },
+            })
+            const exit = yield* sql
+              .withTransaction(legacyPositionSnapshotIndex.pipe(Effect.provideService(SqlClient.SqlClient, delayed)))
+              .pipe(Effect.exit)
+            expect(Exit.isFailure(exit)).toBe(true)
+            if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('statement timeout')
+            expect(
+              yield* sql`SELECT to_regclass('position_snapshots_legacy_account_observed_at_idx') AS index`,
+            ).toEqual([{ index: null }])
+            expect(
+              yield* sql`SELECT current_setting('statement_timeout') AS statement_timeout,
+          current_setting('lock_timeout') AS lock_timeout`,
+            ).toEqual(before)
+          }),
+        )
+      }),
+    )
+  })
 
   test('ignores future-dated broker snapshots when selecting observable state', async () => {
     const candidate = draft()
