@@ -120,6 +120,45 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
 })
 
+test('preparation retains the configured Webull topic only with its independently bound source inventory', () => {
+  const input = fixture()
+  const configured = {
+    ...input.source,
+    marketSources: Schema.decodeUnknownSync(MarketSourcesSchema)(
+      input.source.marketSources.map((source) => ({
+        ...source,
+        topics: { ...source.topics, webullBars: 'synthetic.webull.raw' },
+      })),
+    ),
+  }
+  const source = {
+    ...configured,
+    positions: backtestSourcePartitions(configured).map(
+      ({ topic, partition }) =>
+        input.source.positions.find((position) => position.topic === topic && position.partition === partition) ?? {
+          topic,
+          partition,
+          startOffset: '0',
+          endOffsetExclusive: '0',
+        },
+    ),
+  }
+  const receipt = retainedReplayCaptureFixture(source)
+  const prepared = Result.getOrThrow(prepareWithCapture({ ...input, source }, receipt))
+  expect(prepared.input.source.marketSources[0]?.topics.webullBars).toBe('synthetic.webull.raw')
+  expect(Result.isFailure(prepareWithCapture({ ...input, source }, retainedReplayCaptureFixture(input.source)))).toBe(
+    true,
+  )
+  const changed = {
+    ...source,
+    marketSources: source.marketSources.map((source) => ({
+      ...source,
+      topics: { ...source.topics, webullBars: 'changed' },
+    })),
+  }
+  expect(Result.isFailure(prepareWithCapture({ ...input, source: changed }, receipt))).toBe(true)
+})
+
 test('momentum selects its own source-defined policy without an inference batch identity', () => {
   const input = fixture()
   const identity = Result.getOrThrow(
