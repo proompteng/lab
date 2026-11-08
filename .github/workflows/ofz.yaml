@@ -165,7 +165,8 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
           node .github/scripts/install-tengri-chromium.mjs
-          echo "KEYCLOAK_FIXTURE_BIN=$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")" >> "$GITHUB_ENV"
+          keycloak_fixture_bin="$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")"
+          echo "KEYCLOAK_FIXTURE_BIN=${keycloak_fixture_bin}" >> "$GITHUB_ENV"
       - name: Verify generated authorization client
         run: |
           buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz --path proto/proompteng/relay
