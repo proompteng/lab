@@ -38,7 +38,7 @@ test('current financial receipt reuses its exact independently reproduced handof
   const result = Result.getOrThrow(readStagedInferenceCostEvidence(row))
   expect(result.receipt).toEqual(receipt)
   expect(result.handoff).toEqual(completion.handoff)
-  expect(result.visualStages.map((stage) => stage.outcome)).toEqual(['RECEIVED', 'RECEIVED'])
+  expect(result.visualStages.map((stage) => stage.outcome)).toEqual(['RECEIVED'])
 })
 
 test('a validly rehashed receipt cannot substitute or omit the independent handoff', () => {

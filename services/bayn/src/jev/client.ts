@@ -11,6 +11,7 @@ import {
   JevFailure,
   JevInferenceSchema,
   JevResponseSchema,
+  jevModel,
 } from './contract'
 
 const failedResponseUsageSchema = Schema.Struct({
@@ -67,6 +68,12 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             ),
           )
           const { requestHash } = prepared
+          if (prepared.request.model !== jevModel)
+            return yield* new JevError({
+              failure: JevFailure.Request,
+              message: 'New inference requires the current pinned Jev model',
+              requestHash,
+            })
           const started = yield* Clock.currentTimeMillis
           let failureHttpStatus: number | undefined
           return yield* Effect.gen(function* () {

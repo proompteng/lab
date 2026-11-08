@@ -6,7 +6,7 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import { jevEntryEconomics } from './entry-economics'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
-import type { ChartAssessments } from './chart-questions'
+import type { ChartAssessments } from './/chart-assessments'
 
 const sourceIsFeasible = (input: Parameters<typeof makeEntrySourceCandidates>[0]) =>
   makeEntrySourceCandidates(input).pipe(

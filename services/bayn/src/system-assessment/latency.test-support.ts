@@ -386,7 +386,7 @@ export const nativeLatencyBacktestFixture = (
       recording,
       recordingHash: testHash(recording),
       maximumCalls: 100,
-      models: { jev: 'jev-1.13.0' },
+      models: { jev: configuration.protocol.model },
       inputDefinition: 'bayn.jev-entry-state.v24',
       costs: inferenceTariff,
     },

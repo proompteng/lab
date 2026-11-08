@@ -236,8 +236,8 @@ message CreateCodexThreadRequest {
 message ResumeCodexThreadRequest {
   string agent_id = 1;
   string thread_id = 2;
-  string model = 3;
-  string reasoning_effort = 4;
+  reserved 3, 4;
+  reserved "model", "reasoning_effort";
 }
 message SendCodexInputRequest {
   string agent_id = 1;

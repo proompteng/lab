@@ -613,7 +613,7 @@ test('a substituted response identity fails the replay after preserving the actu
 })
 
 test.each([1000, null])(
-  'chart, selected base, durable handoff and Jev share the original deadline (Jev latency %s)',
+  'Box chart, durable handoff and Jev share the original deadline (Jev latency %s)',
   async (latencyMs) => {
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -684,7 +684,7 @@ test.each([1000, null])(
                           }),
                         ),
                       )
-                    : Effect.succeed({ dispatchAllowed: successor.kind === 'VISUAL' })
+                    : Effect.succeed({ dispatchAllowed: false })
                   ).pipe(
                     Effect.map((admission) => ({
                       requestId:
@@ -704,15 +704,14 @@ test.each([1000, null])(
         const fiber = yield* operation.pipe(Effect.forkChild)
         yield* Deferred.await(chartReceived)
         yield* Deferred.await(jevStarted)
-        expect(budgets).toEqual([10_000, 7000, 3000])
-        if (latencyMs === null) yield* f.providerClock.adjust(3000)
+        expect(budgets).toEqual([10_000, 6000])
+        if (latencyMs === null) yield* f.providerClock.adjust(6000)
         const result = yield* Fiber.join(fiber)
         expect(f.calls.map((call) => [call.stage, call.budgetMs])).toEqual([
           ['CHART', 10_000],
-          ['BASE_START', 7000],
-          ['JEV', 3000],
+          ['JEV', 6000],
         ])
-        expect(budget.dispatchCount()).toBe(3)
+        expect(budget.dispatchCount()).toBe(2)
         if (latencyMs === null) {
           expect(cancelled).toBe(true)
           expect(result.jev).toMatchObject({ status: 'FAILED', failure: JevFailure.Timeout })

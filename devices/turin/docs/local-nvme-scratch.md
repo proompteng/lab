@@ -102,67 +102,25 @@ For the current live mapping, the Transcend `TS256GMTE652T2_I203860329` stale
 COS partitions were already cleared on 2026-06-29 before enabling the scratch
 user volume.
 
-## Kubernetes StorageClass Wiring
+## Kubernetes storage classes
 
-After Talos reports both user volumes ready and mounted, add the mount paths to
-`argocd/applications/local-path/patches/local-path-config.patch.yaml` under the
-`turin` node entry and add a StorageClass using the local-path provisioner's
-`nodePath` parameter.
+The existing `local-path` class includes both mounted Turin scratch devices in its node path map.
+`local-path-ci-amd64` selects the Transcend device on Turin or the local XFS volume on Ryzen for CI workspaces.
+Device-specific scratch classes are not provisioned. Deleting a StorageClass does not unmount its disk.
 
-Do not apply this StorageClass before the Talos mount exists. The local-path
-helper can create a normal directory on `/var`, which would silently put scratch
-data on the wrong disk.
-
-Example:
-
-```yaml
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: local-path-turin-nvme-intel
-  annotations:
-    storageclass.kubernetes.io/is-default-class: "false"
-    storage.proompteng.ai/durability: rebuildable
-    storage.proompteng.ai/node: turin
-provisioner: rancher.io/local-path
-parameters:
-  nodePath: /var/mnt/turin-nvme-intel
-volumeBindingMode: WaitForFirstConsumer
-reclaimPolicy: Delete
-allowedTopologies:
-  - matchLabelExpressions:
-      - key: kubernetes.io/hostname
-        values:
-          - turin
-```
-
-Only add a `nodePath` after it exists in `nodePathMap`; the provisioner requires
-the selected path to be present in the configured path map.
-
-The GitOps storage classes are:
-
-- `local-path-turin-nvme-intel`
-- `local-path-turin-nvme-transcend`
-
-Both are non-default, `Delete` reclaim, `WaitForFirstConsumer`, and constrained
-to `kubernetes.io/hostname=turin`.
-
-If the local-path provisioner has already been running, restart only that
-Deployment after applying the ConfigMap so it reloads the new Turin node paths.
-This does not move or remount existing local-path PV data.
+Verify Talos mounted the intended user volume before allowing the provisioner to create a claim there.
+Without the mount, a helper can create a directory on `/var` and put scratch data on the wrong disk.
+The provisioner reloads its configuration without moving or remounting existing local volumes.
 
 ## Acceptance
 
-```bash
-talosctl -n <turin-ip> get volumestatus -o yaml | rg -n 'turin-scratch|phase:|location:|prettySize:'
-kubectl get storageclass local-path-turin-nvme-intel local-path-turin-nvme-transcend
-kubectl -n local-path-storage logs deploy/local-path-provisioner --tail=100
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd metadata -f json | jq -r '.[] | select(.hostname=="turin") | [.id,.bluefs_db_devices] | @tsv'
+```sh
+talosctl -n <turin-ip> get volumestatus -o yaml
+kubectl --context galactic-tailscale -n local-path-storage get storageclass local-path local-path-ci-amd64
+kubectl --context galactic-tailscale -n local-path-storage logs deploy/local-path-provisioner --tail=100
 ```
 
-Then create a tiny PVC/pod for each StorageClass, pin the pod to `turin`, write
-a test file, delete it, and confirm the PV node affinity is
-`kubernetes.io/hostname=turin`.
+Verify each mounted filesystem and the live provisioner node path map before provisioning scratch storage.
 
 ## References
 

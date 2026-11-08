@@ -39,6 +39,14 @@ deterministic-ID deduplication guards in isolated model copies. Each must produc
 A parser error, checker crash or successful check does not count as detecting the defect. The reviewed model files
 remain unchanged.
 
+After the unchanged production code passes conformance, five child processes independently remove the controller
+completion guard, delay a short entry retry, bypass mutation start replay, remove maximum-authority enforcement and
+omit transfer amount comparison in the actual production modules.
+A Bun preload loader changes only the child's imported module; source files on disk remain unchanged. Each control
+must confirm its mutation loaded and fail the named conformance assertion. A surviving mutation, missing guard,
+parser error, timeout or unrelated failure fails verification. Retained results include each assertion failure and
+the original production module hash. These controls check the model-to-code comparison as well as the model's guards.
+
 ## Bounds, assumptions and limits
 
 TLC exhaustively checks these finite instances. The controller explores two epochs, two source identities and
