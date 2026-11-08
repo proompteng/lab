@@ -926,7 +926,25 @@ describePostgres('PostgreSQL intraday observability projection', () => {
             (sum, key) => sum + Number(node[key] ?? 0),
             0,
           ) * Number(node['Actual Loops'] ?? 0)
-        const clockScans = snapshotScans.filter((node) => node['Alias'] === 'previous')
+        // EXPLAIN may rename repeated aliases across CTEs. This comparison uniquely identifies the clock scan.
+        const clockScans = snapshotScans.filter((node) =>
+          ['Index Cond', 'Recheck Cond', 'Filter'].some(
+            (key) => typeof node[key] === 'string' && /\bingestion_sequence"?\s*</.test(String(node[key])),
+          ),
+        )
+        yield* Effect.logInfo('Query-only snapshot scan candidates').pipe(
+          Effect.annotateLogs(
+            'scans',
+            snapshotScans.map((node) => ({
+              alias: node['Alias'],
+              index: node['Index Name'],
+              indexCondition: node['Index Cond'],
+              filter: node['Filter'],
+              loops: node['Actual Loops'],
+              visitedRows: visitedRows(node),
+            })),
+          ),
+        )
         expect(clockScans).toHaveLength(1)
         const clockScan = clockScans[0]
         if (clockScan === undefined) throw new Error('PostgreSQL did not return the trusted clock regression scan')
