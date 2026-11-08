@@ -1,6 +1,6 @@
 # CosmosAlpha reference inputs and model access
 
-Research cut: November 7, 2026, America/Los_Angeles. The preferred source is the authors’ linked data bundle plus the official DeepSeek API. A reconstruction from other vendors is unnecessary unless that bundle fails admission.
+Research cut: November 7, 2026, America/Los_Angeles. Use the authors' linked data bundle and the existing self-hosted Flamingo model. No paid model subscription is required for the selected replication arm. A reconstruction from other data vendors is unnecessary unless the original bundle fails admission.
 
 ## Get the original data
 
@@ -18,7 +18,15 @@ Each provider needs matching calendar and CSI300 universe data. Validate the com
 
 The authors [explicitly disclose missing strict point-in-time certification for industry data](https://github.com/wzhmtldswz/CosmosAlpha/blob/237f0a56895fd295542e202be8f62be48d6e9995/docs/configuration.md). Preserve that limitation. Original historical data identity is not evidence of original broker-worker arrival times or a prospective Bayn evaluation.
 
-## Get model access
+## Use the existing model
+
+The selected run uses [Flamingo](../../argocd/applications/flamingo/README.md), served as `qwen38-flamingo` at `http://flamingo.ide-newton.ts.net/v1`. Live readback confirmed `nvidia/Qwen3.8-27B-NVFP4`, checkpoint and tokenizer revision `482ca0f3832238542f8f5295dde86b5f22711d80`, with serving image digest `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2` and 262,144-token context.
+
+The model-list and JSON completion requests succeeded without an Authorization header. The JSON probe used 23 input and six output tokens. The upstream config requires a nonempty key field even for anonymous servers; the local adapter uses a clearly identified non-secret compatibility marker and strips Authorization before sending. It creates no credential or account.
+
+This is a declared Qwen backbone replication of the pinned Graph and Chain methods. It does not reproduce the paper's DeepSeek model results. Keep raw returned model IDs, sampling settings, serving identity and all request/usage receipts. External API fees are zero for this route; local GPU, CPU and research costs still need allocation before an economic claim.
+
+## Published DeepSeek setup
 
 The pinned configuration uses the OpenAI-compatible Chat Completions/JSON route at `https://api.deepseek.com`, with `model_alias = "deepseek-flash"`. Obtain access through the [official DeepSeek platform](https://platform.deepseek.com/). The config reads `COSMOSALPHA_LLM_API_KEY`; `COSMOSALPHA_LLM_BASE_URL` is an optional endpoint override. Keep keys in the approved secret mechanism, not in TOML, reports or chat.
 
@@ -46,7 +54,7 @@ The authors’ native loader completed the unchanged reference window and warmup
 
 The inputs remain sparse. Among eligible rows, 158 lack `free_turn`, three lack `returns` and 279 lack industry IDs. There are 310 missing industry IDs across all rows. Null values remain null; industry-dependent operators and neutralization exclude unknown industries. The industry point-in-time warning remains. These checks establish source integrity and observed cross-section, not factor admission, complete coverage for every expression or profit.
 
-With local path-only configuration overrides, the native Graph and Chain preflights now fail only on `LLM_API_KEY_NOT_CONFIGURED`. The original missing dependency, provider paths and industry-manifest failures are resolved. All non-path experiment settings remain unchanged. The shipped Graph and Chain defaults have different search budgets; they must be frozen to a matched comparison before a paid experiment. No model key, paid subscription, API credit or provider account has been created, and no model calls were made. No reference factor search, native strategy qualification or trading authority is established.
+The original path-only DeepSeek preflights failed on a missing model key. That was a limitation of the selected paid-provider configuration, not a missing inference capability. All six amended self-hosted configurations now pass native preflight, and the first Graph run has started. Its first native hypothesis call returned valid structured output and usage. No DeepSeek call, purchase, new credential or provider account was needed. The [reference comparison](cosmosalpha-reference-budget-2026-11-07.md) records the shared proposal allowance and declared backend changes. No completed comparison, native strategy qualification or trading authority is established.
 
 ## Why the other public archives are not the default
 
