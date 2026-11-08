@@ -186,6 +186,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
 1. OSD pod resources: request `1000m` CPU and `8Gi` memory, limit `12Gi`
+1. Manager pod resources: request `500m` CPU and `1Gi` memory, limit `4Gi`
 1. CSI read affinity enabled with `kubernetes.io/hostname`
 
 Do not leave recovery-only overrides in the Ceph config store after backfill is

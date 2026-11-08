@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { ArrowUp, FileText, Folder, Pin, PinOff, RotateCw, X } from 'lucide-react'
 import type { TengriFileEntry, TengriFileList } from '@/lib/tengri/types'
 import { remarkWorkspaceImageBudget } from './markdown-image-budget'
-import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
+import { isWorkspaceImagePath, parseCodexGeneratedImagePath } from '@/lib/tengri/codex-images'
 import { runTengriAction } from './client'
 import { FINDER_WORKSPACE_PATH, finderCanPreviewText } from './finder-model'
 import { parseWorkspaceFileLink, type WorkspaceFileTarget as FileTarget } from './workspace-file-link-model'
@@ -537,6 +537,19 @@ export function WorkspaceFileLink({
   basePath?: string
 }) {
   const openFile = useContext(WorkspaceFileLinkContext)
+  const agentId = useContext(WorkspaceAgentContext)
+  const image = href ? parseCodexGeneratedImagePath(href) : null
+  if (image && agentId) {
+    return (
+      <a
+        href={`/api/tengri/generated-images?${new URLSearchParams({ agentId, path: image.path })}`}
+        rel="noreferrer noopener"
+        target="_blank"
+      >
+        {children}
+      </a>
+    )
+  }
   const file = href ? parseWorkspaceFileLink(href, basePath) : null
   if (file) {
     return (
@@ -563,12 +576,15 @@ export function WorkspaceFileLink({
 export function WorkspaceImage({ src, alt, basePath }: { src?: string; alt?: string; basePath?: string }) {
   const agentId = useContext(WorkspaceAgentContext)
   const file = src ? parseWorkspaceFileLink(src, basePath) : null
+  const generated = src ? parseCodexGeneratedImagePath(src) : null
   const [failedSource, setFailedSource] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
-  if (!agentId || !file || !isWorkspaceImagePath(file.path)) return <span>[Image{alt ? `: ${alt}` : ''}]</span>
-  const query = new URLSearchParams({ agentId, path: file.path })
+  const path = generated?.path ?? file?.path
+  if (!agentId || !path || (!generated && !isWorkspaceImagePath(path)))
+    return <span>[Image{alt ? `: ${alt}` : ''}]</span>
+  const query = new URLSearchParams({ agentId, path })
   if (attempt) query.set('attempt', String(attempt))
-  const url = `/api/tengri/attachments?${query}`
+  const url = `/api/tengri/${generated ? 'generated-images' : 'attachments'}?${query}`
   if (failedSource === url)
     return (
       <span role="status">
@@ -588,7 +604,7 @@ export function WorkspaceImage({ src, alt, basePath }: { src?: string; alt?: str
   return (
     <img
       src={url}
-      alt={alt || file.path.split('/').at(-1) || 'Agent image'}
+      alt={alt || path.split('/').at(-1) || 'Agent image'}
       loading="lazy"
       referrerPolicy="no-referrer"
       className="my-2 max-h-[32rem] max-w-full rounded-lg object-contain"

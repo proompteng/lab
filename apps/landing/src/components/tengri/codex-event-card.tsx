@@ -30,6 +30,7 @@ import {
   codexMessageAttachments,
   codexOutputImagePaths,
   type TengriCodexImage,
+  type CodexImageGeneration,
 } from '@/lib/tengri/codex-images'
 import { CodexMermaid } from './codex-mermaid'
 import { WorkspaceFileLink, WorkspaceImage } from './workspace-file-link'
@@ -38,6 +39,7 @@ type CodexEventCardProps = {
   agentId?: string
   activityTitle?: string
   images?: readonly TengriCodexImage[]
+  imageGeneration?: CodexImageGeneration
   approvalDecisions?: readonly CodexApprovalDecision[]
   approvalId?: string
   approvalTitle?: string
@@ -51,6 +53,7 @@ export const CodexEventCard = memo(function CodexEventCard({
   agentId,
   activityTitle,
   images,
+  imageGeneration,
   approvalDecisions = ['approve-once', 'approve-session', 'deny'],
   approvalId,
   approvalTitle,
@@ -59,6 +62,24 @@ export const CodexEventCard = memo(function CodexEventCard({
   resolvingApproval = false,
   text,
 }: CodexEventCardProps) {
+  if (imageGeneration) {
+    return (
+      <article aria-label="Generated image" className="min-w-0 text-copy-14 text-zinc-300">
+        {imageGeneration.status === 'completed' ? (
+          <WorkspaceImage src={imageGeneration.path} alt="Generated image" />
+        ) : imageGeneration.status === 'generating' ? (
+          <span role="status" className="inline-flex items-center gap-2 py-3">
+            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            Generating image…
+          </span>
+        ) : imageGeneration.status === 'failed' ? (
+          <p role="alert">Image generation failed: {imageGeneration.message}</p>
+        ) : (
+          <p role="status">Generated image preview is unavailable.</p>
+        )}
+      </article>
+    )
+  }
   if (kind === 'user-message') {
     const attachments = agentId ? codexMessageAttachments(text) : { text, paths: [] }
     const body = images?.length ? text.replace(/\[Image\]/g, '').trim() : attachments.text

@@ -287,6 +287,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           ...(source.topics.technicalFeatures === undefined
             ? {}
             : { technicalFeatures: source.topics.technicalFeatures }),
+          ...(source.topics.webullBars === undefined ? {} : { webullBars: source.topics.webullBars }),
         },
       }
       if ((yield* canonicalHashV1Result(universe)) !== (yield* canonicalHashV1Result(source)))
