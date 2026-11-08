@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { isCodexDiagnosticLogWarning } from './codex-diagnostics'
-import { codexEventShouldRender } from '../../components/tengri/codex-events'
+import { codexEventShouldRender, codexEventWithThread } from '../../components/tengri/codex-events'
 
 test('routes only the exact unscoped native logging diagnostic out of conversation rendering', () => {
   const event = {
@@ -15,6 +15,7 @@ test('routes only the exact unscoped native logging diagnostic out of conversati
     text: "Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.",
   }
   expect(isCodexDiagnosticLogWarning(event)).toBe(true)
+  expect(codexEventWithThread(event, 'thread-cat')).toBe(event)
   expect(codexEventShouldRender(event, 'thread-cat', new Set(), 0)).toBe(false)
   for (const other of [
     { ...event, text: 'Provider connection interrupted' },

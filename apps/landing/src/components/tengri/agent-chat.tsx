@@ -87,8 +87,9 @@ import {
   codexEventDisplayText,
   codexEventActivityTitle,
   codexEventImageGeneration,
-  codexEventIsIndependentOfThreadSnapshot,
+  codexEventWithThread,
   codexEventIsRuntimeError,
+  codexEventIsIndependentOfThreadSnapshot,
   codexEventKey,
   codexEventMatchesThread,
   codexEventShouldRender,
@@ -927,9 +928,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         return
       }
       const currentThread = threadIdRef.current
-      const event = codexEventIsRuntimeError(parsed)
-        ? parsed
-        : { ...parsed, threadId: parsed.threadId || currentThread }
+      const event = codexEventWithThread(parsed, currentThread)
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       if (
         ['thread/started', 'thread/name/updated', 'thread/archived', 'thread/unarchived', 'turn/completed'].includes(
@@ -1565,8 +1564,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     if (!threadId) {
       creatingDraftRef.current = null
       draftsRef.current.delete('')
-      const assignThread = (event: CodexBufferedEvent) =>
-        event.threadId || codexEventIsRuntimeError(event) ? event : { ...event, threadId: thread.id }
+      const assignThread = (event: CodexBufferedEvent) => codexEventWithThread(event, thread.id)
       retainedEvents.current = retainedEvents.current.map(assignThread)
       const retained = retainedEvents.current.filter((event) => codexEventMatchesThread(event, thread.id))
       setEvents((current) => retained.reduce((next, event) => appendCodexEvent(next, event), current.map(assignThread)))

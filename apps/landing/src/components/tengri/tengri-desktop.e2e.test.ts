@@ -9413,7 +9413,8 @@ test('keeps image examples in command output as text without requesting missing 
 test('keeps replayed logging diagnostics out of chat while retaining ordinary warnings and failures', async ({
   page,
 }) => {
-  await mockTengri(page)
+  await mockTengri(page, { resumeThreadRawJson: JSON.stringify({ thread: { id: 'thread-cat', turns: [] } }) })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-cat'))
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
   await expect(chat.getByLabel('Model', { exact: true })).toBeEnabled()
@@ -9511,6 +9512,7 @@ test('shows native image generation live and restores its inline preview and lin
     rawJson: JSON.stringify({ params: { item: completed } }),
   })
   await expect(chat.getByRole('button', { name: 'Retry image', exact: true })).toBeVisible()
+  await expect(chat.getByText('Generating image…', { exact: true })).toHaveCount(0)
   await chat.getByRole('button', { name: 'Retry image', exact: true }).click()
   const image = chat.getByRole('img', { name: 'Generated image', exact: true })
   await expect(image).toBeVisible()

@@ -63,6 +63,11 @@ type CodexTextSegment = {
 }
 export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment; asyncQuestionResolved?: true }
 
+export function codexEventWithThread(event: CodexBufferedEvent, threadId: string): CodexBufferedEvent {
+  if (event.threadId || codexEventIsRuntimeError(event) || isCodexDiagnosticLogWarning(event)) return event
+  return { ...event, threadId }
+}
+
 export function retireCodexAsyncQuestions(
   current: CodexBufferedEvent[],
   threadId: string,
@@ -195,20 +200,34 @@ export function appendCodexEvent(
     return next
   }
 
+  const imageGeneration = CODEX_ITEM_LIFECYCLE_METHODS.has(event.method.toLowerCase())
+    ? codexEventImageGeneration(event)
+    : undefined
   const itemIndex = event.itemId
-    ? current.findIndex(
-        (candidate) =>
-          candidate.threadId === event.threadId &&
-          candidate.turnId === event.turnId &&
-          candidate.itemId === event.itemId &&
+    ? current.findIndex((candidate) => {
+        if (
+          candidate.threadId !== event.threadId ||
+          candidate.turnId !== event.turnId ||
+          candidate.itemId !== event.itemId
+        )
+          return false
+        if (
+          imageGeneration &&
+          CODEX_ITEM_LIFECYCLE_METHODS.has(candidate.method.toLowerCase()) &&
+          codexEventImageGeneration(candidate)
+        )
+          return true
+        return (
           candidate.kind === event.kind &&
-          (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
-      )
+          (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event))
+        )
+      })
     : -1
 
   if (itemIndex >= 0) {
     const previous = current[itemIndex]!
     if (event.sequence <= previous.sequence) return current
+    if (imageGeneration?.status === 'generating' && previous.method.toLowerCase() === 'item/completed') return current
     const next = [...current]
     next[itemIndex] = isDeltaEvent(event)
       ? appendTextSegment(previous, event, eventText)
