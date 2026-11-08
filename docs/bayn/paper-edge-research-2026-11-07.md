@@ -1,18 +1,37 @@
 # New paper-derived strategy research
 
 Research cut: November 7, 2026, America/Los_Angeles.
-Status: new-mechanism research; no demonstrated edge, prospective registration, or capital authorization.
+Status: duration-flow development test completed with no added execution value over its constant-hazard control.
+No demonstrated edge, prospective registration, or capital authorization.
 
 ## Decision
 
-Reproduce CosmosAlpha's graph-guided factor discovery before designing its Bayn adaptation. The first comparison
-is Graph versus the authors' Chain search under the same data, proposals, evaluator, and experiment budget.
+CosmosAlpha's graph-guided factor reference remains the first selected reproduction; its required data and
+model-access preflight has not passed. Reproduce it before designing its Bayn adaptation. The first comparison is
+Graph versus the authors' Chain search under the same data, proposals, evaluator, and experiment budget.
 The existing six-bar ridge, momentum, breakout, and crash/VWAP implementations are controls or infrastructure.
 They are not this campaign's new candidate. Reusing ridge as the candidate was considered and rejected before fitting.
 
 This campaign must produce a new source-backed mechanism, its reproducible implementation, and a separate
 prospective economic evaluation under the existing account and risk policy. Published predictive scores and
 historical portfolio results do not establish Bayn profitability.
+
+## Completed native-data experiment
+
+The separate [duration-aware flow development test](duration-flow-development-2026-11-07.md) adapts the September
+[Regimes in the Order Flow](https://arxiv.org/html/2609.07989v1) paper. It does not substitute for the three references
+below or claim to reproduce their methods. The full run-length filter and original likelihood-selected settings
+were evaluated using 13.84 million historical trades/quotes. Funded counterfactuals using native pricing found exactly
+the same economic fills for the log-normal-duration candidate and constant-hazard control in both execution
+scenarios and signing variants: added execution value was $0. The primary base case made $10.40 before unknown
+operating/research costs, its stress entry did not fill, and tick-only sensitivity lost money. Do not promote this
+mapping from these results.
+
+The independent accounting/provenance audit passed across 16 matched portfolios, 84 modeled fills and 48 orders.
+This is inspected historical development with zero prospective observations. The runtime versus sealed-request
+risk-policy conformance check failed; it remains failed. The original economic screen's incorrect 100 bp entry
+hurdle and the first funded run's reused order IDs are retained as failed/inconclusive records, alongside the
+corrected runs. See the linked report for the exact method, assumptions, costs, validation and limitations.
 
 ## Three new hypotheses
 
@@ -107,6 +126,19 @@ Historical REST retrieval cannot establish original trading-worker receipt times
 comparison is inspected development evidence with modeled availability and unresolved operating costs. It is not
 training admission for an original-capture-only command or a new prospective window.
 
+## Reference input access
+
+The pinned author README links the original [Zenodo data bundle](https://zenodo.org/records/23857833).
+Use that route before reconstructing or purchasing the reference data. The [input-source assessment](cosmosalpha-input-sources-2026-11-07.md)
+records the exact archive identity, dependency preparation, model-version distinction and current API pricing.
+Qlib and LightGBM now import in the supported Python environment; all 13 retained upstream tests and eight
+independent graph checks pass. The original bundle is checksum-verified, extracted and loaded by the native provider:
+2,286 dates, 629 historical instruments and 685,511 samples. Independent artifact checks pass, with at least 200 eligible
+instruments per evaluation date. Industry history remains uncertified for strict point-in-time use. Eligible rows contain
+279 null industry IDs, 158 null `free_turn` values and three null `returns` values. Native preflight now fails only on the missing model key. Metered model access,
+a matched Graph/Chain experiment and economic qualification remain unfinished.
+The earlier missing default local paths did not establish that the authors had not published the dataset.
+
 ## Execution order and outstanding evidence
 
 Proceed in this order: source and data admission, deterministic method parity, reference comparison, separately
@@ -115,4 +147,5 @@ all rejected trials. Do not build a new generic strategy platform to perform the
 
 The source commit and reference design are selected. Market-data admission, the original-model access route,
 reference runs, the Bayn adaptation, operating-cost allocation, and prospective registration remain unproven.
-No candidate is fitted or qualified by this document. The full profitability goal remains active.
+The duration-flow adaptation was fitted and tested separately as documented above; it is not qualified. The three
+selected reference mechanisms remain unexecuted. The full profitability goal remains active.
