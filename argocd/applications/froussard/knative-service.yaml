@@ -5,6 +5,7 @@ metadata:
   name: froussard
   namespace: froussard
   annotations:
+    argocd.argoproj.io/sync-wave: '1'
     serving.knative.dev/revision-history-limit: "3"
     serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller
@@ -90,6 +91,8 @@ spec:
               value: "20000"
             - name: LGTM_LOKI_ENDPOINT
               value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+            - name: FROUSSARD_RESTATE_INGRESS
+              value: http://restate.restate.svc.cluster.local:8080
           readinessProbe:
             httpGet:
               path: /health/readiness
