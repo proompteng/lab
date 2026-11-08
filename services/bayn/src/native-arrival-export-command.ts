@@ -91,40 +91,34 @@ export const runNativeArrivalExportCommand = (args: readonly string[]) =>
         Config.withDefault('/var/run/secrets/bayn/native-arrival-postgres/ca.crt'),
       ),
     })
-    const result = yield* Effect.gen(function* () {
-      const sql = yield* PgClient.PgClient
-      return yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sql`SET TRANSACTION READ ONLY`
-          const epoch = yield* readNativeArrivalEpoch(sql, command.captureId)
-          return yield* exportNativeArrivalPrefix({
-            epoch,
-            throughOrdinal: command.throughOrdinal,
-            outputPath: command.outputPath,
-            chunks: prefixChunks(sql, epoch, command.throughOrdinal),
-          })
-        }),
-      )
-    }).pipe(
-      // @effect-diagnostics-next-line strictEffectProvide:off -- command owns its read-only archive connection
-      Effect.provide(
-        PostgresClientLive(
-          { postgres, operationTimeoutMs: 30_000 },
-          {
-            maxConnections: 1,
-            applicationName: 'bayn-native-arrival-export',
-          },
-        ),
-      ),
+    const reader = PostgresClientLive(
+      { postgres, operationTimeoutMs: 30_000 },
+      { maxConnections: 1, applicationName: 'bayn-native-arrival-export', readOnly: true },
     )
+    const epoch = yield* Effect.flatMap(PgClient.PgClient, (sql) =>
+      readNativeArrivalEpoch(sql, command.captureId),
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- immutable metadata read owns its connection
+      Effect.provide(reader),
+    )
+    const chunks = Stream.unwrap(
+      Effect.map(PgClient.PgClient, (sql) => prefixChunks(sql, epoch, command.throughOrdinal)),
+    ).pipe(Stream.provide(reader))
+    // Stream.provide closes the archive pool at EOF, before whole-file validation and receipt publication.
+    const result = yield* exportNativeArrivalPrefix({
+      epoch,
+      throughOrdinal: command.throughOrdinal,
+      outputPath: command.outputPath,
+      chunks,
+    })
     yield* print(JSON.stringify(result))
   })
 
 if (import.meta.main)
   NodeRuntime.runMain(
     runNativeArrivalExportCommand(process.argv.slice(2)).pipe(
-      Effect.tapError(() =>
-        Effect.logError('Native export failed; an export without source-receipt.json is incomplete'),
+      Effect.tapCause((cause) =>
+        Effect.logError('Native export failed; an export without source-receipt.json is incomplete', cause),
       ),
       // @effect-diagnostics-next-line strictEffectProvide:off -- command owns file and standard-output resources
       Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([Logger.withConsoleError(Logger.formatJson)]))),

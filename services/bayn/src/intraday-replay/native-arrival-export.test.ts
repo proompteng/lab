@@ -4,69 +4,11 @@ import { Cause, Deferred, Effect, Fiber, FileSystem, Path, Result, Stream } from
 import { gunzipSync } from 'node:zlib'
 
 import { sha256 } from '../hash'
-import { kafkaCaptureDisposition } from '../market-data/streaming/kafka'
-import {
-  makeNativeArrivalChunk,
-  nativeArrival,
-  nativeArrivalCaptureId,
-  type NativeArrivalEpoch,
-} from '../market-data/streaming/native-arrival'
-import { nativeArrivalEpochFixture } from '../market-data/streaming/native-arrival.test-support'
-import { emptyStreamingProjection, incorporateMarketRecord } from '../market-data/streaming/projection'
-import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { makeNativeArrivalChunk } from '../market-data/streaming/native-arrival'
+import { nativeArrivalExportFixture as fixture } from './native-arrival-export.test-support'
 import { parseNativeArrivalExportArgs } from '../native-arrival-export-command'
 import { exportNativeArrivalPrefix } from './native-arrival-export'
 import { ReplaySourceFailure } from './source'
-
-const fixture = () => {
-  const data = retainedReplayFixture()
-  const bootstrap = {
-    ...nativeArrivalEpochFixture.bootstrap,
-    partitions: data.manifest.positions.map(({ topic, partition, startOffset, endOffsetExclusive }) => ({
-      topic,
-      partition,
-      startOffset,
-      logStartOffset: startOffset,
-      endOffset: endOffsetExclusive,
-    })),
-  }
-  const epoch: NativeArrivalEpoch = {
-    ...nativeArrivalEpochFixture,
-    bootstrap,
-    sources: data.manifest.marketSources,
-    captureId: Result.getOrThrow(
-      nativeArrivalCaptureId(nativeArrivalEpochFixture.build, bootstrap, data.manifest.marketSources),
-    ),
-  }
-  let projection = emptyStreamingProjection(bootstrap.epoch)
-  const records = data.events.map((event, index) => {
-    const before = projection
-    const source = epoch.sources.find((source) => Object.values(source.topics).includes(event.record.topic))
-    if (source === undefined) throw new Error('Fixture source is absent')
-    const rawValue = Buffer.from(event.record.value)
-    const record = {
-      ...event.record,
-      timestampMs: event.record.timestampMs ?? event.availableAtMs,
-      leaderEpoch: 0,
-      rawValue,
-      rawByteLength: rawValue.length,
-      rawValueSha256: sha256(rawValue),
-    }
-    projection = incorporateMarketRecord(projection, record, source, event.availableAtMs)
-    return nativeArrival(epoch, {
-      record,
-      availableAtMs: event.availableAtMs,
-      consumerSequence: index + 1,
-      projectionSequence: projection.sequence,
-      disposition: kafkaCaptureDisposition(before, projection),
-      assignmentInvalidated: false,
-    })
-  })
-  const split = Math.ceil(records.length / 2)
-  const first = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, records.slice(0, split)))
-  const second = Result.getOrThrow(makeNativeArrivalChunk(epoch, 1, first.contentHash, records.slice(split)))
-  return { epoch, records, chunks: [first, second] }
-}
 
 test('exports exact gzip members and validates the complete original prefix through the controls reader', async () => {
   const data = fixture()
@@ -193,4 +135,54 @@ test('CLI requires an explicit immutable consumer prefix and a new output direct
     expect(Result.isFailure(parseNativeArrivalExportArgs([...args.slice(0, 3), bad, ...args.slice(4)]))).toBe(true)
   expect(Result.isFailure(parseNativeArrivalExportArgs(args.slice(0, 4)))).toBe(true)
   expect(Result.getOrThrow(parseNativeArrivalExportArgs(['--help']))).toEqual({ _tag: 'Help' })
+})
+
+test('the CLI reports the actionable failure alongside its incomplete-export warning', async () => {
+  const child = Bun.spawn([process.execPath, `${import.meta.dir}/../native-arrival-export-command.ts`, '--invalid'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  expect(code).toBe(1)
+  expect(stdout).toBe('')
+  expect(stderr).toContain('Usage: bayn-native-arrival-export')
+  expect(stderr).toContain('without source-receipt.json is incomplete')
+})
+
+test('an invalid archive URL remains diagnosable without exposing its credential', async () => {
+  const secret = 'synthetic-password-never-log'
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      `${import.meta.dir}/../native-arrival-export-command.ts`,
+      '--capture-id',
+      '1'.repeat(64),
+      '--through-ordinal',
+      '0',
+      '--output',
+      '/synthetic-unused-export',
+    ],
+    {
+      env: {
+        ...process.env,
+        BAYN_NATIVE_ARRIVAL_POSTGRES_URL: `postgresql://fixture:${secret}@[invalid`,
+        BAYN_POSTGRES_TLS: 'false',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  )
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  expect(code).toBe(1)
+  expect(stdout).toBe('')
+  expect(stderr).toContain('invalid PostgreSQL connection URL')
+  expect(stderr).not.toContain(secret)
 })

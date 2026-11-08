@@ -329,9 +329,10 @@ bun run native:export --capture-id <capture-id> --through-ordinal <final-chunk-o
 
 The published Bayn image exposes the same command as `bayn-native-arrival-export`.
 
-The command opens only the native-arrival archive, inside a read-only transaction, without migrations or broker
-credentials. Select the consumer epoch and final ordinal from its retained provenance, before inspecting control
-returns. A session needs a continuous prefix from ordinal zero that brackets the whole session. A restart cannot be
+The command opens only the native-arrival archive, through read-only connections, without migrations or broker
+credentials. The metadata connection closes after its read; the chunk stream owns and closes its connection pool
+before local whole-file validation and receipt publication. There is no transaction spanning offline validation.
+Select the consumer epoch and final ordinal from its retained provenance, before inspecting control returns. A session needs a continuous prefix from ordinal zero that brackets the whole session. A restart cannot be
 repaired by joining different epochs, filtering other markets, or inventing availability times. Record missing
 coverage as incomplete and preserve the excluded source and reason.
 
