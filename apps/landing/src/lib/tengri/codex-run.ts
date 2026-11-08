@@ -17,7 +17,8 @@ export const codexRunStateSchema = z.discriminatedUnion('phase', [
   z.strictObject({ phase: z.literal('succeeded'), turnId }),
   z.strictObject({ phase: z.literal('failed'), turnId, reason }),
   z.strictObject({ phase: z.literal('cancelled'), turnId: z.string().max(160) }),
-  z.strictObject({ phase: z.literal('needs_reconciliation'), reason }),
+  z.strictObject({ phase: z.literal('needs_reconciliation'), turnId: turnId.nullable(), reason }),
+  z.strictObject({ phase: z.literal('authorization_required'), turnId: turnId.nullable(), reason }),
   z.strictObject({ phase: z.literal('rejected'), reason }),
 ])
 

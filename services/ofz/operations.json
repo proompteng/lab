@@ -182,6 +182,11 @@
   },
   {
     "surface": "controller",
+    "operation": "RecoverCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "InterruptCodexTurn",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -559,6 +564,11 @@
   },
   {
     "surface": "bff",
+    "operation": "recover-run",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "interrupt-turn",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -826,6 +836,11 @@
   {
     "surface": "bff_http",
     "operation": "GET /api/tengri/events",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/generated-images",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -1307,6 +1322,12 @@
     "operation": "GET /api/tengri/connections",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Owner-scoped saved connection metadata without credentials"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/runs",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Owner-scoped run-card command through an enabled connection; exact registered target and current Ofz action permission before Relay execution"
   },
   {
     "surface": "ofz_platform",

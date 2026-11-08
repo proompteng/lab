@@ -37,8 +37,10 @@ class WebullMarketDataArchiveTest {
         null
       } as PreparedStatement
     webullMarketDataStatement().accept(statement, archived)
-    assertEquals(12, bound.size)
+    assertEquals(14, bound.size)
     assertEquals(record.value, bound[12])
+    assertEquals("[]", bound[13])
+    assertEquals("[]", bound[14])
     assertEquals(2, bound[5])
     assertEquals(1234L, bound[6])
     assertFails { decodeArchivedWebullMarketData(record.copy(topic = "torghut.trades.v1"), topic) }
@@ -53,6 +55,8 @@ class WebullMarketDataArchiveTest {
     assertEquals("REJECTED", archived.validationStatus)
     assertTrue(archived.validationError.isNotBlank())
     assertEquals(record.value, archived.capture)
+    assertEquals("[]", archived.minuteBarsJson)
+    assertEquals("[[\"AAPL\",\"REJECTED\",0,0]]", archived.barRequestsJson)
   }
 
   @Test

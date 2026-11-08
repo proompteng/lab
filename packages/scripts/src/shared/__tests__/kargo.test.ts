@@ -191,14 +191,7 @@ const expected = {
     tagRegex: runQualifiedTagRegex,
     images: [imageRepo('restate')],
     apps: ['restate'],
-    includePaths: [
-      'services/restate',
-      'packages/scripts/src/restate',
-      'packages/scripts/src/shared/docker.ts',
-      'argocd/applications/restate',
-      'argocd/applicationsets/platform.yaml',
-      'bun.lock',
-    ],
+    includePaths: ['services/restate', 'argocd/applications/restate'],
   },
   opencode: {
     creationCriteria: 'image-revision',
@@ -340,8 +333,6 @@ const expected = {
     includePaths: [
       'apps/froussard',
       'packages/agent-contracts',
-      'packages/codex',
-      'packages/discord',
       'packages/otel',
       'nix/images/froussard.nix',
       'nix/images/bun-workspace-service.nix',
@@ -492,6 +483,7 @@ const expected = {
       'charts/agents/crds',
       'nix/images/agents.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/images/agentrun-tools.nix',
       'argocd/applications/agents',
       'charts/agents',
     ],
@@ -825,16 +817,15 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns Temporal worker source discovery with both image build triggers', () => {
+  it('aligns Temporal worker publication with source discovery and limits PR builds to worker changes', () => {
     const warehouse = byName(warehouses).get('temporal-worker')
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
-    for (const event of ['pull_request', 'push']) {
-      const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(sourcePaths).toEqual(buildPaths)
-      expect(buildPaths).not.toContain('.github/workflows/temporal-worker-images.yml')
-    }
+    const buildPaths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+    expect(sourcePaths).toEqual(buildPaths)
+    expect(buildPaths).not.toContain('.github/workflows/temporal-worker-images.yml')
+    expect(workflow.on.pull_request.paths).toEqual(['services/temporal-worker/**'])
   })
 
   it('aligns the Agents Warehouse source paths with its exact image build trigger', () => {

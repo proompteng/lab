@@ -32,8 +32,8 @@ import {
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
-import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
-import type { AutonomousCycleStartup } from '../app'
+import { Clock, Context, Data, Duration, Effect, Option, Result, Schema } from 'effect'
+import type { AutonomousCycleStartupInput } from '../app'
 import { BrokerRead, type MarketCalendarQuery } from '../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
@@ -848,17 +848,28 @@ const classifyIntradayEntrySnapshotFailure = (
   observedAt: string,
   submissionCutoffAt: string,
   query: IntradaySnapshotQuery,
-): OperationalError | ObserveDecisionAwaitingSignal => {
-  const snapshotFailure = cause.cause
-  return isIntradaySnapshotPending(snapshotFailure)
-    ? new ObserveDecisionAwaitingSignal({
-        message: snapshotFailure.message,
-        readiness: { ...snapshotReadiness(snapshotFailure), snapshotQuery: snapshotQueryReadiness(query) },
-        observedAt,
-        submissionCutoffAt,
-      })
-    : cause
-}
+  cycleId: string,
+) =>
+  Effect.gen(function* () {
+    const snapshotFailure = cause.cause
+    if (!isIntradaySnapshotPending(snapshotFailure)) return cause
+    const previous = yield* (yield* CandidateObservationStore).latestJevWindowEnd({
+      cycleId,
+      purpose: JevPurpose.Entry,
+    })
+    return new ObserveDecisionAwaitingSignal({
+      message: snapshotFailure.message,
+      readiness: {
+        ...snapshotReadiness(snapshotFailure),
+        snapshotQuery: {
+          ...snapshotQueryReadiness(query),
+          ...(Option.isSome(previous) ? { previousWindowEndAt: previous.value } : {}),
+        },
+      },
+      observedAt,
+      submissionCutoffAt,
+    })
+  })
 
 const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
@@ -901,13 +912,14 @@ const compileObserveStrategyDecision = <R>(
       portfolio,
     }
     const loadSnapshot = Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
-      Effect.mapError((cause) =>
+      Effect.catch((cause) =>
         classifyIntradayEntrySnapshotFailure(
           cause,
           initialFacts.evaluatedAt,
           input.cycle.window.submissionCutoffAt,
           query,
-        ),
+          input.cycle.identity.cycleId,
+        ).pipe(Effect.flatMap(Effect.fail)),
       ),
     )
     const { snapshot, decision } = yield* Effect.gen(function* () {
@@ -926,6 +938,7 @@ const compileObserveStrategyDecision = <R>(
         strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
           ? JevBatchPlanVersion.Ablation
           : JevBatchPlanVersion.V8,
+        { admissionDeadlineAt: admissionExpiresAt },
       )
       const evidence = yield* Effect.fromResult(
         Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
@@ -972,14 +985,22 @@ const compileObserveStrategyDecision = <R>(
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingAt = yield* currentUtcInstant
+    const sourceExpiresAt = protectedEntryExpiresAtMs(decision)
+    const brokerHeadroomExhaustedAt = (at: number) =>
+      pricingReconciliation?.freshUntil !== undefined &&
+      at + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil
     if (
-      Date.parse(pricingAt) >= Math.min(protectedEntryExpiresAtMs(decision), admissionExpiresAt) ||
-      (pricingReconciliation?.freshUntil !== undefined &&
-        Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
+      Date.parse(pricingAt) >= Math.min(sourceExpiresAt, admissionExpiresAt) ||
+      brokerHeadroomExhaustedAt(Date.parse(pricingAt))
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        readiness:
+          Date.parse(pricingAt) >= sourceExpiresAt &&
+          Date.parse(pricingAt) < admissionExpiresAt &&
+          !brokerHeadroomExhaustedAt(Date.parse(pricingAt))
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingQuery =
       decision.selectedSymbols.length === 0
@@ -991,20 +1012,26 @@ const compileObserveStrategyDecision = <R>(
       pricingQuery === undefined
         ? snapshot
         : yield* loadIntradaySnapshot(marketData, pricingQuery).pipe(
-            Effect.mapError((cause) =>
+            Effect.catch((cause) =>
               classifyIntradayEntrySnapshotFailure(
                 cause,
                 pricingAt,
                 input.cycle.window.submissionCutoffAt,
                 pricingQuery,
-              ),
+                input.cycle.identity.cycleId,
+              ).pipe(Effect.flatMap(Effect.fail)),
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
-    if (Date.parse(evaluatedAt) >= Math.min(protectedEntryExpiresAtMs(decision), admissionExpiresAt))
+    if (Date.parse(evaluatedAt) >= Math.min(sourceExpiresAt, admissionExpiresAt))
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
-        readiness: DecisionReadinessReason.InferenceUnavailable,
+        readiness:
+          Date.parse(evaluatedAt) >= sourceExpiresAt &&
+          Date.parse(evaluatedAt) < admissionExpiresAt &&
+          !brokerHeadroomExhaustedAt(Date.parse(evaluatedAt))
+            ? DecisionReadinessReason.InferenceExpired
+            : DecisionReadinessReason.InferenceUnavailable,
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
     return {
@@ -1930,7 +1957,7 @@ export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExe
   )
 
 export const observePass = (
-  recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
+  recordPass: AutonomousCycleStartupInput['recordPass'],
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const retained = retainAutonomousCyclePassObservation(observation)

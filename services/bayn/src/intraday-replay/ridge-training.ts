@@ -178,10 +178,12 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
           const source = yield* openBacktestSource(arrivalsPath, prepared.input.source, runId, receipt)
           const market: ControlMarket = {
             advanceTo: (atMs) =>
-              source.advanceTo(atMs).pipe(
-                Effect.andThen(TestClock.setTime(atMs)),
-                Effect.mapError((cause) => fail('Cannot advance training source', cause)),
-              ),
+              source
+                .advanceTo(atMs, (work) => work)
+                .pipe(
+                  Effect.andThen(TestClock.setTime(atMs)),
+                  Effect.mapError((cause) => fail('Cannot advance training source', cause)),
+                ),
             quoteAt: (symbol, atMs) =>
               source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
             snapshot: () => Effect.fail(fail('Training cannot use the legacy snapshot adapter')),

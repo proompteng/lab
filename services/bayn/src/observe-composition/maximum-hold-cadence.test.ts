@@ -63,7 +63,7 @@ test.each([
     const result = {
       ...position,
       readiness: {
-        reason: DecisionReadinessReason.SignalWindowObserved,
+        reason: DecisionReadinessReason.SignalWindowObserved as const,
         message: 'The completed signal window was already consumed',
         availableAt: instant(signalOffset),
       },
@@ -224,7 +224,6 @@ test.each([7_000, 30_000, 30_001, 60_000])(
               restarted,
               { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
               command.controllerKey,
-              result.maximumHoldDueAt,
               command.sourceRevision,
             ),
           ),
@@ -236,7 +235,6 @@ test.each([7_000, 30_000, 30_001, 60_000])(
               restarted,
               { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
               command.controllerKey,
-              yield* currentUtcInstant,
               command.sourceRevision,
             ),
           )._tag,

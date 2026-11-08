@@ -9,7 +9,7 @@ import {
 import { describe, expect, test } from 'bun:test'
 import { Clock, Deferred, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
-import { AuthenticationError } from '@platformatic/kafka'
+import { AuthenticationError, ProtocolError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
@@ -32,6 +32,7 @@ import {
   type KafkaMarketConfig,
   type KafkaProjectionStream,
   type KafkaProjectionTransport,
+  type KafkaProjectionClosed,
 } from './kafka'
 import type { StreamingUniverse } from './raw-events'
 
@@ -97,16 +98,42 @@ class FakeTransport implements KafkaProjectionTransport {
   commit = async (records: readonly KafkaConsumedRecord[]) => {
     this.commits = [...this.commits, [...records]]
   }
-  close = async () => {
-    if (this.closed) return
+  close = async (): Promise<KafkaProjectionClosed> => {
+    if (this.closed) return { _tag: 'Closed' }
     this.closed = true
     this.closeCount++
     this.pending?.({ done: true, value: undefined })
     this.pending = undefined
+    return { _tag: 'Closed' }
   }
 }
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe((self) => provideTestLayer(self, TestClock.layer())))
+
+test('history arriving after the original bootstrap deadline cannot make a cold worker ready', async () => {
+  const transport = new FakeTransport()
+  transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '10' : '0')
+  await program(
+    Effect.gen(function* () {
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => transport)
+      yield* Effect.sleep(5500).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            transport.drained = positions('10')
+          }),
+        ),
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust(6500)
+      const status = yield* market.status
+      expect(status.ready).toBe(false)
+      expect(status.bootstrapDeadlineAtMs).toBe(5000)
+      expect(status.failure).toBe('Kafka bootstrap deadline exceeded')
+      expect(Result.isFailure(yield* market.read.pipe(Effect.result))).toBe(true)
+    }),
+  )
+  expect(transport.closeCount).toBe(1)
+})
 
 test('native retention observes the trading consumer cut, including rejected records and repeated deliveries', async () => {
   await program(
@@ -1300,6 +1327,38 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
+  test('rebuilds after local shutdown despite an unavailable group coordinator without the fatal-close cooldown', async () => {
+    const first = new FakeTransport()
+    const second = new FakeTransport()
+    const close = first.close
+    first.close = async () => {
+      await close()
+      return { _tag: 'ClosedAfterCoordinatorFailure', cause: new ProtocolError('COORDINATOR_NOT_AVAILABLE') }
+    }
+    let attempts = 0
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
+          attempts++
+          if (attempts === 1) return first
+          expect(first.closed).toBe(true)
+          return second
+        })
+        yield* TestClock.adjust('2 seconds')
+        const initial = yield* projection.read
+        first.invalidated?.(new Error('fetch session failed'))
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        yield* TestClock.adjust('3 seconds')
+        expect(attempts).toBe(2)
+        const recovered = yield* projection.read
+        expect(recovered.bootstrap.epoch).not.toBe(initial.bootstrap.epoch)
+        expect(recovered.projection.sequence).toBe(0)
+        expect(first.closeCount).toBe(1)
+      }),
+    )
+    expect(second.closeCount).toBe(1)
+  })
+
   test('closes a failed consumer before replacing it even when cleanup reports an error', async () => {
     const first = new FakeTransport()
     const second = new FakeTransport()
@@ -1360,8 +1419,9 @@ describe('Kafka bootstrap and scoped consumption', () => {
             })
           const close = transport.close
           transport.close = async () => {
-            await close()
+            const closed = await close()
             cancel?.(positions('0'))
+            return closed
           }
           transports.push(transport)
           return transport

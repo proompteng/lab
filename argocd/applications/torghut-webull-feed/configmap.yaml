@@ -7,5 +7,5 @@ data:
   KAFKA_BOOTSTRAP_SERVERS: kafka-kafka-bootstrap.kafka:9092
   KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
   WEBULL_TOPIC: dorvud.webull.raw.v1
-  # Fill scarce streaming slots with Bayn's current equity symbols first, then the catalog alphabetically.
-  WEBULL_STREAM_PRIORITY_SYMBOLS: AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC
+  # Prioritize Bayn's equity symbols for streaming admission and completed-minute polling.
+  WEBULL_PRIORITY_SYMBOLS: AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC

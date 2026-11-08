@@ -32,6 +32,31 @@ const arcRunnerBuildTriggerPaths = YAML.parse(arcRunnerBuildWorkflow).on.push.pa
 const arcRunnerToolchainScriptPaths = Array.from(
   new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
 )
+
+const arcNixSetupSteps = (workflow: string) => {
+  const jobs = YAML.parseDocument(workflow).get('jobs')
+  if (!YAML.isMap(jobs)) throw new Error('Workflow jobs are missing')
+  return jobs.items.flatMap(({ key, value: job }) => {
+    if (!YAML.isMap(job)) throw new Error('Workflow job is not a map')
+    const runner = job.get('runs-on')
+    const matrix = job.getIn(['strategy', 'matrix', 'include'])
+    const runners =
+      typeof runner === 'string' && runner.includes('matrix.runner') && YAML.isSeq(matrix)
+        ? matrix.items.map((row) => (YAML.isMap(row) ? row.get('runner') : undefined))
+        : YAML.isSeq(runner)
+          ? runner.toJSON()
+          : [runner]
+    if (!runners.some((name: unknown) => typeof name === 'string' && name.startsWith('arc-'))) return []
+    const steps = job.get('steps')
+    if (!YAML.isSeq(steps)) return []
+    return steps.items.flatMap((step) =>
+      YAML.isMap(step) && step.get('uses') === './.github/actions/setup-nix-toolchain'
+        ? [{ job: String(key), required: step.getIn(['with', 'require-preinstalled']) }]
+        : [],
+    )
+  })
+}
+
 describe('ARC Nix runner toolchain', () => {
   it('keeps ARC runner scratch writes off shared Ceph while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
@@ -160,10 +185,8 @@ describe('ARC Nix runner toolchain', () => {
     ])
     expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
       'local-path',
+      'local-path-bayn-wal',
       'local-path-ci-amd64',
-      'local-path-ryzen',
-      'local-path-turin-nvme-intel',
-      'local-path-turin-nvme-transcend',
     ])
   })
 
@@ -339,19 +362,46 @@ describe('ARC Nix runner toolchain', () => {
     expect(nixOciWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
   })
 
+  it('checks setup steps in their own ARC jobs, including matrix runners', () => {
+    const setup = { uses: './.github/actions/setup-nix-toolchain' }
+    const workflow = YAML.stringify({
+      jobs: {
+        hosted: { 'runs-on': 'ubuntu-latest', steps: [setup] },
+        native: { 'runs-on': 'arc-amd64', steps: [] },
+      },
+    })
+    expect(arcNixSetupSteps(workflow)).toEqual([])
+    expect(
+      arcNixSetupSteps(
+        YAML.stringify({
+          jobs: {
+            guarded: {
+              'runs-on': 'arc-amd64',
+              steps: [{ ...setup, with: { 'require-preinstalled': 'true' } }],
+            },
+            unguarded: {
+              'runs-on': '${{ matrix.runner }}',
+              strategy: { matrix: { include: [{ runner: 'arc-arm64' }] } },
+              steps: [setup],
+            },
+          },
+        }),
+      ),
+    ).toEqual([
+      { job: 'guarded', required: 'true' },
+      { job: 'unguarded', required: undefined },
+    ])
+  })
+
   it('does not let ARC workflow callers silently use fallback Nix installation', () => {
     const workflowDir = new URL('.github/workflows/', repoRoot)
     const arcSetupCallers = readdirSync(workflowDir)
       .filter((file) => file.endsWith('.yml') || file.endsWith('.yaml'))
-      .map((file) => [file, readRepoFile(`.github/workflows/${file}`)] as const)
-      .filter(([, content]) => content.includes('uses: ./.github/actions/setup-nix-toolchain'))
-      .filter(([, content]) => content.includes('runs-on: arc-') || content.includes('runner: arc-'))
+      .flatMap((file) => arcNixSetupSteps(readRepoFile(`.github/workflows/${file}`)).map((step) => ({ file, ...step })))
 
     expect(arcSetupCallers.length).toBeGreaterThan(0)
-    for (const [file, content] of arcSetupCallers) {
-      expect(content, `${file} must require the preinstalled ARC Nix toolchain`).toContain(
-        "require-preinstalled: 'true'",
-      )
+    for (const { file, job, required } of arcSetupCallers) {
+      expect(required, `${file}:${job} must require the preinstalled ARC Nix toolchain`).toBe('true')
     }
   })
 })

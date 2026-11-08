@@ -15,7 +15,7 @@ import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { OrderType as AlpacaOrderType, TimeInForce as AlpacaTimeInForce } from '../broker/alpaca/model'
-import { JevBatchPlanVersion } from './batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { JevBatchStore } from './batch-evaluation'
 import { JevClient } from './client'
 import { decideJevEntry } from './decision'
@@ -234,6 +234,103 @@ describe('Jev entry execution quote eligibility', () => {
       expect(Result.isFailure(compiled)).toBe(true)
       if (Result.isFailure(compiled))
         expect(compiled.failure).toMatchObject({ message: expect.stringContaining('profit target already reached') })
+    },
+  )
+
+  test.each(['not-ready', 'freshness'] as const)(
+    'source-excluded %s batches retain the next signal time without reopening the consumed window',
+    async (sourceFailure) => {
+      const fixture = nativeJevFixture(undefined, '2026-09-04T14:30:57.529Z', undefined, {
+        ...defaultJevProtocolDocument,
+        candidateSymbols: ['AAPL', 'AMZN'],
+      })
+      const snapshot = streamingFixtureFromRaw(
+        {
+          ...fixture.snapshot,
+          quotes: fixture.snapshot.quotes.map((quote) =>
+            quote.symbol === 'AAPL'
+              ? { ...quote, bidPrice: 100, askPrice: 101 }
+              : quote.symbol === 'AMZN'
+                ? sourceFailure === 'not-ready'
+                  ? { ...quote, bidPrice: 0, bidSize: 0 }
+                  : {
+                      ...quote,
+                      eventAt: new Date(
+                        Date.parse(fixture.snapshot.manifest.observedAt) - fixture.protocol.maximumQuoteAgeMs - 1,
+                      ).toISOString(),
+                    }
+                : quote,
+          ),
+        },
+        fixture.query,
+      ).snapshot
+      let latestWindow = Option.none<string>()
+      let batchCount = 0
+      const unused = Effect.die('Source exclusions must not dispatch inference')
+      const attempt = evaluateJevObservationFromSnapshot(
+        {
+          cycleId: fixture.observation.payload.cycleId,
+          authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+          protocol: fixture.protocol,
+          portfolio: fixture.portfolio,
+        },
+        snapshot.manifest.rangeEndAt,
+        Effect.succeed(snapshot),
+        JevBatchPlanVersion.V8,
+      )
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(snapshot.manifest.observedAt))
+          const first = yield* Effect.result(attempt)
+          expect(first).toMatchObject({
+            _tag: 'Failure',
+            failure: {
+              _tag: 'JevAwaitingEvidence',
+              readiness:
+                sourceFailure === 'not-ready'
+                  ? DecisionReadinessReason.SnapshotUnavailable
+                  : DecisionReadinessReason.SnapshotStale,
+              availableAt: '2026-09-04T14:31:02.000Z',
+            },
+          })
+          if (Result.isFailure(first)) expect(first.failure).not.toHaveProperty('entryAbstention')
+          yield* TestClock.adjust(1000)
+          expect(yield* Effect.result(attempt)).toMatchObject({
+            _tag: 'Failure',
+            failure: { _tag: 'JevAwaitingFreshWindow', availableAt: '2026-09-04T14:31:02.000Z' },
+          })
+          expect(batchCount).toBe(1)
+        }).pipe(
+          Effect.provideService(CandidateObservationStore, {
+            record: () => unused,
+            latestJevWindowEnd: () => Effect.sync(() => latestWindow),
+          }),
+          Effect.provideService(JevBatchStore, {
+            pending: () => Effect.succeed([]),
+            read: () => unused,
+            complete: () => unused,
+            finish: () => unused,
+            begin: (plan, observation) =>
+              Effect.sync(() => {
+                batchCount += 1
+                latestWindow = Option.some(observation.manifest.rangeEndAt)
+                expect(plan.candidates.map((candidate) => candidate.status)).toEqual([
+                  JevCandidatePlanStatus.Excluded,
+                  JevCandidatePlanStatus.Excluded,
+                ])
+                return { plan, dispatches: [], result: nativeJevBatchResult(plan, snapshot.manifest.observedAt) }
+              }),
+          }),
+          Effect.provideService(JevEvaluationStore, {
+            read: () => unused,
+            recordAll: () => unused,
+            abandon: () => unused,
+          }),
+          Effect.provide(entryInferenceFixtureLayer),
+          Effect.provideService(JevClient, entryProviderFixture({ evaluate: () => unused })),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
     },
   )
 

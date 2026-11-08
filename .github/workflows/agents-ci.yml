@@ -23,6 +23,7 @@ on:
       - 'nix/images/agents.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/openai-codex-cli.nix'
+      - 'nix/images/agentrun-tools.nix'
       - 'nix/packages.nix'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
@@ -139,6 +140,16 @@ jobs:
     if: ${{ needs.plan.outputs.run_unit == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -185,7 +196,10 @@ jobs:
             packages/scripts/src/shared/__tests__/docker.test.ts
 
       - name: Run Agents service typecheck and unit tests
+        env:
+          AGENTS_STORE_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
         run: |
+          bun services/relay/generate.ts --check
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
 
@@ -399,6 +413,18 @@ jobs:
       - name: Ensure Kind Docker network
         run: scripts/agents/ensure-kind-network.sh
 
+      - name: Install pinned Kind binary
+        run: |
+          set -euo pipefail
+          kind_bin="${RUNNER_TOOL_CACHE}/kind/v0.31.0/amd64/kind/bin"
+          mkdir -p "${kind_bin}"
+          curl --fail --location --retry 3 --header 'Accept: application/octet-stream' \
+            --output "${RUNNER_TEMP}/kind-linux-amd64" \
+            https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/330009836
+          echo "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa  ${RUNNER_TEMP}/kind-linux-amd64" | sha256sum --check
+          # kind-action reuses this checked executable rather than downloading it through the release frontend.
+          install -m 755 "${RUNNER_TEMP}/kind-linux-amd64" "${kind_bin}/kind"
+
       - name: Create Kind cluster
         uses: helm/kind-action@v1
         env:
@@ -568,12 +594,33 @@ jobs:
 
       - name: Preload published Agents runner
         if: ${{ !contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           set -euo pipefail
           test -n "${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
           docker exec "${KIND_CLUSTER_NAME}-control-plane" crictl pull \
             "${BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY}:${BUILT_AGENTS_RUNNER_IMAGE_TAG}@${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+
+      - name: Verify runner toolchain in a fresh Pod
+        if: ${{ contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          image="${BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY}:${BUILT_AGENTS_RUNNER_IMAGE_TAG}"
+          if [ -n "${BUILT_AGENTS_RUNNER_IMAGE_DIGEST:-}" ]; then
+            image="${image}@${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+          fi
+          kubectl create namespace agents-runner-ci --dry-run=client -o yaml | kubectl apply -f -
+          cleanup() {
+            kubectl -n agents-runner-ci logs runner-toolchain-smoke || true
+            kubectl -n agents-runner-ci delete pod runner-toolchain-smoke --ignore-not-found --wait=false
+          }
+          trap cleanup EXIT
+          kubectl -n agents-runner-ci run runner-toolchain-smoke \
+            --image="${image}" --image-pull-policy=IfNotPresent --restart=Never \
+            --command -- agentrun-acceptance --smoke
+          kubectl -n agents-runner-ci wait --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/runner-toolchain-smoke --timeout=180s
 
       - name: Run Agents integration smoke test
         env:

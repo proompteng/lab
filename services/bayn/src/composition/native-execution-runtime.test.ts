@@ -12,11 +12,13 @@ import {
   ManagedRuntime,
   Option,
   Redacted,
-  Ref,
   Result,
   ScopedRef,
+  type Scope,
 } from 'effect'
 import { TestClock } from 'effect/testing'
+import { PgClient } from '@effect/sql-pg'
+import { nativeActivationPreflight, NativeActivationPreflightError } from './native-activation-preflight'
 
 import type { ApplicationPlan } from '../app'
 import type { NativeExecutionRuntime } from '../restate/restate-execution-controller'
@@ -39,26 +41,28 @@ import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
+import { makeRebindingCycleDriver } from './generation-cycle'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
+import { completeExecutionControllerTick, executionControllerPlanHash } from '../execution/controller'
 import {
-  awaitNativeExecutionRuntimeDriver,
-  captureRecoveryFirstCycleDriver,
+  bindRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
-  executionControllerPlanHash,
-  failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionProjectionRuntime,
-  makePublishedExecutionCycleDriverLive,
+  makeExecutionCycleDriverLive,
   makeRecoveringManagedNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
   projectExecutionControllerState,
-  PublishedExecutionCycleDriver,
-  readRecoveryFirstCycleDriverSlot,
+  ExecutionCycleDriver,
   type BoundRecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverSlot,
-  type RecoveryFirstCycleDriverSlotState,
 } from './native-execution-runtime'
+
+const executionBuild = {
+  sourceRevision: 'a'.repeat(40),
+  imageRepository: 'registry.example.test/lab/bayn',
+  imageDigest: `sha256:${'1'.repeat(64)}`,
+}
 
 const hash = (character: string): string => character.repeat(64)
 const sourceRevision = 'a'.repeat(40)
@@ -142,24 +146,15 @@ const statusStore = (
   read: () => Effect.succeed(null),
 })
 
-const readySlot = (current: BoundRecoveryFirstCycleDriver): RecoveryFirstCycleDriverSlot =>
-  Effect.runSync(
-    Effect.gen(function* () {
-      const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-      yield* Deferred.succeed(ready, undefined)
-      return { ready, state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver: current }) }
-    }),
-  )
-
 const withExecutionRuntime = (
-  slot: RecoveryFirstCycleDriverSlot,
+  prepare: Effect.Effect<BoundRecoveryFirstCycleDriver, never, Scope.Scope>,
   use: (runtime: NativeExecutionRuntime) => Promise<void>,
 ): Promise<void> =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const resources = Layer.merge(
-          Layer.succeed(PublishedExecutionCycleDriver, slot),
+          Layer.effect(ExecutionCycleDriver, prepare),
           Layer.succeed(
             ExecutionControllerStatusStore,
             statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
@@ -177,6 +172,7 @@ const withExecutionRuntime = (
           ScopedRef.getUnsafe(managed),
           { runPromise: Effect.runPromise },
           controllerPlanHash,
+          () => Promise.resolve(),
         )
         yield* Effect.promise(() => use(runtime))
       }),
@@ -241,6 +237,91 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
 }
 
 describe('native execution runtime', () => {
+  const observePreflight = <E>(read: Effect.Effect<readonly unknown[], E>) => {
+    const original = plan({ brokerAccess: 'read-only' })
+    const { capitalActivationRequestJson: _request, ...config } = original.config
+    const sql = (() => read) as unknown as PgClient.PgClient
+    return nativeActivationPreflight({ ...original, config }).pipe(Effect.provideService(PgClient.PgClient, sql))
+  }
+  const authorityRow = {
+    schema_version: 'bayn.paper-authority.v1',
+    generation_hash: 'a'.repeat(64),
+    maximum: 'OBSERVE',
+    effective: 'OBSERVE',
+    kill_state: 'CLEAR',
+    reason: null,
+    version: '1',
+    updated_at: '2026-11-05T18:00:00.000Z',
+    observed_at: new Date('2026-11-05T18:01:00.000Z'),
+  }
+
+  test.each([{ rows: [] }, { rows: [authorityRow] }])(
+    'authority preflight reads once without initializing or replacing execution resources: %j',
+    async ({ rows }) => {
+      let reads = 0
+      await Effect.runPromise(
+        observePreflight(
+          Effect.sync(() => {
+            reads += 1
+            return rows
+          }),
+        ),
+      )
+      expect(reads).toBe(1)
+    },
+  )
+
+  test.each([
+    { ...authorityRow, maximum: 'PAPER', effective: 'PAPER' },
+    { ...authorityRow, maximum: 'invalid' },
+    { ...authorityRow, version: '0' },
+    { ...authorityRow, updated_at: '2026-11-05T18:02:00.000Z' },
+  ])('authority preflight rejects incompatible or invalid durable state: %j', async (row) => {
+    const result = await Effect.runPromise(observePreflight(Effect.succeed([row])).pipe(Effect.result))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(NativeActivationPreflightError)
+  })
+
+  test('authority preflight retains typed read failures and propagates defects', async () => {
+    const failure = new Error('database unavailable')
+    const result = await Effect.runPromise(observePreflight(Effect.fail(failure)).pipe(Effect.result))
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { cause: failure } })
+    const defect = await Effect.runPromiseExit(observePreflight(Effect.die(failure)))
+    expect(Exit.isFailure(defect)).toBe(true)
+    if (Exit.isFailure(defect)) expect(Cause.hasDies(defect.cause)).toBe(true)
+  })
+
+  test.each(['timeout', 'interruption'])(
+    'authority preflight cancels its read and finalizes once on %s',
+    async (kind) => {
+      let released = 0
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const read = Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined)
+            return yield* Effect.never
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                released += 1
+              }),
+            ),
+          )
+          const fiber = yield* Effect.forkChild(observePreflight(read))
+          yield* Deferred.await(started)
+          if (kind === 'timeout') yield* TestClock.adjust(30_000)
+          else yield* Fiber.interrupt(fiber)
+          return yield* Fiber.await(fiber)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+      expect(Exit.isFailure(result)).toBe(true)
+      expect(released).toBe(1)
+      if (Exit.isFailure(result) && kind === 'timeout') {
+        expect(Cause.hasFails(result.cause)).toBe(true)
+      }
+    },
+  )
   test('retains exact Jev observation references across stores, waiting, recovery and subsequent passes', async () => {
     const firstHash = hash('b')
     const recoveredHash = hash('a')
@@ -281,26 +362,21 @@ describe('native execution runtime', () => {
     const results = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const slot = {
-            state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-            ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-          }
-          yield* captureRecoveryFirstCycleDriver(slot)(currentDriver).pipe(
+          const bound = yield* bindRecoveryFirstCycleDriver(currentDriver, executionBuild).pipe(
             Effect.provideContext(context),
-            Effect.forkScoped,
           )
-          yield* Deferred.await(slot.ready)
-          const bound = yield* readRecoveryFirstCycleDriverSlot(slot)
           return [yield* bound.advance, yield* bound.advance]
         }),
       ),
     )
     expect(results[0]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
     })
     expect(results[1]?.observation).toEqual({
       ...windowClosedObservation,
+      executionBuild,
       jevObservationReferences: { hashes: [], complete: true },
     })
     expect(retainedPolicies).toEqual([momentum, undefined])
@@ -329,31 +405,29 @@ describe('native execution runtime', () => {
       const result = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const slot = {
-              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-              ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-            }
-            yield* captureRecoveryFirstCycleDriver(slot)({
-              ...driver,
-              advance: Effect.gen(function* () {
-                if (retainEarlier)
-                  yield* (yield* CandidateObservationStore)
-                    .record({ ...candidate, contentHash: hash('b') })
-                    .pipe(Effect.orDie)
-                yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.ignore)
-                return {
-                  observation: {
-                    result: 'FAILURE' as const,
-                    observedAt: completedAt,
-                    operation: 'build-decision' as const,
-                    failure: 'database' as const,
-                    message: 'record failed',
-                  },
-                }
-              }),
-            }).pipe(Effect.provideContext(context), Effect.forkScoped)
-            yield* Deferred.await(slot.ready)
-            return yield* (yield* readRecoveryFirstCycleDriverSlot(slot)).advance
+            const bound = yield* bindRecoveryFirstCycleDriver(
+              {
+                ...driver,
+                advance: Effect.gen(function* () {
+                  if (retainEarlier)
+                    yield* (yield* CandidateObservationStore)
+                      .record({ ...candidate, contentHash: hash('b') })
+                      .pipe(Effect.orDie)
+                  yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.ignore)
+                  return {
+                    observation: {
+                      result: 'FAILURE' as const,
+                      observedAt: completedAt,
+                      operation: 'build-decision' as const,
+                      failure: 'database' as const,
+                      message: 'record failed',
+                    },
+                  }
+                }),
+              },
+              executionBuild,
+            ).pipe(Effect.provideContext(context))
+            return yield* bound.advance
           }),
         ),
       )
@@ -383,30 +457,28 @@ describe('native execution runtime', () => {
       const result = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const slot = {
-              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-              ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-            }
-            yield* captureRecoveryFirstCycleDriver(slot)({
-              ...driver,
-              advance: Effect.gen(function* () {
-                const store = yield* CandidateObservationStore
-                for (let index = 20; index > 0; index--) {
-                  const candidate = {
-                    get contentHash() {
-                      if (mode === 'instrumentation-failure') throw new Error('evidence unavailable')
-                      return mode === 'malformed' ? 'invalid' : index.toString(16).padStart(64, '0')
-                    },
-                    payload: { schemaVersion: 'bayn.jev-observation.v1' },
-                  } as CandidateObservation
-                  yield* store.record(candidate).pipe(Effect.orDie)
-                  writes++
-                }
-                return { observation: windowClosedObservation, nextDelayMs: 1_000 }
-              }),
-            }).pipe(Effect.provideContext(context), Effect.forkScoped)
-            yield* Deferred.await(slot.ready)
-            return yield* (yield* readRecoveryFirstCycleDriverSlot(slot)).advance
+            const bound = yield* bindRecoveryFirstCycleDriver(
+              {
+                ...driver,
+                advance: Effect.gen(function* () {
+                  const store = yield* CandidateObservationStore
+                  for (let index = 20; index > 0; index--) {
+                    const candidate = {
+                      get contentHash() {
+                        if (mode === 'instrumentation-failure') throw new Error('evidence unavailable')
+                        return mode === 'malformed' ? 'invalid' : index.toString(16).padStart(64, '0')
+                      },
+                      payload: { schemaVersion: 'bayn.jev-observation.v1' },
+                    } as CandidateObservation
+                    yield* store.record(candidate).pipe(Effect.orDie)
+                    writes++
+                  }
+                  return { observation: windowClosedObservation, nextDelayMs: 1_000 }
+                }),
+              },
+              executionBuild,
+            ).pipe(Effect.provideContext(context))
+            return yield* bound.advance
           }),
         ),
       )
@@ -414,6 +486,7 @@ describe('native execution runtime', () => {
       expect(result.nextDelayMs).toBe(1_000)
       expect(result.observation).toEqual({
         ...windowClosedObservation,
+        executionBuild,
         jevObservationReferences: {
           hashes:
             mode === 'overflow'
@@ -480,24 +553,14 @@ describe('native execution runtime', () => {
   test('keeps the owned execution runtime lazy until its first driver acquisition', async () => {
     let acquired = 0
     let released = 0
-    const readySlot = Effect.runSync(
-      Effect.gen(function* () {
-        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-        yield* Deferred.succeed(ready, undefined)
-        return {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
-          ready,
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
-    )
     const execution = ManagedRuntime.make(
       Layer.merge(
         Layer.effect(
-          PublishedExecutionCycleDriver,
+          ExecutionCycleDriver,
           Effect.acquireRelease(
             Effect.sync(() => {
               acquired += 1
-              return readySlot
+              return driver
             }),
             () =>
               Effect.sync(() => {
@@ -514,7 +577,7 @@ describe('native execution runtime', () => {
 
     expect(acquired).toBe(0)
 
-    await execution.runPromise(PublishedExecutionCycleDriver.pipe(Effect.asVoid))
+    await execution.runPromise(ExecutionCycleDriver.pipe(Effect.asVoid))
     expect(acquired).toBe(1)
     await execution.dispose()
     expect(released).toBe(1)
@@ -611,38 +674,20 @@ describe('native execution runtime', () => {
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
   })
 
-  test('the native worker captures exactly one bounded pass for one Restate advance', async () => {
+  test('the native worker executes exactly one bounded pass for one Restate advance', async () => {
     let advances = 0
-    const slot = Effect.runSync(
-      Effect.gen(function* () {
-        return {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-          ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
+    const captured = await Effect.runPromise(
+      bindRecoveryFirstCycleDriver(
+        {
+          ...driver,
+          advance: Effect.sync(() => {
+            advances++
+            return { observation: windowClosedObservation }
+          }),
+        },
+        executionBuild,
+      ).pipe(Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>)),
     )
-    const capturedDriver = {
-      ...driver,
-      ...driver,
-      advance: Effect.sync(() => {
-        advances += 1
-        return {
-          observation: {
-            result: 'SUCCESS' as const,
-            observedAt: completedAt,
-            outcome: 'WINDOW_CLOSED' as const,
-          },
-        }
-      }),
-    }
-    const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(capturedDriver).pipe(
-        Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>),
-      ),
-    )
-
-    await Effect.runPromise(Deferred.await(slot.ready))
-    const captured = await Effect.runPromise(readRecoveryFirstCycleDriverSlot(slot))
     await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
@@ -651,20 +696,18 @@ describe('native execution runtime', () => {
         controllerPlanHash,
       ),
     )
-    await Effect.runPromise(Fiber.interrupt(publication))
-
     expect(advances).toBe(1)
   })
 
   test('keeps replacement registration and projection writer-fence-free until the first execution tick', async () => {
     let acquired = 0
     let released = 0
-    let publishedSlot: RecoveryFirstCycleDriverSlot | undefined
+    let preflights = 0
     const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const executionResources = Layer.merge(
-      makePublishedExecutionCycleDriverLive(30_000, (slot) => {
-        publishedSlot = slot
-        return Effect.acquireRelease(
+      makeExecutionCycleDriverLive(
+        30_000,
+        Effect.acquireRelease(
           Effect.sync(() => {
             acquired += 1
             return undefined
@@ -673,8 +716,10 @@ describe('native execution runtime', () => {
             Effect.sync(() => {
               released += 1
             }),
-        ).pipe(Effect.andThen(captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context))))
-      }),
+        ).pipe(
+          Effect.andThen(bindRecoveryFirstCycleDriver(driver, executionBuild).pipe(Effect.provideContext(context))),
+        ),
+      ),
       Layer.succeed(
         ExecutionControllerStatusStore,
         statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
@@ -710,8 +755,14 @@ describe('native execution runtime', () => {
             projectionManaged,
             hostRunner,
             controllerPlanHash,
+            async () => {
+              preflights += 1
+            },
           )
 
+          expect(acquired).toBe(0)
+          yield* Effect.promise(() => runtime.prepareActivation(new AbortController().signal))
+          expect(preflights).toBe(1)
           expect(acquired).toBe(0)
           yield* Effect.promise(() => runtime.log('info', 'inactive worker discovery', {}))
           expect(acquired).toBe(0)
@@ -746,164 +797,160 @@ describe('native execution runtime', () => {
       ),
     )
     expect(released).toBe(1)
-    if (publishedSlot === undefined) throw new Error('production driver layer did not publish its slot')
-    expect(await Effect.runPromise(Ref.get(publishedSlot.state))).toEqual({ _tag: 'Pending' })
   })
 
-  test('managed runtime resolves the current driver after a restricted generation rebind', async () => {
+  test('managed execution uses the replacement driver and retains its Jev references', async () => {
     const calls: string[] = []
-    const withCall = (name: string): BoundRecoveryFirstCycleDriver => ({
-      ...driver,
-      advance: Effect.sync(() => {
-        calls.push(name)
-        return {
-          observation: {
-            result: 'SUCCESS' as const,
-            observedAt: completedAt,
-            outcome: 'WINDOW_CLOSED' as const,
-          },
-        }
+    let rebind = false
+    const candidate = {
+      contentHash: hash('b'),
+      payload: { schemaVersion: 'bayn.jev-observation.v1' },
+    } as CandidateObservation
+    const resources = Context.make(CandidateObservationStore, {
+      record: () => Effect.void,
+      latestJevWindowEnd: () => Effect.succeed(Option.none()),
+    }).pipe(
+      Context.add(JevBatchStore, {
+        read: () => Effect.succeed(null),
+        pending: () => Effect.succeed([]),
+        begin: () => Effect.die('unused'),
+        complete: () => Effect.die('unused'),
+        finish: () => Effect.die('unused'),
       }),
-    })
-    const slot = Effect.runSync(
+    ) as Context.Context<RecoveryFirstRuntime>
+    const bound = await Effect.runPromise(
       Effect.gen(function* () {
-        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-        yield* Deferred.succeed(ready, undefined)
-        return {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({
-            _tag: 'Ready',
-            driver: withCall('restricted'),
-          }),
-          ready,
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
+        const initial = {
+          driver: {
+            ...driver,
+            advance: Effect.sync(() => {
+              calls.push('restricted')
+              rebind = true
+              return { observation: windowClosedObservation }
+            }),
+          },
+          needsRebind: Effect.sync(() => rebind),
+        }
+        const replacement = {
+          driver: {
+            ...driver,
+            advance: Effect.gen(function* () {
+              calls.push('successor')
+              yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+              return { observation: windowClosedObservation }
+            }),
+          },
+          needsRebind: Effect.succeed(false),
+        }
+        const current = yield* makeRebindingCycleDriver(initial, Effect.succeed(replacement))
+        return yield* bindRecoveryFirstCycleDriver(current, executionBuild)
+      }).pipe(Effect.provideContext(resources)),
     )
-    await withExecutionRuntime(slot, async (runtime) => {
+    await withExecutionRuntime(Effect.succeed(bound), async (runtime) => {
       await runtime.advance(command, new AbortController().signal)
-      await Effect.runPromise(Ref.set(slot.state, { _tag: 'Ready', driver: withCall('observe') }))
       await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
     })
-    expect(calls).toEqual(['restricted', 'observe'])
+    const evidence = await Effect.runPromise(bound.advance)
+    expect(evidence.observation.jevObservationReferences).toEqual({ hashes: [hash('b')], complete: true })
+    expect(calls).toEqual(['restricted', 'successor', 'successor'])
   })
 
-  test.each(['cold-start', 'generation-handoff'] as const)(
-    'reacquires execution resources after a %s initialization failure',
-    async (stage) => {
-      let acquired = 0
-      let released = 0
-      const failure =
-        stage === 'cold-start'
-          ? new Error('transient dependency unavailable')
-          : new NativeExecutionRuntimeError({
-              operation: 'initialize',
-              message: 'generation handoff failed',
-              cause: new Error('transient dependency unavailable'),
-            })
-      const readySlot = Effect.runSync(
-        Effect.gen(function* () {
-          const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-          yield* Deferred.succeed(ready, undefined)
-          return {
-            state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
-            ready,
-          } satisfies RecoveryFirstCycleDriverSlot
-        }),
-      )
-      const executionResources = Layer.merge(
-        Layer.effect(
-          PublishedExecutionCycleDriver,
-          Effect.acquireRelease(
+  test('reacquires execution resources after an initialization failure', async () => {
+    let acquired = 0
+    let released = 0
+    const failure = new Error('transient dependency unavailable')
+    const executionResources = Layer.merge(
+      Layer.effect(
+        ExecutionCycleDriver,
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            acquired += 1
+            return acquired
+          }),
+          () =>
             Effect.sync(() => {
-              acquired += 1
-              return acquired
+              released += 1
             }),
-            () =>
-              Effect.sync(() => {
-                released += 1
-              }),
-          ).pipe(
-            Effect.flatMap((attempt) =>
-              attempt === 1 && stage === 'cold-start'
-                ? Effect.fail(failure)
-                : Ref.set(readySlot.state, { _tag: 'Ready', driver }).pipe(Effect.as(readySlot)),
-            ),
-          ),
-        ),
-        Layer.succeed(
-          ExecutionControllerStatusStore,
-          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-        ),
-      )
-      const hostRunner = {
-        runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
-          Effect.runPromise(effect, options),
-      }
+        ).pipe(Effect.flatMap((attempt) => (attempt === 1 ? Effect.fail(failure) : Effect.succeed(driver)))),
+      ),
+      Layer.succeed(
+        ExecutionControllerStatusStore,
+        statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+      ),
+    )
+    const hostRunner = {
+      runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
+        Effect.runPromise(effect, options),
+    }
 
-      const result = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const managed = yield* ScopedRef.fromAcquire(
-              Effect.acquireRelease(
-                Effect.succeed(ManagedRuntime.make(executionResources)),
-                (runtime) => runtime.disposeEffect,
-              ),
-            )
-            const projectionManaged = yield* Effect.acquireRelease(
-              Effect.succeed(
-                ManagedRuntime.make(
-                  Layer.succeed(
-                    ExecutionControllerStatusStore,
-                    statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-                  ),
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const managed = yield* ScopedRef.fromAcquire(
+            Effect.acquireRelease(
+              Effect.succeed(ManagedRuntime.make(executionResources)),
+              (runtime) => runtime.disposeEffect,
+            ),
+          )
+          const projectionManaged = yield* Effect.acquireRelease(
+            Effect.succeed(
+              ManagedRuntime.make(
+                Layer.succeed(
+                  ExecutionControllerStatusStore,
+                  statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
                 ),
               ),
-              (runtime) => runtime.disposeEffect,
-            )
-            const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
-              managed,
-              executionResources,
-              projectionManaged,
-              hostRunner,
-              controllerPlanHash,
-            )
-            if (failure instanceof NativeExecutionRuntimeError) {
-              yield* Effect.promise(() => runtime.advance(command, new AbortController().signal))
-              yield* failRecoveryFirstCycleDriverSlot(readySlot, failure)
-            }
-            const first = yield* Effect.tryPromise({
-              try: () => runtime.advance(command, new AbortController().signal),
-              catch: (cause) => cause,
-            }).pipe(Effect.flip)
-            const second = yield* Effect.promise(() =>
-              runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal),
-            )
-            return { first, second }
-          }),
-        ),
-      )
-
-      expect(result.first).toBe(failure)
-      expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
-      expect(acquired).toBe(2)
-      expect(released).toBe(2)
-    },
-  )
-
-  test('fails initialization deterministically when preparation never publishes a driver', async () => {
-    const failure = await Effect.runPromise(
-      Effect.gen(function* () {
-        const slot: RecoveryFirstCycleDriverSlot = {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-          ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-        }
-        const awaiting = yield* Effect.forkChild(awaitNativeExecutionRuntimeDriver(slot, 20))
-        yield* TestClock.adjust(nativeExecutionRuntimeInitializationTimeoutMs(20))
-        return yield* Fiber.join(awaiting).pipe(Effect.flip)
-      }).pipe(Effect.provide(TestClock.layer())),
+            ),
+            (runtime) => runtime.disposeEffect,
+          )
+          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+            managed,
+            executionResources,
+            projectionManaged,
+            hostRunner,
+            controllerPlanHash,
+            () => Promise.resolve(),
+          )
+          const first = yield* Effect.tryPromise({
+            try: () => runtime.advance(command, new AbortController().signal),
+            catch: (cause) => cause,
+          }).pipe(Effect.flip)
+          const second = yield* Effect.promise(() =>
+            runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal),
+          )
+          return { first, second }
+        }),
+      ),
     )
 
+    expect(result.first).toBe(failure)
+    expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
+    expect(acquired).toBe(2)
+    expect(released).toBe(2)
+  })
+
+  test('times out stalled driver preparation and finalizes acquired resources exactly once', async () => {
+    let released = 0
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const resources = makeExecutionCycleDriverLive(
+          20,
+          Effect.acquireRelease(Deferred.succeed(started, undefined), () =>
+            Effect.sync(() => {
+              released++
+            }),
+          ).pipe(Effect.andThen(Effect.never)),
+        )
+        const pending = yield* Layer.build(resources).pipe(Effect.scoped, Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(nativeExecutionRuntimeInitializationTimeoutMs(20))
+        return yield* Fiber.join(pending).pipe(Effect.flip)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
     expect(failure).toBeInstanceOf(NativeExecutionRuntimeError)
     expect(failure).toMatchObject({ operation: 'initialize' })
+    expect(released).toBe(1)
   })
 
   test('projects the exact completed tick before returning the compact Restate result', async () => {
@@ -972,6 +1019,23 @@ describe('native execution runtime', () => {
           }),
         }
         const first = yield* executeNativeExecutionAdvance(command, boundedDriver, store, controllerPlanHash)
+        const completed = Result.getOrThrow(
+          completeExecutionControllerTick(
+            {
+              schemaVersion: 1,
+              active: true,
+              epoch: command.epoch,
+              planHash: controllerPlanHash,
+              sourceRevision,
+              initialSequence: command.sequence,
+              nextSequence: command.sequence,
+            },
+            { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: command.epoch, sequence: command.sequence },
+            first,
+            sourceRevision,
+          ),
+        )
+        yield* projectExecutionControllerState(command.controllerKey, completed, store)
         yield* TestClock.adjust(20_000)
         const replayed = yield* executeNativeExecutionAdvance(command, boundedDriver, store, controllerPlanHash)
         expect(replayed).toEqual(first)
@@ -1076,6 +1140,50 @@ describe('native execution runtime', () => {
     })
   })
 
+  test.each([false, true])(
+    'retains a pass only in its existing projection epoch (stored inactive: %s)',
+    async (storedInactive) => {
+      const retained = status({
+        lastPass: windowClosedObservation,
+        active: !storedInactive,
+        epoch: storedInactive ? command.epoch + 1 : command.epoch,
+      })
+      if (!executionControllerStatusHasCompletion(retained)) throw new Error('Expected a retained completion')
+      let projected: ExecutionControllerStatus | undefined
+      await Effect.runPromise(
+        projectExecutionControllerState(
+          command.controllerKey,
+          {
+            schemaVersion: 1,
+            active: false,
+            epoch: command.epoch + 1,
+            planHash: controllerPlanHash,
+            sourceRevision,
+            initialSequence: command.sequence,
+            nextSequence: command.sequence + 1,
+            lastCompletion: {
+              sequence: retained.lastSequence,
+              outcome: retained.lastOutcome,
+              receiptHash: retained.lastReceiptHash,
+              completedAt: retained.completedAt,
+            },
+          },
+          {
+            read: () => Effect.succeed(retained),
+            project: (candidate) =>
+              Effect.sync(() => {
+                projected = candidate
+                return { _tag: 'Applied' as const, status: candidate }
+              }),
+          },
+        ),
+      )
+      expect(projected).toMatchObject({ epoch: command.epoch + 1, lastReceiptHash: retained.lastReceiptHash })
+      if (storedInactive) expect(projected).toHaveProperty('lastPass', windowClosedObservation)
+      else expect(projected).not.toHaveProperty('lastPass')
+    },
+  )
+
   test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
     let projected: ExecutionControllerStatus | undefined
     await Effect.runPromise(
@@ -1176,7 +1284,12 @@ describe('native execution runtime', () => {
         executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
       )
       const replay = await Effect.runPromise(
-        executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
+        executeNativeExecutionAdvance(
+          { ...command, issuedAt: '2026-08-13T18:01:00.000Z' },
+          replayDriver,
+          uncertainStore,
+          controllerPlanHash,
+        ),
       )
 
       expect(advanceCount).toBe(1)
@@ -1205,7 +1318,7 @@ describe('native execution runtime', () => {
     let readCount = 0
     const authoritative = status({
       lastReceiptHash: hash('a'),
-      lastPass: windowClosedObservation,
+      lastPass: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
     })
     if (!executionControllerStatusHasCompletion(authoritative)) {
       throw new Error('projection-race fixture requires completion evidence')
@@ -1236,7 +1349,12 @@ describe('native execution runtime', () => {
     }
 
     const observed = await Effect.runPromise(
-      executeNativeExecutionAdvance(command, replayDriver, racingStore, controllerPlanHash),
+      executeNativeExecutionAdvance(
+        { ...command, issuedAt: '2026-08-13T18:01:00.000Z' },
+        replayDriver,
+        racingStore,
+        controllerPlanHash,
+      ),
     )
 
     expect(advanceCount).toBe(1)
@@ -1244,7 +1362,7 @@ describe('native execution runtime', () => {
     expect(readCount).toBe(2)
     expect(observed).toEqual({
       completedAt: authoritative.completedAt,
-      observation: windowClosedObservation,
+      observation: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
       outcome: {
         _tag: authoritative.lastOutcome,
         receiptHash: authoritative.lastReceiptHash,
@@ -1412,15 +1530,9 @@ describe('native execution runtime', () => {
                 return { observation: windowClosedObservation }
               }).pipe(Effect.withSpan('execution-pass-test')),
             }
-            const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-            yield* Deferred.succeed(ready, undefined)
-            const slot = {
-              ready,
-              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver: tracedDriver }),
-            }
             const store = statusStore((candidate) => ({ _tag: 'Applied', status: candidate }))
             const resources = Layer.merge(
-              Layer.succeed(PublishedExecutionCycleDriver, slot),
+              Layer.succeed(ExecutionCycleDriver, tracedDriver),
               Layer.succeed(ExecutionControllerStatusStore, store),
             )
             const managed = yield* ScopedRef.fromAcquire(
@@ -1436,6 +1548,7 @@ describe('native execution runtime', () => {
               ScopedRef.getUnsafe(managed),
               runner,
               controllerPlanHash,
+              () => Promise.resolve(),
             )
             yield* Effect.promise(() =>
               context.with(trace.setSpanContext(context.active(), nativeParent), () =>
@@ -1458,7 +1571,7 @@ describe('native execution runtime', () => {
   test('interrupts an in-flight execution pass when Restate cancels it', async () => {
     const started = Effect.runSync(Deferred.make<void>())
     let interrupted = 0
-    const slot = readySlot({
+    const current = {
       ...driver,
       advance: Deferred.succeed(started, undefined).pipe(
         Effect.andThen(Effect.never),
@@ -1468,8 +1581,8 @@ describe('native execution runtime', () => {
           }),
         ),
       ),
-    })
-    await withExecutionRuntime(slot, async (runtime) => {
+    }
+    await withExecutionRuntime(Effect.succeed(current), async (runtime) => {
       const abort = new AbortController()
       const pending = runtime.advance(command, abort.signal).then(
         () => undefined,
@@ -1483,58 +1596,58 @@ describe('native execution runtime', () => {
     expect(interrupted).toBe(1)
   })
 
-  test('propagates a preparation failure that occurs after the first driver was published', async () => {
-    const failure = new NativeExecutionRuntimeError({
-      operation: 'initialize',
-      message: 'observe driver rebinding failed',
-    })
-    const slot = Effect.runSync(
-      Effect.gen(function* () {
-        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-        yield* Deferred.succeed(ready, undefined)
-        const state = yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver })
-        return {
-          state,
-          ready,
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
+  test('a failed generation replacement retries without using the old driver or reacquiring clients', async () => {
+    let acquired = 0
+    let released = 0
+    let rebind = false
+    let calls = 0
+    let preparations = 0
+    const failure = operationalError({ component: 'database', operation: 'fixture', message: 'unavailable' })
+    const current = await Effect.runPromise(
+      makeRebindingCycleDriver(
+        {
+          driver: {
+            ...driver,
+            advance: Effect.sync(() => {
+              calls++
+              rebind = true
+              return { observation: windowClosedObservation }
+            }),
+          },
+          needsRebind: Effect.sync(() => rebind),
+        },
+        Effect.gen(function* () {
+          preparations++
+          if (preparations === 1) return yield* failure
+          return { driver, needsRebind: Effect.succeed(false) }
+        }),
+      ),
     )
-    await withExecutionRuntime(slot, async (runtime) => {
+    const prepare = Effect.acquireRelease(
+      Effect.sync(() => {
+        acquired++
+        return current
+      }),
+      () =>
+        Effect.sync(() => {
+          released++
+        }),
+    )
+    await withExecutionRuntime(prepare, async (runtime) => {
       await runtime.advance(command, new AbortController().signal)
-      await Effect.runPromise(failRecoveryFirstCycleDriverSlot(slot, failure))
-      const afterFailure = await runtime
-        .advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
-        .then(
-          () => undefined,
-          (error: unknown) => error,
-        )
-
-      expect(afterFailure).toBe(failure)
+      const next = { ...command, sequence: command.sequence + 1 }
+      const failed = await runtime.advance(next, new AbortController().signal).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(failed).toBeInstanceOf(TransientExecutionFailure)
+      expect(calls).toBe(1)
+      await runtime.advance(next, new AbortController().signal)
+      expect(calls).toBe(1)
+      expect(preparations).toBe(2)
+      expect(acquired).toBe(1)
+      expect(released).toBe(0)
     })
-  })
-
-  test('makes the old driver unavailable while a replacement is being prepared', async () => {
-    const slot = Effect.runSync(
-      Effect.gen(function* () {
-        return {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-          ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
-    )
-    const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
-    const publication = Effect.runFork(
-      captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context)),
-    )
-
-    await Effect.runPromise(Deferred.await(slot.ready))
-    expect(await Effect.runPromise(readRecoveryFirstCycleDriverSlot(slot))).toBeDefined()
-    await Effect.runPromise(Fiber.interrupt(publication))
-    const unavailable = await Effect.runPromise(Effect.flip(readRecoveryFirstCycleDriverSlot(slot)))
-
-    expect(unavailable).toMatchObject({
-      operation: 'initialize',
-      message: 'native execution runtime driver is unavailable',
-    })
+    expect(released).toBe(1)
   })
 })

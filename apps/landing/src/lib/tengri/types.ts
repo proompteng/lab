@@ -188,10 +188,11 @@ export type TengriAction =
   | { action: 'codex-models'; agentId: string; cursor?: string }
   | { action: 'active-codex-runs'; agentId: string }
   | { action: 'codex-run'; agentId: string; runId: string }
+  | { action: 'recover-run'; agentId: string; runId: string; operationId: string }
   | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
   | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
-  | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
+  | { action: 'resume-thread'; agentId: string; threadId: string }
   | ({
       action: 'send-turn'
       agentId: string

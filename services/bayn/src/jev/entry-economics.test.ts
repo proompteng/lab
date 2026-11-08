@@ -15,7 +15,7 @@ import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
 import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
 import { jevEntryEconomics, jevMaximumEntryAskMicros } from './entry-economics'
-import { defaultJevProtocolDocument } from './protocol'
+import { defaultJevProtocolDocument, retainedJevProtocolV39Document } from './protocol'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { calculateSessionFees } from '../strategy/execution-model/fees'
@@ -73,7 +73,7 @@ test('retained v26 funding reproduces its original entry allowance and broker fe
       cryptoFeeTier: 4,
 
       protocol: {
-        ...defaultJevProtocolDocument,
+        ...retainedJevProtocolV39Document,
         inputDefinition: 'bayn.jev-entry-state.v22' as const,
         lookbackMinutes: 30 as const,
         schemaVersion: 'bayn.jev.protocol.v26',
@@ -123,7 +123,7 @@ test('the capped crypto order funds a source target that the former buy allowanc
   }
   expect(
     candidates({
-      ...defaultJevProtocolDocument,
+      ...retainedJevProtocolV39Document,
       inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       schemaVersion: 'bayn.jev.protocol.v26',
@@ -162,7 +162,7 @@ test('an equity buy capped at its inference ask funds the observed target withou
   }
   expect(
     candidates({
-      ...defaultJevProtocolDocument,
+      ...retainedJevProtocolV39Document,
       inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       schemaVersion: 'bayn.jev.protocol.v27',

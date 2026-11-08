@@ -2,7 +2,7 @@ import { Context, Data, Effect, Layer } from 'effect'
 
 import { errorResponse, okResponse } from '../http'
 import { createKubernetesClient, type KubernetesClient } from '../kube-types'
-import { asRecord, asString } from '../primitives'
+import { asRecord, asString, readNested } from '../primitives'
 import { createPrimitivesStore } from '../primitives-store'
 import { readRetainedRunLogs, RetainedRunLogsNotFound } from '../retained-run-logs'
 import type { AgentRunRecord } from './agent-run-store'
@@ -38,6 +38,8 @@ type AgentRunLogsSuccess = {
 }
 
 export type AgentRunLogsDependencies = {
+  record?: AgentRunRecord
+  maxBytes?: number
   kubeClient?: KubernetesClient
   kubeClientFactory?: () => KubernetesClient
   storeFactory?: () => {
@@ -164,7 +166,16 @@ export const makeAgentRunLogsKubeLayer = (deps: AgentRunLogsDependencies = {}) =
       Effect.map((kube) => ({
         listPods: (request) =>
           kubeEffect('list-pods', request, async () => {
-            const list = await kube.list('pods', request.namespace, `agents.proompteng.ai/agent-run=${request.name}`)
+            const uid = asString(readNested(deps.record?.payload, ['resource', 'metadata', 'uid']))
+            if (
+              deps.record &&
+              (!uid ||
+                deps.record.externalRunId !== request.name ||
+                readNested(deps.record.payload, ['request', 'namespace']) !== request.namespace)
+            )
+              throw new Error('recorded run identity does not match the log request')
+            const selector = `agents.proompteng.ai/agent-run=${request.name}${uid ? `,agents.proompteng.ai/run-uid=${uid}` : ''}`
+            const list = await kube.list('pods', request.namespace, selector)
             const items = Array.isArray(list.items) ? list.items : []
             return items
               .map((item) => readAgentRunPod(asRecord(item) ?? {}))
@@ -177,6 +188,7 @@ export const makeAgentRunLogsKubeLayer = (deps: AgentRunLogsDependencies = {}) =
               namespace: request.namespace,
               container: request.container,
               tailLines: request.tailLines,
+              ...(deps.maxBytes ? { limitBytes: deps.maxBytes } : {}),
             }),
           ),
       })),
@@ -296,7 +308,12 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
     getAgentRunLogsEffect(request).pipe(Effect.provide(makeAgentRunLogsKubeLayer(deps)), Effect.either),
   )
   if (result._tag === 'Right' && result.right.pods.length > 0) {
-    return okResponse({ ...result.right, source: 'pod', truncated: false, artifact: null })
+    return okResponse({
+      ...result.right,
+      source: 'pod',
+      truncated: deps.maxBytes ? Buffer.byteLength(result.right.logs) >= deps.maxBytes : false,
+      artifact: null,
+    })
   }
   if (result._tag === 'Right') {
     const parsed = await Effect.runPromise(parseRequest(request))
@@ -304,7 +321,7 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
     try {
       store = (deps.storeFactory ?? createPrimitivesStore)()
       await store.ready
-      const record = await store.getAgentRunByExternalRunId(parsed.name)
+      const record = deps.record ?? (await store.getAgentRunByExternalRunId(parsed.name))
       if (!record) throw new RetainedRunLogsNotFound('AgentRun logs not found')
       const kube = deps.kubeClient ?? deps.kubeClientFactory?.() ?? createKubernetesClient()
       const retained = await readRetainedRunLogs({
@@ -314,6 +331,7 @@ export const getAgentRunLogsHandler = async (request: Request, deps: AgentRunLog
         env: deps.env,
         fetch: deps.fetch,
         tailLines: parsed.tailLines,
+        maxBytes: deps.maxBytes,
         pod: parsed.pod,
         container: parsed.container,
       })

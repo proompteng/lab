@@ -16,6 +16,21 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
    `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
 
+## Bounded session-opening verification
+
+Resolve the broker calendar's exact session date and opening instant in `America/New_York`, then convert each
+requested check to `America/Los_Angeles` and UTC. A schedule without a timezone cannot establish a Pacific trigger.
+Read back the scheduler's next execution instant before treating a follow-up as installed. Reject a trigger already
+past its named session; do not silently advance it to a different trading day.
+
+Pre-open readiness requires the authorized account, compatible PAPER mandate, clear kill state, advancing native
+controller, broker mutation eligibility, fresh exact reconciliation, complete fill accounting, zero unresolved
+mutations, Jev availability, and stock-feed/feature-job readiness. At the open, inspect actual fresh equity bars,
+quotes, feature arrivals, and a durable decision or justified strategy abstention within the existing deadlines.
+Crypto activity and a healthy pod do not establish the equity boundary. Distinguish operational failures, source
+exclusions, strategy abstentions, submitted orders, broker fills, and profitability. End the follow-up after the
+requested opening check; retain its failure evidence when a check arrives late.
+
 ## Native PAPER restoration
 
 The account controller owns routine restoration under the existing approved mandate. Compatible Kargo releases retain
@@ -249,6 +264,14 @@ Confirm the current Restate registration's label selector before comparing worke
   then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
   acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
   minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
+  For `Streaming market snapshot rejected`, inspect the same observation's `inputCut.reasons` before attributing
+  complete bar coverage to a healthy consumer. `SOURCE_UNAVAILABLE` and `REQUIRED_PARTITIONS_MISSING` identify
+  incorporation/bootstrap setup; `AVAILABILITY_NOT_OBSERVED`, `EPOCH_MISMATCH` and `BOOTSTRAP_AFTER_OBSERVATION`
+  identify an ineligible cut, not missing producer data. `BOOTSTRAP_OFFSETS_INCOMPLETE` includes bounded pending
+  topic/partition positions and required end offsets for the existing consumer owner. Counts remain complete when
+  the eight-coordinate sample is truncated. An empty reason list clears only these gates; inspect the separate
+  feature/window diagnostics next. Correlate the exact replica and observation time with rollout/startup evidence,
+  and do not infer a current outage from a resolved notification or a later healthy sample.
   Warmup, a bound decision, cutoff, and ordinary abstention do not trigger this alert. Restore the failed input owner;
   do not relax freshness, admission, risk, or authority gates or force a trade.
 - `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
@@ -269,13 +292,23 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` remains a hard deadline for an
   ACTIVE cycle until its immutable decision is bound. A decision-bound ACTIVE cycle may continue broker recovery and
   reconciliation through `executionCloseAt`; an unbound ACTIVE cycle at the cutoff is a missed-submission incident.
-- `BaynCycleFailed`: preserve `cycle.reason` and the terminal cycle identity. Resolve the underlying authority,
-  reconciliation, mutation, or durable-cycle state through its existing writer contract. When
+- `BaynCycleFailed`: this is an operational fail-closed condition, not necessarily a terminal cycle failure.
+  Preserve `cycle.reason` and the matching current or last cycle identity. Reconciliation that predates a mutation,
+  an unresolved mutation, or active kill state can trigger it while an ACTIVE cycle is safely recovering.
+  Resolve the underlying authority, reconciliation, mutation, or durable-cycle state through its existing writer contract. When
   `cycle.reason=LAST_CYCLE_BLOCKED`, branch on the exact persisted `cycle.last.terminalReason`; never clear the alert
   by editing monitoring state.
+  The rule evaluates every 15 seconds, requires one minute of failed-condition observations, aggregates across
+  replicas, and retains firing for five minutes after the expression clears. Projection age, scrape timing and
+  replica differences can extend the observed interval; email grouping can delay both firing and resolution messages.
+  Notification timestamps are not incident onset or duration. A firing email may arrive after automatic recovery.
+  Correlate the historical per-replica `bayn_cycle_reason`, `bayn_cycle_condition` and `ALERTS` samples with the
+  matching controller trace, then verify current authority, reconciliation, unresolved mutations, orders and positions.
+  A terminal COMPLETED cycle can include a canceled, unfilled entry. Neither that terminal state nor a resolved alert
+  proves a fill, profit, or permission to trade; preserve the existing broker and authority safeguards.
 
-An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms
-recovery.
+The underlying condition clears only when its source-of-truth state changes and the next bounded projection or
+health probe confirms recovery. Rule keep-firing periods and notification grouping can delay the resolved message.
 
 Missing telemetry is UNKNOWN, not a healthy input window. A stale runtime projection closes `bayn_runtime_ready`;
 an unavailable cycle projection and a failed scrape have their own alerts. This rule cannot diagnose the underlying

@@ -1,4 +1,3 @@
-import { JevBatchPlanVersion } from '../jev/batch'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { selectSupportedEntryProposal } from '../jev/entry-questions'
 import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
@@ -17,17 +16,18 @@ import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
 import type { JevResponse } from '../jev/contract'
-import {
-  decodeJevBatchResult,
-  JevBatchPlanSchema,
-  JevBatchResultSchema,
-  JevCandidateResultStatus,
-  usableEntryBatchInferences,
-} from '../jev/batch'
+import { JevBatchResultSchema, JevCandidateResultStatus } from '../jev/batch'
 import { JevOutcome } from '../jev/evidence'
-import { JevObservationSchema } from '../jev/observation-contract'
 import { JevPurpose } from '../jev/portfolio'
-import { jevBenchmarkSignalFor, jevSignalFor, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
+import { jevBenchmarkSignalFor, jevSignalFor } from '../jev/trading-signals'
+import {
+  JevStudyObservationSchema,
+  JevStudyBatchPlanSchema,
+  reproduceJevStudyBatchEvidence,
+  decodeJevStudyBatchResult,
+  jevStudyBatchInferencesAt,
+  selectRetainedJevStudyEntry,
+} from '../jev/study-evidence'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
@@ -84,8 +84,8 @@ export const signalStudyDefinition = {
 } as const
 
 const Batch = Schema.Struct({
-  observation: JevObservationSchema,
-  batchPlan: JevBatchPlanSchema,
+  observation: JevStudyObservationSchema,
+  batchPlan: JevStudyBatchPlanSchema,
   batchResult: Schema.NullOr(JevBatchResultSchema),
 })
 
@@ -111,19 +111,20 @@ export class SignalStudyFailure extends Data.TaggedError('SignalStudyFailure')<{
 export const prepareSignalStudyBatch = (input: unknown) =>
   Result.gen(function* () {
     const batch = yield* Schema.decodeUnknownResult(Batch, strictParseOptions)(input)
-    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(batch.observation, batch.batchPlan)
+    const source = yield* reproduceJevStudyBatchEvidence(batch.observation, batch.batchPlan)
+    const { observation, plan } = source
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* Result.fail(new SignalStudyFailure({ message: 'The study requires native Jev observations' }))
-    const batchResult = batch.batchResult === null ? null : yield* decodeJevBatchResult(plan, batch.batchResult)
+    const batchResult = batch.batchResult === null ? null : yield* decodeJevStudyBatchResult(source, batch.batchResult)
     const decidedAt = batch.batchResult?.completedAt ?? plan.expiresAt
     const native =
       batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry
         ? null
-        : decideJevEntry({ ...batch, decidedAt })
+        : source._tag === 'RETAINED_V38'
+          ? selectRetainedJevStudyEntry(source, batch.batchResult, decidedAt)
+          : decideJevEntry({ ...batch, decidedAt })
     const usable =
-      batch.batchResult === null
-        ? null
-        : usableEntryBatchInferences(plan, batch.batchResult, Date.parse(decidedAt), JevBatchPlanVersion.V8)
+      batch.batchResult === null ? null : jevStudyBatchInferencesAt(source, batch.batchResult, Date.parse(decidedAt))
     const inferences = usable !== null && Result.isSuccess(usable) ? usable.success : []
     const snapshot = observation.snapshot
     const signals = []
@@ -231,6 +232,7 @@ export const summarizeSignalFactorOutcomes = (
       for (const [name, answer] of Object.entries(row.factors.answers)) {
         if (answer.type === 'noul') factors.push([name, bin(answer.noul)])
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
+        else if (answer.type === 'box') factors.push([`${name}.confidence`, bin(answer.confidence)])
         else {
           factors.push([name, answer.choice])
         }
@@ -609,7 +611,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
     }
     tasks.sort((a, b) => a.atMs - b.atMs)
     for (const task of tasks) {
-      yield* source.advanceTo(task.atMs)
+      yield* source.advanceTo(task.atMs, (work) => work)
       yield* task.run
     }
     yield* source.finish

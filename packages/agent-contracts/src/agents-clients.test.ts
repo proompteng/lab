@@ -87,14 +87,14 @@ describe('agents typed service clients', () => {
     const effectResult = await Effect.runPromise(
       fetchAgentsJsonEffect<{ status: string }>('/health', env).pipe(
         Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    expect(effectResult._tag).toBe('Left')
-    if (effectResult._tag === 'Left') {
-      expect(effectResult.left).toBeInstanceOf(AgentsTransportError)
-      expect(effectResult.left).toMatchObject({
+    expect(effectResult._tag).toBe('Failure')
+    if (effectResult._tag === 'Failure') {
+      expect(effectResult.failure).toBeInstanceOf(AgentsTransportError)
+      expect(effectResult.failure).toMatchObject({
         method: 'GET',
         url: 'http://agents.test/health',
       })
@@ -121,14 +121,14 @@ describe('agents typed service clients', () => {
     const effectResult = await Effect.runPromise(
       fetchAgentsJsonEffect<{ ok: false; error: string }>('/ready', env).pipe(
         Effect.provide(makeAgentsHttpClientLayer({ fetch: fetchMock as unknown as typeof fetch })),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    expect(effectResult._tag).toBe('Left')
-    if (effectResult._tag === 'Left') {
-      expect(effectResult.left).toBeInstanceOf(AgentsHttpStatusError)
-      expect(effectResult.left).toMatchObject({
+    expect(effectResult._tag).toBe('Failure')
+    if (effectResult._tag === 'Failure') {
+      expect(effectResult.failure).toBeInstanceOf(AgentsHttpStatusError)
+      expect(effectResult.failure).toMatchObject({
         method: 'GET',
         url: 'http://agents.test/ready',
         status: 503,
