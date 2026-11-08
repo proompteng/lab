@@ -7,7 +7,7 @@ No demonstrated edge, prospective registration, or capital authorization.
 ## Decision
 
 CosmosAlpha's graph-guided factor reference remains the first selected reproduction. Its original data and
-self-hosted model now pass preflight, and the first Graph run is executing. Complete it before designing its Bayn adaptation. The first comparison is
+self-hosted model pass preflight. The first Graph arm has restarted with the [recorded source repairs](cosmosalpha-reference-budget-2026-11-07.md#source-repairs); its interrupted predecessor remains inconclusive. Complete the comparison before designing its Bayn adaptation. The first comparison is
 Graph versus the authors' Chain search under the same data, proposals, evaluator, and experiment budget.
 The existing six-bar ridge, momentum, breakout, and crash/VWAP implementations are controls or infrastructure.
 They are not this campaign's new candidate. Reusing ridge as the candidate was considered and rejected before fitting.
@@ -138,6 +138,9 @@ instruments per evaluation date. Industry history remains uncertified for strict
 279 null industry IDs, 158 null `free_turn` values and three null `returns` values. The existing self-hosted Flamingo endpoint
 now supplies model access without a paid API key. All six amended configurations pass native preflight. The matched
 Graph/Chain experiment is running; its comparison and economic qualification remain unfinished.
+The original source's normalized-number parser and duplicate-loser constructor failed independently reproduced
+regression cases. The explicit two-file repair passes 16 regression cases plus the 13 upstream tests. The corrected
+six-arm plan preserves data, thresholds, prompts, seeds and budgets; all partial predecessor evidence is retained.
 The earlier missing default local paths did not establish that the authors had not published the dataset.
 
 The [matched reference budget and accounting assessment](cosmosalpha-reference-budget-2026-11-07.md) now specifies
